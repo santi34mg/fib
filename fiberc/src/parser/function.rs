@@ -11,7 +11,7 @@ pub struct Function {
 pub struct FunctionSignature {
     pub name: String,
     pub parameters: Vec<FunctionParameter>,
-    pub return_type: Option<TypeIdentifier>,
+    pub return_type: TypeIdentifier,
 }
 
 #[derive(Debug, Clone)]

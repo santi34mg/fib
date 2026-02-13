@@ -1,22 +1,15 @@
 # Fiber (Fib Compiler)
 
-This is an early-stage toy compiler project for Fib, a C and Go inspired language
-designed for performance, clarity, and modern language features. The goal is to
-create a language and toolchain that combines low-level control with safer
-abstractions, ownership models, and ergonomics suited for systems programming
-and backend development.
+This is an early-stage toy compiler project for Fib, a C and Go inspired language designed for performance, clarity, and modern language features.
+The goal is to create a language and toolchain that combines low-level control with safer abstractions, ownership models, and ergonomics suited for systems programming and backend development.
 
-The compiler, called Fiber, is written in Rust and will support incremental
-compilation, LLVM backend, and a modular package system.
+The compiler, called Fiber, is written in Rust and will support incremental compilation, LLVM backend, and a modular package system.
 
 ## Current Status
 
-At this stage, the compiler can read source files and tokenize input code into
-a stream of tokens. The lexer is the foundation for the next phases: parsing,
-type checking, IR generation, and code emission.
+At this stage, the compiler can read source files and tokenize input code into a stream of tokens. The lexer is the foundation for the next phases: parsing, type checking, IR generation, and code emission.
 
-The project is under active development and meant for learning, experimentation,
-and laying the groundwork for a modern systems programming language.
+The project is under active development and meant for learning, experimentation, and laying the groundwork for a modern systems programming language.
 
 ## Minimal Language Feature Set (v0.1)
 
@@ -108,8 +101,7 @@ Currently, this will tokenize the input and print tokens to stdout as a debuggin
 ## Contributing
 
 Contributions, suggestions, and bug reports are welcome.
-This project is a personal exploration of compiler design and language implementation,
-but any help or feedback is appreciated.
+This project is a personal exploration of compiler design and language implementation, but any help or feedback is appreciated.
 
 ## License
 

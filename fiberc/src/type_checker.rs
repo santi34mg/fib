@@ -33,12 +33,12 @@ fn load_std_functions() -> HashMap<String, FunctionSignature> {
     // print_int(n int) -> None (accept any type)
     let print_param = FunctionParameter {
         parameter_name: "n".to_string(),
-        parameter_type: TypeIdentifier::Number,
+        parameter_type: TypeIdentifier::Integer,
     };
     let print_signature = FunctionSignature {
         name: "print_int".to_string(),
         parameters: vec![print_param.clone()],
-        return_type: None,
+        return_type: TypeIdentifier::Unit,
     };
     function_signatures.insert("print_int".to_string(), print_signature);
 
@@ -46,7 +46,7 @@ fn load_std_functions() -> HashMap<String, FunctionSignature> {
     let println_signature = FunctionSignature {
         name: "println".to_string(),
         parameters: vec![print_param],
-        return_type: None,
+        return_type: TypeIdentifier::Unit,
     };
     function_signatures.insert("println".to_string(), println_signature);
 
@@ -54,7 +54,7 @@ fn load_std_functions() -> HashMap<String, FunctionSignature> {
     let read_int_signature = FunctionSignature {
         name: "read_int".to_string(),
         parameters: vec![],
-        return_type: Some(TypeIdentifier::Number),
+        return_type: TypeIdentifier::Integer,
     };
     function_signatures.insert("read_int".to_string(), read_int_signature);
 
@@ -62,7 +62,7 @@ fn load_std_functions() -> HashMap<String, FunctionSignature> {
     let read_char_signature = FunctionSignature {
         name: "read_char".to_string(),
         parameters: vec![],
-        return_type: Some(TypeIdentifier::Char),
+        return_type: TypeIdentifier::Char,
     };
     function_signatures.insert("read_char".to_string(), read_char_signature);
 
@@ -99,7 +99,12 @@ impl<'a> TypeChecker<'a> {
                 then_branch,
                 else_branch,
             } => self.check_if(condition, then_branch, else_branch),
+            Statement::For {} => self.check_for(),
         }
+    }
+
+    fn check_for(&self) -> TypeCheckerResult<TypeIdentifier> {
+        todo!();
     }
 
     fn check_if(
@@ -190,19 +195,18 @@ impl<'a> TypeChecker<'a> {
                 if let Statement::Return(expr) = stmt {
                     found_return = true;
                     let ret_type = self.check_return(&expr)?;
-                    if let Some(expected) = return_type.clone() {
-                        if expected != ret_type {
-                            // restore outer scope before returning
-                            self.variables = outer_scope;
-                            return Err(TypeCheckerError {
-                                message: format!(
-                                    "Function '{}' returns {:?}, but declared as {:?}",
-                                    function_name.clone(),
-                                    ret_type,
-                                    expected
-                                ),
-                            });
-                        }
+                    let expected = return_type.clone();
+                    if expected != ret_type {
+                        // restore outer scope before returning
+                        self.variables = outer_scope;
+                        return Err(TypeCheckerError {
+                            message: format!(
+                                "Function '{}' returns {:?}, but declared as {:?}",
+                                function_name.clone(),
+                                ret_type,
+                                expected
+                            ),
+                        });
                     }
                 } else {
                     self.check_statement(&stmt)?;
@@ -213,7 +217,11 @@ impl<'a> TypeChecker<'a> {
         // restore outer scope after checking the function body
         self.variables = outer_scope;
         // Optionally: check for missing return in non-void functions
-        if function.signature.return_type.is_some() && !found_return {
+        if matches!(
+            function.signature.return_type,
+            TypeIdentifier::UserDefinedType
+        ) && !found_return
+        {
             return Err(TypeCheckerError {
                 message: format!("Function '{}' is missing a return statement", function_name),
             });
@@ -244,12 +252,12 @@ impl<'a> TypeChecker<'a> {
                 }
                 match op {
                     Operator::Plus | Operator::Minus | Operator::Multiply | Operator::Divide => {
-                        if left_type != TypeIdentifier::Number {
+                        if left_type != TypeIdentifier::Integer {
                             return Err(TypeCheckerError {
                                 message: "Arithmetic operators require number types".to_string(),
                             });
                         }
-                        TypeIdentifier::Number
+                        TypeIdentifier::Integer
                     }
                     Operator::Equals
                     | Operator::Different
@@ -258,8 +266,8 @@ impl<'a> TypeChecker<'a> {
                     | Operator::GreaterEqual
                     | Operator::LesserEqual => {
                         // require both sides to be numbers
-                        if left_type != TypeIdentifier::Number
-                            || right_type != TypeIdentifier::Number
+                        if left_type != TypeIdentifier::Integer
+                            || right_type != TypeIdentifier::Integer
                         {
                             return Err(TypeCheckerError {
                                 message: "Comparison operators require number types".to_string(),
@@ -291,7 +299,7 @@ impl<'a> TypeChecker<'a> {
                 })?
             }
             Expression::Literal(lit) => match &lit {
-                Literal::Integer(_) => TypeIdentifier::Number,
+                Literal::Integer(_) => TypeIdentifier::Integer,
                 Literal::Boolean(_) => TypeIdentifier::Boolean,
                 Literal::Character(_) => TypeIdentifier::Char,
                 _ => {
@@ -370,10 +378,7 @@ impl<'a> TypeChecker<'a> {
             }
 
             // Return the function's return type (or UserDefinedType if None)
-            return Ok(function_signature
-                .return_type
-                .clone()
-                .unwrap_or(TypeIdentifier::UserDefinedType));
+            return Ok(function_signature.return_type.clone());
         } else {
             return Err(TypeCheckerError {
                 message: "Only identifier function calls are supported".to_string(),

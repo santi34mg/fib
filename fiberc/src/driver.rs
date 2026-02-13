@@ -24,16 +24,16 @@ pub fn run_pipeline(file: &Path, is_debug_mode: bool) {
     if is_debug_mode {
         show_ast(&ast);
     }
-    run_type_checking(&ast);
+    run_type_checker(ast);
 }
 
-pub fn run_lexer(src: &String) -> Vec<Token> {
+fn run_lexer(src: &String) -> Vec<Token> {
     let lexer = Lexer::new(&src);
     let tokens = lexer.collect();
     tokens
 }
 
-pub fn run_parser(tokens: Vec<Token>, filename: String, source: String) -> Option<Ast> {
+fn run_parser(tokens: Vec<Token>, filename: String, source: String) -> Option<Ast> {
     // TODO: improve error handling
     let mut parser = Parser::new(tokens.into_iter(), filename, source);
     match parser.parse_program() {
@@ -45,8 +45,8 @@ pub fn run_parser(tokens: Vec<Token>, filename: String, source: String) -> Optio
     }
 }
 
-pub fn run_type_checking(ast: &Ast) {
-    let mut type_checker = TypeChecker::new(ast);
+fn run_type_checker(ast: Ast) {
+    let mut type_checker = TypeChecker::new(&ast);
     type_checker.check_ast();
 }
 
