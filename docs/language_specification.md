@@ -3,179 +3,159 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
-- [Introduction](#introduction)
-- [Notation](#notation)
-- [Program](#program)
-- [Lexical elements](#lexical-elements)
-  - [Identifier](#identifier)
-  - [Comments](#comments)
-  - [Literals](#literals)
-    - [Integer literals](#integer-literals)
-    - [Float literals](#float-literals)
-    - [Boolean literals](#boolean-literals)
-    - [Character literals](#character-literals)
-    - [String literals](#string-literals)
-    - [Tuple literals](#tuple-literals)
-    - [Array literals](#array-literals)
-    - [Range literals](#range-literals)
-    - [Map literals](#map-literals)
-    - [Struct literals](#struct-literals)
-    - [Unit literal](#unit-literal)
-- [Names and bindings](#names-and-bindings)
-  - [Entity](#entity)
-  - [Bindings](#bindings)
-  - [Scope](#scope)
-  - [Environment](#environment)
-  - [Name resolution](#name-resolution)
-  - [Modules](#modules)
-    - [Module declarations](#module-declarations)
-    - [Default module](#default-module)
-    - [Module member declarations](#module-member-declarations)
-    - [Module member references](#module-member-references)
-    - [Name resolution in modules](#name-resolution-in-modules)
-    - [Visibility and access control](#visibility-and-access-control)
-- [Semantics](#semantics)
-  - [Values](#values)
-    - [Atomic values](#atomic-values)
-    - [Composite values](#composite-values)
-  - [Evaluation](#evaluation)
-- [Expressions](#expressions)
-  - [Primary expressions](#primary-expressions)
-  - [Operators](#operators)
-    - [Arithmetic operators](#arithmetic-operators)
-    - [Increment and decrement statements](#increment-and-decrement-statements)
-    - [Compound assignment operators](#compound-assignment-operators)
-    - [Comparison operators](#comparison-operators)
-      - [Structural equality (`==`, `!=`)](#structural-equality--)
-      - [Strict type equality (`===`, `!==`)](#strict-type-equality--)
-      - [Function type equality](#function-type-equality)
-      - [Ordering operators (`<`, `>`, `<=`, `>=`)](#ordering-operators----)
-    - [Logical operators](#logical-operators)
-    - [Bitwise operators](#bitwise-operators)
-    - [Operator precedence and associativity](#operator-precedence-and-associativity)
-  - [Block expressions](#block-expressions)
-- [Variables](#variables)
-  - [Variable declarations](#variable-declarations)
-  - [Variable assignment](#variable-assignment)
-- [Control flow](#control-flow)
-  - [Conditional statements](#conditional-statements)
-    - [If statement](#if-statement)
-    - [If-else statement](#if-else-statement)
-    - [If-else if chains](#if-else-if-chains)
-    - [If expressions](#if-expressions)
-  - [Iteration statements](#iteration-statements)
-    - [For statement](#for-statement)
-    - [Break statement](#break-statement)
-    - [Continue statement](#continue-statement)
-  - [Pattern matching](#pattern-matching)
-    - [Match expressions](#match-expressions)
-    - [Patterns](#patterns)
-    - [Pattern matching on sum types](#pattern-matching-on-sum-types)
-    - [Guards](#guards)
-  - [Return statement](#return-statement)
-  - [Destructuring](#destructuring)
-    - [Positional product type destructuring](#positional-product-type-destructuring)
-    - [Labeled products type destructuring](#labeled-products-type-destructuring)
-    - [Array index access](#array-index-access)
-- [Type system](#type-system)
-  - [Types](#types)
-    - [Primitive types](#primitive-types)
-    - [Product types](#product-types)
-    - [Sum types](#sum-types)
-    - [Array types](#array-types)
-      - [Array indexing with ranges](#array-indexing-with-ranges)
-      - [Array indexing with arrays](#array-indexing-with-arrays)
-    - [Slice types](#slice-types)
-    - [Map types](#map-types)
-      - [Map access](#map-access)
-      - [Map key requirements](#map-key-requirements)
-      - [Missing key behavior](#missing-key-behavior)
-      - [Nested maps](#nested-maps)
-    - [Function types](#function-types)
-    - [Type composition](#type-composition)
-    - [Named types](#named-types)
-      - [Named types with labeled members](#named-types-with-labeled-members)
-      - [Named types with contract implementations](#named-types-with-contract-implementations)
-  - [Pointers](#pointers)
-    - [Safe pointer types](#safe-pointer-types)
-      - [Unique pointers](#unique-pointers)
-      - [Shared pointers](#shared-pointers)
-      - [Weak pointers](#weak-pointers)
-    - [Raw pointers](#raw-pointers)
-      - [Pointer arithmetic](#pointer-arithmetic)
-    - [Obtaining addresses](#obtaining-addresses)
-    - [Dereferencing](#dereferencing)
-    - [Null pointers](#null-pointers)
-  - [Contracts](#contracts)
-    - [Contract declarations](#contract-declarations)
-    - [Contract implementation](#contract-implementation)
-    - [Contract-typed parameters](#contract-typed-parameters)
-    - [Monomorphization](#monomorphization)
-  - [Errors](#errors)
-    - [The Error contract](#the-error-contract)
-    - [Defining custom errors](#defining-custom-errors)
-    - [Using errors in functions](#using-errors-in-functions)
-    - [Handling errors](#handling-errors)
-    - [Functions accepting any error](#functions-accepting-any-error)
-    - [Panic](#panic)
-- [Functions](#functions)
-  - [Function declarations](#function-declarations)
-  - [Forward declarations](#forward-declarations)
-  - [Parameters](#parameters)
-  - [Function application](#function-application)
-  - [Recursion](#recursion)
-  - [Anonymous functions](#anonymous-functions)
-  - [Closures](#closures)
-- [Memory management](#memory-management)
-  - [Stack allocation](#stack-allocation)
-  - [Heap allocation](#heap-allocation)
-  - [Deallocation](#deallocation)
-  - [Deferred deallocation](#deferred-deallocation)
-  - [Arena allocation](#arena-allocation)
-- [Compiler Hints](#compiler-hints)
-  - [Hint Syntax](#hint-syntax)
-  - [Parameter Hint Semantics](#parameter-hint-semantics)
-    - [Requirement Hints (Inline Placement)](#requirement-hints-inline-placement)
-    - [Promise Hints (External Placement)](#promise-hints-external-placement)
-    - [Combining Requirement and Promise Hints](#combining-requirement-and-promise-hints)
-    - [Verification Rules](#verification-rules)
-    - [Parameter Hint Examples](#parameter-hint-examples)
-  - [Function Hints](#function-hints)
-    - [Inlining Hints](#inlining-hints)
-    - [Execution Frequency Hints](#execution-frequency-hints)
-    - [Purity and Side Effect Hints](#purity-and-side-effect-hints)
-    - [Recursion Hints](#recursion-hints)
-    - [Control Flow Hints](#control-flow-hints)
-    - [Return Value Hints](#return-value-hints)
-    - [Exception and Error Hints](#exception-and-error-hints)
-  - [Memory and Allocation Hints](#memory-and-allocation-hints)
-    - [Function-Level Memory Hints](#function-level-memory-hints)
-  - [Variable and Parameter Hints](#variable-and-parameter-hints)
-    - [Memory Access Hints](#memory-access-hints)
-    - [Nullability Hints](#nullability-hints)
-    - [Alignment Hints](#alignment-hints)
-    - [Storage Hints](#storage-hints)
-  - [Control Flow Hints](#control-flow-hints-1)
-    - [Branch Prediction Hints](#branch-prediction-hints)
-    - [Reachability Hints](#reachability-hints)
-  - [Loop Hints](#loop-hints)
-    - [Unrolling Hints](#unrolling-hints)
-    - [Vectorization Hints](#vectorization-hints)
-    - [Parallelization Hints](#parallelization-hints)
-  - [Concurrency Hints](#concurrency-hints)
-  - [Code Generation Hints](#code-generation-hints)
-    - [Optimization Level Hints](#optimization-level-hints)
-    - [Target-Specific Hints](#target-specific-hints)
-    - [Linkage and ABI Hints](#linkage-and-abi-hints)
-  - [Safety and Verification Hints](#safety-and-verification-hints)
-    - [Bounds Checking Hints](#bounds-checking-hints)
-    - [Overflow Checking Hints](#overflow-checking-hints)
-    - [Unsafe Code Hints](#unsafe-code-hints)
-    - [Contract Hints (Design by Contract)](#contract-hints-design-by-contract)
-  - [Hint Placement Summary](#hint-placement-summary)
-  - [Combining Hints](#combining-hints)
-  - [Hint Verification](#hint-verification)
-  - [Standard Library Hint Annotations](#standard-library-hint-annotations)
+- [Language specification](#language-specification)
+  - [Introduction](#introduction)
+  - [Notation](#notation)
+  - [Program](#program)
+  - [Lexical elements](#lexical-elements)
+    - [Identifier](#identifier)
+    - [Comments](#comments)
+    - [Literals](#literals)
+      - [Integer literals](#integer-literals)
+      - [Float literals](#float-literals)
+      - [Boolean literals](#boolean-literals)
+      - [Character literals](#character-literals)
+      - [String literals](#string-literals)
+      - [Tuple literals](#tuple-literals)
+      - [Array literals](#array-literals)
+      - [Range literals](#range-literals)
+      - [Map literals](#map-literals)
+      - [Struct literals](#struct-literals)
+      - [Unit literal](#unit-literal)
+  - [Names and bindings](#names-and-bindings)
+    - [Entity](#entity)
+    - [Bindings](#bindings)
+    - [Scope](#scope)
+    - [Environment](#environment)
+    - [Name resolution](#name-resolution)
+    - [Modules](#modules)
+      - [Module declarations](#module-declarations)
+      - [Default module](#default-module)
+      - [Module member declarations](#module-member-declarations)
+      - [Module member references](#module-member-references)
+      - [Submodules and nesting](#submodules-and-nesting)
+      - [Name resolution in modules](#name-resolution-in-modules)
+      - [Using external modules](#using-external-modules)
+      - [Visibility and access control](#visibility-and-access-control)
+  - [Semantics](#semantics)
+    - [Values](#values)
+      - [Atomic values](#atomic-values)
+      - [Composite values](#composite-values)
+    - [Evaluation](#evaluation)
+  - [Expressions](#expressions)
+    - [Primary expressions](#primary-expressions)
+    - [Operators](#operators)
+      - [Arithmetic operators](#arithmetic-operators)
+      - [Increment and decrement statements](#increment-and-decrement-statements)
+      - [Compound assignment operators](#compound-assignment-operators)
+      - [Comparison operators](#comparison-operators)
+        - [Structural equality (`==`, `!=`)](#structural-equality--)
+        - [Strict type equality (`===`, `!==`)](#strict-type-equality--)
+        - [Function type equality](#function-type-equality)
+        - [Ordering operators (`<`, `>`, `<=`, `>=`)](#ordering-operators----)
+      - [Logical operators](#logical-operators)
+      - [Bitwise operators](#bitwise-operators)
+      - [Operator precedence and associativity](#operator-precedence-and-associativity)
+    - [Block expressions](#block-expressions)
+  - [Variables](#variables)
+    - [Variable declarations](#variable-declarations)
+    - [Variable assignment](#variable-assignment)
+    - [Type inference](#type-inference)
+  - [Control flow](#control-flow)
+    - [Conditional statements](#conditional-statements)
+      - [If statement](#if-statement)
+      - [If-else statement](#if-else-statement)
+      - [If-else if chains](#if-else-if-chains)
+      - [If expressions](#if-expressions)
+    - [Iteration statements](#iteration-statements)
+      - [For statement](#for-statement)
+      - [Break statement](#break-statement)
+      - [Continue statement](#continue-statement)
+    - [Pattern matching](#pattern-matching)
+      - [Match expressions](#match-expressions)
+      - [Patterns](#patterns)
+      - [Pattern matching on sum types](#pattern-matching-on-sum-types)
+      - [Guards](#guards)
+    - [Return statement](#return-statement)
+    - [Destructuring](#destructuring)
+      - [Positional product type destructuring](#positional-product-type-destructuring)
+      - [Labeled products type destructuring](#labeled-products-type-destructuring)
+      - [Array index access](#array-index-access)
+  - [Memory model, ownership, and lifetime](#memory-model-ownership-and-lifetime)
+    - [Lifetime rules](#lifetime-rules)
+    - [Initialization](#initialization)
+    - [Evaluation order](#evaluation-order)
+    - [ABI and FFI](#abi-and-ffi)
+  - [Undefined and implementation-defined behavior](#undefined-and-implementation-defined-behavior)
+  - [Type system](#type-system)
+    - [Types](#types)
+    - [Generics and Code Generation](#generics-and-code-generation)
+      - [Primitive types](#primitive-types)
+      - [Product types](#product-types)
+      - [Sum types](#sum-types)
+      - [Array types](#array-types)
+        - [Array indexing with ranges](#array-indexing-with-ranges)
+        - [Array indexing with arrays](#array-indexing-with-arrays)
+      - [Slice types](#slice-types)
+      - [Map types](#map-types)
+        - [Map access](#map-access)
+        - [Map key requirements](#map-key-requirements)
+        - [Missing key behavior](#missing-key-behavior)
+        - [Nested maps](#nested-maps)
+      - [Function types](#function-types)
+      - [Type composition](#type-composition)
+      - [Named types](#named-types)
+        - [Named types with labeled members](#named-types-with-labeled-members)
+        - [Named types with contract implementations](#named-types-with-contract-implementations)
+    - [Pointers](#pointers)
+      - [Safe pointer types](#safe-pointer-types)
+        - [Unique pointers](#unique-pointers)
+        - [Shared pointers](#shared-pointers)
+        - [Weak pointers](#weak-pointers)
+      - [Raw pointers](#raw-pointers)
+        - [Pointer arithmetic](#pointer-arithmetic)
+      - [Obtaining addresses](#obtaining-addresses)
+      - [Dereferencing](#dereferencing)
+      - [Null pointers](#null-pointers)
+    - [Contracts](#contracts)
+      - [Contract declarations](#contract-declarations)
+      - [Contract implementation](#contract-implementation)
+      - [Contract-typed parameters](#contract-typed-parameters)
+      - [Monomorphization](#monomorphization)
+    - [Errors](#errors)
+      - [The Error contract](#the-error-contract)
+      - [Defining custom errors](#defining-custom-errors)
+      - [Using errors in functions](#using-errors-in-functions)
+      - [Handling errors](#handling-errors)
+      - [Functions accepting any error](#functions-accepting-any-error)
+      - [Panic](#panic)
+    - [Type casting](#type-casting)
+      - [Raw casting](#raw-casting)
+      - [Safe casting](#safe-casting)
+  - [Functions](#functions)
+    - [Function declarations](#function-declarations)
+    - [Forward declarations](#forward-declarations)
+    - [Parameters](#parameters)
+    - [Function application](#function-application)
+    - [Recursion](#recursion)
+    - [Anonymous functions](#anonymous-functions)
+    - [Closures](#closures)
+    - [Purity and side effects](#purity-and-side-effects)
+  - [Memory management](#memory-management)
+    - [Stack allocation](#stack-allocation)
+    - [Heap allocation](#heap-allocation)
+    - [Deallocation](#deallocation)
+    - [Deferred deallocation](#deferred-deallocation)
+    - [Arena allocation](#arena-allocation)
+  - [Compiler Hints](#compiler-hints)
+    - [Hint Syntax](#hint-syntax)
+    - [Parameter Hint Semantics](#parameter-hint-semantics)
+      - [Requirement Hints (Inline Placement)](#requirement-hints-inline-placement)
+      - [Promise Hints (External Placement)](#promise-hints-external-placement)
+      - [Combining Requirement and Promise Hints](#combining-requirement-and-promise-hints)
+      - [Verification Rules](#verification-rules)
+    - [Hint Placement Summary](#hint-placement-summary)
+  - [Stackful coroutines](#stackful-coroutines)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -485,58 +465,46 @@ Name resolution is the process of determining, for each reference occurrence of 
 
 A _module_ is a program unit that defines a scope and an interface.
 
-A module contains declarations and statements.
-Declarations introduce bindings within the module’s scope.
-A module's _interface_ is the set of public bindings that the module exports for external access.The module interface determines which bindings defined in the module are accessible outside the module.
+A module may contain bindings to variables, types, functions, coroutines and other modules.
+A module's _interface_ is the set of public bindings that the module exports for external access.
+The module interface determines which bindings defined in the module are accessible outside the module.
 
 #### Module declarations
 
 A _module declaration_ introduces a name for a module.
 The module name must be a valid identifier.
 
-Module declarations may appear anywhere in a file.
-Multiple module declarations may appear in the same file.
+Module declarations may only appear at the top level of a file.
+There may only be one module declaration per file.
+A module may not be declared in more than one file.
 
 **Syntax**:
 
 ```
 [public | private] module <module_identifier>[;]
-[public | private] module <module_identifier> "{" <statements> "}"[;]
 ```
 
-Modules are private by default. The visibility of the module defines the visibility
-of its bindings for external modules.
+Modules are private by default.
+The visibility of the module defines the visibility of its bindings for external modules.
 
-The semicolon is optional in both forms.
+**Example**:
 
-The block form contains declarations and statements that introduce bindings within the module's scope.
-Bindings declared within a module block are locally scoped to that block.
+```
+module cats;
+
+public type Cat = ('name string * 'size int)
+```
+
+Bindings declared within a module's are locally scoped to that block.
 
 #### Default module
 
-If no module is explicitly declared, an implicit module named `main` is created.
-
-All declarations not qualified with a module identifier that are outside of a module declaration block are introduced into the `main` module.
-
-The identifier `main` is reserved for the default module but this can be changed in the compiler configuration.
+If no module is explicitly declared, an implicit module named after the file name is declared.
 
 #### Module member declarations
 
-Entities may be declared as members of a module using qualified identifiers.
-
-**Syntax**:
-
-```
-let <module_identifier>:<identifier> <type>[;]
-let <module_identifier>:<identifier> <type> = <expression>[;]
-function <module_identifier>:<identifier>(<parameters>) <return_type> "{" <statements> "}"[;]
-function <module_identifier>:<identifier>(<parameters>) <return_type>[;]
-```
-
-Qualified declarations introduce bindings into the named module's scope.
-
-Qualified declarations may appear outside the module's block if the module is public.
-Qualified declarations may reference modules defined in other files.
+Entities declared within the file of a module declaration are declared within that module's scope.
+If no module was declared, the default module is used instead.
 
 #### Module member references
 
@@ -550,12 +518,45 @@ Bindings from other modules may be referenced using qualified identifiers.
 
 Name resolution for qualified identifiers locates the binding in the specified module's scope.
 
+#### Submodules and nesting
+
+A _submodule_ is a module (refered to as the child) that has been binded to another module (refered to as the parent).
+This process is called _module nesting_.
+A sibling is any entity that shares a common parent with a submodule.
+
+To declare a submodule use the following syntax:
+
+```
+[public | private] module <parent-module>:<children-module>
+```
+
+The parent module may be a submodule as well.
+
 #### Name resolution in modules
 
 Within a module's scope, unqualified identifier occurrences are resolved by searching the local scope first.
 If no binding is found in the local scope, name resolution searches enclosing scopes.
 
-To reference an entity from another module, a qualified identifier must be used.
+#### Using external modules
+
+The `use` keyword brings another module's public bindings to the scope of the current module.
+This simplifies the use of nested modules.
+
+```
+use Animals:Mammals:Pets:Cats:create_cat
+
+function main() unit {
+    let cat = create_cat()
+}
+```
+
+Otherwise, to reference an entity from another module, a qualified identifier must be used.
+
+```
+function main() unit {
+    let cat = Animals:Mammals:Pets:Cats:create_cat()
+}
+```
 
 #### Visibility and access control
 
@@ -863,8 +864,8 @@ Variables are declared using the `let` keyword.
 **Syntax**:
 
 ```
-let <identifier> <type>[;]
-let <identifier> <type> = <expression>[;]
+let <identifier> [<type>][;]
+let <identifier> [<type>] = <expression>[;]
 ```
 
 A variable declaration may optionally include an initializer expression.
@@ -882,6 +883,23 @@ The binding remains unchanged; only the variable's stored value is updated.
 ```
 
 The identifier must refer to a variable binding in scope.
+
+### Type inference
+
+Types may be inferred by ommitting the type in a declaration.
+
+```
+let x = 5
+// same as
+let x int = 5
+```
+
+For cases where the type may need extra information, portions of the type may still be inferred using `_`.
+
+```
+let x = 5                       // int is inferred
+let p unique &_ = addressof x   // unique &int is inferred
+```
 
 <div class="page"/>
 
@@ -1048,14 +1066,13 @@ The value of the match expression is the value produced by the matching arm.
 
 ```
 match <expression> {
-| <pattern> -> <expression>
-| <pattern> -> <expression>
+  <pattern> -> <expression>
+  <pattern> -> <expression>
 ...
 }
 ```
 
 Each arm consists of a pattern and an expression separated by `->`.
-Arms are prefixed with `|` for visual clarity.
 
 #### Patterns
 
@@ -1083,8 +1100,8 @@ type Option = 'None + 'Some int;
 let value Option = 'Some 42;
 
 let result int = match value {
-| 'None -> 0
-| 'Some x -> x
+  'None -> 0
+  'Some x -> x
 };
 ```
 
@@ -1095,16 +1112,16 @@ Patterns may include guards which are additional boolean conditions using the `w
 **Syntax**:
 
 ```
-| <pattern> when <condition> -> <expression>
+  <pattern> when <condition> -> <expression>
 ```
 
 **Example**:
 
 ```
 match x {
-| n when n < 0 -> "negative"
-| n when n > 0 -> "positive"
-| _ -> "zero"
+  n when n < 0 -> "negative"
+  n when n > 0 -> "positive"
+  _ -> "zero"
 }
 ```
 
@@ -1218,15 +1235,11 @@ let third int = arr.2;
 
 <div class="page"/>
 
-## Type system
-
-fib has static typing with type inference at compile time. All types and type conversions are checked at compile time unless explicitly marked as runtime-checked. Type errors are always compile-time errors.
-
 ## Memory model, ownership, and lifetime
 
 fib uses a pragmatic memory and value model:
 
-- All variables and heap allocations must be initialized before use. Uninitialized variables or memory are a compile-time error.
+- All variables and heap allocations must be initialized before use.
 - By default, values (ints, structs, etc.) use copy semantics: assignment and passing by value create independent copies.
 - Move semantics (where assignment or passing invalidates the source) are only enabled for types or variables explicitly marked with a compiler hint (`@drop_if_moved`). Unique pointers (`unique &T`) have this hint by default via the standard library.
 - Shared pointers (`shared &T`) use reference counting for memory management. Multiple shared pointers may reference the same memory; memory is freed when the last reference is dropped.
@@ -1242,8 +1255,8 @@ Violations of lifetime rules (use-after-free, double-free, dangling pointer) are
 
 ### Initialization
 
-All variables and heap allocations must be initialized before use. Uninitialized variables or memory are a compile-time error.
-Using the `@uninitalized` hint prevents the compiler from throwing an error and warning instead.
+Variables may be initalized while being declared.
+Uninitialized variables cannot be read from. Doing so results in a compile time error.
 
 ### Evaluation order
 
@@ -1259,47 +1272,32 @@ The Application Binary Interface (ABI) is implementation-defined.
 
 Undefined behavior is any program action for which this specification imposes no requirements. Implementations may behave unpredictably in such cases. Implementation-defined behavior must be documented by the implementation and should be minimized.
 
-## Examples and edge cases
+## Type system
 
-Throughout this document, examples are provided for both typical and edge-case scenarios. If an example is missing for a non-obvious behavior, it should be considered underspecified and reported as a documentation bug.
-
-### Type casting
-
-Type casting allows converting a value from one type to another, either by reinterpreting the underlying bits (raw casting) or by using a safe conversion (safe casting).
-
-#### Raw casting
-
-Raw casting only changes the types; it does not perform any operation on the underlying value.
-Raw casting requires the two types to be of the same size (for example, you cannot cast from `int` to `bool` because the former is 4 bytes and the latter is 1 byte).
-
-> Note: raw casting is not recommended for general use. `@raw_cast` is provided to allow conversions between types in low-level scenarios and should be used with care as any language hint.
-
-**Example**:
-
-```
-@raw_cast
-let x Int_8 =  'c';
-```
-
-This example casts the character literal `'c'` to an `Int_8` (unsigned 8-bit integer).
-
-#### Safe casting
-
-Safe casting is an abstraction over raw casting. Use the standard library to safely cast between types.
-
-**Examples**:
-
-```
-let x int = 3.14f.cast_int();
-// same as:
-let x int = cast_int(3.14f)
-```
+fib has static typing with type inference at compile time. All types and type conversions are checked at compile time unless explicitly marked as runtime-checked. Type errors are always compile-time errors.
 
 ### Types
 
 A _type_ defines the set of values a variable may hold and the operations that may be performed on those values.
 
 fib supports several type constructors that allow building complex types from simpler ones.
+
+### Generics and Code Generation
+
+fib does not support generic types or generic contracts. All types, functions, and data structures must be defined with concrete types. Patterns that would typically use generics in other languages (such as parameterized data structures or interfaces) should be implemented using code generation, macros, or explicit code duplication.
+
+This design choice ensures predictable performance and simplifies the type system. For reusable data structure patterns (such as lists, maps, or option types), developers are encouraged to use code generation tools or macros to produce the required concrete types and functions for each use case.
+
+**Example:**
+
+To create a list of integers and a list of strings, generate two separate concrete types:
+
+```fib
+type IntList = ... // implementation for int
+type StringList = ... // implementation for string
+```
+
+There is no syntax for `type List T` or `contract Poll T` in the language.
 
 #### Primitive types
 
@@ -1879,8 +1877,8 @@ let w weak &int = Weak:from(p);   // Create weak pointer (std library)
 
 // Later, to use the weak pointer:
 match Weak:upgrade(w) {
-| 'Some s -> print(deref s)
-| 'None -> print("referent has been freed")
+  'Some s -> print(deref s)
+  'None -> print("referent has been freed")
 }
 ```
 
@@ -2225,8 +2223,8 @@ function main() unit {
     let result DivideResult = divide(10, 0);
 
     match result {
-    | 'Err err -> print(err.get_error_message())
-    | 'Ok value -> print(value)
+      'Err err -> print(err.get_error_message())
+      'Ok value -> print(value)
     }
 }
 ```
@@ -2258,6 +2256,38 @@ function divide_panic(a int, b int) int {
 ```
 
 <div class="page"/>
+
+### Type casting
+
+Type casting allows converting a value from one type to another, either by reinterpreting the underlying bits (raw casting) or by using a safe conversion (safe casting).
+
+#### Raw casting
+
+Raw casting only changes the types; it does not perform any operation on the underlying value.
+Raw casting requires the two types to be of the same size (for example, you cannot cast from `int` to `bool` because the former is 4 bytes and the latter is 1 byte).
+
+> Note: raw casting is not recommended for general use. `@raw_cast` is provided to allow conversions between types in low-level scenarios and should be used with care as any language hint.
+
+**Example**:
+
+```
+@raw_cast
+let x Int_8 =  'c';
+```
+
+This example casts the character literal `'c'` to an `Int_8` (unsigned 8-bit integer).
+
+#### Safe casting
+
+Safe casting is an abstraction over raw casting. Use the standard library to safely cast between types.
+
+**Examples**:
+
+```
+let x int = 3.14f.cast_int();
+// same as:
+let x int = cast_int(3.14f)
+```
 
 ## Functions
 
@@ -2527,7 +2557,14 @@ defer <statement>
 }  // buffer is freed here
 ```
 
-Deferred statements execute in reverse order of their declaration (LIFO).
+Deferred statements execute in reverse order of their lexical declaration (LIFO).
+
+Deferred statements execute in the following scenarios:
+
+- Normal scope exit
+- Early returns
+- Panic unwinding
+- Coroutine stack unwinding
 
 ### Arena allocation
 
@@ -2725,3 +2762,90 @@ foo(bar);
 | Statement hints           | Before the statement                           | Applies to statement           |
 | Type hints                | Before `type` keyword                          | Applies to type                |
 | Module hints              | Before `module` keyword                        | Applies to module              |
+
+## Stackful coroutines
+
+Stackful coroutines are baked into the language.
+
+A stackful coroutine may be declared using the `coroutine` keyword. Semantically, this will define a function that can be suspended and resumed later.
+
+> Technical note: because these are stackful coroutines, when they are suspended, their stack frames, including local variables and spilled arguments, along with registers and other relevant memory, are stored in a heap allocated object.
+
+**Syntax**:
+
+```
+coroutine <coroutine-name>(<arguments>) <return-type> {<body>}
+```
+
+Inside the body of a coroutine, the `yield` statement may be used to suspend the execution of the coroutine.
+
+**Example**:
+
+```
+coroutine counter(start int, end int) 'Some int + 'None unit {
+    let i int = start;
+    for i < end {
+        yield 'Some i;
+        i += 1
+    }
+    yield 'None ();
+}
+```
+
+> The return type expressed int the coroutine's signature is the type of the value produced by the `resume` expression and not the handler type produced by the `spawn` expression.
+
+A coroutine may be spawned using the `spawn` expression. Spawning a coruoutine does not begin the execution of its body statements, instead, it produces a _coroutine handler_.
+
+The `resume` expression utilizes a coroutine handler and execute its coroutine
+
+```
+let c = spawn counter(0, 3);
+
+for {
+    let result = resume c;
+    match result {
+        'Some x  -> {print(x);}
+        'None () -> {break;}
+    }
+}
+// 0, 1, 2
+```
+
+The `spawn` expression returns a _coroutine handle_, which is similar to a function type.
+
+```
+let c coroutine -> 'Some int + 'None unit = spawn counter(0, 3);
+```
+
+The type of `c` is a coroutine handler that produces an int and it is written as `coroutine -> 'Some int + 'None unit`.
+
+The coroutine handler type is an opaque first-class citizen of the language.
+The handler is not callable like a normal function, `resume` must be used.
+
+Handlers use move semantics. Trying to bind a handler to another identifier is not allowed.
+
+```
+let c = spawn counter(0, 3);
+// Not allowed
+let d = c;
+```
+
+Handlers may be referenced using pointers.
+Aliasing is allowed, so shared references of the handler is also allowed.
+If no aliasing is desired use unique pointers.
+
+```
+let c = spawn counter(0, 3);
+
+let p1 shared &_ = copy(c);
+let p2 shared &_ = addressof c;
+
+// use them
+let x1 = resume (deref p1)          // 0
+let x2 = resume (deref p2)          // 1
+```
+
+Concurrency should be handled using other language structures like mutex or semaphores.
+
+Dropping an uncompleted coroutine performs stack unwinding and cleanup must is perfomed by `defer` blocks.
+Unwinding walks frames from innermost to outermost, executing each frame’s defers before discarding it.

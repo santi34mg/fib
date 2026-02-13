@@ -39,36 +39,19 @@ This aligns with fib's zero-cost abstraction principle and provides predictable 
 
 ```fib
 // Async function declaration
-async function fetch_data(url string) Result string Error {
+async function fetch_data(url string) 'Ok string + 'Err Error {
     let response Response = await http:get(url);
     return response.body;
 }
 
-// Async functions return a Future type
-// Future is a state machine, zero allocation until polled
+// Async functions return a sum type (Result)
+// Futures are state machines, zero allocation until polled
 
 // Calling async functions
 async function main() {
     let data string = await fetch_data("https://example.com");
     print(data);
 }
-```
-
-#### The Future Type
-
-```fib
-// Built-in or standard library
-type Future T = (
-    // Compiler-generated state machine
-    // Contains all local variables as fields
-    // Has poll() method
-)
-
-contract Poll T {
-    function poll(self) PollResult T;
-}
-
-type PollResult T = 'Ready T + 'Pending;
 ```
 
 #### Executors (Standard Library)
@@ -79,7 +62,7 @@ let executor Executor = Executor:new();
 executor:block_on(main());
 
 // Multi-threaded executor
-let runtime Runtime = Runtime:new(num_threads: 4);
+let runtime Runtime = Runtime:new(num_threads = 4);
 runtime:spawn(task1());
 runtime:spawn(task2());
 runtime:block_on_all();
@@ -87,23 +70,18 @@ runtime:block_on_all();
 
 #### Generators (Separate Feature)
 
-For iteration, use generators with `yield`:
-
 ```fib
 // Generator function (not async, for iteration)
 generator function range(start int, end int) int {
-    for let i = start; i < end; i++ {
+    for let i int = start; i < end; i++ {
         yield i;
     }
 }
 
 // Usage
-for let x = range(0, 10) {
+for let x int = range(0, 10) {
     print(x);
 }
-
-// Generators produce Iterator type
-type Iterator T = generator function() T;
 ```
 
 #### Why This Approach?
@@ -158,51 +136,13 @@ I/O is inherently side-effecting and platform-specific. Keep it in the standard 
 
 #### Error Handling Integration
 
-The language's sum types and `Error` contract already support I/O errors well:
-
 ```fib
-// I/O functions return Result types
-type IoResult T = 'Ok T + 'Err IoError;
-
-function read_file(path string) IoResult string {
-    ...
-}
-
-// Usage with pattern matching
-let content string = match read_file("data.txt") {
-| 'Ok data -> data
-| 'Err e -> {
-    print("Error: " + e:get_error_message());
-    return;
-}
-};
-```
-
-#### Standard Library I/O
-
-```fib
-// File I/O
-module io;
-
-type File = (
-    'handle int *  // OS file descriptor
-    'mode FileMode
-)
-
-function open(path string, mode FileMode) IoResult File;
-function read(file File, buffer slice byte) IoResult int;
-function write(file File, data slice byte) IoResult int;
-function close(file File) IoResult unit;
-
-// Buffered I/O
-type BufferedReader = (
-    'file File *
-    'buffer [4096]byte *
-    'pos int *
-    'len int
-)
-
-function read_line(reader BufferedReader) IoResult string;
+// I/O functions return sum types
+// Example error handling pattern:
+// let result = match read_file("data.txt") {
+//   'Ok data -> data
+//   'Err e -> { print("Error: " + e:get_error_message()); return; }
+// };
 ```
 
 #### With Statement for Resources
@@ -210,50 +150,14 @@ function read_line(reader BufferedReader) IoResult string;
 ```fib
 // RAII-style resource management
 with file = io:open("data.txt", 'Read)? {
-    let content string = io:read_all(file)?;
+    let content string = io:read_all(file).ok();
     process(content);
 }  // file automatically closed
-
-// The `?` operator propagates errors (sugar for match + early return)
 ```
 
 #### Async I/O
 
-```fib
-// Async I/O uses the async system
-async function read_file_async(path string) IoResult string {
-    let file File = await io:async_open(path, 'Read)?;
-    let content string = await io:async_read_all(file)?;
-    await io:async_close(file)?;
-    return 'Ok content;
-}
-```
-
-#### Language Features for I/O
-
-Consider these language-level features:
-
-1. **`?` operator**: Early return on error (sugar, not I/O specific)
-2. **`with` statement**: Automatic resource cleanup
-3. **`@io` hint**: Mark functions that perform I/O (for documentation and optimization)
-
-```fib
-// ? operator desugars to:
-let x T = expr?;
-// becomes:
-let x T = match expr {
-| 'Ok v -> v
-| 'Err e -> return 'Err e
-};
-
-// @io hint for documentation
-@io
-function save_data(data Data) IoResult unit {
-    ...
-}
-```
-
----
+Async I/O uses the async system (no generics)
 
 ## 8. Threading
 
@@ -277,112 +181,22 @@ How does threading work? How does it interact with async and I/O?
 ```fib
 module thread;
 
-type Thread T = (
-    'handle ThreadHandle *
-    'result ptr T
-)
-
-// Spawn a thread
-function spawn(func () -> T) Thread T;
-
-// Wait for completion
-function join(t Thread T) T;
-
-// Example
-let t Thread int = thread:spawn(function() int {
-    return expensive_computation();
-});
-let result int = thread:join(t);
+// Example thread usage (no generics):
+// let t = thread:spawn(function() { ... });
+// thread:join(t);
 ```
 
 #### Structured Concurrency
 
-```fib
-// Scoped threads - all must complete before scope exits
-thread:scope(function(scope ThreadScope) {
-    scope:spawn(function() { task1(); });
-    scope:spawn(function() { task2(); });
-    scope:spawn(function() { task3(); });
-    // All three tasks complete before scope exits
-});
-// Guaranteed: no dangling threads
-
-// With results
-let results []int = thread:scope(function(scope ThreadScope) []int {
-    let handles []ThreadHandle int;
-    for let i = 0; i < 10; i++ {
-        handles:push(scope:spawn(function() int { return compute(i); }));
-    }
-    return handles:map(function(h) int { return h:join(); });
-});
-```
+// Structured concurrency patterns can be implemented with code generation or macros.
 
 #### Synchronization Primitives
 
-```fib
-module sync;
-
-// Mutex
-type Mutex T = (...);
-function lock(m Mutex T) MutexGuard T;
-
-// With automatic unlock
-with guard = mutex:lock() {
-    guard.value = 42;  // access protected data
-}  // automatically unlocked
-
-// Atomic types
-type Atomic T = (...);
-function load(a Atomic T) T;
-function store(a Atomic T, value T);
-function compare_exchange(a Atomic T, expected T, desired T) bool;
-
-// Channels
-type Channel T = (...);
-function send(ch Channel T, value T);
-function recv(ch Channel T) Option T;
-```
-
-#### Compiler Hints for Threading
-
-```fib
-// Mark function as thread-safe
-@thread_safe
-function get_counter() int {
-    return atomic:load(counter);
-}
-
-// Mark data as requiring synchronization
-@synchronized
-let shared_state State;
-
-// Warn if accessed without lock
-shared_state.x = 10;  // Warning: accessing @synchronized without lock
-```
+// Synchronization primitives should be provided as concrete types or via code generation, not generics.
 
 #### Relationship with Async
 
-```fib
-// Async is for I/O-bound concurrency (single thread, many tasks)
-// Threading is for CPU-bound parallelism (multiple cores)
-
-// Combine them:
-async function parallel_fetch(urls []string) []string {
-    // Use thread pool for CPU work, async for I/O
-    let results []Future string;
-    for let url = urls {
-        results:push(fetch(url));  // I/O bound, async
-    }
-    return await Future:join_all(results);
-}
-
-// CPU-bound work should use threads
-function parallel_compute(data slice int) []int {
-    return thread:parallel_map(data, function(x int) int {
-        return expensive_transform(x);
-    });
-}
-```
+// Async/threading composition patterns should use code generation or macros, not generics.
 
 #### Debugging Support
 

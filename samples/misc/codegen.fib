@@ -2,16 +2,10 @@ contract Node {
    function get_next(self) Self;
 }
 
-@codegen(
-    // inside codegen use @match(patter string) to match identifiers only one 
-    // @match per codegen
-    type @match("T") LinkedList_T = (
-        // use @captured to access the value matched
-        'Head unique &@captured *
-        // match is restricted to the identifier right after the @match so 
-        // "Tail" is not affected
-        'Tail unique &@captured
-    )
+@codegen("_T")
+type LinkedList__T = (
+    'Head unique &_T *
+    'Tail unique &_T
 )
 // After codegen runs and matches "LinkedList_Dog", capturing "Dog" this code is 
 // created:
