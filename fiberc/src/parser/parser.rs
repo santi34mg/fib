@@ -3,7 +3,7 @@ use std::iter::Peekable;
 
 use crate::parser::function::{FunctionBody, FunctionParameter, FunctionSignature};
 use crate::parser::{Ast, Expression, Function, Statement, VariableDeclaration};
-use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
+use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind, TypeIdentifier};
 
 #[derive(Debug)]
 pub struct ParseError {
@@ -207,6 +207,10 @@ where
                     Statement::Expression(expr)
                 }
                 TokenKind::Operator(Operator::Not) => {
+                    let expr = self.parse_expression()?;
+                    Statement::Expression(expr)
+                }
+                TokenKind::Punctuation(Punctuation::OpenParen) => {
                     let expr = self.parse_expression()?;
                     Statement::Expression(expr)
                 }
@@ -639,17 +643,17 @@ where
             }
         }
 
-        // Optional return type
-        let return_type = if let Some(ret_type_token) =
+        // Return type
+        let return_type: TypeIdentifier = if let Some(ret_type_token) =
             self.consume_if(|t| matches!(t.kind, TokenKind::TypeIdentifier(_)))
         {
-            if let TokenKind::TypeIdentifier(t) = ret_type_token.kind {
-                Some(t)
+            if let TokenKind::TypeIdentifier(type_id) = ret_type_token.kind {
+                type_id
             } else {
-                None
+                panic!()
             }
         } else {
-            None
+            panic!()
         };
 
         // Function body (use shared parse_body)

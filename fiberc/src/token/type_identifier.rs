@@ -1,8 +1,8 @@
-
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TypeIdentifier {
-    Number,
+    Integer,
     Boolean,
     Char,
+    Unit,
     UserDefinedType,
 }
