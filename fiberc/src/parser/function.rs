@@ -1,5 +1,4 @@
-use crate::parser::statement::Statement;
-use crate::token::TypeIdentifier;
+use crate::parser::{TypeIdentifier, statement::Statement};
 
 #[derive(Debug, Clone)]
 pub struct Function {

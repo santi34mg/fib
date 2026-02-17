@@ -1,7 +1,7 @@
 use core::panic;
 use std::char;
 
-use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind, TypeIdentifier};
+use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
 
 pub struct Lexer<'input> {
     input: &'input str,
@@ -64,7 +64,12 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 if self.peek() == Some('=') {
                     self.bump();
-                    Some(TokenKind::Operator(Operator::Equals))
+                    if self.peek() == Some('=') {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::StrictlyEquals))
+                    } else {
+                        Some(TokenKind::Operator(Operator::StructuralEquals))
+                    }
                 } else {
                     Some(TokenKind::Operator(Operator::Assign))
                 }
@@ -73,98 +78,171 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 if self.peek() == Some('=') {
                     self.bump();
-                    Some(TokenKind::Operator(Operator::Different))
+                    if self.peek() == Some('=') {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::StrictlyDifferent))
+                    } else {
+                        Some(TokenKind::Operator(Operator::StructuralDifferent))
+                    }
                 } else {
-                    Some(TokenKind::Operator(Operator::Not))
+                    Some(TokenKind::Operator(Operator::LogicalNot))
                 }
             }
             '>' => {
                 self.bump();
-                if self.peek() == Some('=') {
-                    self.bump();
-                    Some(TokenKind::Operator(Operator::GreaterEqual))
-                } else {
-                    Some(TokenKind::Operator(Operator::GreaterThan))
+                let c = self.peek();
+                match c {
+                    Some('>') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::RightShift))
+                    }
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::GreaterEqual))
+                    }
+                    Some(_) => Some(TokenKind::Operator(Operator::GreaterThan)),
+                    None => todo!(),
                 }
             }
             '<' => {
                 self.bump();
-                if self.peek() == Some('=') {
-                    self.bump();
-                    Some(TokenKind::Operator(Operator::LesserEqual))
-                } else {
-                    Some(TokenKind::Operator(Operator::LesserThan))
+                let c = self.peek();
+                match c {
+                    Some('<') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::LeftShift))
+                    }
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::LesserEqual))
+                    }
+                    Some(_) => Some(TokenKind::Operator(Operator::LesserThan)),
+                    None => todo!(),
                 }
             }
             '+' => {
                 self.bump();
-                if self.peek() == Some('+') {
-                    self.bump();
-                    Some(TokenKind::Operator(Operator::Increment))
-                } else {
-                    Some(TokenKind::Operator(Operator::Plus))
+                let c = self.peek();
+                match c {
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::AddAssign))
+                    }
+                    Some(_) => Some(TokenKind::Operator(Operator::Minus)),
+                    None => todo!(),
                 }
             }
             '-' => {
                 self.bump();
-                if self.peek() == Some('-') {
-                    self.bump();
-                    Some(TokenKind::Operator(Operator::Decrement))
-                } else {
-                    Some(TokenKind::Operator(Operator::Minus))
+                let c = self.peek();
+                match c {
+                    Some('>') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::TypeReturn))
+                    }
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::MinusAssign))
+                    }
+                    Some(_) => Some(TokenKind::Operator(Operator::Minus)),
+                    None => todo!(),
                 }
             }
             '*' => {
                 self.bump();
-                Some(TokenKind::Operator(Operator::Multiply))
+                let c = self.peek();
+                match c {
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::MultiplyAssign))
+                    }
+                    Some(_) => Some(TokenKind::Operator(Operator::Multiply)),
+                    None => todo!(),
+                }
             }
             '/' => {
                 self.bump();
-                if self.peek() == Some('/') {
-                    self.bump();
-                    self.skip_while(|c| c != '\n');
-                    None
-                } else {
-                    Some(TokenKind::Operator(Operator::Divide))
+                let c = self.peek();
+                match c {
+                    Some('/') => {
+                        self.bump();
+                        self.skip_while(|c| c != '\n');
+                        None
+                    }
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::DivideAssign))
+                    }
+                    Some(_) => Some(TokenKind::Operator(Operator::Divide)),
+                    None => todo!(),
+                }
+            }
+            '%' => {
+                self.bump();
+                let c = self.peek();
+                match c {
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::ModuloAssign))
+                    }
+                    Some(_) => Some(TokenKind::Operator(Operator::Modulo)),
+                    None => todo!(),
                 }
             }
             '&' => {
                 self.bump();
                 if self.peek() == Some('&') {
                     self.bump();
-                    Some(TokenKind::Operator(Operator::And))
+                    Some(TokenKind::Operator(Operator::LogicalAnd))
                 } else {
-                    Some(TokenKind::Unknown('&'))
+                    Some(TokenKind::Operator(Operator::Ampersand))
                 }
             }
             '|' => {
                 self.bump();
                 if self.peek() == Some('|') {
                     self.bump();
-                    Some(TokenKind::Operator(Operator::Or))
+                    Some(TokenKind::Operator(Operator::LogicalOr))
                 } else {
-                    Some(TokenKind::Unknown('|'))
+                    Some(TokenKind::Operator(Operator::Pipe))
                 }
+            }
+            '^' => {
+                self.bump();
+                Some(TokenKind::Operator(Operator::Caret))
+            }
+            '~' => {
+                self.bump();
+                Some(TokenKind::Operator(Operator::Tilde))
             }
             '(' => {
                 self.bump();
-                Some(TokenKind::Punctuation(Punctuation::OpenParen))
+                Some(TokenKind::Punctuation(Punctuation::OpeningParenthesis))
             }
             ')' => {
                 self.bump();
-                Some(TokenKind::Punctuation(Punctuation::CloseParen))
+                Some(TokenKind::Punctuation(Punctuation::ClosingParenthesis))
             }
             '{' => {
                 self.bump();
-                Some(TokenKind::Punctuation(Punctuation::OpenCurly))
+                Some(TokenKind::Punctuation(Punctuation::OpeningCurlyBrace))
             }
             '}' => {
                 self.bump();
-                Some(TokenKind::Punctuation(Punctuation::CloseCurly))
+                Some(TokenKind::Punctuation(Punctuation::ClosingCurlyBrace))
             }
             ',' => {
                 self.bump();
                 Some(TokenKind::Punctuation(Punctuation::Comma))
+            }
+            '.' => {
+                self.bump();
+                if self.peek() == Some('.') {
+                    self.bump();
+                    Some(TokenKind::Operator(Operator::Range))
+                } else {
+                    Some(TokenKind::Punctuation(Punctuation::Dot))
+                }
             }
             ';' => {
                 self.bump();
@@ -183,10 +261,26 @@ impl<'input> Lexer<'input> {
                 }
                 Some(TokenKind::Literal(Literal::Character(ch)))
             }
-            c if c.is_ascii_digit() => {
-                let num = self.lex_numeric(c);
-                num
+            '[' => {
+                self.bump();
+                Some(TokenKind::Punctuation(Punctuation::OpenSquareBrace))
             }
+            ']' => {
+                self.bump();
+                Some(TokenKind::Punctuation(Punctuation::ClosingSquareBrace))
+            }
+            '\"' => {
+                self.bump();
+                let starting_pos = self.position;
+                self.skip_while(|c| c != '\"');
+                let s: &str = &self.input[starting_pos..self.position];
+                Some(TokenKind::Literal(Literal::String(s.to_string())))
+            }
+            '@' => {
+                self.bump();
+                Some(TokenKind::Punctuation(Punctuation::At))
+            }
+            c if c.is_ascii_digit() => self.lex_numeric(c),
             c if c.is_alphabetic() => Some(self.lex_identifier_or_keyword()),
             c => {
                 self.bump();
@@ -208,14 +302,19 @@ impl<'input> Lexer<'input> {
                     start = self.position;
                     (16, |c: char| c.is_ascii_hexdigit())
                 }
+                'd' => {
+                    self.bump();
+                    (10, |c: char| c.is_ascii_digit())
+                }
+                'o' => {
+                    self.bump();
+                    start = self.position;
+                    (8, |c: char| c == '0' || c == '1')
+                }
                 'b' => {
                     self.bump();
                     start = self.position;
                     (2, |c: char| c == '0' || c == '1')
-                }
-                'd' => {
-                    self.bump();
-                    (10, |c: char| c.is_ascii_digit())
                 }
                 c if c.is_ascii_digit() => (10, |c: char| c.is_ascii_digit() || c == '.'),
                 '.' => (10, |c: char| c.is_ascii_digit() || c == '.'),
@@ -247,18 +346,46 @@ impl<'input> Lexer<'input> {
         self.skip_while(|c| c.is_alphanumeric() || c == '_');
         let name = &self.input[start..self.position];
         match name {
+            "module" => TokenKind::Keyword(Keyword::Module),
+            "use" => TokenKind::Keyword(Keyword::Use),
+            "public" => TokenKind::Keyword(Keyword::Public),
+            "private" => TokenKind::Keyword(Keyword::Private),
             "let" => TokenKind::Keyword(Keyword::Let),
+            "mut" => TokenKind::Keyword(Keyword::Mutable),
             "function" => TokenKind::Keyword(Keyword::Function),
+            "match" => TokenKind::Keyword(Keyword::Match),
+            "when" => TokenKind::Keyword(Keyword::When),
+            "coroutine" => TokenKind::Keyword(Keyword::Coroutine),
+            "spawn" => TokenKind::Keyword(Keyword::Spawn),
+            "resume" => TokenKind::Keyword(Keyword::Resume),
+            "addressof" => TokenKind::Keyword(Keyword::Addressof),
+            "deref" => TokenKind::Keyword(Keyword::Dereference),
+            "contract" => TokenKind::Keyword(Keyword::Contract),
+            "impl" => TokenKind::Keyword(Keyword::Implementation),
+            "type" => TokenKind::Keyword(Keyword::Type),
+            "struct" => TokenKind::Keyword(Keyword::Struct),
+            "variant" => TokenKind::Keyword(Keyword::Variant),
             "if" => TokenKind::Keyword(Keyword::If),
             "else" => TokenKind::Keyword(Keyword::Else),
             "for" => TokenKind::Keyword(Keyword::For),
+            "break" => TokenKind::Keyword(Keyword::Break),
+            "continue" => TokenKind::Keyword(Keyword::Continue),
             "return" => TokenKind::Keyword(Keyword::Return),
-            "int" => TokenKind::TypeIdentifier(TypeIdentifier::Integer),
-            "bool" => TokenKind::TypeIdentifier(TypeIdentifier::Boolean),
-            "char" => TokenKind::TypeIdentifier(TypeIdentifier::Char),
-            "unit" => TokenKind::TypeIdentifier(TypeIdentifier::Unit),
+            "dynamic" => TokenKind::Keyword(Keyword::Dynamic),
+            "blob" => TokenKind::Keyword(Keyword::Blob),
+            "never" => TokenKind::Keyword(Keyword::Never),
+            "int" => TokenKind::Keyword(Keyword::Integer),
+            "float" => TokenKind::Keyword(Keyword::Float),
+            "string" => TokenKind::Keyword(Keyword::String),
+            "bool" => TokenKind::Keyword(Keyword::Boolean),
+            "char" => TokenKind::Keyword(Keyword::Character),
+            "unit" => TokenKind::Keyword(Keyword::Unit),
+            "unique" => TokenKind::Keyword(Keyword::Unique),
+            "shared" => TokenKind::Keyword(Keyword::Shared),
+            "wak" => TokenKind::Keyword(Keyword::Weak),
             "true" => TokenKind::Literal(Literal::Boolean(true)),
             "false" => TokenKind::Literal(Literal::Boolean(false)),
+            "null" => TokenKind::Literal(Literal::Null),
             _ => TokenKind::Identifier(name.to_string()),
         }
     }

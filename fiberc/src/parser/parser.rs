@@ -2,8 +2,8 @@ use std::fmt;
 use std::iter::Peekable;
 
 use crate::parser::function::{FunctionBody, FunctionParameter, FunctionSignature};
-use crate::parser::{Ast, Expression, Function, Statement, VariableDeclaration};
-use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind, TypeIdentifier};
+use crate::parser::{Ast, Expression, Function, Statement, TypeIdentifier, VariableDeclaration};
+use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
 
 #[derive(Debug)]
 pub struct ParseError {
@@ -155,7 +155,7 @@ where
                         // If next token is not a semicolon or block close, parse expression
                         match token.kind {
                             TokenKind::Punctuation(Punctuation::Semicolon)
-                            | TokenKind::Punctuation(Punctuation::CloseCurly) => {
+                            | TokenKind::Punctuation(Punctuation::ClosingCurlyBrace) => {
                                 Statement::Return(None)
                             }
                             _ => {
@@ -206,21 +206,24 @@ where
                     let expr = self.parse_expression()?;
                     Statement::Expression(expr)
                 }
-                TokenKind::Operator(Operator::Not) => {
+                TokenKind::Operator(Operator::LogicalNot) => {
                     let expr = self.parse_expression()?;
                     Statement::Expression(expr)
                 }
-                TokenKind::Punctuation(Punctuation::OpenParen) => {
+                TokenKind::Punctuation(Punctuation::OpeningParenthesis) => {
                     let expr = self.parse_expression()?;
                     Statement::Expression(expr)
                 }
-                TokenKind::TypeIdentifier(_)
-                | TokenKind::Keyword(Keyword::Else)
+                TokenKind::Keyword(Keyword::Else)
                 | TokenKind::Operator(_)
                 | TokenKind::Punctuation(_)
                 | TokenKind::Unknown(_) => {
                     let t = token.clone();
                     return Err(self.error("unsupported", t.line, t.column));
+                }
+                _ => {
+                    let t = token.clone();
+                    return Err(self.error("not implemented yet", t.line, t.column));
                 }
             }
         } else {
@@ -253,8 +256,8 @@ where
         if let Some(token) = iter.next() {
             if let TokenKind::Identifier(_) = token.kind {
                 if let Some(next_token) = iter.next() {
-                    if let TokenKind::Operator(Operator::Increment)
-                    | TokenKind::Operator(Operator::Decrement) = next_token.kind
+                    if let TokenKind::Operator(Operator::AddAssign)
+                    | TokenKind::Operator(Operator::MinusAssign) = next_token.kind
                     {
                         return Ok(true);
                     }
@@ -303,8 +306,8 @@ where
 
         let op_token = self.expect_next("parse_increment_decrement: expected '++' or '--'")?;
         let op = match op_token.kind {
-            TokenKind::Operator(Operator::Increment) => Operator::Plus,
-            TokenKind::Operator(Operator::Decrement) => Operator::Minus,
+            TokenKind::Operator(Operator::AddAssign) => Operator::Plus,
+            TokenKind::Operator(Operator::MinusAssign) => Operator::Minus,
             _ => {
                 return Err(self.error(
                     "parse_increment_decrement: expected '++' or '--'",
@@ -334,13 +337,32 @@ where
         };
 
         let type_token = self.expect_token(
-            |t| matches!(t.kind, TokenKind::TypeIdentifier(_)),
+            |t| {
+                matches!(
+                    t.kind,
+                    TokenKind::Keyword(
+                        Keyword::Integer
+                            | Keyword::Float
+                            | Keyword::String
+                            | Keyword::Boolean
+                            | Keyword::Character
+                            | Keyword::Unit
+                    )
+                )
+            },
             "parse_var_decl: expected type identifier",
         )?;
-        let var_type = if let TokenKind::TypeIdentifier(t_ident) = type_token.kind {
-            t_ident
-        } else {
-            unreachable!()
+        let var_type = match type_token.kind {
+            TokenKind::Keyword(keyword) => match keyword {
+                Keyword::Integer => TypeIdentifier::Integer,
+                Keyword::Float => TypeIdentifier::Float,
+                Keyword::String => TypeIdentifier::String,
+                Keyword::Boolean => TypeIdentifier::Boolean,
+                Keyword::Character => TypeIdentifier::Character,
+                Keyword::Unit => TypeIdentifier::Unit,
+                _ => todo!(),
+            },
+            _ => todo!(),
         };
 
         let expr = self.parse_initializer()?;
@@ -355,12 +377,12 @@ where
         let mut expr = self.parse_logical_and()?;
         while let Some(token) = self.peek() {
             match &token.kind {
-                TokenKind::Operator(Operator::Or) => {
+                TokenKind::Operator(Operator::LogicalOr) => {
                     self.next();
                     let right = Box::new(self.parse_logical_and()?);
                     expr = Expression::Binary {
                         left: Box::new(expr),
-                        operator: Operator::Or,
+                        operator: Operator::LogicalOr,
                         right,
                     };
                 }
@@ -374,12 +396,12 @@ where
         let mut expr = self.parse_equality()?;
         while let Some(token) = self.peek() {
             match &token.kind {
-                TokenKind::Operator(Operator::And) => {
+                TokenKind::Operator(Operator::LogicalAnd) => {
                     self.next();
                     let right = Box::new(self.parse_equality()?);
                     expr = Expression::Binary {
                         left: Box::new(expr),
-                        operator: Operator::And,
+                        operator: Operator::LogicalAnd,
                         right,
                     };
                 }
@@ -395,7 +417,9 @@ where
 
         while let Some(token) = self.peek() {
             match &token.kind {
-                TokenKind::Operator(op @ (Operator::Equals | Operator::Different)) => {
+                TokenKind::Operator(
+                    op @ (Operator::StructuralEquals | Operator::StructuralDifferent),
+                ) => {
                     let op = *op;
                     self.next();
                     let right = Box::new(self.parse_comparison()?);
@@ -487,11 +511,11 @@ where
         if let Some(_t) = self.peek() {
             // If there's a '!' operator, consume it and parse unary recursively
             if let Some(_op_token) =
-                self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Not)))
+                self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::LogicalNot)))
             {
                 let expr = self.parse_unary()?;
                 Ok(Expression::Unary {
-                    operator: Operator::Not,
+                    operator: Operator::LogicalNot,
                     expression: Box::new(expr),
                 })
             } else {
@@ -515,10 +539,15 @@ where
                 Expression::Literal(Literal::Character(char_literal))
             }
             TokenKind::Identifier(id) => Expression::Identifier(id),
-            TokenKind::Punctuation(Punctuation::OpenParen) => {
+            TokenKind::Punctuation(Punctuation::OpeningParenthesis) => {
                 let inner_expr = self.parse_expression()?;
                 let _close = self.expect_token(
-                    |t| matches!(t.kind, TokenKind::Punctuation(Punctuation::CloseParen)),
+                    |t| {
+                        matches!(
+                            t.kind,
+                            TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+                        )
+                    },
                     "parse_atom: expected ')'",
                 )?;
                 Expression::Grouping(Box::new(inner_expr))
@@ -534,11 +563,17 @@ where
 
         // Parse function call if '(' follows
         while let Some(token) = self.peek() {
-            if matches!(token.kind, TokenKind::Punctuation(Punctuation::OpenParen)) {
+            if matches!(
+                token.kind,
+                TokenKind::Punctuation(Punctuation::OpeningParenthesis)
+            ) {
                 self.next(); // consume '('
                 let mut args = Vec::new();
                 if let Some(token) = self.peek() {
-                    if !matches!(token.kind, TokenKind::Punctuation(Punctuation::CloseParen)) {
+                    if !matches!(
+                        token.kind,
+                        TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+                    ) {
                         loop {
                             args.push(self.parse_expression()?);
                             if let Some(token) = self.peek() {
@@ -555,7 +590,12 @@ where
                     }
                 }
                 self.expect_token(
-                    |t| matches!(t.kind, TokenKind::Punctuation(Punctuation::CloseParen)),
+                    |t| {
+                        matches!(
+                            t.kind,
+                            TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+                        )
+                    },
                     "parse_atom: expected ')' after function call arguments",
                 )?;
                 expr = Expression::Call {
@@ -589,13 +629,18 @@ where
 
         // Parameters
         self.expect_token(
-            |t| matches!(t.kind, TokenKind::Punctuation(Punctuation::OpenParen)),
+            |t| {
+                matches!(
+                    t.kind,
+                    TokenKind::Punctuation(Punctuation::OpeningParenthesis)
+                )
+            },
             "parse_function_declaration: expected '('",
         )?;
         let mut args = Vec::new();
         while let Some(token) = self.peek() {
             match &token.kind {
-                TokenKind::Punctuation(Punctuation::CloseParen) => {
+                TokenKind::Punctuation(Punctuation::ClosingParenthesis) => {
                     self.next();
                     break;
                 }
@@ -611,14 +656,32 @@ where
                     };
 
                     let param_type_token = self.expect_token(
-                        |t| matches!(t.kind, TokenKind::TypeIdentifier(_)),
+                        |t| {
+                            matches!(
+                                t.kind,
+                                TokenKind::Keyword(
+                                    Keyword::Integer
+                                        | Keyword::Float
+                                        | Keyword::String
+                                        | Keyword::Boolean
+                                        | Keyword::Character
+                                        | Keyword::Unit
+                                )
+                            )
+                        },
                         "parse_function_declaration: expected parameter type",
                     )?;
-                    let argument_type = if let TokenKind::TypeIdentifier(t) = param_type_token.kind
-                    {
-                        t
-                    } else {
-                        unreachable!()
+                    let argument_type = match param_type_token.kind {
+                        TokenKind::Keyword(keyword) => match keyword {
+                            Keyword::Integer => TypeIdentifier::Integer,
+                            Keyword::Float => TypeIdentifier::Float,
+                            Keyword::String => TypeIdentifier::String,
+                            Keyword::Boolean => TypeIdentifier::Boolean,
+                            Keyword::Character => TypeIdentifier::Character,
+                            Keyword::Unit => TypeIdentifier::Unit,
+                            _ => todo!(),
+                        },
+                        _ => todo!(),
                     };
 
                     args.push(FunctionParameter {
@@ -644,13 +707,30 @@ where
         }
 
         // Return type
-        let return_type: TypeIdentifier = if let Some(ret_type_token) =
-            self.consume_if(|t| matches!(t.kind, TokenKind::TypeIdentifier(_)))
-        {
-            if let TokenKind::TypeIdentifier(type_id) = ret_type_token.kind {
-                type_id
-            } else {
-                panic!()
+        let return_type = if let Some(ret_type_token) = self.consume_if(|t| {
+            matches!(
+                t.kind,
+                TokenKind::Keyword(
+                    Keyword::Integer
+                        | Keyword::Float
+                        | Keyword::String
+                        | Keyword::Boolean
+                        | Keyword::Character
+                        | Keyword::Unit
+                )
+            )
+        }) {
+            match ret_type_token.kind {
+                TokenKind::Keyword(keyword) => match keyword {
+                    Keyword::Integer => TypeIdentifier::Integer,
+                    Keyword::Float => TypeIdentifier::Float,
+                    Keyword::String => TypeIdentifier::String,
+                    Keyword::Boolean => TypeIdentifier::Boolean,
+                    Keyword::Character => TypeIdentifier::Character,
+                    Keyword::Unit => TypeIdentifier::Unit,
+                    _ => todo!(),
+                },
+                _ => todo!(),
             }
         } else {
             panic!()
@@ -672,13 +752,21 @@ where
     /// Parse a block body: expects '{' then parses statements until matching '}'.
     fn parse_body(&mut self) -> ParseResult<Vec<Statement>> {
         self.expect_token(
-            |t| matches!(t.kind, TokenKind::Punctuation(Punctuation::OpenCurly)),
+            |t| {
+                matches!(
+                    t.kind,
+                    TokenKind::Punctuation(Punctuation::OpeningCurlyBrace)
+                )
+            },
             "parse_body: expected '{'",
         )?;
 
         let mut stmts = Vec::new();
         while let Some(token) = self.peek() {
-            if matches!(token.kind, TokenKind::Punctuation(Punctuation::CloseCurly)) {
+            if matches!(
+                token.kind,
+                TokenKind::Punctuation(Punctuation::ClosingCurlyBrace)
+            ) {
                 self.next();
                 break;
             }

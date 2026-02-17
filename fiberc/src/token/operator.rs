@@ -1,23 +1,42 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
-    // Arithmetic
     Plus,
     Minus,
     Multiply,
     Divide,
-    // Boolean opeartor
-    Equals,
-    Different,
+    Modulo,
+
+    StructuralEquals,
+    StrictlyEquals,
+
+    StructuralDifferent,
+    StrictlyDifferent,
+
     GreaterThan,
     LesserThan,
     GreaterEqual,
     LesserEqual,
-    // Assignments
+
     Assign,
-    Increment,
-    Decrement,
-    // Logical operators
-    And,
-    Or,
-    Not,
+    AddAssign,
+    MinusAssign,
+    MultiplyAssign,
+    DivideAssign,
+    ModuloAssign,
+
+    LogicalAnd,
+    LogicalOr,
+    LogicalNot,
+
+    Ampersand,
+    Pipe,
+    Tilde,
+    Caret,
+
+    LeftShift,
+    RightShift,
+
+    Range,
+
+    TypeReturn,
 }

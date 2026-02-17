@@ -3,9 +3,9 @@ use std::{collections::HashMap, fmt};
 use crate::{
     parser::{
         Ast, Expression, Function, FunctionBody, FunctionParameter, FunctionSignature, Statement,
-        VariableDeclaration,
+        TypeIdentifier, VariableDeclaration,
     },
-    token::{Literal, Operator, TypeIdentifier},
+    token::{Literal, Operator},
 };
 
 pub struct TypeChecker<'a> {
@@ -62,7 +62,7 @@ fn load_std_functions() -> HashMap<String, FunctionSignature> {
     let read_char_signature = FunctionSignature {
         name: "read_char".to_string(),
         parameters: vec![],
-        return_type: TypeIdentifier::Char,
+        return_type: TypeIdentifier::Character,
     };
     function_signatures.insert("read_char".to_string(), read_char_signature);
 
@@ -99,12 +99,7 @@ impl<'a> TypeChecker<'a> {
                 then_branch,
                 else_branch,
             } => self.check_if(condition, then_branch, else_branch),
-            Statement::For {} => self.check_for(),
         }
-    }
-
-    fn check_for(&self) -> TypeCheckerResult<TypeIdentifier> {
-        todo!();
     }
 
     fn check_if(
@@ -259,8 +254,8 @@ impl<'a> TypeChecker<'a> {
                         }
                         TypeIdentifier::Integer
                     }
-                    Operator::Equals
-                    | Operator::Different
+                    Operator::StructuralEquals
+                    | Operator::StructuralDifferent
                     | Operator::GreaterThan
                     | Operator::LesserThan
                     | Operator::GreaterEqual
@@ -275,7 +270,7 @@ impl<'a> TypeChecker<'a> {
                         }
                         TypeIdentifier::Boolean
                     }
-                    Operator::And | Operator::Or => {
+                    Operator::LogicalAnd | Operator::LogicalOr => {
                         // require both sides to be booleans
                         if left_type != TypeIdentifier::Boolean
                             || right_type != TypeIdentifier::Boolean
@@ -301,7 +296,7 @@ impl<'a> TypeChecker<'a> {
             Expression::Literal(lit) => match &lit {
                 Literal::Integer(_) => TypeIdentifier::Integer,
                 Literal::Boolean(_) => TypeIdentifier::Boolean,
-                Literal::Character(_) => TypeIdentifier::Char,
+                Literal::Character(_) => TypeIdentifier::Character,
                 _ => {
                     todo!()
                 }
@@ -314,7 +309,7 @@ impl<'a> TypeChecker<'a> {
             } => {
                 let expr_type = self.check_expr(expr)?;
                 match op {
-                    Operator::Not => {
+                    Operator::LogicalNot => {
                         if expr_type != TypeIdentifier::Boolean {
                             return Err(TypeCheckerError {
                                 message: "Logical operators require boolean types".to_string(),

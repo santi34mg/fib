@@ -4,4 +4,6 @@ pub enum Literal {
     Float(f32),
     Boolean(bool),
     Character(char),
+    String(String),
+    Null,
 }

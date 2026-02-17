@@ -4,6 +4,10 @@ fib is a systems language with a focous on performance and expressiveness. Devel
 
 fib follows the imperative llanguage paradigm.
 
+## Motto
+
+Write slow, think smart, ship safe.
+
 ## Principles
 
 As stated previously, fib mainly follows two principles: developer control and performance.

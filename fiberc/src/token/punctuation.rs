@@ -1,10 +1,14 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Punctuation {
-    OpenParen,
-    CloseParen,
-    OpenCurly,
-    CloseCurly,
+    OpeningParenthesis,
+    ClosingParenthesis,
+    OpeningCurlyBrace,
+    ClosingCurlyBrace,
+    OpenSquareBrace,
+    ClosingSquareBrace,
     Semicolon,
     Comma,
     Colon,
+    Dot,
+    At,
 }
