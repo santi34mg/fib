@@ -3,159 +3,161 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
-- [Language specification](#language-specification)
-  - [Introduction](#introduction)
-  - [Notation](#notation)
-  - [Program](#program)
-  - [Lexical elements](#lexical-elements)
-    - [Identifier](#identifier)
-    - [Comments](#comments)
-    - [Literals](#literals)
-      - [Integer literals](#integer-literals)
-      - [Float literals](#float-literals)
-      - [Boolean literals](#boolean-literals)
-      - [Character literals](#character-literals)
-      - [String literals](#string-literals)
-      - [Tuple literals](#tuple-literals)
-      - [Array literals](#array-literals)
-      - [Range literals](#range-literals)
-      - [Map literals](#map-literals)
-      - [Struct literals](#struct-literals)
-      - [Unit literal](#unit-literal)
-  - [Names and bindings](#names-and-bindings)
-    - [Entity](#entity)
-    - [Bindings](#bindings)
-    - [Scope](#scope)
-    - [Environment](#environment)
-    - [Name resolution](#name-resolution)
-    - [Modules](#modules)
-      - [Module declarations](#module-declarations)
-      - [Default module](#default-module)
-      - [Module member declarations](#module-member-declarations)
-      - [Module member references](#module-member-references)
-      - [Submodules and nesting](#submodules-and-nesting)
-      - [Name resolution in modules](#name-resolution-in-modules)
-      - [Using external modules](#using-external-modules)
-      - [Visibility and access control](#visibility-and-access-control)
-  - [Semantics](#semantics)
-    - [Values](#values)
-      - [Atomic values](#atomic-values)
-      - [Composite values](#composite-values)
-    - [Evaluation](#evaluation)
-  - [Expressions](#expressions)
-    - [Primary expressions](#primary-expressions)
-    - [Operators](#operators)
-      - [Arithmetic operators](#arithmetic-operators)
-      - [Increment and decrement statements](#increment-and-decrement-statements)
-      - [Compound assignment operators](#compound-assignment-operators)
-      - [Comparison operators](#comparison-operators)
-        - [Structural equality (`==`, `!=`)](#structural-equality--)
-        - [Strict type equality (`===`, `!==`)](#strict-type-equality--)
-        - [Function type equality](#function-type-equality)
-        - [Ordering operators (`<`, `>`, `<=`, `>=`)](#ordering-operators----)
-      - [Logical operators](#logical-operators)
-      - [Bitwise operators](#bitwise-operators)
-      - [Operator precedence and associativity](#operator-precedence-and-associativity)
-    - [Block expressions](#block-expressions)
-  - [Variables](#variables)
-    - [Variable declarations](#variable-declarations)
-    - [Variable assignment](#variable-assignment)
-    - [Type inference](#type-inference)
-  - [Control flow](#control-flow)
-    - [Conditional statements](#conditional-statements)
-      - [If statement](#if-statement)
-      - [If-else statement](#if-else-statement)
-      - [If-else if chains](#if-else-if-chains)
-      - [If expressions](#if-expressions)
-    - [Iteration statements](#iteration-statements)
-      - [For statement](#for-statement)
-      - [Break statement](#break-statement)
-      - [Continue statement](#continue-statement)
-    - [Pattern matching](#pattern-matching)
-      - [Match expressions](#match-expressions)
-      - [Patterns](#patterns)
-      - [Pattern matching on sum types](#pattern-matching-on-sum-types)
-      - [Guards](#guards)
-    - [Return statement](#return-statement)
-    - [Destructuring](#destructuring)
-      - [Positional product type destructuring](#positional-product-type-destructuring)
-      - [Labeled products type destructuring](#labeled-products-type-destructuring)
-      - [Array index access](#array-index-access)
-  - [Memory model, ownership, and lifetime](#memory-model-ownership-and-lifetime)
-    - [Lifetime rules](#lifetime-rules)
-    - [Initialization](#initialization)
-    - [Evaluation order](#evaluation-order)
-    - [ABI and FFI](#abi-and-ffi)
-  - [Undefined and implementation-defined behavior](#undefined-and-implementation-defined-behavior)
-  - [Type system](#type-system)
-    - [Types](#types)
-    - [Generics and Code Generation](#generics-and-code-generation)
-      - [Primitive types](#primitive-types)
-      - [Product types](#product-types)
-      - [Sum types](#sum-types)
-      - [Array types](#array-types)
-        - [Array indexing with ranges](#array-indexing-with-ranges)
-        - [Array indexing with arrays](#array-indexing-with-arrays)
-      - [Slice types](#slice-types)
-      - [Map types](#map-types)
-        - [Map access](#map-access)
-        - [Map key requirements](#map-key-requirements)
-        - [Missing key behavior](#missing-key-behavior)
-        - [Nested maps](#nested-maps)
-      - [Function types](#function-types)
-      - [Type composition](#type-composition)
-      - [Named types](#named-types)
-        - [Named types with labeled members](#named-types-with-labeled-members)
-        - [Named types with contract implementations](#named-types-with-contract-implementations)
-    - [Pointers](#pointers)
-      - [Safe pointer types](#safe-pointer-types)
-        - [Unique pointers](#unique-pointers)
-        - [Shared pointers](#shared-pointers)
-        - [Weak pointers](#weak-pointers)
-      - [Raw pointers](#raw-pointers)
-        - [Pointer arithmetic](#pointer-arithmetic)
-      - [Obtaining addresses](#obtaining-addresses)
-      - [Dereferencing](#dereferencing)
-      - [Null pointers](#null-pointers)
-    - [Contracts](#contracts)
-      - [Contract declarations](#contract-declarations)
-      - [Contract implementation](#contract-implementation)
-      - [Contract-typed parameters](#contract-typed-parameters)
-      - [Monomorphization](#monomorphization)
-    - [Errors](#errors)
-      - [The Error contract](#the-error-contract)
-      - [Defining custom errors](#defining-custom-errors)
-      - [Using errors in functions](#using-errors-in-functions)
-      - [Handling errors](#handling-errors)
-      - [Functions accepting any error](#functions-accepting-any-error)
-      - [Panic](#panic)
-    - [Type casting](#type-casting)
-      - [Raw casting](#raw-casting)
-      - [Safe casting](#safe-casting)
-  - [Functions](#functions)
-    - [Function declarations](#function-declarations)
-    - [Forward declarations](#forward-declarations)
-    - [Parameters](#parameters)
-    - [Function application](#function-application)
-    - [Recursion](#recursion)
-    - [Anonymous functions](#anonymous-functions)
-    - [Closures](#closures)
-    - [Purity and side effects](#purity-and-side-effects)
-  - [Memory management](#memory-management)
-    - [Stack allocation](#stack-allocation)
-    - [Heap allocation](#heap-allocation)
-    - [Deallocation](#deallocation)
-    - [Deferred deallocation](#deferred-deallocation)
-    - [Arena allocation](#arena-allocation)
-  - [Compiler Hints](#compiler-hints)
-    - [Hint Syntax](#hint-syntax)
-    - [Parameter Hint Semantics](#parameter-hint-semantics)
-      - [Requirement Hints (Inline Placement)](#requirement-hints-inline-placement)
-      - [Promise Hints (External Placement)](#promise-hints-external-placement)
-      - [Combining Requirement and Promise Hints](#combining-requirement-and-promise-hints)
-      - [Verification Rules](#verification-rules)
-    - [Hint Placement Summary](#hint-placement-summary)
-  - [Stackful coroutines](#stackful-coroutines)
+- [Introduction](#introduction)
+- [Notation](#notation)
+- [Program](#program)
+- [Lexical elements](#lexical-elements)
+  - [Identifier](#identifier)
+  - [Comments](#comments)
+  - [Literals](#literals)
+    - [Integer literals](#integer-literals)
+    - [Float literals](#float-literals)
+    - [Boolean literals](#boolean-literals)
+    - [Character literals](#character-literals)
+    - [String literals](#string-literals)
+    - [Tuple literals](#tuple-literals)
+    - [Array literals](#array-literals)
+    - [Range literals](#range-literals)
+    - [Map literals](#map-literals)
+    - [Struct literals](#struct-literals)
+    - [Variant literal](#variant-literal)
+    - [Unit literal](#unit-literal)
+- [Names and bindings](#names-and-bindings)
+  - [Entity](#entity)
+  - [Bindings](#bindings)
+  - [Scope](#scope)
+  - [Environment](#environment)
+  - [Name resolution](#name-resolution)
+  - [Modules](#modules)
+    - [Module declarations](#module-declarations)
+    - [Default module](#default-module)
+    - [Module member declarations](#module-member-declarations)
+    - [Module member references](#module-member-references)
+    - [Submodules and nesting](#submodules-and-nesting)
+    - [Name resolution in modules](#name-resolution-in-modules)
+    - [Using external modules](#using-external-modules)
+    - [Visibility and access control](#visibility-and-access-control)
+- [Semantics](#semantics)
+  - [Values](#values)
+    - [Atomic values](#atomic-values)
+    - [Composite values](#composite-values)
+  - [Evaluation](#evaluation)
+- [Expressions](#expressions)
+  - [Primary expressions](#primary-expressions)
+  - [Operators](#operators)
+    - [Arithmetic operators](#arithmetic-operators)
+    - [Compound assignment operators](#compound-assignment-operators)
+    - [Comparison operators](#comparison-operators)
+      - [Structural equality](#structural-equality)
+      - [Strict type equality](#strict-type-equality)
+      - [Function type equality](#function-type-equality)
+      - [Ordering operators](#ordering-operators)
+    - [Logical operators](#logical-operators)
+    - [Bitwise operators](#bitwise-operators)
+    - [Operator precedence and associativity](#operator-precedence-and-associativity)
+  - [Block expressions](#block-expressions)
+- [Variables](#variables)
+  - [Immutable variable declarations](#immutable-variable-declarations)
+  - [Mutable variable declarations](#mutable-variable-declarations)
+  - [Variable assignment](#variable-assignment)
+  - [Type inference](#type-inference)
+- [Control flow](#control-flow)
+  - [Conditional statements](#conditional-statements)
+    - [If statement](#if-statement)
+    - [If-else statement](#if-else-statement)
+    - [If-else if chains](#if-else-if-chains)
+    - [If expressions](#if-expressions)
+  - [Iteration statements](#iteration-statements)
+    - [For statement](#for-statement)
+    - [Break statement](#break-statement)
+    - [Continue statement](#continue-statement)
+  - [Pattern matching](#pattern-matching)
+    - [Match expressions](#match-expressions)
+    - [Patterns](#patterns)
+    - [Pattern matching on sum types](#pattern-matching-on-sum-types)
+    - [Guards](#guards)
+  - [Return statement](#return-statement)
+  - [Destructuring](#destructuring)
+    - [Positional product type destructuring](#positional-product-type-destructuring)
+    - [Labeled products type destructuring](#labeled-products-type-destructuring)
+    - [Array index access](#array-index-access)
+- [Memory model, ownership, and lifetime](#memory-model-ownership-and-lifetime)
+  - [Lifetime rules](#lifetime-rules)
+  - [Initialization](#initialization)
+  - [Evaluation order](#evaluation-order)
+  - [ABI and FFI](#abi-and-ffi)
+- [Undefined and implementation-defined behavior](#undefined-and-implementation-defined-behavior)
+- [Type system](#type-system)
+  - [Types](#types)
+  - [Generics and Code Generation](#generics-and-code-generation)
+  - [Primitive types](#primitive-types)
+  - [Structs](#structs)
+  - [Variants](#variants)
+  - [Array types](#array-types)
+    - [Array indexing with ranges](#array-indexing-with-ranges)
+    - [Array indexing with arrays](#array-indexing-with-arrays)
+    - [Slice types](#slice-types)
+  - [Map types](#map-types)
+      - [Map access](#map-access)
+      - [Map key requirements](#map-key-requirements)
+      - [Missing key behavior](#missing-key-behavior)
+      - [Nested maps](#nested-maps)
+  - [Function types](#function-types)
+  - [Type composition](#type-composition)
+  - [Named types](#named-types)
+  - [Pointers](#pointers)
+    - [Safe pointer types](#safe-pointer-types)
+      - [Unique pointers](#unique-pointers)
+      - [Shared pointers](#shared-pointers)
+      - [Weak pointers](#weak-pointers)
+    - [Raw pointers](#raw-pointers)
+      - [Pointer arithmetic](#pointer-arithmetic)
+    - [Obtaining addresses](#obtaining-addresses)
+    - [Dereferencing](#dereferencing)
+    - [Null pointers](#null-pointers)
+  - [Contracts](#contracts)
+    - [Contract declarations](#contract-declarations)
+    - [Contract implementations](#contract-implementations)
+    - [Contract-typed parameters](#contract-typed-parameters)
+    - [Monomorphization](#monomorphization)
+  - [Errors](#errors)
+    - [The Error contract](#the-error-contract)
+    - [Defining custom errors](#defining-custom-errors)
+    - [Using errors in functions](#using-errors-in-functions)
+    - [Handling errors](#handling-errors)
+    - [Functions accepting any error](#functions-accepting-any-error)
+    - [Panic](#panic)
+  - [Type casting](#type-casting)
+    - [Raw casting](#raw-casting)
+    - [Safe casting](#safe-casting)
+  - [Dynamic type](#dynamic-type)
+  - [Blob type](#blob-type)
+  - [Never type](#never-type)
+- [Functions](#functions)
+  - [Function declarations](#function-declarations)
+  - [Forward declarations](#forward-declarations)
+  - [Parameters](#parameters)
+  - [Function application](#function-application)
+  - [Recursion](#recursion)
+  - [Anonymous functions](#anonymous-functions)
+  - [Closures](#closures)
+  - [Purity and side effects](#purity-and-side-effects)
+- [Memory management](#memory-management)
+  - [Stack allocation](#stack-allocation)
+  - [Heap allocation](#heap-allocation)
+  - [Deallocation](#deallocation)
+  - [Deferred deallocation](#deferred-deallocation)
+  - [Arena allocation](#arena-allocation)
+- [Compiler Hints](#compiler-hints)
+  - [Hint Syntax](#hint-syntax)
+  - [Parameter Hint Semantics](#parameter-hint-semantics)
+    - [Requirement Hints (Inline Placement)](#requirement-hints-inline-placement)
+    - [Promise Hints (External Placement)](#promise-hints-external-placement)
+    - [Combining Requirement and Promise Hints](#combining-requirement-and-promise-hints)
+    - [Verification Rules](#verification-rules)
+  - [Hint Placement Summary](#hint-placement-summary)
+- [Stackful coroutines](#stackful-coroutines)
+- [Code generation](#code-generation)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -407,19 +409,36 @@ See [Map types](#map-types) for type syntax and access methods.
 
 #### Struct literals
 
-A struct literal constructs a value of a labeled product type.
+A struct literal constructs a value of struct type.
 
 **Syntax**:
 
 ```
-{ <label> = <expression>, <label> = <expression>, ... }
+struct { <label> = <expression>, ... }
 ```
 
 **Examples**:
 
 ```
-{ x = 10, y = 20 }
-{ name = "Alice", age = 30, active = true }
+struct { x = 10, y = 20 }
+struct { name = "Alice", age = 30, active = true }
+```
+
+#### Variant literal
+
+A variant literal constructs a value of variant type.
+
+**Syntax**:
+
+```
+variant {<label> = <expression>}
+```
+
+**Examples**:
+
+```
+variant {Ok = 10}
+variant {Left "hello"}
 ```
 
 #### Unit literal
@@ -638,31 +657,6 @@ Arithmetic operators operate on integer values and produce integer results.
 
 Division by zero causes a runtime error or may be handled via error values.
 
-#### Increment and decrement statements
-
-Increment and decrement operators modify a variable's value by one.
-These are statements, not expressions; they do not produce a value and cannot be used within expressions.
-
-| Statement | Description    | Equivalent  |
-| --------- | -------------- | ----------- |
-| `a++`     | Increment by 1 | `a = a + 1` |
-| `a--`     | Decrement by 1 | `a = a - 1` |
-
-The operand must be a variable of integer type.
-
-**Examples**:
-
-```
-let i int = 5;
-i++;          // Valid: i = 6
-i--;          // Valid: i = 5
-
-// Invalid (compile-time errors):
-let x int = i++;      // Error: ++ is a statement, not an expression
-array[i++] = 5;       // Error: ++ is a statement, not an expression
-if i++ > 0 { }        // Error: ++ is a statement, not an expression
-```
-
 #### Compound assignment operators
 
 Compound assignment operators combine an arithmetic operation with assignment.
@@ -693,7 +687,7 @@ Comparison operators compare two values and produce a boolean result.
 | `<=`     | Less than or equal     | `a <= b`  |
 | `>=`     | Greater than or equal  | `a >= b`  |
 
-##### Structural equality (`==`, `!=`)
+##### Structural equality
 
 Structural equality compares values based on their runtime representation.
 Two values are structurally equal if they have compatible types and their components are recursively equal.
@@ -727,7 +721,7 @@ let p2 (string * Age) = ("J", 20);
 p1 == p2  // true (structurally equivalent)
 ```
 
-##### Strict type equality (`===`, `!==`)
+##### Strict type equality
 
 Strict type equality requires that both the values and their complete type structures are identical.
 Named types are distinguished from their underlying types and from other named types.
@@ -766,7 +760,7 @@ p1 == p2   // true (structurally equal)
 Function types do not support equality comparison.
 Attempting to compare function values with `==`, `!=`, `===`, or `!==` causes a compile-time error.
 
-##### Ordering operators (`<`, `>`, `<=`, `>=`)
+##### Ordering operators
 
 Ordering operators are defined for numeric and character types.
 
@@ -856,7 +850,7 @@ A _variable_ is a storage location that holds a _value_.
 A variable is associated with an identifier through a binding established by a variable declaration.
 The [_type_](#types) of a variable restricts the set of allowed values for that variable as well as the _operations_ allowed with that variable.
 
-### Variable declarations
+### Immutable variable declarations
 
 A _variable declaration_ introduces a binding that associates an identifier with a variable.
 Variables are declared using the `let` keyword.
@@ -870,6 +864,26 @@ let <identifier> [<type>] = <expression>[;]
 
 A variable declaration may optionally include an initializer expression.
 When an initializer is present, the expression is evaluated and the resulting value is stored in the variable.
+
+### Mutable variable declarations
+
+The language supports two types of mutability.
+The first is binding mutability.
+The second is value mutability.
+Binding mutability refers to the mutation of the binding itself.
+Value mutability refers to the mutation of the value being binded.
+
+Bindings and values are immutable by default.
+This means that a variable's binding cannot be reassigned or the underlying value be changed.
+
+The `let mut` statement may be used to create a mutable binding.
+
+```
+let mut <identifier> [<type>][;]
+let mut <identifier> [<type>] = <expression>[;]
+```
+
+For mutable values, the type may be marked as mutable.
 
 ### Variable assignment
 
@@ -1284,22 +1298,13 @@ fib supports several type constructors that allow building complex types from si
 
 ### Generics and Code Generation
 
-fib does not support generic types or generic contracts. All types, functions, and data structures must be defined with concrete types. Patterns that would typically use generics in other languages (such as parameterized data structures or interfaces) should be implemented using code generation, macros, or explicit code duplication.
+fib does not support generic types or generic contracts. All types, functions, and data structures must be defined with concrete types. Patterns that would typically use generics in other languages (such as parameterized data structures or interfaces) should be implemented using code generation or explicit code duplication.
 
 This design choice ensures predictable performance and simplifies the type system. For reusable data structure patterns (such as lists, maps, or option types), developers are encouraged to use code generation tools or macros to produce the required concrete types and functions for each use case.
 
-**Example:**
-
-To create a list of integers and a list of strings, generate two separate concrete types:
-
-```fib
-type IntList = ... // implementation for int
-type StringList = ... // implementation for string
-```
-
 There is no syntax for `type List T` or `contract Poll T` in the language.
 
-#### Primitive types
+### Primitive types
 
 Primitive types are the fundamental, built-in types of the language.
 
@@ -1321,86 +1326,88 @@ It is used for functions that perform side effects without producing a meaningfu
 The `unit` type is zero-sized: values of type `unit` occupy no memory at runtime.
 The compiler erases `unit` values during code generation, ensuring no runtime overhead for their use in parameters, return values, or composite types.
 
-#### Product types
+### Structs
 
-A _product type_ represents a composite value containing multiple components.
-Product types are constructed using the `*` operator.
+A _struct_ represents a composite value containing multiple components.
+Struct types are constructed using the `struct` keyword
 
 **Syntax**:
 
 ```
-<type> * <type>
-<type> * <type> * <type>
-...
+struct {<field-name> <field-type> [= <default-expression>], ...}[;]
 ```
 
 **Examples**:
 
 ```
-let point (int * int);
-let person (string * int * bool);
+struct {x int = 0, y int = 0}
+struct {name string, age int, has_pets bool = false};
 ```
 
-Product types create tuples or struct-like values where each component maintains its type.
-The order of types in a product type is significant.
+**Construction**:
 
-> **Note**: When declaring a variable with a product type, the type expression must be enclosed in parentheses.
+Structs are constructed using a struct literal.
 
-#### Sum types
+Individual members are accessed using dot notation:
 
-A _sum type_ (also called a tagged union or variant type) represents a value that can be one of several possible variants.
-Sum types are constructed using the `+` operator with labeled variants.
+```
+let p struct {x int, y int} = struct {x int = 1, y int = 2};
+let x_coord int = p.x;
+```
 
-Each variant must have a label prefixed with `'` (single quote), similar to labeled product types.
-The label serves as the variant's tag for pattern matching.
+> Note: notation seems redundant but it get easier by leveraging named types.
+
+### Variants
+
+A _variant_ represents a value that can be one of several possible types.
+Variants are constructed using the `variant` keyword.
 
 **Syntax**:
 
 ```
-type <identifier> = '<variant_label> <type> + '<variant_label> <type> + ...
+variant {<variant-name> <variant-type> [= <default-expression>], ...}[;]
 ```
 
-Variants may carry a payload type or be unit variants (carrying no data):
-
-```
-type <identifier> = '<variant_label> + '<variant_label> <type>
-```
-
-A unit variant has no payload and is written without a type following the label.
+Variants may carry a payload type or be unit variants (carrying no data).
+A unit variant has no payload and is written with the unit type following the label.
 
 **Examples**:
 
 ```
 // Option type with a unit variant and a payload variant
-type Option = 'None + 'Some int;
+variant {Some int, None unit};
 
 // Result type for error handling
-type Result = 'Ok int + 'Err string;
+variant {Ok int, Err string};
 
 // Either type with two payload variants
-type Either = 'Left string + 'Right int;
+variant {Left string, Right int}
 
 // Status with multiple unit variants
-type Status = 'Pending + 'Running + 'Completed + 'Failed string;
+variant {Pending unit, Running unit, Completed unit, Failed string};
 ```
 
-A sum type value at runtime holds exactly one of the variant types.
-Sum types enable type-safe representation of alternatives and optional values.
+A variant value at runtime holds exactly one of the variant types.
+Variants enable type-safe representation of alternatives and optional values.
 
-**Constructing sum type values**:
+**Construction**:
 
-Sum type values are constructed using the variant label:
+Variant values are constructed using the `variant` literal.
+
+**Examples**:
 
 ```
-let opt Option = 'Some 42;
-let none Option = 'None;
-let result Result = 'Ok 100;
-let err Result = 'Err "something went wrong";
+let opt variant {Some int, None unit} = variant {Some = 42};
+let none variant {Some int, None unit} = variant {None = ()};
+let result variant {Ok int, Err string} = variant {Ok = 100};
+let err variant {Ok int, Err string} = variant {Err = "something went wrong"};
 ```
 
-> **Note**: Anonymous (unlabeled) sum types are not permitted. All sum types must be declared as named types with labeled variants.
+The variant literal label must match one of the variant type labels.
 
-#### Array types
+> Note: notation seems redundant but it get easier by leveraging named types.
+
+### Array types
 
 An _array type_ represents a sequence of elements of the same type.
 
@@ -1428,7 +1435,7 @@ When static verification is not possible, runtime bounds checking is enabled by 
 Runtime bounds checking may be disabled using the [`@no_bounds_check`](#bounds-checking-hints) compiler hint.
 Accessing an index outside the array bounds causes a panic.
 
-##### Array indexing with ranges
+#### Array indexing with ranges
 
 Arrays may be indexed using range expressions to produce a slice.
 A range expression specifies a contiguous subsequence of array elements.
@@ -1453,7 +1460,7 @@ let slice3 []int = arr.(2..);   // [2, 3, 4, 5]
 let slice4 []int = arr.(..);    // [0, 1, 2, 3, 4, 5]
 ```
 
-##### Array indexing with arrays
+#### Array indexing with arrays
 
 Arrays may also be indexed using another array to select multiple elements at specified indices.
 
@@ -1515,7 +1522,7 @@ let first int = s.0;            // element at index 0 of slice (arr.1)
 Slice bounds are checked at runtime by default.
 Accessing an index outside the slice bounds causes a panic.
 
-#### Map types
+### Map types
 
 A _map_ is an associative data structure that maps keys to values.
 Maps provide efficient lookup of values by their associated keys.
@@ -1583,7 +1590,7 @@ let m string[]int = { "a" -> 1 };
 
 m.get("a");       // Valid: returns 1
 m.get("b");       // Compile-time error: key "b" not in map
-m.get(unknown);   // Runtime panic if unknown is not a key
+m.get(some_var);  // Runtime panic if some_var is not a key
 ```
 
 Uninitialized maps cannot be accessed.
@@ -1610,7 +1617,7 @@ let feature_enabled bool = config.get("features").get(0);  // true
 config.get("flags").get(0);  // Compile-time error: empty map
 ```
 
-#### Function types
+### Function types
 
 A _function type_ represents a callable entity that accepts parameters and returns a value.
 Function types are constructed using arrow syntax.
@@ -1618,9 +1625,9 @@ Function types are constructed using arrow syntax.
 **Syntax**:
 
 ```
-(<parameter_types>) -> <return_type>
-(<type>) -> <type>
-(<type>, <type>) -> <type>
+// Arguments
+(<argument-types>) -> <return_type>
+// No arguments
 () -> <type>
 ```
 
@@ -1630,29 +1637,29 @@ Function types are constructed using arrow syntax.
 let transform (string) -> int;
 let combine (int, int) -> int;
 let produce () -> string;
-let process ((string * int) -> (bool + string));
+let process (struct {x int, y int} -> variant {a bool, b string});
 ```
 
 Function types are first-class, meaning they can be stored in variables, passed as arguments, and returned from functions.
 
-#### Type composition
+### Type composition
 
 Type constructors may be composed to create complex types:
 
 ```
-let complex (int * string) -> (bool + int);
+let complex struct {x int, y string} -> variant {a bool, b int};
 let handler ((string) -> int) -> string;
 ```
 
 Operator precedence for type constructors (highest to lowest):
 
-1. `->` (function arrow)
-2. `*` (product)
-3. `+` (sum)
+1. `->`
+2. `struct`
+3. `variant`
 
 Parentheses may be used to override precedence.
 
-#### Named types
+### Named types
 
 A _named type_ declaration introduces a name bound to a type expression.
 Named types are declared using the `type` keyword.
@@ -1660,121 +1667,19 @@ Named types are declared using the `type` keyword.
 **Syntax**:
 
 ```
-type <identifier> = <type_expression>[;]
+type <identifier> = <type-expression>[;]
 ```
 
 **Examples**:
 
 ```
-type Point = (int * int);
-type Result = (int + string);
+type Point = struct {x int, y int};
+type Result = variant {Ok int, Err string};
 type Transform = (string) -> int;
 ```
 
 Named types provide clarity and reusability for complex type expressions.
 A named type and its underlying type expression are structurally equivalent and may be used interchangeably.
-
-##### Named types with labeled members
-
-Product types within named type declarations may use labeled members.
-Labels provide names for accessing individual components of the product type.
-
-**Syntax**:
-
-```
-type <identifier> = ('label1 <type> * 'label2 <type> * ...)
-```
-
-Labels are prefixed with a single quote character `'`.
-
-**Example**:
-
-```
-type Point = ('x int * 'y int);
-type Person = ('name string * 'age int * 'active bool);
-```
-
-Labels may also be applied to function type components within a product type:
-
-```
-type Generator = ('gen_num () -> int * 'seed int);
-```
-
-This declares a product type with two labeled members:
-
-- `gen_num`: a function type `() -> int`
-- `seed`: an `int`
-
-Values of labeled product types can be constructed using member initializers:
-
-```
-let p Point = { x = 10, y = 20 };
-let person Person = { name = "Alice", age = 30, active = true };
-```
-
-Individual members are accessed using dot notation:
-
-```
-let x_coord int = p.x;
-let person_name string = person.name;
-```
-
-Labeled function type members are accessed the same way:
-
-```
-let gen Generator = { gen_num = function() int { return 42; }, seed = 100 };
-let result int = gen.gen_num();  // Calls the function, result = 42
-```
-
-The label attaches to the immediately following type. Without parentheses around the return type, subsequent types in the product are separate members:
-
-```
-// 'gen_num labels a () -> int function, followed by an unlabeled int
-let foo ('gen_num () -> int * int);
-
-// 'gen_num labels a () -> (int * int) function (returns a tuple)
-let bar ('gen_num () -> (int * int));
-```
-
-##### Named types with contract implementations
-
-Named types may implement one or more contracts.
-Contract implementations are specified after a semicolon following the type expression.
-
-**Syntax**:
-
-```
-type <identifier> = (<type_expression>; <contract_implementations>)
-```
-
-Each contract implementation includes the contract name and method definitions.
-
-**Example**:
-
-```
-type House = (
-    'number_of_doors int *
-    'number_of_windows int *
-    'address string
-    ;
-    Building {
-        function get_address(self) string {
-            return self.address;
-        }
-    }
-)
-```
-
-Multiple contract implementations may be specified:
-
-```
-type House = (
-    'address string
-    ;
-    Building { ... }
-    Comparable { ... }
-)
-```
 
 ### Pointers
 
@@ -2056,42 +1961,39 @@ contract Serializable {
 
 The `Self` type refers to the type implementing the contract.
 
-#### Contract implementation
+#### Contract implementations
 
-Types implement contracts by providing method definitions within their type declaration.
-
-Contract implementations are specified after the type expression, separated by a semicolon.
+Named types may implement one or more contracts.
+Contract implementations are specified in an `impl` block after the type expresion.
 
 **Syntax**:
 
 ```
-type <identifier> = (
-    <type_expression>
-    ;
-    <contract_name> {
-        function <method_name>(<parameters>) <return_type> {
-            <statements>
-        }
-        ...
-    }
-    ...
-)
+<type-expression> impl <contract-name> {
+    <implementations>
+}
 ```
+
+Each implementation includes the method definition.
 
 **Example**:
 
 ```
-type Rectangle = (
-    'width int *
-    'height int
-    ;
-    Shape {
-        function area(self) int {
-            return self.width * self.height;
-        }
+contract Building {
+    function get_address(self) string;
+}
+type House = struct {
+    number_of_doors int,
+    number_of_windows int,
+    address string,
+} impl Building {
+    function get_address(self) string {
+        return self.address;
     }
-)
+};
 ```
+
+Multiple contract implementations may be specified.
 
 All methods declared in a contract must be implemented.
 Failing to implement all required methods causes a compile-time error.
@@ -2263,19 +2165,24 @@ Type casting allows converting a value from one type to another, either by reint
 
 #### Raw casting
 
+`@raw_cast` may be used to reinterpret the data into another type.
 Raw casting only changes the types; it does not perform any operation on the underlying value.
-Raw casting requires the two types to be of the same size (for example, you cannot cast from `int` to `bool` because the former is 4 bytes and the latter is 1 byte).
+Raw casting requires the two types to be of the same size (e.g., you cannot cast from `int` to `bool` because the former is 4 bytes and the latter is 1 byte).
 
-> Note: raw casting is not recommended for general use. `@raw_cast` is provided to allow conversions between types in low-level scenarios and should be used with care as any language hint.
+**Syntax**:
+
+```
+@raw_cast <<variable-initialization> | <variable-assignment>>
+```
 
 **Example**:
 
 ```
-@raw_cast
-let x Int_8 =  'c';
+@raw_cast let c [4]char = 1752132705;
+// ['h', 'o', 'l', 'a']
 ```
 
-This example casts the character literal `'c'` to an `Int_8` (unsigned 8-bit integer).
+> Note: raw casting is not recommended for general use.
 
 #### Safe casting
 
@@ -2288,6 +2195,231 @@ let x int = 3.14f.cast_int();
 // same as:
 let x int = cast_int(3.14f)
 ```
+
+### Dynamic type
+
+`dynamic` is a type boundary marker.
+
+`dynamic` types are constructed using a compile-time type synthesis: `(dynamic) <expression>`.
+
+Each `(dynamic) <expression>` introduces a new, compiler generated concrete type whose structure is equal to the static type of `<expression>`.
+If `<expression>` had type `T`, then `(dynamic) <expression>` will have a type denoted by `D_T` that is structurally equal.
+
+`D_T` and `T` are structurally equal (`==`) but not strictly equal (`===`).
+However, `D_T` is not assignable to `T` because they are different types.
+Structural equality does not imply assignability.
+
+Two separate constructions of the same `T` produce the same `D_T` and `D_T` is uniquely determined by the canonical structural identity of `T` within a compilation unit.
+The scope of canonicalization is program-wide.
+
+**Example**:
+
+```
+// cat=1
+// dog.food=steak
+
+function read_structured_string(str string) dynamic {
+    let keys []string = empty_slice_helper();
+    let values []('terminal string + 'nested dynamic) = empty_slice_helper();
+    let buffer []char = empty_slice_char();
+    for let i int = 0; i < str.size; i++ {
+        let b byte = str.[i];
+        match b.to_char() {
+            ' ' -> {continue;}
+            '=' -> {
+                keys.push(buffer.to_string());
+            }
+            '\n' -> {
+                values.push(buffer.to_string());
+            }
+            '.' -> {
+                keys.push(buffer.to_string());
+                i++;
+                let subkey dynamic = read_structured_string(str.(i..));
+                values.push(subkey);
+            }
+            c -> {
+                buffer.push(c);
+            }
+        }
+    }
+    return (dynamic)(keys, values);
+}
+```
+
+When a variable is declared as having type `dynamic`, this acts as a placeholder that is replaced at compile time with the concrete generated type `D_T`.
+The placeholder replacement occurs after full type checking of the initializer.
+After replacement, the variable no longer has type `dynamic` anywhere in the typed AST.
+`dynamic` variables must be assigned a value produced by type synthesis, otherwise it is a compile time error.
+
+```
+// Not allowed
+let x dynamic = 5;
+```
+
+Also, a variable of type dynamic must have an initializer that is a type synthesis expression.
+
+```
+// Not allowed
+let x dynamic;
+```
+
+In function signatures, the return type must be resolved after type checking the body.
+
+- The function's return type is inferred from the `(dynamic)` expressions in all return paths.
+- All return paths must produce `(dynamic)` of the same underlying T.
+- The underlying `T` must be strictly equal across return paths.
+- Structural equality is insufficient.
+
+Therefore the following example is incorrect:
+
+```
+if cond {
+    return (dynamic)(1);
+} else {
+    return (dynamic)("x");
+}
+```
+
+**Example**:
+
+```
+let data dynamic = read_structured_data(str);
+```
+
+In case of recursion of `dynamics`, the inner dynamic type have already been transformed into a concrete type (`D_U`) so there is no infinite expansion.
+The transformation occurs during type checking.
+Recursive `dynamic` types are resolved as finite nominal graphs.
+`dynamic` does not introduce recursive type capabilities beyond those permitted by the base type system
+
+Because `D_T` is structurally identical to `T` all normal structural rules apply.
+This includes field access and pattern matching.
+Sum and product semantics are preserved exactly.
+`dynamic` introduces no runtime tagging beyond what `T` already required.
+
+```
+let keys = data.keys
+
+let values_size = data.values.size
+for {let value = data.values.[0]; let i = 0;}; i < values_size; {i += 1; value = data.values.[i];} {
+    match value {
+        'terminal s -> {...}
+        'nested n -> {...}
+    }
+}
+```
+
+> `dynamic` introduces compile-time synthesis of a nominal type equal in structure to the wrapped expression type.
+
+**Cross boundary compatibility**:
+
+```
+function f() dynamic { return (dynamic)(1); }
+function g() dynamic { return (dynamic)(1); }
+
+let a = f();
+let b = g();
+```
+
+Here `a` and `b` are the same type.
+
+### Blob type
+
+`blob` represents a contiguous region of memory whose size is known only at runtime.
+`blob` is a built-in primitive.
+The size of a `blob` value is not part its static type, it is a dynamically-sized value type.
+
+A `blob` value consists of a pointer to memory and a runtime size in bytes.
+The memory layout is implementation-defined but it must contain an address and a lenght.
+
+`blob` is always sized at runtime but statically known to occupy a fixed machine representation (pointer + size)
+
+A `blob` has no element type, it is untyped raw storage.
+
+`blob` has no structural knowledge, therefore, it is not possible to access fields, index into it or pattern match it.
+Allowd operations include querying its size, copying it, passing it, and performing explicit reinterpretation (raw casting).
+
+A `blob` is an owning conatiner of its memory.
+Copying a `blob` performs a deep copy of the underlying memory region.
+Move semantics transfer ownership of the `blob` without duplication.
+Destruction frees the owned memory.
+
+A `blob` value may be created through one of the following mechanisms:
+
+1. Allocation
+
+   A new `blob` may be created by allocating a contiguous region of memory of a specified runtime size.
+   The allocated memory is owned by the resulting `blob`.
+   The contents of the memory are unspecified unless otherwise defined.
+
+2. Copy from existing memory
+
+   A new `blob` may be created by copying bytes from an existing contiguous memory region.
+   The resulting `blob` owns its memory independently of the source.
+   The source memory is not aliased.
+
+3. External source construction
+
+   A `blob` may be created by operations that produce raw byte data (for example, file or network operations).
+   The resulting `blob` owns the produced memory.
+
+A `blob` cannot be created via type casting.
+A `blob` cannot be implicitly constructed from structured types.
+
+Reinterpretation of a blob as another type T requires explicit raw casting and must obey size compatibility rules, alignment requirements, and have no automatic deserialization.
+
+### Never type
+
+`never` is a built-in primitive type representing computations that do not complete normally.
+A value of `never` cannot exist.
+A function returninig `never` does not return execution to its caller.
+
+**Example**:
+
+```
+funciton panic(message 'Some string + 'None unit) never {
+    // ...
+}
+```
+
+**Semantics**:
+
+- `never` is the bottom type.
+- `never` is strictly equal only to itself (`===`).
+- `never` is assignable to all types.
+
+No type is assignable to `never`.
+This allows:
+
+```
+let x int = panic("error");
+```
+
+because `panic(...)` has type `never`, and `never` is assignable to `int`.
+
+An expression of type `never` is considered to have any required contextual type.
+
+In control flow constructs:
+
+```
+if cond {
+    panic("error");
+} else {
+    5
+}
+```
+
+The entire expression has type `int`.
+
+The branch containing `panic` does not contribute a type; it is treated as `never`.
+
+In a match expression a branch returning `never` does not affect exhaustiveness.
+If all branches return `never`, the match expression has type `never`.
+
+`never` does not participate in `dynamic` type synthesis.
+`(dynamic) panic(...)` is invalid because `panic(...)` has no value.
+
+If a function call has type `never`, all statements following it in the same block are unreachable.
 
 ## Functions
 
@@ -2849,3 +2981,50 @@ Concurrency should be handled using other language structures like mutex or sema
 
 Dropping an uncompleted coroutine performs stack unwinding and cleanup must is perfomed by `defer` blocks.
 Unwinding walks frames from innermost to outermost, executing each frame’s defers before discarding it.
+
+## Code generation
+
+Code generation code should be placed in a "\*.codegen.fib" file.
+
+```
+codegen "<name-of-codegen>" (<regex>, <substitution-strings>) { <template> }
+```
+
+```
+codegen "Linked List" ("LinkedList_()", "_T") {
+    type LinkedList__T = (
+        'head unique &_T *
+        'tail unique &_T
+    )
+}
+```
+
+```
+codegen "foo example" ("foo_()_()", "_T", "_U") {
+    function foo__T__U() unit {...}
+}
+```
+
+The name is used to identify the codegen execution during debugging.
+The regex is used to find instances in the code base where the expression matches.
+Capture groups may be used.
+Capture groups are assigned to each substition string in order.
+In the "foo example" the first capture group is assigned the "\_T", the second is assigned the "\_U" string and the list would go on.
+If the amount of capture groups and substituion strings is not matched this codegen fails and an error is thrown.
+If there is no matching code in the code base the codegen is skipped (codegen can be used to conditionally add code based on the existance of code or not).
+The substitution string is replaced in the template with the value that was captured in the regex.
+The template is valid fib code.
+
+Matching is perfomed against identifiers.
+
+In case of collision errors there is a compile time error.
+
+Generated code is injected into the module the match occurred.
+
+Codegen runs before contract monomorphization.
+
+Order: Parse → Codegen → Name resolution → Type check → Contract monomorphization → Lowering
+
+Only one pass is allowed and codegen cannot be written inside template.
+
+User can configure the amount of instantiations that a given codegen can perform

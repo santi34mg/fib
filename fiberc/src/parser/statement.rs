@@ -17,5 +17,4 @@ pub enum Statement {
         then_branch: Vec<Statement>,
         else_branch: Option<Vec<Statement>>,
     },
-    For {},
 }

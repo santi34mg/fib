@@ -1,5 +1,4 @@
-use crate::parser::expression::Expression;
-use crate::token::TypeIdentifier;
+use crate::parser::{TypeIdentifier, expression::Expression};
 
 #[derive(Debug, Clone)]
 pub struct VariableDeclaration {
