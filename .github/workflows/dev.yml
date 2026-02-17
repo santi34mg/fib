@@ -14,6 +14,10 @@ jobs:
     name: Build and run tests
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: fiberc
+
     steps:
       - uses: actions/checkout@v4
 
@@ -34,19 +38,13 @@ jobs:
           toolchain: stable
 
       - name: Check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
+        run: cargo check
 
       - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
+        run: cargo build
 
       - name: Test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
+        run: cargo test
 
   merge_master:
     name: Merge to master
