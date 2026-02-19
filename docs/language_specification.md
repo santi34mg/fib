@@ -3,161 +3,154 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
-- [Introduction](#introduction)
-- [Notation](#notation)
-- [Program](#program)
-- [Lexical elements](#lexical-elements)
-  - [Identifier](#identifier)
-  - [Comments](#comments)
-  - [Literals](#literals)
-    - [Integer literals](#integer-literals)
-    - [Float literals](#float-literals)
-    - [Boolean literals](#boolean-literals)
-    - [Character literals](#character-literals)
-    - [String literals](#string-literals)
-    - [Tuple literals](#tuple-literals)
-    - [Array literals](#array-literals)
-    - [Range literals](#range-literals)
-    - [Map literals](#map-literals)
-    - [Struct literals](#struct-literals)
-    - [Variant literal](#variant-literal)
-    - [Unit literal](#unit-literal)
-- [Names and bindings](#names-and-bindings)
-  - [Entity](#entity)
-  - [Bindings](#bindings)
-  - [Scope](#scope)
-  - [Environment](#environment)
-  - [Name resolution](#name-resolution)
-  - [Modules](#modules)
-    - [Module declarations](#module-declarations)
-    - [Default module](#default-module)
-    - [Module member declarations](#module-member-declarations)
-    - [Module member references](#module-member-references)
-    - [Submodules and nesting](#submodules-and-nesting)
-    - [Name resolution in modules](#name-resolution-in-modules)
-    - [Using external modules](#using-external-modules)
-    - [Visibility and access control](#visibility-and-access-control)
-- [Semantics](#semantics)
-  - [Values](#values)
-    - [Atomic values](#atomic-values)
-    - [Composite values](#composite-values)
-  - [Evaluation](#evaluation)
-- [Expressions](#expressions)
-  - [Primary expressions](#primary-expressions)
-  - [Operators](#operators)
-    - [Arithmetic operators](#arithmetic-operators)
-    - [Compound assignment operators](#compound-assignment-operators)
-    - [Comparison operators](#comparison-operators)
-      - [Structural equality](#structural-equality)
-      - [Strict type equality](#strict-type-equality)
-      - [Function type equality](#function-type-equality)
-      - [Ordering operators](#ordering-operators)
-    - [Logical operators](#logical-operators)
-    - [Bitwise operators](#bitwise-operators)
-    - [Operator precedence and associativity](#operator-precedence-and-associativity)
-  - [Block expressions](#block-expressions)
-- [Variables](#variables)
-  - [Immutable variable declarations](#immutable-variable-declarations)
-  - [Mutable variable declarations](#mutable-variable-declarations)
-  - [Variable assignment](#variable-assignment)
-  - [Type inference](#type-inference)
-- [Control flow](#control-flow)
-  - [Conditional statements](#conditional-statements)
-    - [If statement](#if-statement)
-    - [If-else statement](#if-else-statement)
-    - [If-else if chains](#if-else-if-chains)
-    - [If expressions](#if-expressions)
-  - [Iteration statements](#iteration-statements)
-    - [For statement](#for-statement)
-    - [Break statement](#break-statement)
-    - [Continue statement](#continue-statement)
-  - [Pattern matching](#pattern-matching)
-    - [Match expressions](#match-expressions)
-    - [Patterns](#patterns)
-    - [Pattern matching on sum types](#pattern-matching-on-sum-types)
-    - [Guards](#guards)
-  - [Return statement](#return-statement)
-  - [Destructuring](#destructuring)
-    - [Positional product type destructuring](#positional-product-type-destructuring)
-    - [Labeled products type destructuring](#labeled-products-type-destructuring)
-    - [Array index access](#array-index-access)
-- [Memory model, ownership, and lifetime](#memory-model-ownership-and-lifetime)
-  - [Lifetime rules](#lifetime-rules)
-  - [Initialization](#initialization)
-  - [Evaluation order](#evaluation-order)
-  - [ABI and FFI](#abi-and-ffi)
-- [Undefined and implementation-defined behavior](#undefined-and-implementation-defined-behavior)
-- [Type system](#type-system)
-  - [Types](#types)
-  - [Generics and Code Generation](#generics-and-code-generation)
-  - [Primitive types](#primitive-types)
-  - [Structs](#structs)
-  - [Variants](#variants)
-  - [Array types](#array-types)
-    - [Array indexing with ranges](#array-indexing-with-ranges)
-    - [Array indexing with arrays](#array-indexing-with-arrays)
-    - [Slice types](#slice-types)
-  - [Map types](#map-types)
+- [Language specification](#language-specification)
+  - [Introduction](#introduction)
+  - [Notation](#notation)
+  - [Program](#program)
+  - [Lexical elements](#lexical-elements)
+    - [Identifier](#identifier)
+      - [Array literals](#array-literals)
+      - [Range literals](#range-literals)
+      - [Map literals](#map-literals)
+      - [Struct literals](#struct-literals)
+      - [Variant literal](#variant-literal)
+      - [Unit literal](#unit-literal)
+  - [Names and bindings](#names-and-bindings)
+    - [Entity](#entity)
+    - [Bindings](#bindings)
+    - [Scope](#scope)
+    - [Environment](#environment)
+    - [Name resolution](#name-resolution)
+    - [Modules](#modules)
+      - [Module declarations](#module-declarations)
+      - [Default module](#default-module)
+      - [Module member declarations](#module-member-declarations)
+      - [Module member references](#module-member-references)
+      - [Submodules and nesting](#submodules-and-nesting)
+      - [Name resolution in modules](#name-resolution-in-modules)
+      - [Using external modules](#using-external-modules)
+      - [Visibility and access control](#visibility-and-access-control)
+  - [Semantics](#semantics)
+    - [Values](#values)
+      - [Atomic values](#atomic-values)
+      - [Composite values](#composite-values)
+    - [Evaluation](#evaluation)
+  - [Expressions](#expressions)
+    - [Primary expressions](#primary-expressions)
+    - [Operators](#operators)
+      - [Arithmetic operators](#arithmetic-operators)
+      - [Compound assignment operators](#compound-assignment-operators)
+      - [Comparison operators](#comparison-operators)
+        - [Structural equality](#structural-equality)
+        - [Strict type equality](#strict-type-equality)
+        - [Function type equality](#function-type-equality)
+        - [Ordering operators](#ordering-operators)
+      - [Logical operators](#logical-operators)
+      - [Bitwise operators](#bitwise-operators)
+      - [Operator precedence and associativity](#operator-precedence-and-associativity)
+    - [Block expressions](#block-expressions)
+  - [Variables](#variables)
+    - [Immutable variable declarations](#immutable-variable-declarations)
+    - [Mutable variable declarations](#mutable-variable-declarations)
+    - [Variable assignment](#variable-assignment)
+    - [Type inference](#type-inference)
+  - [Control flow](#control-flow)
+    - [Conditional statements](#conditional-statements)
+      - [If statement](#if-statement)
+      - [If-else statement](#if-else-statement)
+      - [If-else if chains](#if-else-if-chains)
+      - [If expressions](#if-expressions)
+    - [Iteration statements](#iteration-statements)
+      - [For statement](#for-statement)
+      - [Break statement](#break-statement)
+      - [Continue statement](#continue-statement)
+    - [Pattern matching](#pattern-matching)
+      - [Match expressions](#match-expressions)
+      - [Patterns](#patterns)
+      - [Pattern matching on sum types](#pattern-matching-on-sum-types)
+      - [Guards](#guards)
+    - [Return statement](#return-statement)
+    - [Destructuring](#destructuring)
+      - [Positional product type destructuring](#positional-product-type-destructuring)
+      - [Labeled products type destructuring](#labeled-products-type-destructuring)
+      - [Array index access](#array-index-access)
+  - [Memory model, ownership, and lifetime](#memory-model-ownership-and-lifetime)
+    - [Lifetime rules](#lifetime-rules)
+    - [Initialization](#initialization)
+    - [Evaluation order](#evaluation-order)
+    - [ABI and FFI](#abi-and-ffi)
+  - [Undefined and implementation-defined behavior](#undefined-and-implementation-defined-behavior)
+  - [Type system](#type-system)
+    - [Types](#types)
+    - [Generics and Code Generation](#generics-and-code-generation)
+    - [Primitive types](#primitive-types)
+    - [Structs](#structs)
+    - [Variants](#variants)
+    - [Array types](#array-types)
+      - [Array indexing with ranges](#array-indexing-with-ranges)
+      - [Array indexing with arrays](#array-indexing-with-arrays)
+      - [Slice types](#slice-types)
+    - [Map types](#map-types)
       - [Map access](#map-access)
       - [Map key requirements](#map-key-requirements)
       - [Missing key behavior](#missing-key-behavior)
       - [Nested maps](#nested-maps)
-  - [Function types](#function-types)
-  - [Type composition](#type-composition)
-  - [Named types](#named-types)
-  - [Pointers](#pointers)
-    - [Safe pointer types](#safe-pointer-types)
-      - [Unique pointers](#unique-pointers)
-      - [Shared pointers](#shared-pointers)
-      - [Weak pointers](#weak-pointers)
-    - [Raw pointers](#raw-pointers)
-      - [Pointer arithmetic](#pointer-arithmetic)
-    - [Obtaining addresses](#obtaining-addresses)
-    - [Dereferencing](#dereferencing)
-    - [Null pointers](#null-pointers)
-  - [Contracts](#contracts)
-    - [Contract declarations](#contract-declarations)
-    - [Contract implementations](#contract-implementations)
-    - [Contract-typed parameters](#contract-typed-parameters)
-    - [Monomorphization](#monomorphization)
-  - [Errors](#errors)
-    - [The Error contract](#the-error-contract)
-    - [Defining custom errors](#defining-custom-errors)
-    - [Using errors in functions](#using-errors-in-functions)
-    - [Handling errors](#handling-errors)
-    - [Functions accepting any error](#functions-accepting-any-error)
-    - [Panic](#panic)
-  - [Type casting](#type-casting)
-    - [Raw casting](#raw-casting)
-    - [Safe casting](#safe-casting)
-  - [Dynamic type](#dynamic-type)
-  - [Blob type](#blob-type)
-  - [Never type](#never-type)
-- [Functions](#functions)
-  - [Function declarations](#function-declarations)
-  - [Forward declarations](#forward-declarations)
-  - [Parameters](#parameters)
-  - [Function application](#function-application)
-  - [Recursion](#recursion)
-  - [Anonymous functions](#anonymous-functions)
-  - [Closures](#closures)
-  - [Purity and side effects](#purity-and-side-effects)
-- [Memory management](#memory-management)
-  - [Stack allocation](#stack-allocation)
-  - [Heap allocation](#heap-allocation)
-  - [Deallocation](#deallocation)
-  - [Deferred deallocation](#deferred-deallocation)
-  - [Arena allocation](#arena-allocation)
-- [Compiler Hints](#compiler-hints)
-  - [Hint Syntax](#hint-syntax)
-  - [Parameter Hint Semantics](#parameter-hint-semantics)
-    - [Requirement Hints (Inline Placement)](#requirement-hints-inline-placement)
-    - [Promise Hints (External Placement)](#promise-hints-external-placement)
-    - [Combining Requirement and Promise Hints](#combining-requirement-and-promise-hints)
-    - [Verification Rules](#verification-rules)
-  - [Hint Placement Summary](#hint-placement-summary)
-- [Stackful coroutines](#stackful-coroutines)
-- [Code generation](#code-generation)
+    - [Function types](#function-types)
+    - [Type composition](#type-composition)
+    - [Named types](#named-types)
+    - [Pointers](#pointers)
+      - [Safe pointer types](#safe-pointer-types)
+        - [Unique pointers](#unique-pointers)
+        - [Shared pointers](#shared-pointers)
+        - [Weak pointers](#weak-pointers)
+      - [Raw pointers](#raw-pointers)
+        - [Pointer arithmetic](#pointer-arithmetic)
+      - [Obtaining addresses](#obtaining-addresses)
+      - [Dereferencing](#dereferencing)
+      - [Null pointers](#null-pointers)
+    - [Contracts](#contracts)
+      - [Contract declarations](#contract-declarations)
+      - [Contract implementations](#contract-implementations)
+      - [Contract-typed parameters](#contract-typed-parameters)
+      - [Monomorphization](#monomorphization)
+    - [Errors](#errors)
+      - [The Error contract](#the-error-contract)
+      - [Defining custom errors](#defining-custom-errors)
+      - [Using errors in functions](#using-errors-in-functions)
+      - [Handling errors](#handling-errors)
+      - [Functions accepting any error](#functions-accepting-any-error)
+      - [Panic](#panic)
+    - [Type casting](#type-casting)
+      - [Raw casting](#raw-casting)
+      - [Safe casting](#safe-casting)
+    - [Dynamic type](#dynamic-type)
+    - [Blob type](#blob-type)
+    - [Never type](#never-type)
+  - [Functions](#functions)
+    - [Function declarations](#function-declarations)
+    - [Forward declarations](#forward-declarations)
+    - [Parameters](#parameters)
+    - [Function application](#function-application)
+    - [Recursion](#recursion)
+    - [Anonymous functions](#anonymous-functions)
+    - [Closures](#closures)
+    - [Purity and side effects](#purity-and-side-effects)
+  - [Memory management](#memory-management)
+    - [Stack allocation](#stack-allocation)
+    - [Heap allocation](#heap-allocation)
+    - [Deallocation](#deallocation)
+    - [Deferred deallocation](#deferred-deallocation)
+    - [Arena allocation](#arena-allocation)
+  - [Compiler Hints](#compiler-hints)
+    - [Hint Syntax](#hint-syntax)
+    - [Parameter Hint Semantics](#parameter-hint-semantics)
+      - [Requirement Hints (Inline Placement)](#requirement-hints-inline-placement)
+      - [Promise Hints (External Placement)](#promise-hints-external-placement)
+      - [Combining Requirement and Promise Hints](#combining-requirement-and-promise-hints)
+      - [Verification Rules](#verification-rules)
+    - [Hint Placement Summary](#hint-placement-summary)
+  - [Stackful coroutines](#stackful-coroutines)
+  - [Code generation](#code-generation)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -191,145 +184,6 @@ The interpretation of identifier occurrences is governed by the language's rules
 ```
 
 Identifiers must not match any reserved keyword.
-
-### Comments
-
-A comment is a section of program text that has no effect on the semantics of the program and is included only for documentation or clarification purposes by and for the developers of the program.
-
-**Syntax**:
-
-```
-// <comment_text>
-```
-
-### Literals
-
-A _literal_ is a notation for representing a fixed value in source code.
-
-#### Integer literals
-
-An integer literal represents an integer constant.
-
-**Syntax**:
-
-```
-<decimal_literal>     ::= [0-9][0-9_]*
-<hexadecimal_literal> ::= 0x[0-9a-fA-F][0-9a-fA-F_]*
-<binary_literal>      ::= 0b[01][01_]*
-```
-
-Underscores may appear between digits for readability and are ignored.
-
-**Examples**:
-
-```
-42
-1_000_000
-0xFF
-0x00_FF_00
-0b1010_1100
-0o755
-```
-
-#### Float literals
-
-A float literal represents a floating-point constant. Float literals must have a decimal point followed by digits and end with the `f` suffix.
-
-**Syntax**:
-
-```
-<float_literal> ::= [0-9][0-9_]* '.' [0-9][0-9_]* 'f'
-```
-
-**Examples**:
-
-```
-0.0f
-3.14f
-1.5f
-0.123f
-```
-
-#### Boolean literals
-
-Boolean literals represent truth values.
-
-**Syntax**:
-
-```
-true
-false
-```
-
-#### Character literals
-
-A character literal represents a single Unicode code point.
-
-**Syntax**:
-
-```
-'<character>'
-'<escape_sequence>'
-```
-
-Escape sequences include:
-
-| Sequence   | Meaning                |
-| ---------- | ---------------------- |
-| `\n`       | Newline                |
-| `\r`       | Carriage return        |
-| `\t`       | Tab                    |
-| `\\`       | Backslash              |
-| `\'`       | Single quote           |
-| `\0`       | Null character         |
-| `\xNN`     | Hexadecimal byte value |
-| `\u{NNNN}` | Unicode code point     |
-
-**Examples**:
-
-```
-'a'
-'\n'
-'\u{03B1}'  // Greek letter alpha
-```
-
-#### String literals
-
-A string literal represents a sequence of characters.
-
-**Syntax**:
-
-```
-"<characters>"
-```
-
-String literals support the same escape sequences as character literals.
-
-**Examples**:
-
-```
-"hello, world"
-"line one\nline two"
-"unicode: \u{1F600}"
-```
-
-#### Tuple literals
-
-A tuple literal constructs a value of a product type.
-
-**Syntax**:
-
-```
-(<expression>, <expression>, ...)
-```
-
-**Examples**:
-
-```
-(1, 2)
-("name", 25, true)
-(1, (2, 3))  // Nested tuple
-```
 
 #### Array literals
 

@@ -2,7 +2,6 @@ use std::path::Path;
 use std::{fs, process};
 
 use crate::parser::{Ast, Parser};
-use crate::type_checker::TypeChecker;
 use crate::{lexer::Lexer, token::Token};
 
 pub fn run_pipeline(file: &Path, is_debug_mode: bool) {
@@ -24,7 +23,6 @@ pub fn run_pipeline(file: &Path, is_debug_mode: bool) {
     if is_debug_mode {
         show_ast(&ast);
     }
-    run_type_checker(ast);
 }
 
 fn run_lexer(src: &String) -> Vec<Token> {
@@ -33,7 +31,7 @@ fn run_lexer(src: &String) -> Vec<Token> {
     tokens
 }
 
-fn run_parser(tokens: Vec<Token>, filename: String, source: String) -> Option<Ast> {
+fn run_parser<'a>(tokens: Vec<Token>, filename: String, source: String) -> Option<Ast> {
     // TODO: improve error handling
     let mut parser = Parser::new(tokens.into_iter(), filename, source);
     match parser.parse_program() {
@@ -43,11 +41,6 @@ fn run_parser(tokens: Vec<Token>, filename: String, source: String) -> Option<As
             None
         }
     }
-}
-
-fn run_type_checker(ast: Ast) {
-    let mut type_checker = TypeChecker::new(&ast);
-    type_checker.check_ast();
 }
 
 #[allow(dead_code)]

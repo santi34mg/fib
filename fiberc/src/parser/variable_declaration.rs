@@ -3,15 +3,19 @@ use crate::parser::{TypeIdentifier, expression::Expression};
 #[derive(Debug, Clone)]
 pub struct VariableDeclaration {
     pub identifier: String,
-    pub variable_type: TypeIdentifier,
+    pub variable_type: Option<TypeIdentifier>,
     pub expression: Expression,
 }
 
 impl VariableDeclaration {
-    pub fn new(identifier: String, variable_type: TypeIdentifier, expression: Expression) -> Self {
+    pub fn new(
+        identifier: String,
+        variable_type: Option<TypeIdentifier>,
+        expression: Expression,
+    ) -> Self {
         Self {
             identifier,
-            variable_type: variable_type,
+            variable_type,
             expression,
         }
     }

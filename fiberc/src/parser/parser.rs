@@ -2,6 +2,7 @@ use std::fmt;
 use std::iter::Peekable;
 
 use crate::parser::function::{FunctionBody, FunctionParameter, FunctionSignature};
+use crate::parser::types::{Field, PointerVariant};
 use crate::parser::{Ast, Expression, Function, Statement, TypeIdentifier, VariableDeclaration};
 use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
 
@@ -62,8 +63,10 @@ where
         }
     }
 
-    fn peek(&mut self) -> Option<&Token> {
-        self.tokens.peek()
+    fn peek(&self) -> Option<Token> {
+        // Clone the internal Peekable iterator and peek on the clone so we don't need &mut
+        let mut cloned = self.tokens.clone();
+        cloned.peek().cloned()
     }
 
     fn next(&mut self) -> Option<Token> {
@@ -98,7 +101,7 @@ where
         F: FnOnce(&Token) -> bool,
     {
         if let Some(token) = self.peek() {
-            if pred(token) {
+            if pred(&token) {
                 return self.next();
             }
         }
@@ -336,37 +339,218 @@ where
             unreachable!()
         };
 
-        let type_token = self.expect_token(
-            |t| {
-                matches!(
-                    t.kind,
-                    TokenKind::Keyword(
-                        Keyword::Integer
-                            | Keyword::Float
-                            | Keyword::String
-                            | Keyword::Boolean
-                            | Keyword::Character
-                            | Keyword::Unit
-                    )
-                )
-            },
-            "parse_var_decl: expected type identifier",
-        )?;
-        let var_type = match type_token.kind {
-            TokenKind::Keyword(keyword) => match keyword {
+        let var_type = self.parse_type()?;
+
+        let expr = self.parse_initializer()?;
+        Ok(VariableDeclaration::new(ident, var_type, expr))
+    }
+
+    fn parse_type(&mut self) -> ParseResult<Option<TypeIdentifier>> {
+        let type_token = if let Some(t) = self.next() {
+            t
+        } else {
+            return Ok(None);
+        };
+        let var_type: TypeIdentifier = match type_token.kind {
+            TokenKind::Keyword(ref keyword) => match keyword {
                 Keyword::Integer => TypeIdentifier::Integer,
                 Keyword::Float => TypeIdentifier::Float,
                 Keyword::String => TypeIdentifier::String,
                 Keyword::Boolean => TypeIdentifier::Boolean,
                 Keyword::Character => TypeIdentifier::Character,
                 Keyword::Unit => TypeIdentifier::Unit,
-                _ => todo!(),
+                Keyword::Dynamic => TypeIdentifier::Dynamic,
+                Keyword::Blob => TypeIdentifier::Blob,
+                Keyword::Never => TypeIdentifier::Never,
+                Keyword::Struct => self.parse_struct_literal(&type_token)?,
+                Keyword::Variant => self.parse_variant_literal(&type_token)?,
+                Keyword::Unique => self.parse_pointer(PointerVariant::Unique)?,
+                Keyword::Shared => self.parse_pointer(PointerVariant::Shared)?,
+                Keyword::Weak => self.parse_pointer(PointerVariant::Weak)?,
+                Keyword::Function => self.parse_function_type(&type_token)?,
+                _ => return Err(self.error("not a type", type_token.line, type_token.column)),
             },
-            _ => todo!(),
+            TokenKind::Operator(Operator::Ampersand) => {
+                self.parse_pointer_type(PointerVariant::Raw, type_token)?
+            }
+            TokenKind::Identifier(identifier) => TypeIdentifier::UserDefinedType(identifier),
+            _ => {
+                return Err(self.error(
+                    "expected a type keyword",
+                    type_token.line,
+                    type_token.column,
+                ));
+            }
         };
+        Ok(Some(var_type))
+    }
 
-        let expr = self.parse_initializer()?;
-        Ok(VariableDeclaration::new(ident, var_type, expr))
+    fn parse_function_type(&mut self, type_token: &Token) -> ParseResult<TypeIdentifier> {
+        let _ = self.expect_token(
+            |t| {
+                matches!(
+                    t.kind,
+                    TokenKind::Punctuation(Punctuation::OpeningParenthesis)
+                )
+            },
+            "expected '('",
+        )?;
+        let mut argument_types: Vec<TypeIdentifier> = Vec::new();
+        loop {
+            let argument_type = match self.parse_type()? {
+                Some(type_id) => type_id,
+                None => {
+                    return Err(self.error(
+                        "expected type identifier",
+                        type_token.line,
+                        type_token.column,
+                    ));
+                }
+            };
+            argument_types.push(argument_type);
+            if let Some(t) = self.peek()
+                && matches!(
+                    t.kind,
+                    TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+                )
+            {
+                break;
+            } else {
+                let _ = self.expect_token(
+                    |comma| matches!(comma.kind, TokenKind::Punctuation(Punctuation::Comma)),
+                    "expected ','",
+                )?;
+            }
+        }
+        // consume ')'
+        self.next();
+        // expect '->'
+        let arrow = self.expect_token(
+            |t| matches!(t.kind, TokenKind::Operator(Operator::TypeReturn)),
+            "expected '('",
+        )?;
+        let return_type = match self.parse_type()? {
+            Some(rt) => rt,
+            None => {
+                return Err(self.error("expected a return typr", arrow.line, arrow.column));
+            }
+        };
+        Ok(TypeIdentifier::Function {
+            argument_types,
+            return_type: Box::new(return_type),
+        })
+    }
+
+    fn parse_pointer(&mut self, pointer_variant: PointerVariant) -> ParseResult<TypeIdentifier> {
+        let next_token = self.expect_token(
+            |t| matches!(t.kind, TokenKind::Operator(Operator::Ampersand)),
+            "expected AMPERSAND (&) after token",
+        )?;
+        if let TokenKind::Operator(Operator::Ampersand) = next_token.kind {
+            self.parse_pointer_type(pointer_variant, next_token)
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn parse_pointer_type(
+        &mut self,
+        pointer_variant: PointerVariant,
+        next_token: Token,
+    ) -> ParseResult<TypeIdentifier> {
+        let pointed_type = match self.parse_type()? {
+            Some(type_id) => type_id,
+            None => {
+                return Err(self.error("expected type", next_token.line, next_token.column));
+            }
+        };
+        Ok(TypeIdentifier::Pointer {
+            pointer_variant,
+            pointed_type: Box::new(pointed_type),
+        })
+    }
+
+    fn parse_struct_literal(&mut self, type_token: &Token) -> ParseResult<TypeIdentifier> {
+        match self.next() {
+            Some(first_token) => match first_token.kind {
+                TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => {
+                    let fields = self.parse_type_fields()?;
+                    Ok(TypeIdentifier::Struct { fields })
+                }
+                _ => {
+                    return Err(self.error(
+                        "expected an open curly brace",
+                        first_token.line,
+                        first_token.column,
+                    ));
+                }
+            },
+            None => {
+                return Err(self.error(
+                    "expected a type keyword",
+                    type_token.line,
+                    type_token.column,
+                ));
+            }
+        }
+    }
+
+    fn parse_variant_literal(&mut self, type_token: &Token) -> ParseResult<TypeIdentifier> {
+        match self.next() {
+            Some(first_token) => match first_token.kind {
+                TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => {
+                    let fields = self.parse_type_fields()?;
+                    Ok(TypeIdentifier::Variant { fields })
+                }
+                _ => {
+                    return Err(self.error(
+                        "expected an open curly brace",
+                        first_token.line,
+                        first_token.column,
+                    ));
+                }
+            },
+            None => {
+                return Err(self.error(
+                    "expected a type keyword",
+                    type_token.line,
+                    type_token.column,
+                ));
+            }
+        }
+    }
+
+    fn parse_type_fields(&mut self) -> ParseResult<Vec<Field>> {
+        let mut fields: Vec<Field> = Vec::new();
+        while let Some(next_token) = self.peek() {
+            let (next_token, label) = if let TokenKind::Identifier(id) = &next_token.kind {
+                // already peeked so it is safe to unwrap
+                let label = id.to_string();
+                (self.next().unwrap(), label)
+            } else {
+                let next_token = self.next().unwrap();
+                return Err(self.error(
+                    "expected an identifier",
+                    next_token.line,
+                    next_token.column,
+                ));
+            };
+            let field_type = match self.parse_type()? {
+                Some(field_type) => field_type,
+                None => {
+                    return Err(self.error(
+                        "expected a type identifier",
+                        next_token.line,
+                        next_token.column,
+                    ));
+                }
+            };
+            fields.push(Field {
+                label,
+                type_id: field_type,
+            });
+        }
+        Ok(fields)
     }
 
     fn parse_expression(&mut self) -> ParseResult<Expression> {
