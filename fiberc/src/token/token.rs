@@ -12,6 +12,7 @@ pub enum TokenKind {
     Operator(Operator),
     Punctuation(Punctuation),
     Unknown(char),
+    Comment,
 }
 #[derive(Debug, Clone)]
 pub struct Token {

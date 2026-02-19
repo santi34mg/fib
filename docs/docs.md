@@ -1,5 +1,7 @@
 # Lexicons
 
+## [Comments](lexicons/comments.md#comments)
+
 ## Keywords
 
 - [`module`]()
@@ -20,6 +22,7 @@
 - [`coroutine`]()
 - [`spawn`]()
 - [`resume`]()
+- [`yield`]()
 - [`addressof`]()
 - [`deref`]()
 - [`contract`]()
@@ -40,14 +43,14 @@
 - [`blob`]()
 - [`never`]()
 
-## Literals
+## [Literals](lexicons/literals/overview.md)
 
-- [Integers]()
-- [Floats]()
-- [`true`]()
-- [`false`]()
-- [Characters]()
-- [Strings]()
+- [Integers](lexicons/literals/integers.md#integer-literal)
+- [Floats](lexicons/literals/floats.md#float-literals)
+- [`true`](lexicons/literals/booleans.md#boolean-literals)
+- [`false`](lexicons/literals/booleans.md#boolean-literals)
+- [Characters](lexicons/literals/characters.md#character-literals)
+- [Strings](lexicons/literals/strings.md#string-literals)
 
 ## Operators
 

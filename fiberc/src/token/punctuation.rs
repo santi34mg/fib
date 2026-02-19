@@ -4,7 +4,7 @@ pub enum Punctuation {
     ClosingParenthesis,
     OpeningCurlyBrace,
     ClosingCurlyBrace,
-    OpenSquareBrace,
+    OpeningSquareBrace,
     ClosingSquareBrace,
     Semicolon,
     Comma,

@@ -167,7 +167,7 @@ impl<'input> Lexer<'input> {
                     Some('/') => {
                         self.bump();
                         self.skip_while(|c| c != '\n');
-                        None
+                        Some(TokenKind::Comment)
                     }
                     Some('=') => {
                         self.bump();
@@ -252,18 +252,10 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 Some(TokenKind::Punctuation(Punctuation::Colon))
             }
-            '\'' => {
-                self.bump(); // consume opening quote
-                let ch = self.bump()?; // get the character
-                if self.bump()? != '\'' {
-                    // expect closing quote
-                    return Some(Token::new(TokenKind::Unknown(ch), start_line, start_col));
-                }
-                Some(TokenKind::Literal(Literal::Character(ch)))
-            }
+            '\'' => self.lex_char_literal(),
             '[' => {
                 self.bump();
-                Some(TokenKind::Punctuation(Punctuation::OpenSquareBrace))
+                Some(TokenKind::Punctuation(Punctuation::OpeningSquareBrace))
             }
             ']' => {
                 self.bump();
@@ -274,6 +266,7 @@ impl<'input> Lexer<'input> {
                 let starting_pos = self.position;
                 self.skip_while(|c| c != '\"');
                 let s: &str = &self.input[starting_pos..self.position];
+                self.bump(); // consume closing quote
                 Some(TokenKind::Literal(Literal::String(s.to_string())))
             }
             '@' => {
@@ -288,6 +281,76 @@ impl<'input> Lexer<'input> {
             }
         };
         Some(Token::new(kind?, start_line, start_col))
+    }
+
+    fn lex_char_literal(&mut self) -> Option<TokenKind> {
+        // consume opening quote
+        self.bump();
+        // get the character
+        let ch = self.bump()?;
+        // if char is '\\' then it is an escape sequence
+        let ch = if ch == '\\' {
+            let esc = self.bump()?;
+            match esc {
+                'n' => '\n',
+                't' => '\t',
+                '\\' => '\\',
+                '\'' => '\'',
+                '\"' => '\"',
+                '0' => '\0',
+                'x' => {
+                    let mut hex = String::new();
+                    // get two hex digits
+                    for _ in 0..2 {
+                        let c = self.bump()?;
+                        if c.is_ascii_hexdigit() {
+                            hex.push(c);
+                        } else {
+                            panic!("Invalid hex escape sequence");
+                        }
+                    }
+                    let value = u8::from_str_radix(&hex, 16).unwrap_or_else(|e| {
+                        eprintln!("Error: {}\nfor hex string \"{}\"", e, hex);
+                        panic!();
+                    });
+                    value as char
+                }
+                'u' => {
+                    if self.peek() == Some('{') {
+                        self.bump(); // consume '{'
+                        let mut hex = String::new();
+                        while let Some(c) = self.peek() {
+                            if c == '}' {
+                                break;
+                            }
+                            if c.is_ascii_hexdigit() {
+                                hex.push(c);
+                                self.bump();
+                            } else {
+                                panic!("Invalid unicode escape sequence");
+                            }
+                        }
+                        self.bump(); // consume '}'
+                        let value = u32::from_str_radix(&hex, 16).unwrap_or_else(|e| {
+                            eprintln!("Error: {}\nfor unicode hex string \"{}\"", e, hex);
+                            panic!();
+                        });
+                        char::from_u32(value).unwrap_or_else(|| {
+                            panic!("Invalid unicode code point: {}", value);
+                        })
+                    } else {
+                        panic!("Invalid unicode escape sequence");
+                    }
+                }
+                c => {
+                    panic!("Invalid escape sequence: \\{}", c);
+                }
+            }
+        } else {
+            ch
+        };
+        self.bump(); // consume closing quote
+        Some(TokenKind::Literal(Literal::Character(ch)))
     }
 
     fn lex_numeric(&mut self, first: char) -> Option<TokenKind> {
@@ -358,6 +421,7 @@ impl<'input> Lexer<'input> {
             "coroutine" => TokenKind::Keyword(Keyword::Coroutine),
             "spawn" => TokenKind::Keyword(Keyword::Spawn),
             "resume" => TokenKind::Keyword(Keyword::Resume),
+            "yield" => TokenKind::Keyword(Keyword::Yield),
             "addressof" => TokenKind::Keyword(Keyword::Addressof),
             "deref" => TokenKind::Keyword(Keyword::Dereference),
             "contract" => TokenKind::Keyword(Keyword::Contract),
@@ -371,6 +435,7 @@ impl<'input> Lexer<'input> {
             "break" => TokenKind::Keyword(Keyword::Break),
             "continue" => TokenKind::Keyword(Keyword::Continue),
             "return" => TokenKind::Keyword(Keyword::Return),
+            "as" => TokenKind::Keyword(Keyword::As),
             "dynamic" => TokenKind::Keyword(Keyword::Dynamic),
             "blob" => TokenKind::Keyword(Keyword::Blob),
             "never" => TokenKind::Keyword(Keyword::Never),
