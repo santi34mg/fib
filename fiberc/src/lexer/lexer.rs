@@ -128,7 +128,7 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::AddAssign))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::Minus)),
+                    Some(_) => Some(TokenKind::Operator(Operator::Plus)),
                     None => todo!(),
                 }
             }
@@ -447,7 +447,7 @@ impl<'input> Lexer<'input> {
             "unit" => TokenKind::Keyword(Keyword::Unit),
             "unique" => TokenKind::Keyword(Keyword::Unique),
             "shared" => TokenKind::Keyword(Keyword::Shared),
-            "wak" => TokenKind::Keyword(Keyword::Weak),
+            "weak" => TokenKind::Keyword(Keyword::Weak),
             "true" => TokenKind::Literal(Literal::Boolean(true)),
             "false" => TokenKind::Literal(Literal::Boolean(false)),
             "null" => TokenKind::Literal(Literal::Null),

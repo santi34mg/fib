@@ -25,7 +25,7 @@ impl fmt::Display for ParseError {
     }
 }
 
-type ParseResult<T> = Result<T, ParseError>;
+pub type ParseResult<T> = Result<T, ParseError>;
 
 pub struct Parser<I>
 where
@@ -148,7 +148,7 @@ where
                     Statement::FunctionDeclaration(user_function)
                 }
                 TokenKind::Keyword(Keyword::Let) => {
-                    let stmt = self.parse_var_decl()?;
+                    let stmt = self.parse_variable_declaration()?;
                     Statement::VariableDeclaration(stmt)
                 }
                 TokenKind::Keyword(Keyword::Return) => {
@@ -226,7 +226,11 @@ where
                 }
                 _ => {
                     let t = token.clone();
-                    return Err(self.error("not implemented yet", t.line, t.column));
+                    return Err(self.error(
+                        &format!("not implemented yet: {:?}", t.kind),
+                        t.line,
+                        t.column,
+                    ));
                 }
             }
         } else {
@@ -270,15 +274,6 @@ where
         Ok(false)
     }
 
-    /// Helper to parse '= expr'
-    fn parse_initializer(&mut self) -> ParseResult<Expression> {
-        self.expect_token(
-            |t| matches!(t.kind, TokenKind::Operator(Operator::Assign)),
-            "expected '='",
-        )?;
-        self.parse_expression()
-    }
-
     /// Parses an assignment statement: identifier '=' expression
     fn parse_assignment(&mut self) -> ParseResult<(String, Expression)> {
         let ident_token = self.expect_token(
@@ -290,8 +285,11 @@ where
         } else {
             unreachable!()
         };
-
-        let expr = self.parse_initializer()?;
+        let _ = self.expect_token(
+            |t| matches!(t.kind, TokenKind::Operator(Operator::Assign)),
+            "expected '='",
+        );
+        let expr = self.parse_expression()?;
         Ok((identifier, expr))
     }
 
@@ -323,63 +321,68 @@ where
         Ok((identifier, op))
     }
 
-    fn parse_var_decl(&mut self) -> ParseResult<VariableDeclaration> {
-        self.expect_token(
+    /// Parses a variable declaration statement: let identifier [type] [= expression][;]
+    fn parse_variable_declaration(&mut self) -> ParseResult<VariableDeclaration> {
+        let let_token = self.expect_token(
             |t| matches!(t.kind, TokenKind::Keyword(Keyword::Let)),
-            "parse_var_decl: expected 'var' keyword",
+            "parse_var_decl: expected 'let' keyword",
         )?;
 
-        let ident_token = self.expect_token(
-            |t| matches!(t.kind, TokenKind::Identifier(_)),
-            "parse_var_decl: expected identifier",
-        )?;
-        let ident = if let TokenKind::Identifier(ident) = ident_token.kind {
+        let ident = if let TokenKind::Identifier(ident) = self
+            .expect_next("parse_var_decl: expected identifier")?
+            .kind
+        {
             ident
         } else {
-            unreachable!()
+            return Err(self.error("expected identifier", let_token.line, let_token.column));
         };
 
         let var_type = self.parse_type()?;
 
-        let expr = self.parse_initializer()?;
-        Ok(VariableDeclaration::new(ident, var_type, expr))
+        match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
+            Some(_) => {
+                let expr = self.parse_expression()?;
+                Ok(VariableDeclaration::new(ident, var_type, Some(expr)))
+            }
+            None => Ok(VariableDeclaration::new(ident, var_type, None)),
+        }
     }
 
-    fn parse_type(&mut self) -> ParseResult<Option<TypeIdentifier>> {
-        let type_token = if let Some(t) = self.next() {
+    pub fn parse_type(&mut self) -> ParseResult<Option<TypeIdentifier>> {
+        let type_token = if let Some(t) = self.peek() {
             t
         } else {
             return Ok(None);
         };
         let var_type: TypeIdentifier = match type_token.kind {
-            TokenKind::Keyword(ref keyword) => match keyword {
-                Keyword::Integer => TypeIdentifier::Integer,
-                Keyword::Float => TypeIdentifier::Float,
-                Keyword::String => TypeIdentifier::String,
-                Keyword::Boolean => TypeIdentifier::Boolean,
-                Keyword::Character => TypeIdentifier::Character,
-                Keyword::Unit => TypeIdentifier::Unit,
-                Keyword::Dynamic => TypeIdentifier::Dynamic,
-                Keyword::Blob => TypeIdentifier::Blob,
-                Keyword::Never => TypeIdentifier::Never,
-                Keyword::Struct => self.parse_struct_literal(&type_token)?,
-                Keyword::Variant => self.parse_variant_literal(&type_token)?,
-                Keyword::Unique => self.parse_pointer(PointerVariant::Unique)?,
-                Keyword::Shared => self.parse_pointer(PointerVariant::Shared)?,
-                Keyword::Weak => self.parse_pointer(PointerVariant::Weak)?,
-                Keyword::Function => self.parse_function_type(&type_token)?,
-                _ => return Err(self.error("not a type", type_token.line, type_token.column)),
-            },
+            TokenKind::Keyword(ref keyword) => {
+                self.next();
+                match keyword {
+                    Keyword::Integer => TypeIdentifier::Integer,
+                    Keyword::Float => TypeIdentifier::Float,
+                    Keyword::String => TypeIdentifier::String,
+                    Keyword::Boolean => TypeIdentifier::Boolean,
+                    Keyword::Character => TypeIdentifier::Character,
+                    Keyword::Unit => TypeIdentifier::Unit,
+                    Keyword::Dynamic => TypeIdentifier::Dynamic,
+                    Keyword::Blob => TypeIdentifier::Blob,
+                    Keyword::Never => TypeIdentifier::Never,
+                    Keyword::Struct => self.parse_struct_literal(&type_token)?,
+                    Keyword::Variant => self.parse_variant_literal(&type_token)?,
+                    Keyword::Unique => self.parse_pointer(PointerVariant::Unique)?,
+                    Keyword::Shared => self.parse_pointer(PointerVariant::Shared)?,
+                    Keyword::Weak => self.parse_pointer(PointerVariant::Weak)?,
+                    Keyword::Function => self.parse_function_type(&type_token)?,
+                    _ => return Err(self.error("not a type", type_token.line, type_token.column)),
+                }
+            }
             TokenKind::Operator(Operator::Ampersand) => {
+                self.next();
                 self.parse_pointer_type(PointerVariant::Raw, type_token)?
             }
             TokenKind::Identifier(identifier) => TypeIdentifier::UserDefinedType(identifier),
             _ => {
-                return Err(self.error(
-                    "expected a type keyword",
-                    type_token.line,
-                    type_token.column,
-                ));
+                return Ok(None);
             }
         };
         Ok(Some(var_type))
@@ -523,10 +526,16 @@ where
     fn parse_type_fields(&mut self) -> ParseResult<Vec<Field>> {
         let mut fields: Vec<Field> = Vec::new();
         while let Some(next_token) = self.peek() {
-            let (next_token, label) = if let TokenKind::Identifier(id) = &next_token.kind {
-                // already peeked so it is safe to unwrap
+            match next_token.kind {
+                TokenKind::Punctuation(Punctuation::ClosingCurlyBrace) => {
+                    self.next(); // consume the closing curly brace
+                    break;
+                }
+                _ => {}
+            }
+            let label = if let TokenKind::Identifier(id) = &next_token.kind {
                 let label = id.to_string();
-                (self.next().unwrap(), label)
+                label
             } else {
                 let next_token = self.next().unwrap();
                 return Err(self.error(
@@ -535,6 +544,7 @@ where
                     next_token.column,
                 ));
             };
+            self.next();
             let field_type = match self.parse_type()? {
                 Some(field_type) => field_type,
                 None => {
@@ -549,6 +559,7 @@ where
                 label,
                 type_id: field_type,
             });
+            self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
         }
         Ok(fields)
     }

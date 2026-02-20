@@ -34,13 +34,7 @@ fn run_lexer(src: &String) -> Vec<Token> {
 fn run_parser<'a>(tokens: Vec<Token>, filename: String, source: String) -> Option<Ast> {
     // TODO: improve error handling
     let mut parser = Parser::new(tokens.into_iter(), filename, source);
-    match parser.parse_program() {
-        Ok(ast) => Some(ast),
-        Err(err) => {
-            println!("{}", err);
-            None
-        }
-    }
+    parser.parse_program().ok()
 }
 
 #[allow(dead_code)]

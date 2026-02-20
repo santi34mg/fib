@@ -3,6 +3,7 @@ pub mod expression;
 pub mod function;
 pub mod parser;
 pub mod statement;
+pub mod test;
 pub mod types;
 pub mod variable_declaration;
 
