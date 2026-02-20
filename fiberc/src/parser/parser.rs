@@ -178,32 +178,13 @@ where
                             identifier: stmt.0,
                             expr: stmt.1,
                         }
-                    } else if self.is_increment_decrement()? {
-                        let (identifier, op) = self.parse_increment_decrement()?;
-                        // Represent as assignment: x++ => x = x + 1, x-- => x = x - 1
-                        let expr = Expression::Binary {
-                            left: Box::new(Expression::Identifier(identifier.clone())),
-                            operator: op,
-                            right: Box::new(Expression::Literal(Literal::Integer(1))),
-                        };
-                        Statement::Assignment { identifier, expr }
                     } else {
                         let expr = self.parse_expression()?;
                         Statement::Expression(expr)
                     }
                 }
                 TokenKind::Keyword(Keyword::For) => {
-                    // For simplicity, treat for as an expression statement for now
-                    self.next(); // consume 'for'
-                    let condition = self.parse_expression()?;
-                    // Use shared parse_body to consume the block
-                    let _body = self.parse_body()?;
-                    // Represent while as a function call for now (to be implemented properly later)
-                    let while_expr = Expression::Call {
-                        callee: Box::new(Expression::Identifier("while".to_string())),
-                        args: vec![condition], // Incomplete representation
-                    };
-                    Statement::Expression(while_expr)
+                    todo!()
                 }
                 TokenKind::Literal(_) => {
                     let expr = self.parse_expression()?;
@@ -257,23 +238,6 @@ where
         Ok(false)
     }
 
-    /// Checks if the next tokens represent an increment or decrement (identifier followed by ++ or --)
-    fn is_increment_decrement(&mut self) -> ParseResult<bool> {
-        let mut iter = self.tokens.clone();
-        if let Some(token) = iter.next() {
-            if let TokenKind::Identifier(_) = token.kind {
-                if let Some(next_token) = iter.next() {
-                    if let TokenKind::Operator(Operator::AddAssign)
-                    | TokenKind::Operator(Operator::MinusAssign) = next_token.kind
-                    {
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-        Ok(false)
-    }
-
     /// Parses an assignment statement: identifier '=' expression
     fn parse_assignment(&mut self) -> ParseResult<(String, Expression)> {
         let ident_token = self.expect_token(
@@ -291,34 +255,6 @@ where
         );
         let expr = self.parse_expression()?;
         Ok((identifier, expr))
-    }
-
-    /// Parses an increment or decrement statement: identifier ++ or identifier --
-    fn parse_increment_decrement(&mut self) -> ParseResult<(String, Operator)> {
-        let ident_token = self.expect_token(
-            |t| matches!(t.kind, TokenKind::Identifier(_)),
-            "parse_increment_decrement: expected identifier",
-        )?;
-        let identifier = if let TokenKind::Identifier(id) = ident_token.kind {
-            id
-        } else {
-            unreachable!()
-        };
-
-        let op_token = self.expect_next("parse_increment_decrement: expected '++' or '--'")?;
-        let op = match op_token.kind {
-            TokenKind::Operator(Operator::AddAssign) => Operator::Plus,
-            TokenKind::Operator(Operator::MinusAssign) => Operator::Minus,
-            _ => {
-                return Err(self.error(
-                    "parse_increment_decrement: expected '++' or '--'",
-                    op_token.line,
-                    op_token.column,
-                ));
-            }
-        };
-
-        Ok((identifier, op))
     }
 
     /// Parses a variable declaration statement: let identifier [type] [= expression][;]
