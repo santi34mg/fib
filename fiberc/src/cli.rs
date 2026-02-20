@@ -89,5 +89,5 @@ fn build_command(file: &PathBuf, config: &CompilerConfig) {
 }
 
 fn print_usage() {
-    eprintln!("Usage: fiber <command>\nCommands: run, init");
+    eprintln!("Usage: fiber <command>\nCommands: build, init");
 }
