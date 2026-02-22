@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_mutable_keyword() {
-        let test_string = "mutable";
+        let test_string = "mut";
         let lexer = Lexer::new(test_string);
         lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Mutable)))
     }
