@@ -1,12 +1,13 @@
-use crate::hir;
-use crate::parser::{Ast, Expression, Statement, TypeIdentifier, function::FunctionBody};
+use crate::ast::ast::{DeclarationNode, Expression as PExpr, FunctionBody, TypeIdentifier};
+use crate::ast::{Ast, StatementNode};
+use crate::hir::{HIRExpr, HIRFunction, HIRStmt, Type};
+use crate::token::literal::Literal;
 
-fn map_type(ty: &TypeIdentifier) -> Result<hir::Type, String> {
-    use crate::parser::TypeIdentifier;
+fn map_type(ty: &TypeIdentifier) -> Result<Type, String> {
     match ty {
-        TypeIdentifier::Integer => Ok(hir::Type::Int),
-        TypeIdentifier::Boolean => Ok(hir::Type::Bool),
-        TypeIdentifier::Unit => Ok(hir::Type::Unit),
+        TypeIdentifier::Integer => Ok(Type::Int),
+        TypeIdentifier::Boolean => Ok(Type::Bool),
+        TypeIdentifier::Unit => Ok(Type::Unit),
         TypeIdentifier::Function {
             argument_types,
             return_type,
@@ -16,19 +17,16 @@ fn map_type(ty: &TypeIdentifier) -> Result<hir::Type, String> {
                 args.push(map_type(a)?);
             }
             let ret = Box::new(map_type(return_type)?);
-            Ok(hir::Type::Function { args, ret })
+            Ok(Type::Function { args, ret })
         }
         _ => Err(format!("unsupported type in semantic analysis: {:?}", ty)),
     }
 }
 
-fn expr_to_hir(expr: &Expression) -> Result<hir::HIRExpr, String> {
-    use crate::parser::expression::Expression as PExpr;
-    use crate::token::literal::Literal;
-
+fn expr_to_hir(expr: &PExpr) -> Result<HIRExpr, String> {
     match expr {
-        PExpr::Literal(Literal::Integer(i)) => Ok(hir::HIRExpr::LiteralInt(*i)),
-        PExpr::Literal(Literal::Boolean(b)) => Ok(hir::HIRExpr::LiteralBool(*b)),
+        PExpr::Literal(Literal::Integer(i)) => Ok(HIRExpr::LiteralInt(*i)),
+        PExpr::Literal(Literal::Boolean(b)) => Ok(HIRExpr::LiteralBool(*b)),
         PExpr::Literal(Literal::Float(_)) => {
             Err("Float literals are not supported in minimal semantic pass".to_string())
         }
@@ -38,8 +36,8 @@ fn expr_to_hir(expr: &Expression) -> Result<hir::HIRExpr, String> {
         PExpr::Literal(Literal::String(_)) => {
             Err("String literals are not supported in minimal semantic pass".to_string())
         }
-        PExpr::Literal(Literal::Null) => Ok(hir::HIRExpr::Null),
-        PExpr::Identifier(name) => Ok(hir::HIRExpr::Var(name.clone())),
+        PExpr::Literal(Literal::Null) => Ok(HIRExpr::Null),
+        PExpr::Identifier(name) => Ok(HIRExpr::Var(name.clone())),
         PExpr::Binary {
             left,
             operator,
@@ -48,7 +46,7 @@ fn expr_to_hir(expr: &Expression) -> Result<hir::HIRExpr, String> {
             let l = expr_to_hir(left)?;
             let r = expr_to_hir(right)?;
             let op = format!("{:?}", operator);
-            Ok(hir::HIRExpr::Binary {
+            Ok(HIRExpr::Binary {
                 left: Box::new(l),
                 op,
                 right: Box::new(r),
@@ -63,7 +61,7 @@ fn expr_to_hir(expr: &Expression) -> Result<hir::HIRExpr, String> {
                     for a in args.iter() {
                         hargs.push(expr_to_hir(a)?);
                     }
-                    Ok(hir::HIRExpr::Call {
+                    Ok(HIRExpr::Call {
                         callee: name.clone(),
                         args: hargs,
                     })
@@ -80,20 +78,18 @@ fn expr_to_hir(expr: &Expression) -> Result<hir::HIRExpr, String> {
             // represent unary as binary with a zero/true literal where appropriate for now
             let inner = expr_to_hir(expression)?;
             let op = format!("{:?}", operator);
-            Ok(hir::HIRExpr::Binary {
+            Ok(HIRExpr::Binary {
                 left: Box::new(inner.clone()),
                 op,
-                right: Box::new(hir::HIRExpr::LiteralInt(0)),
+                right: Box::new(HIRExpr::LiteralInt(0)),
             })
         }
     }
 }
 
-fn stmt_to_hir(stmt: &Statement) -> Result<hir::HIRStmt, String> {
-    use crate::parser::statement::Statement as S;
-
+fn stmt_to_hir(stmt: &StatementNode) -> Result<HIRStmt, String> {
     match stmt {
-        S::VariableDeclaration(var) => {
+        StatementNode::VariableDeclaration(var) => {
             let init = match &var.expression {
                 Some(e) => Some(expr_to_hir(e)?),
                 None => None,
@@ -102,25 +98,25 @@ fn stmt_to_hir(stmt: &Statement) -> Result<hir::HIRStmt, String> {
                 Some(t) => Some(map_type(t)?),
                 None => None,
             };
-            Ok(hir::HIRStmt::Let {
+            Ok(HIRStmt::Let {
                 name: var.identifier.clone(),
                 ty,
                 init,
             })
         }
-        S::Assignment { identifier, expr } => {
+        StatementNode::Assignment { identifier, expr } => {
             let e = expr_to_hir(expr)?;
-            Ok(hir::HIRStmt::Assign {
+            Ok(HIRStmt::Assign {
                 name: identifier.clone(),
                 expr: e,
             })
         }
-        S::Expression(e) => Ok(hir::HIRStmt::Expr(expr_to_hir(e)?)),
-        S::Return(opt) => Ok(hir::HIRStmt::Return(match opt {
+        StatementNode::ExpressionStatement(e) => Ok(HIRStmt::Expr(expr_to_hir(e)?)),
+        StatementNode::Return(opt) => Ok(HIRStmt::Return(match opt {
             Some(e) => Some(expr_to_hir(e)?),
             None => None,
         })),
-        S::If {
+        StatementNode::If {
             condition,
             then_branch,
             else_branch,
@@ -140,13 +136,13 @@ fn stmt_to_hir(stmt: &Statement) -> Result<hir::HIRStmt, String> {
                 }
                 None => None,
             };
-            Ok(hir::HIRStmt::If {
+            Ok(HIRStmt::If {
                 cond,
                 then_branch: then_h,
                 else_branch: else_h,
             })
         }
-        S::For {
+        StatementNode::For {
             initializer,
             condition,
             increment,
@@ -168,58 +164,66 @@ fn stmt_to_hir(stmt: &Statement) -> Result<hir::HIRStmt, String> {
             for s in body.iter() {
                 body_h.push(stmt_to_hir(s)?);
             }
-            Ok(hir::HIRStmt::For {
+            Ok(HIRStmt::For {
                 init: init_h,
                 cond: cond_h,
                 post: post_h,
                 body: body_h,
             })
         }
-        S::FunctionDeclaration(_) => Err(
-            "nested function declarations are not supported in minimal semantic pass".to_string(),
-        ),
     }
 }
 
 /// Perform semantic analysis on the parser AST and produce a vector of HIR functions.
-pub fn analyze(ast: &Ast) -> Result<Vec<hir::HIRFunction>, String> {
-    let mut result: Vec<hir::HIRFunction> = Vec::new();
+pub fn analyze(ast: &Ast) -> Result<Vec<HIRFunction>, String> {
+    let mut result: Vec<HIRFunction> = Vec::new();
 
-    for stmt in ast.statements.iter() {
-        match stmt {
-            Statement::FunctionDeclaration(f) => {
-                // Map signature
-                let sig = &f.signature;
-                let mut params: Vec<(String, hir::Type)> = Vec::new();
-                for p in sig.parameters.iter() {
-                    let pty = map_type(&p.parameter_type)?;
-                    params.push((p.parameter_name.clone(), pty));
-                }
-                let ret_type = map_type(&sig.return_type)?;
+    // AST now groups declarations under modules. Iterate modules and their declarations.
+    for module in ast.program.modules.iter() {
+        for decl in module.declarations.iter() {
+            match decl {
+                DeclarationNode::FunctionDeclaration(f) => {
+                    // Map signature
+                    let sig = &f.signature;
+                    let mut params: Vec<(String, Type)> = Vec::new();
+                    for p in sig.parameters.iter() {
+                        let pty = map_type(&p.parameter_type)?;
+                        params.push((p.parameter_name.clone(), pty));
+                    }
+                    let ret_type = match &sig.return_type {
+                        Some(rt) => map_type(rt)?,
+                        None => Type::Unit,
+                    };
 
-                // Map body statements (only if FunctionBody::Statements)
-                let mut body_h: Vec<hir::HIRStmt> = Vec::new();
-                match &f.body {
-                    FunctionBody::Statements(stmts) => {
-                        for s in stmts.iter() {
-                            body_h.push(stmt_to_hir(s)?);
+                    // Map body statements (only if FunctionBody::Statements)
+                    let mut body_h: Vec<HIRStmt> = Vec::new();
+                    match &f.body {
+                        Some(FunctionBody::Statements(stmts)) => {
+                            for s in stmts.iter() {
+                                body_h.push(stmt_to_hir(s)?);
+                            }
+                        }
+                        None => {
+                            // No body, treat as empty function for now
                         }
                     }
-                    FunctionBody::Empty => {}
-                }
 
-                result.push(hir::HIRFunction {
-                    name: sig.name.clone(),
-                    params,
-                    ret_type,
-                    body: body_h,
-                });
-            }
-            other => {
-                return Err(format!(
-                    "only top-level functions supported in minimal semantic pass: found {:?}",
-                    other
-                ));
+                    result.push(HIRFunction {
+                        name: sig.name.clone(),
+                        params,
+                        ret_type,
+                        body: body_h,
+                    });
+                }
+                DeclarationNode::ModuleDeclaration(_m) => {
+                    // Ignore module declarations for this minimal pass, but could be used in future passes for error checking or namespacing
+                }
+                other => {
+                    return Err(format!(
+                        "only top-level functions supported in minimal semantic pass: found {:?}",
+                        other
+                    ));
+                }
             }
         }
     }
