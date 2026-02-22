@@ -1,52 +1,68 @@
 #[cfg(test)]
 mod tests {
-    use crate::{
-        lexer::Lexer,
-        parser::{
-            Ast, Expression, Parser, Statement, TypeIdentifier, VariableDeclaration,
-            types::{Field, PointerVariant},
-        },
-        token::{Literal, Operator, Token},
+    use crate::ast::ast::{
+        DeclarationNode, Expression, Field, PointerVariant, TypeIdentifier, VariableDeclaration,
     };
+    use crate::ast::{Ast, StatementNode};
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+    use crate::token::{Literal, Operator, Token};
 
     fn get_ast(test_string: &str) -> Ast {
-        let lexer = Lexer::new(test_string);
+        // ensure input is wrapped in a module for parser.parse_module
+        let src = if test_string.trim_start().starts_with("module") {
+            test_string.to_string()
+        } else {
+            format!("module test; {}", test_string)
+        };
+        let lexer = Lexer::new(&src);
         let tokens: Vec<Token> = lexer.collect();
-        let mut parser = Parser::new(
-            tokens.into_iter(),
-            "test_instance".to_string(),
-            test_string.to_string(),
-        );
-        match parser.parse_program() {
+        let mut parser = Parser::new(tokens.into_iter(), "test_instance", src.clone());
+        match parser.parse_module() {
             Ok(ast) => ast,
-            Err(e) => panic!("Could not parse {}, error:\n{}", test_string, e),
+            Err(e) => panic!("Could not parse {}, error:\n{}", src, e),
         }
+    }
+
+    fn module_statements(ast: &Ast) -> Vec<&StatementNode> {
+        let mut stmts = Vec::new();
+        if let Some(module) = ast.program.modules.get(0) {
+            for decl in &module.declarations {
+                if let DeclarationNode::Statement(s) = decl {
+                    stmts.push(s);
+                }
+            }
+        }
+        stmts
     }
 
     #[test]
     fn test_expression_literal() {
         let test_string = "1";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
+        assert_eq!(ast.program.modules.len(), 1);
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
         assert!(matches!(
-            &ast.statements[0],
-            Statement::Expression(Expression::Literal(Literal::Integer(1)))
-        ))
+            stmts[0],
+            StatementNode::ExpressionStatement(Expression::Literal(Literal::Integer(1)))
+        ));
     }
 
     #[test]
     fn test_expression_addition() {
         let test_string = "1 + 2";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::Expression(Expression::Binary {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::ExpressionStatement(Expression::Binary {
             left,
             operator,
             right,
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             let l_expr = *left.clone();
-            let op = *operator;
+            let op = operator;
             let r_expr = *right.clone();
             assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
             assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
@@ -60,15 +76,16 @@ mod tests {
     fn test_expression_substraction() {
         let test_string = "1 - 2";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::Expression(Expression::Binary {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::ExpressionStatement(Expression::Binary {
             left,
             operator,
             right,
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             let l_expr = *left.clone();
-            let op = *operator;
+            let op = operator;
             let r_expr = *right.clone();
             assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
             assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
@@ -82,15 +99,16 @@ mod tests {
     fn test_expression_multiplication() {
         let test_string = "1 * 2";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::Expression(Expression::Binary {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::ExpressionStatement(Expression::Binary {
             left,
             operator,
             right,
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             let l_expr = *left.clone();
-            let op = *operator;
+            let op = operator;
             let r_expr = *right.clone();
             assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
             assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
@@ -104,15 +122,16 @@ mod tests {
     fn test_expression_division() {
         let test_string = "1 / 2";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::Expression(Expression::Binary {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::ExpressionStatement(Expression::Binary {
             left,
             operator,
             right,
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             let l_expr = *left.clone();
-            let op = *operator;
+            let op = operator;
             let r_expr = *right.clone();
             assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
             assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
@@ -126,15 +145,16 @@ mod tests {
     fn test_expression_order_operations() {
         let test_string = "2 * 3 + 2";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::Expression(Expression::Binary {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::ExpressionStatement(Expression::Binary {
             left,
             operator,
             right,
-        }) = &ast.statements[0]
+        }) = &stmts[0]
         {
             let l_expr = *left.clone();
-            let op = *operator;
+            let op = operator;
             let r_expr = *right.clone();
             assert!(matches!(l_expr, Expression::Binary { .. }));
             assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
@@ -148,13 +168,14 @@ mod tests {
     fn test_full_variable_declaration() {
         let test_string = "let x int = 5;";
         let ast = get_ast(test_string);
-        println!("{:#?}", ast.statements);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::VariableDeclaration(VariableDeclaration {
+        // println!("{:#?}", ast.statements); // Removed: Ast has no 'statements' field
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::VariableDeclaration(VariableDeclaration {
             identifier,
             variable_type: Some(TypeIdentifier::Integer),
             expression: Some(Expression::Literal(Literal::Integer(5))),
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             assert_eq!(identifier, "x");
         } else {
@@ -166,12 +187,13 @@ mod tests {
     fn test_variable_declaration_without_type() {
         let test_string = "let x = 5;";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::VariableDeclaration(VariableDeclaration {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::VariableDeclaration(VariableDeclaration {
             identifier,
             variable_type: None,
             expression: Some(Expression::Literal(Literal::Integer(5))),
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             assert_eq!(identifier, "x");
         } else {
@@ -183,12 +205,13 @@ mod tests {
     fn test_variable_declaration_without_expresion() {
         let test_string = "let x int;";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::VariableDeclaration(VariableDeclaration {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::VariableDeclaration(VariableDeclaration {
             identifier,
             variable_type: Some(TypeIdentifier::Integer),
             expression: None,
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             assert_eq!(identifier, "x");
         } else {
@@ -200,12 +223,13 @@ mod tests {
     fn test_variable_declaration_without_semicolon() {
         let test_string = "let x int = 5";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::VariableDeclaration(VariableDeclaration {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::VariableDeclaration(VariableDeclaration {
             identifier,
             variable_type: Some(TypeIdentifier::Integer),
             expression: Some(Expression::Literal(Literal::Integer(5))),
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             assert_eq!(identifier, "x");
         } else {
@@ -217,12 +241,13 @@ mod tests {
     fn test_variable_declaration_only_identifier() {
         let test_string = "let x";
         let ast = get_ast(test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::VariableDeclaration(VariableDeclaration {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::VariableDeclaration(VariableDeclaration {
             identifier,
             variable_type: None,
             expression: None,
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             assert_eq!(identifier, "x");
         } else {
@@ -233,12 +258,13 @@ mod tests {
     fn test_type(type_string: String, expected_type: TypeIdentifier) {
         let test_string = format!("let x {};", type_string);
         let ast = get_ast(&test_string);
-        assert_eq!(ast.statements.len(), 1);
-        if let Statement::VariableDeclaration(VariableDeclaration {
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::VariableDeclaration(VariableDeclaration {
             identifier,
             variable_type: Some(var_type),
             expression: None,
-        }) = &ast.statements[0]
+        }) = stmts[0]
         {
             assert_eq!(identifier, "x");
             assert_eq!(*var_type, expected_type);
