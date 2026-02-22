@@ -9,3 +9,5 @@ toml = "0.9.8"
 clap = { version = "4.5.60", features = ["derive"]}
 regex = "1.12.3"
 inkwell = { version = "0.8.0", features = ["llvm17-0"] }
+walkdir = "2.3.4"
+petgraph = "0.6.1"
