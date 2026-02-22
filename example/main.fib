@@ -1,0 +1,11 @@
+module main;
+
+function main() {
+    let x int = 5;
+    let y int;
+
+    y = 10;
+
+    let z = x + y;
+    return z + 1;
+}

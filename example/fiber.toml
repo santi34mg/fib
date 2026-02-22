@@ -1,2 +1,2 @@
 main_module_path = "main.fib"
-is_debug = false
+is_debug = true
