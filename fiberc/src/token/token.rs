@@ -1,12 +1,15 @@
+use crate::token::builtin::Builtin;
 use crate::token::keyword::Keyword;
 use crate::token::literal::Literal;
 use crate::token::operator::Operator;
 use crate::token::punctuation::Punctuation;
+use crate::token::identifier::Identifier;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // The identifier token contains the name of the identifier as a string
-    Identifier(String),
+    Identifier(Identifier),
+    Builtin(Builtin),
     Literal(Literal),
     Keyword(Keyword),
     Operator(Operator),
@@ -26,3 +29,4 @@ impl Token {
         return Self { kind, line, column };
     }
 }
+

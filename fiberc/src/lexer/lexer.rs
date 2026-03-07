@@ -1,7 +1,7 @@
 use core::panic;
 use std::char;
 
-use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
+use crate::token::{builtin::{Builtin, BuiltinType}, identifier::Identifier, Keyword, Literal, Operator, Punctuation, Token, TokenKind};
 
 pub struct Lexer<'input> {
     input: &'input str,
@@ -381,9 +381,9 @@ impl<'input> Lexer<'input> {
                 }
                 c if c.is_ascii_digit() => (10, |c: char| c.is_ascii_digit() || c == '.'),
                 '.' => (10, |c: char| c.is_ascii_digit() || c == '.'),
-                // TODO: better error handling
-                _ => {
-                    panic!()
+                _c => {
+                    // anything else means its just one digit
+                    (10, |c: char| c.is_ascii_digit() || c == '.')
                 }
             }
         } else {
@@ -395,7 +395,7 @@ impl<'input> Lexer<'input> {
             let value = ("0".to_string() + num_str).parse::<f32>().ok()?;
             return Some(TokenKind::Literal(Literal::Float(value)));
         } else {
-            let value = u32::from_str_radix(num_str, base).unwrap_or_else(|e| {
+            let value = u64::from_str_radix(num_str, base).unwrap_or_else(|e| {
                 eprintln!("Error: {}\nfor string \"{}\"", e, num_str);
                 // TODO: better errors
                 panic!();
@@ -408,50 +408,48 @@ impl<'input> Lexer<'input> {
         let start = self.position;
         self.skip_while(|c| c.is_alphanumeric() || c == '_');
         let name = &self.input[start..self.position];
+        // for now, "__<identifier>" is reserved for internal identifiers
         match name {
-            "module" => TokenKind::Keyword(Keyword::Module),
-            "use" => TokenKind::Keyword(Keyword::Use),
-            "public" => TokenKind::Keyword(Keyword::Public),
-            "private" => TokenKind::Keyword(Keyword::Private),
-            "let" => TokenKind::Keyword(Keyword::Let),
-            "mut" => TokenKind::Keyword(Keyword::Mutable),
-            "function" => TokenKind::Keyword(Keyword::Function),
-            "match" => TokenKind::Keyword(Keyword::Match),
-            "when" => TokenKind::Keyword(Keyword::When),
+            "let"       => TokenKind::Keyword(Keyword::Let),
+            "mut"       => TokenKind::Keyword(Keyword::Mutable),
+            "function"  => TokenKind::Keyword(Keyword::Function),
+            "switch"    => TokenKind::Keyword(Keyword::Switch),
+            "when"      => TokenKind::Keyword(Keyword::When),
             "coroutine" => TokenKind::Keyword(Keyword::Coroutine),
-            "spawn" => TokenKind::Keyword(Keyword::Spawn),
-            "resume" => TokenKind::Keyword(Keyword::Resume),
-            "yield" => TokenKind::Keyword(Keyword::Yield),
+            "spawn"     => TokenKind::Keyword(Keyword::Spawn),
+            "resume"    => TokenKind::Keyword(Keyword::Resume),
+            "yield"     => TokenKind::Keyword(Keyword::Yield),
             "addressof" => TokenKind::Keyword(Keyword::Addressof),
-            "deref" => TokenKind::Keyword(Keyword::Dereference),
-            "contract" => TokenKind::Keyword(Keyword::Contract),
-            "impl" => TokenKind::Keyword(Keyword::Implementation),
-            "type" => TokenKind::Keyword(Keyword::Type),
-            "struct" => TokenKind::Keyword(Keyword::Struct),
-            "variant" => TokenKind::Keyword(Keyword::Variant),
-            "if" => TokenKind::Keyword(Keyword::If),
-            "else" => TokenKind::Keyword(Keyword::Else),
-            "for" => TokenKind::Keyword(Keyword::For),
-            "break" => TokenKind::Keyword(Keyword::Break),
-            "continue" => TokenKind::Keyword(Keyword::Continue),
-            "return" => TokenKind::Keyword(Keyword::Return),
-            "as" => TokenKind::Keyword(Keyword::As),
-            "dynamic" => TokenKind::Keyword(Keyword::Dynamic),
-            "blob" => TokenKind::Keyword(Keyword::Blob),
-            "never" => TokenKind::Keyword(Keyword::Never),
-            "int" => TokenKind::Keyword(Keyword::Integer),
-            "float" => TokenKind::Keyword(Keyword::Float),
-            "string" => TokenKind::Keyword(Keyword::String),
-            "bool" => TokenKind::Keyword(Keyword::Boolean),
-            "char" => TokenKind::Keyword(Keyword::Character),
-            "unit" => TokenKind::Keyword(Keyword::Unit),
-            "unique" => TokenKind::Keyword(Keyword::Unique),
-            "shared" => TokenKind::Keyword(Keyword::Shared),
-            "weak" => TokenKind::Keyword(Keyword::Weak),
-            "true" => TokenKind::Literal(Literal::Boolean(true)),
-            "false" => TokenKind::Literal(Literal::Boolean(false)),
-            "null" => TokenKind::Literal(Literal::Null),
-            _ => TokenKind::Identifier(name.to_string()),
+            "deref"     => TokenKind::Keyword(Keyword::Dereference),
+            "contract"  => TokenKind::Keyword(Keyword::Contract),
+            "type"      => TokenKind::Keyword(Keyword::Type),
+            "impl"      => TokenKind::Keyword(Keyword::Implementation),
+            "struct"    => TokenKind::Keyword(Keyword::Struct),
+            "enum"      => TokenKind::Keyword(Keyword::Enum),
+            "union"     => TokenKind::Keyword(Keyword::Union),
+            "if"        => TokenKind::Keyword(Keyword::If),
+            "else"      => TokenKind::Keyword(Keyword::Else),
+            "for"       => TokenKind::Keyword(Keyword::For),
+            "break"     => TokenKind::Keyword(Keyword::Break),
+            "continue"  => TokenKind::Keyword(Keyword::Continue),
+            "return"    => TokenKind::Keyword(Keyword::Return),
+            "true"      => TokenKind::Literal(Literal::Boolean(true)),
+            "false"     => TokenKind::Literal(Literal::Boolean(false)),
+            "null"      => TokenKind::Literal(Literal::Null),
+            "void"      => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Void)),
+            "uint8"     => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt8)),
+            "uint16"    => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt16)),
+            "uint32"    => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt32)),
+            "uint64"    => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt64)),
+            "sint8"     => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::SInt8)),
+            "sint16"    => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::SInt16)),
+            "sint32"    => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::SInt32)),
+            "sint64"    => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::SInt64)),
+            "float32"   => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float32)),
+            "float64"   => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float64)),
+            "char"      => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Char)),
+            "bool"      => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Boolean)),
+            _ => TokenKind::Identifier(Identifier {identifier: name.to_string()}),
         }
     }
 }

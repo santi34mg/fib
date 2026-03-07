@@ -2,7 +2,7 @@
 mod tests {
     use crate::{
         lexer::Lexer,
-        token::{Keyword, Literal, Operator, Punctuation, TokenKind},
+        token::{identifier::Identifier, Keyword, Literal, Operator, Punctuation, TokenKind},
     };
 
     #[test]
@@ -11,7 +11,9 @@ mod tests {
         let expected = [
             TokenKind::Comment,
             TokenKind::Keyword(Keyword::Let),
-            TokenKind::Identifier("x".to_string()),
+            TokenKind::Identifier(Identifier {
+                identifier: "x".to_string(),
+            }),
             TokenKind::Operator(Operator::Assign),
             TokenKind::Literal(Literal::Integer(5)),
             TokenKind::Punctuation(Punctuation::Semicolon),
@@ -136,34 +138,6 @@ mod tests {
     }
 
     #[test]
-    fn test_module_keyword() {
-        let test_string = "module";
-        let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Module)))
-    }
-
-    #[test]
-    fn test_use_keyword() {
-        let test_string = "use";
-        let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Use)))
-    }
-
-    #[test]
-    fn test_public_keyword() {
-        let test_string = "public";
-        let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Public)))
-    }
-
-    #[test]
-    fn test_private_keyword() {
-        let test_string = "private";
-        let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Private)))
-    }
-
-    #[test]
     fn test_mutable_keyword() {
         let test_string = "mut";
         let lexer = Lexer::new(test_string);
@@ -172,9 +146,9 @@ mod tests {
 
     #[test]
     fn test_match_keyword() {
-        let test_string = "match";
+        let test_string = "switch";
         let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Match)))
+        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Switch)))
     }
 
     #[test]
