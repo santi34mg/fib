@@ -1,17 +1,18 @@
 use std::fmt;
 use std::iter::Peekable;
+use std::path::Path;
 
 use crate::ast::ast::{
-    DeclarationNode, Expression, Field, FunctionBody, FunctionDeclaration, FunctionParameter,
-    FunctionSignature, ModuleDeclaration, ModuleNode, PointerVariant, TypeIdentifier,
-    VariableDeclaration,
+    Ast, DeclarationNode, Expression, Field, FunctionBody, FunctionDeclaration, FunctionParameter,
+    FunctionSignature, PointerVariant, StatementNode, TypeExpression, VariableDeclaration,
 };
-use crate::ast::{Ast, StatementNode};
+use crate::token::builtin::Builtin;
+use crate::token::identifier::Identifier;
 use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
 
 #[derive(Debug)]
 pub struct ParseError {
-    pub filename: String,
+    pub filename: Box<Path>,
     pub message: String,
     pub line: usize,
     pub column: usize,
@@ -21,7 +22,7 @@ pub struct ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Standard format: file:line:column
-        writeln!(f, "{}:{}:{}:", self.filename, self.line, self.column)?;
+        writeln!(f, "{:?}:{}:{}:", self.filename, self.line, self.column)?;
         writeln!(f, "{}", self.message)?;
         writeln!(f, "\t{}", self.source_line)?;
         let indent_len = self.column.saturating_sub(1).min(self.source_line.len());
@@ -30,6 +31,8 @@ impl fmt::Display for ParseError {
     }
 }
 
+impl std::error::Error for ParseError {}
+
 pub type ParseResult<T> = Result<T, ParseError>;
 
 pub struct Parser<'a, I>
@@ -37,7 +40,7 @@ where
     I: Iterator<Item = Token> + Clone,
 {
     tokens: Peekable<I>,
-    filename: &'a str,
+    filename: &'a Path,
     source_lines: Vec<String>,
 }
 
@@ -45,7 +48,7 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token> + Clone,
 {
-    pub fn new(tokens: I, filename: &'a str, source: String) -> Self {
+    pub fn new(tokens: I, filename: &'a Path, source: String) -> Self {
         Self {
             tokens: tokens.peekable(),
             filename,
@@ -53,14 +56,14 @@ where
         }
     }
 
-    fn error(&self, message: &str, line: usize, column: usize) -> ParseError {
+    fn error<'err>(&'err self, message: &str, line: usize, column: usize) -> ParseError {
         let source_line = self
             .source_lines
             .get(line.saturating_sub(1))
             .cloned()
             .unwrap_or_default();
         ParseError {
-            filename: self.filename.to_string(),
+            filename: self.filename.into(),
             message: message.to_string(),
             line,
             column,
@@ -110,10 +113,8 @@ where
         None
     }
 
-    pub fn parse_module(&mut self) -> ParseResult<Ast> {
-        let mut module_decl: Option<ModuleDeclaration> = None;
-        let mut uses: Vec<String> = Vec::new();
-        let mut other_decls: Vec<DeclarationNode> = Vec::new();
+    pub fn parse(&mut self) -> ParseResult<Ast> {
+        let mut declarations: Vec<DeclarationNode> = Vec::new();
 
         while let Some(token) = self.peek() {
             match &token.kind {
@@ -121,73 +122,15 @@ where
                     self.next();
                     continue;
                 }
-                TokenKind::Keyword(Keyword::Module) => {
-                    // consume 'module'
-                    self.next();
-                    let name_tok = self.expect_next("expected module name (identifier)")?;
-                    let name = if let TokenKind::Identifier(n) = name_tok.kind {
-                        n
-                    } else {
-                        return Err(self.error(
-                            "expected module name (identifier)",
-                            name_tok.line,
-                            name_tok.column,
-                        ));
-                    };
-                    // optionally consume semicolon
-                    self.consume_if(|t| {
-                        matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon))
-                    });
-                    module_decl = Some(ModuleDeclaration {
-                        name,
-                        uses: Vec::new(),
-                    });
-                }
-                TokenKind::Keyword(Keyword::Use) => {
-                    self.next(); // consume 'use'
-                    // collect dotted identifier sequence
-                    let mut parts: Vec<String> = Vec::new();
-                    loop {
-                        let t = self.expect_next("expected identifier in use path")?;
-                        if let TokenKind::Identifier(id) = t.kind {
-                            parts.push(id);
-                        } else {
-                            return Err(self.error(
-                                "expected identifier in use path",
-                                t.line,
-                                t.column,
-                            ));
-                        }
-                        // if next is dot, consume and continue; if semicolon or other, stop
-                        if let Some(nxt) = self.peek() {
-                            match nxt.kind {
-                                TokenKind::Punctuation(Punctuation::Dot) => {
-                                    self.next(); // consume dot
-                                    continue;
-                                }
-                                TokenKind::Punctuation(Punctuation::Semicolon) => {
-                                    self.next(); // consume semicolon
-                                    break;
-                                }
-                                _ => break,
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                    if !parts.is_empty() {
-                        uses.push(parts.join("."));
-                    }
-                }
                 TokenKind::Keyword(Keyword::Function) => {
                     let func = self.parse_function_declaration()?;
-                    other_decls.push(DeclarationNode::FunctionDeclaration(func));
+                    declarations.push(DeclarationNode::FunctionDeclaration(func));
                 }
                 // For now, treat other top-level constructs as statements or ignore
                 _ => {
                     // try to parse a statement and keep it as a top-level declaration
                     if let Some(stmt) = self.parse_statement()? {
-                        other_decls.push(DeclarationNode::Statement(stmt));
+                        declarations.push(DeclarationNode::Statement(stmt));
                     } else {
                         break;
                     }
@@ -195,21 +138,10 @@ where
             }
         }
 
-        // If module_decl was not found, return an error
-        let module_decl =
-            module_decl.ok_or_else(|| self.error("missing top-level module declaration", 0, 0))?;
-        let mut declarations: Vec<DeclarationNode> = Vec::new();
-        // first insert module declaration (with collected uses)
-        let mut module_decl = module_decl;
-        module_decl.uses = uses;
-        declarations.push(DeclarationNode::ModuleDeclaration(module_decl));
-        declarations.extend(other_decls);
+        let mut ast = Ast::new();
+        ast.declarations = declarations;
 
-        let module_node = ModuleNode { declarations };
-        let program = crate::ast::ast::ProgramNode {
-            modules: vec![module_node],
-        };
-        Ok(Ast { program })
+        Ok(ast)
     }
 
     fn parse_statement_some(&mut self) -> ParseResult<StatementNode> {
@@ -394,9 +326,11 @@ where
     }
 
     /// Parses an assignment statement: identifier '=' expression
-    fn parse_assignment(&mut self) -> ParseResult<(String, Expression)> {
+    fn parse_assignment(&mut self) -> ParseResult<(Identifier, Expression)> {
         let ident_token = self.expect_token(
-            TokenKind::Identifier(String::new()),
+            TokenKind::Identifier(Identifier {
+                identifier: String::new(),
+            }),
             "parse_assignment: expected identifier",
         )?;
         let identifier = if let TokenKind::Identifier(id) = ident_token.kind {
@@ -425,7 +359,9 @@ where
             return Err(self.error("expected identifier", let_token.line, let_token.column));
         };
 
+        println!("Got to type parsing");
         let var_type = self.parse_type()?;
+        println!("Next token after var_type: {:?}", self.peek());
 
         match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
             Some(_) => {
@@ -436,32 +372,23 @@ where
         }
     }
 
-    /// Parses a type annotation, which can be a primitive type, user-defined type, or complex type.
+    /// Parses a type annotation, which can be a user-defined type (type identifier), or complex type (struct, variant or function).
     /// Returns `Ok(Some(TypeIdentifier))` if a type is successfully parsed, `Ok(None)` if the next token is not a type, or `Err` if there's a syntax error while parsing a type.
-    pub fn parse_type(&mut self) -> ParseResult<Option<TypeIdentifier>> {
+    pub fn parse_type(&mut self) -> ParseResult<Option<TypeExpression>> {
         let type_token = if let Some(t) = self.peek() {
             t
         } else {
             return Ok(None);
         };
-        let var_type: TypeIdentifier = match type_token.kind {
+        let var_type: TypeExpression = match type_token.kind {
+            TokenKind::Builtin(Builtin::BuiltinType(builtin_type)) => {
+                self.next();
+                TypeExpression::Builtin(builtin_type)
+            }
             TokenKind::Keyword(ref keyword) => {
                 self.next();
                 match keyword {
-                    Keyword::Integer => TypeIdentifier::Integer,
-                    Keyword::Float => TypeIdentifier::Float,
-                    Keyword::String => TypeIdentifier::String,
-                    Keyword::Boolean => TypeIdentifier::Boolean,
-                    Keyword::Character => TypeIdentifier::Character,
-                    Keyword::Unit => TypeIdentifier::Unit,
-                    Keyword::Dynamic => TypeIdentifier::Dynamic,
-                    Keyword::Blob => TypeIdentifier::Blob,
-                    Keyword::Never => TypeIdentifier::Never,
                     Keyword::Struct => self.parse_struct_literal(&type_token)?,
-                    Keyword::Variant => self.parse_variant_literal(&type_token)?,
-                    Keyword::Unique => self.parse_pointer(PointerVariant::Unique)?,
-                    Keyword::Shared => self.parse_pointer(PointerVariant::Shared)?,
-                    Keyword::Weak => self.parse_pointer(PointerVariant::Weak)?,
                     Keyword::Function => self.parse_function_type(&type_token)?,
                     _ => return Err(self.error("not a type", type_token.line, type_token.column)),
                 }
@@ -470,7 +397,10 @@ where
                 self.next();
                 self.parse_pointer_type(PointerVariant::Raw, type_token)?
             }
-            TokenKind::Identifier(identifier) => TypeIdentifier::UserDefinedType(identifier),
+            TokenKind::Identifier(identifier) => {
+                self.next();
+                TypeExpression::Identifier(identifier)
+            }
             _ => {
                 return Ok(None);
             }
@@ -478,12 +408,12 @@ where
         Ok(Some(var_type))
     }
 
-    fn parse_function_type(&mut self, type_token: &Token) -> ParseResult<TypeIdentifier> {
+    fn parse_function_type(&mut self, type_token: &Token) -> ParseResult<TypeExpression> {
         self.expect_token(
             TokenKind::Punctuation(Punctuation::OpeningParenthesis),
             "expected '('",
         )?;
-        let mut argument_types: Vec<TypeIdentifier> = Vec::new();
+        let mut argument_types: Vec<TypeExpression> = Vec::new();
         loop {
             let argument_type = match self.parse_type()? {
                 Some(type_id) => type_id,
@@ -517,13 +447,14 @@ where
                 return Err(self.error("expected a return typr", arrow.line, arrow.column));
             }
         };
-        Ok(TypeIdentifier::Function {
+        Ok(TypeExpression::Function {
             argument_types,
             return_type: Box::new(return_type),
         })
     }
 
-    fn parse_pointer(&mut self, pointer_variant: PointerVariant) -> ParseResult<TypeIdentifier> {
+    #[allow(dead_code)]
+    fn parse_pointer(&mut self, pointer_variant: PointerVariant) -> ParseResult<TypeExpression> {
         let next_token = self.expect_token(
             TokenKind::Operator(Operator::Ampersand),
             "expected AMPERSAND (&) after token",
@@ -539,50 +470,25 @@ where
         &mut self,
         pointer_variant: PointerVariant,
         next_token: Token,
-    ) -> ParseResult<TypeIdentifier> {
+    ) -> ParseResult<TypeExpression> {
         let pointed_type = match self.parse_type()? {
             Some(type_id) => type_id,
             None => {
                 return Err(self.error("expected type", next_token.line, next_token.column));
             }
         };
-        Ok(TypeIdentifier::Pointer {
+        Ok(TypeExpression::Pointer {
             pointer_variant,
             pointed_type: Box::new(pointed_type),
         })
     }
 
-    fn parse_struct_literal(&mut self, type_token: &Token) -> ParseResult<TypeIdentifier> {
+    fn parse_struct_literal(&mut self, type_token: &Token) -> ParseResult<TypeExpression> {
         match self.next() {
             Some(first_token) => match first_token.kind {
                 TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => {
                     let fields = self.parse_type_fields()?;
-                    Ok(TypeIdentifier::Struct { fields })
-                }
-                _ => {
-                    return Err(self.error(
-                        "expected an open curly brace",
-                        first_token.line,
-                        first_token.column,
-                    ));
-                }
-            },
-            None => {
-                return Err(self.error(
-                    "expected a type keyword",
-                    type_token.line,
-                    type_token.column,
-                ));
-            }
-        }
-    }
-
-    fn parse_variant_literal(&mut self, type_token: &Token) -> ParseResult<TypeIdentifier> {
-        match self.next() {
-            Some(first_token) => match first_token.kind {
-                TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => {
-                    let fields = self.parse_type_fields()?;
-                    Ok(TypeIdentifier::Variant { fields })
+                    Ok(TypeExpression::Struct { fields })
                 }
                 _ => {
                     return Err(self.error(
@@ -613,8 +519,7 @@ where
                 _ => {}
             }
             let label = if let TokenKind::Identifier(id) = &next_token.kind {
-                let label = id.to_string();
-                label
+                id
             } else {
                 let next_token = self.next().unwrap();
                 return Err(self.error(
@@ -635,7 +540,7 @@ where
                 }
             };
             fields.push(Field {
-                label,
+                label: label.clone(),
                 type_id: field_type,
             });
             self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
@@ -882,7 +787,9 @@ where
 
         // Function name
         let name_token = self.expect_token(
-            TokenKind::Identifier(String::new()),
+            TokenKind::Identifier(Identifier {
+                identifier: String::new(),
+            }),
             "parse_function_declaration: expected function name",
         )?;
         let name = if let TokenKind::Identifier(n) = name_token.kind {
@@ -905,7 +812,9 @@ where
                 }
                 TokenKind::Identifier(_) => {
                     let param_name_token = self.expect_token(
-                        TokenKind::Identifier(String::new()),
+                        TokenKind::Identifier(Identifier {
+                            identifier: String::new(),
+                        }),
                         "parse_function_declaration: expected parameter name",
                     )?;
                     let argument_name = if let TokenKind::Identifier(n) = param_name_token.kind {
@@ -951,12 +860,8 @@ where
         let return_type = self.parse_type()?;
 
         // Function body (use shared parse_body)
-        let body = if let Some(_semicolon_token) =
-            self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)))
-        {
-            None
-        } else {
-            Some(FunctionBody::Statements(self.parse_body()?))
+        let body = FunctionBody {
+            statements: self.parse_body()?,
         };
 
         Ok(FunctionDeclaration {
