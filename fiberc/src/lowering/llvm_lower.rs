@@ -1,121 +1,209 @@
 use std::collections::HashMap;
 
-use crate::hir::{HIRExpr, HIRFunction, HIRStmt, Type};
-use inkwell::builder::{Builder, BuilderError};
+use crate::hir::{
+    CompilationUnit, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction, HIRStmt,
+    HIRSymbol, HIRTypeKind, Scope,
+};
+use crate::token::Operator;
+use crate::token::builtin::BuiltinType;
+use crate::token::identifier::Identifier;
+use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType};
 use inkwell::values::BasicMetadataValueEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
+use std::error::Error;
 
-fn llvm_type_for_int<'ctx>(ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
-    ctx.i64_type().as_basic_type_enum()
-}
+/// Lower HIR into LLVM IR represented as a string.
+pub fn lower(
+    mut compilation_unit: CompilationUnit,
+    module_name: &str,
+) -> Result<String, Box<dyn Error>> {
+    let ctx = Context::create();
+    let module = ctx.create_module(module_name);
+    let builder = ctx.create_builder();
+    let mut vars: HashMap<Identifier, PointerValue> = HashMap::new();
 
-fn map_hir_type_to_llvm<'ctx>(_ty: &Type, ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
-    // Minimal mapping: Int -> i64, Bool -> i64, Unit -> void handled separately
-    llvm_type_for_int(ctx)
-}
+    // Create function declarations and bodies
+    for declaration in compilation_unit.declarations {
+        match declaration {
+            HIRDeclaration::HIRFunction(hir_function) => {
+                let function_name = hir_function.name.identifier.clone();
+                let fn_params: Vec<BasicMetadataTypeEnum> = hir_function
+                    .params
+                    .iter()
+                    .map(|param| {
+                        map_type_to_llvm(
+                            &param.1.clone(),
+                            &ctx,
+                            compilation_unit.scope_root.clone(),
+                        )
+                        .unwrap()
+                        .into()
+                    })
+                    .collect();
 
-fn create_entry_allocas<'ctx>(
-    ctx: &'ctx Context,
-    _module: &Module<'ctx>,
-    _builder: &Builder<'ctx>,
-    function: FunctionValue<'ctx>,
-    hir_fn: &HIRFunction,
-) -> HashMap<String, PointerValue<'ctx>> {
-    let mut vars = std::collections::HashMap::new();
-
-    // Create an alloca for each parameter in the entry block
-    let entry = function.get_first_basic_block().unwrap();
-    let builder_at_entry = ctx.create_builder();
-    if let Some(first_instr) = entry.get_first_instruction() {
-        builder_at_entry.position_before(&first_instr);
-    } else {
-        builder_at_entry.position_at_end(entry);
-    }
-
-    for (i, (name, _ty)) in hir_fn.params.iter().enumerate() {
-        let param = function.get_nth_param(i as u32).unwrap();
-        // param.get_type() is a BasicTypeEnum already; build_alloca expects BasicTypeEnum
-        let alloca = match builder_at_entry.build_alloca(
-            ctx.i64_type().as_basic_type_enum(),
-            &format!("{}_addr", name),
-        ) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("Failed to create alloca for parameter '{}': {}", name, e);
-                continue;
+                let fn_ty: FunctionType;
+                if let HIRTypeKind::Builtin(BuiltinType::Void) = hir_function.return_type {
+                    todo!()
+                } else {
+                    let ret_ty = map_type_to_llvm(
+                        &hir_function.return_type,
+                        &ctx,
+                        compilation_unit.scope_root.clone(),
+                    )
+                    .unwrap();
+                    fn_ty = ret_ty.fn_type(&fn_params, false);
+                }
+                let function = module.add_function(&function_name, fn_ty, None);
+                let entry = ctx.append_basic_block(function, "entry");
+                builder.position_at_end(entry);
+                let mut entry_vars = create_entry_allocas(
+                    &ctx,
+                    function,
+                    hir_function.clone(),
+                    compilation_unit.scope_root.clone(),
+                )?;
+                let _ = hir_function.body.iter().for_each(|stmt| {
+                    let _ = codegen_stmt(
+                        &ctx,
+                        &builder,
+                        &module,
+                        &mut entry_vars,
+                        &mut compilation_unit.scope_root,
+                        &stmt,
+                    );
+                });
             }
-        };
-        // store the param value into the alloca
-        let _ = builder_at_entry.build_store(alloca, param);
-        vars.insert(name.clone(), alloca);
+            HIRDeclaration::HIRVar(hir_var) => {
+                let ty = if let HIRSymbol::Variable(var) = compilation_unit
+                    .scope_root
+                    .symbols
+                    .get(&hir_var.name)
+                    .ok_or_else(|| format!("didnt find type for name {}", hir_var.name))?
+                {
+                    map_type_to_llvm(&var.ty, &ctx, compilation_unit.scope_root.clone())?
+                } else {
+                    return Err(format!("codegen_expr: {} is not a variable", hir_var.name).into());
+                };
+                let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_var.name)) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to create alloca for parameter '{}': {}",
+                            hir_var.name, e
+                        );
+                        continue;
+                    }
+                };
+                // store the param value into the alloca
+                if let Some(expr) = hir_var.init {
+                    let _ = builder.build_store(
+                        alloca,
+                        codegen_expr(
+                            &ctx,
+                            &builder,
+                            &module,
+                            &mut vars,
+                            &mut compilation_unit.scope_root.clone(),
+                            &expr,
+                        )?,
+                    );
+                }
+                vars.insert(hir_var.name, alloca);
+            }
+        }
     }
 
-    vars
+    // Return LLVM IR as string.
+    // Some LLVM builds (with opaque pointers) print pointer types as `ptr` which
+    // older clang versions reject. For now, post-process the printed IR to
+    // restore typed pointers for our simple i64-based lowering.
+    let ir = module.print_to_string().to_string();
+    Ok(ir)
 }
 
 fn codegen_expr<'ctx>(
     ctx: &'ctx Context,
     builder: &Builder<'ctx>,
     module: &Module<'ctx>,
-    vars: &mut std::collections::HashMap<String, PointerValue<'ctx>>,
-    expr: &HIRExpr,
-) -> Result<BasicValueEnum<'ctx>, BuilderError> {
-    match expr {
-        HIRExpr::LiteralInt(i) => Ok(ctx
-            .i64_type()
-            .const_int(*i as u64, true)
-            .as_basic_value_enum()),
-        HIRExpr::LiteralBool(b) => {
-            let v = if *b { 1 } else { 0 };
-            Ok(ctx.i64_type().const_int(v, false).as_basic_value_enum())
+    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
+    current_scope: &mut Scope,
+    expr: &HIRExpression,
+) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
+    match &expr.expression {
+        HIRExpressionKind::LiteralInt { value } => {
+            if let BasicTypeEnum::IntType(ty) =
+                map_type_to_llvm(&expr.inferred_type, ctx, Scope::new())?
+            {
+                Ok(ty.const_int(*value as u64, true).as_basic_value_enum())
+            } else {
+                unreachable!()
+            }
         }
-        HIRExpr::Var(name) => {
-            let ptr = vars.get(name).unwrap();
-            let load = builder.build_load(
-                ctx.i64_type().as_basic_type_enum(),
-                *ptr,
-                &format!("load_{}", name),
-            )?;
+        HIRExpressionKind::LiteralBool(b) => Ok(ctx
+            .bool_type()
+            .const_int(*b as u64, false)
+            .as_basic_value_enum()),
+        HIRExpressionKind::Variable(name) => {
+            let ty = if let HIRSymbol::Variable(var) =
+                current_scope
+                    .symbols
+                    .get(&name)
+                    .ok_or_else(|| format!("didnt find type for name {}", name))?
+            {
+                map_type_to_llvm(&var.ty, ctx, current_scope.clone())?
+            } else {
+                return Err(format!("codegen_expr: {} is not a variable", name).into());
+            };
+            let ptr = vars
+                .get(&name)
+                .ok_or_else(|| format!("codegen_expr: didnt find ptr for name {}", name))?;
+            let load = builder.build_load(ty, *ptr, &format!("load_{}", name))?;
             Ok(load)
         }
-        HIRExpr::Null => Ok(ctx.i64_type().const_int(0, false).as_basic_value_enum()),
-        HIRExpr::Binary { left, op, right } => {
-            let l = codegen_expr(ctx, builder, module, vars, left)?;
-            let r = codegen_expr(ctx, builder, module, vars, right)?;
+        // TODO: Null?
+        HIRExpressionKind::Null => Ok(ctx.i64_type().const_int(0, false).as_basic_value_enum()),
+        HIRExpressionKind::Binary {
+            left,
+            operator,
+            right,
+        } => {
+            let l = codegen_expr(ctx, builder, module, vars, current_scope, &left)?;
+            let r = codegen_expr(ctx, builder, module, vars, current_scope, &right)?;
             // All arithmetic as i64 for minimal pass
-            if op.contains("Plus") || op.contains("Add") {
+            if let Operator::Plus = operator {
                 Ok(builder
                     .build_int_add(l.into_int_value(), r.into_int_value(), "addtmp")?
                     .as_basic_value_enum())
-            } else if op.contains("Minus") {
+            } else if let Operator::Minus = operator {
                 Ok(builder
                     .build_int_sub(l.into_int_value(), r.into_int_value(), "subtmp")?
                     .as_basic_value_enum())
-            } else if op.contains("Multiply") {
+            } else if let Operator::Multiply = operator {
                 Ok(builder
                     .build_int_mul(l.into_int_value(), r.into_int_value(), "multmp")?
                     .as_basic_value_enum())
-            } else if op.contains("Divide") {
+            } else if let Operator::Divide = operator {
                 Ok(builder
                     .build_int_signed_div(l.into_int_value(), r.into_int_value(), "divtmp")?
                     .as_basic_value_enum())
             } else {
-                panic!("unsupported binary operator in codegen: {}", op);
+                panic!(
+                    "unsupported binary operatorerator in codegen: {:?}",
+                    operator
+                );
             }
         }
-        HIRExpr::Call { callee, args } => {
-            // Resolve callee by name from module
-            // For minimal lowering we assume function exists and returns i64
+        HIRExpressionKind::Call { callee, args } => {
             let mut arg_values = Vec::new();
             for a in args.iter() {
-                let av = codegen_expr(ctx, builder, module, vars, a)?;
+                let av = codegen_expr(ctx, builder, module, vars, current_scope, a)?;
                 arg_values.push(av);
             }
             // lookup function by name
-            if let Some(fnval) = module.get_function(callee) {
+            if let Some(fnval) = module.get_function(&callee.identifier) {
                 // convert BasicValueEnum args into BasicMetadataValueEnum expected by build_call
                 let mut md_args: Vec<BasicMetadataValueEnum> = Vec::new();
                 for (i, _) in fnval.get_type().get_param_types().iter().enumerate() {
@@ -132,38 +220,140 @@ fn codegen_expr<'ctx>(
     }
 }
 
+fn map_type_to_llvm<'ctx>(
+    ty: &HIRTypeKind,
+    ctx: &'ctx Context,
+    current_scope: Scope,
+) -> Result<BasicTypeEnum<'ctx>, Box<dyn Error>> {
+    match ty {
+        HIRTypeKind::Builtin(builtin) => {
+            let any_ty = match builtin {
+                BuiltinType::Boolean => BasicTypeEnum::IntType(ctx.bool_type()),
+                // TODO: make unsigned truly unsigned
+                BuiltinType::UInt8 => BasicTypeEnum::IntType(ctx.i8_type()),
+                BuiltinType::UInt16 => BasicTypeEnum::IntType(ctx.i16_type()),
+                BuiltinType::UInt32 => BasicTypeEnum::IntType(ctx.i32_type()),
+                BuiltinType::UInt64 => BasicTypeEnum::IntType(ctx.i64_type()),
+                BuiltinType::SInt8 => BasicTypeEnum::IntType(ctx.i8_type()),
+                BuiltinType::SInt16 => BasicTypeEnum::IntType(ctx.i16_type()),
+                BuiltinType::SInt32 => BasicTypeEnum::IntType(ctx.i32_type()),
+                BuiltinType::SInt64 => BasicTypeEnum::IntType(ctx.i64_type()),
+                BuiltinType::Float16 => BasicTypeEnum::FloatType(ctx.f16_type()),
+                BuiltinType::Float32 => BasicTypeEnum::FloatType(ctx.f32_type()),
+                BuiltinType::Float64 => BasicTypeEnum::FloatType(ctx.f64_type()),
+                BuiltinType::Float128 => BasicTypeEnum::FloatType(ctx.f128_type()),
+                _ => todo!("type not implemented yet"),
+            };
+            Ok(any_ty)
+        }
+        HIRTypeKind::Identifier(identifier) => {
+            let symbol = current_scope
+                .symbols
+                .get(&identifier)
+                .ok_or_else(|| {
+                    format!(
+                        "identifier {} not found in current scope",
+                        identifier
+                    )
+                })?;
+            if let HIRSymbol::Type(ty) = symbol {
+                return Ok(map_type_to_llvm(ty, ctx, current_scope.clone())?);
+            } else {
+                return Err(format!("symbol {:?} is not a type", symbol).into());
+            }
+        }
+        HIRTypeKind::Struct => todo!("map_type_to_llvm: struct type kind not implemented yet"),
+    }
+}
+
+/// Create an alloca for each parameter in the entry block
+fn create_entry_allocas<'ctx>(
+    ctx: &'ctx Context,
+    function: FunctionValue<'ctx>,
+    hir_fn: HIRFunction,
+    current_scope: Scope,
+) -> Result<HashMap<Identifier, PointerValue<'ctx>>, Box<dyn Error>> {
+    let mut vars = HashMap::new();
+
+    let entry = function.get_first_basic_block().unwrap();
+    let builder_at_entry = ctx.create_builder();
+    if let Some(first_instr) = entry.get_first_instruction() {
+        builder_at_entry.position_before(&first_instr);
+    } else {
+        builder_at_entry.position_at_end(entry);
+    }
+
+    for (idx, (param_name, ty)) in hir_fn.params.into_iter().enumerate() {
+        let param = function.get_nth_param(idx as u32).unwrap();
+        // param.get_type() is a BasicTypeEnum already; build_alloca expects BasicTypeEnum
+        let alloca = match builder_at_entry.build_alloca(
+            map_type_to_llvm(&ty, ctx, current_scope.clone())?,
+            &format!("{}_addr", param_name),
+        ) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!(
+                    "Failed to create alloca for parameter '{}': {}",
+                    param_name, e
+                );
+                continue;
+            }
+        };
+        // store the param value into the alloca
+        let _ = builder_at_entry.build_store(alloca, param);
+        vars.insert(param_name.clone(), alloca);
+    }
+    Ok(vars)
+}
+
 fn codegen_stmt<'ctx>(
     ctx: &'ctx Context,
     builder: &Builder<'ctx>,
     module: &Module<'ctx>,
-    vars: &mut std::collections::HashMap<String, PointerValue<'ctx>>,
+    mut vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
+    current_scope: &mut Scope,
     stmt: &HIRStmt,
-) -> Result<Option<BasicValueEnum<'ctx>>, BuilderError> {
+) -> Result<Option<BasicValueEnum<'ctx>>, Box<dyn Error>> {
     match stmt {
-        HIRStmt::Let {
-            name,
-            init,
-            ty: _ty,
-        } => {
-            // allocate and optionally initialize
-            let alloca = builder.build_alloca(
-                ctx.i64_type().as_basic_type_enum(),
-                &format!("{}_alloca", name),
-            )?;
-            if let Some(init_expr) = init {
-                let v = codegen_expr(ctx, builder, module, vars, init_expr)?;
-                let _ = builder.build_store(alloca, v);
+        HIRStmt::Let(hir_var) => {
+            let ty = if let HIRSymbol::Variable(var) = current_scope
+                .symbols
+                .get(&hir_var.name)
+                .ok_or_else(|| format!("didnt find type for name {}", hir_var.name))?
+            {
+                map_type_to_llvm(&var.ty, &ctx, current_scope.clone())?
             } else {
+                return Err(format!("codegen_expr: {} is not a variable", hir_var.name).into());
+            };
+            let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_var.name)) {
+                Ok(a) => a,
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to create alloca for parameter '{}': {}",
+                        hir_var.name, e
+                    )
+                    .into());
+                }
+            };
+            // store the param value into the alloca
+            if let Some(expr) = &hir_var.init {
                 let _ = builder.build_store(
                     alloca,
-                    ctx.i64_type().const_int(0, false).as_basic_value_enum(),
-                );
+                    codegen_expr(
+                        &ctx,
+                        &builder,
+                        &module,
+                        &mut vars,
+                        &mut current_scope.clone(),
+                        &expr,
+                    )?,
+                )?;
             }
-            vars.insert(name.clone(), alloca);
+            vars.insert(hir_var.name.clone(), alloca);
             Ok(None)
         }
         HIRStmt::Assign { name, expr } => {
-            let v = codegen_expr(ctx, builder, module, vars, expr)?;
+            let v = codegen_expr(ctx, builder, module, vars, current_scope, expr)?;
             if let Some(ptr) = vars.get(name) {
                 let _ = builder.build_store(*ptr, v);
                 Ok(None)
@@ -172,12 +362,12 @@ fn codegen_stmt<'ctx>(
             }
         }
         HIRStmt::Expr(e) => {
-            let _ = codegen_expr(ctx, builder, module, vars, e)?;
+            let _ = codegen_expr(ctx, builder, module, vars, current_scope, e)?;
             Ok(None)
         }
         HIRStmt::Return(opt) => {
             if let Some(e) = opt {
-                let v = codegen_expr(ctx, builder, module, vars, e)?;
+                let v = codegen_expr(ctx, builder, module, vars, current_scope, e)?;
                 let _ = builder.build_return(Some(&v));
             } else {
                 let _ = builder.build_return(None);
@@ -195,8 +385,9 @@ fn codegen_stmt<'ctx>(
             let else_bb = ctx.append_basic_block(func, "else");
             let merge_bb = ctx.append_basic_block(func, "ifcont");
 
-            let cond_v = codegen_expr(ctx, builder, module, vars, cond)?;
+            let cond_v = codegen_expr(ctx, builder, module, vars, current_scope, cond)?;
             // compare cond != 0
+            // TODO: dont some other way?
             let zero = ctx.i64_type().const_int(0, false);
             let cond_bool = builder.build_int_compare(
                 inkwell::IntPredicate::NE,
@@ -209,7 +400,7 @@ fn codegen_stmt<'ctx>(
             // then
             builder.position_at_end(then_bb);
             for s in then_branch.iter() {
-                codegen_stmt(ctx, builder, module, vars, s)?;
+                codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
             }
             if builder
                 .get_insert_block()
@@ -224,7 +415,7 @@ fn codegen_stmt<'ctx>(
             builder.position_at_end(else_bb);
             if let Some(eb) = else_branch {
                 for s in eb.iter() {
-                    codegen_stmt(ctx, builder, module, vars, s)?;
+                    codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
                 }
             }
             if builder
@@ -249,7 +440,7 @@ fn codegen_stmt<'ctx>(
             // Lower for to while:
             // init
             if let Some(i) = init {
-                codegen_stmt(ctx, builder, module, vars, i)?;
+                codegen_stmt(ctx, builder, module, vars, current_scope, i)?;
             }
             let func = builder.get_insert_block().unwrap().get_parent().unwrap();
             let loop_bb = ctx.append_basic_block(func, "loop");
@@ -260,7 +451,8 @@ fn codegen_stmt<'ctx>(
 
             // cond
             if let Some(c) = cond {
-                let cval = codegen_expr(ctx, builder, module, vars, c)?;
+                let cval = codegen_expr(ctx, builder, module, vars, current_scope, c)?;
+                // TODO: some other way?
                 let zero = ctx.i64_type().const_int(0, false);
                 let cond_bool = builder.build_int_compare(
                     inkwell::IntPredicate::NE,
@@ -272,10 +464,10 @@ fn codegen_stmt<'ctx>(
                 let _ = builder.build_conditional_branch(cond_bool, body_bb, after_bb);
                 builder.position_at_end(body_bb);
                 for s in body.iter() {
-                    codegen_stmt(ctx, builder, module, vars, s)?;
+                    codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
                 }
                 if let Some(p) = post {
-                    codegen_stmt(ctx, builder, module, vars, p)?;
+                    codegen_stmt(ctx, builder, module, vars, current_scope, p)?;
                 }
                 if builder
                     .get_insert_block()
@@ -289,10 +481,10 @@ fn codegen_stmt<'ctx>(
             } else {
                 // infinite loop body
                 for s in body.iter() {
-                    codegen_stmt(ctx, builder, module, vars, s)?;
+                    codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
                 }
                 if let Some(p) = post {
-                    codegen_stmt(ctx, builder, module, vars, p)?;
+                    codegen_stmt(ctx, builder, module, vars, current_scope, p)?;
                 }
                 if builder
                     .get_insert_block()
@@ -308,66 +500,4 @@ fn codegen_stmt<'ctx>(
             Ok(None)
         }
     }
-}
-
-/// Lower HIR into LLVM IR represented as a string. Minimal lowering: i64-based values.
-pub fn lower(hir: &[HIRFunction]) -> Result<String, BuilderError> {
-    let ctx = Context::create();
-    let module = ctx.create_module("fib_module");
-    let builder = ctx.create_builder();
-
-    // Create function declarations and bodies
-    for hf in hir.iter() {
-        // Build function type (all params -> i64, returns i64 or void)
-        let mut param_types = Vec::new();
-        for (_name, ty) in hf.params.iter() {
-            let llvm_ty = map_hir_type_to_llvm(ty, &ctx);
-            param_types.push(llvm_ty);
-        }
-        let ret_llvm = map_hir_type_to_llvm(&hf.ret_type, &ctx);
-        let fn_type = ret_llvm.fn_type(
-            &param_types
-                .iter()
-                .map(|t| (*t).into())
-                .collect::<Vec<BasicMetadataTypeEnum>>(),
-            false,
-        );
-        let function = module.add_function(&hf.name, fn_type, None);
-
-        // Create entry block
-        let entry = ctx.append_basic_block(function, "entry");
-        builder.position_at_end(entry);
-
-        // Create allocas for params
-        let mut vars = create_entry_allocas(&ctx, &module, &builder, function, hf);
-
-        // Emit statements
-        for s in hf.body.iter() {
-            codegen_stmt(&ctx, &builder, &module, &mut vars, s)?;
-        }
-
-        // Ensure function has a return
-        if builder
-            .get_insert_block()
-            .unwrap()
-            .get_terminator()
-            .is_none()
-        {
-            if let Type::Unit = hf.ret_type {
-                let _ = builder.build_return(None);
-            } else {
-                let _ = builder.build_return(Some(
-                    &ctx.i64_type().const_int(0, false).as_basic_value_enum(),
-                ));
-            }
-        }
-    }
-
-    // Return LLVM IR as string.
-    // Some LLVM builds (with opaque pointers) print pointer types as `ptr` which
-    // older clang versions reject. For now, post-process the printed IR to
-    // restore typed pointers for our simple i64-based lowering.
-    let ir = module.print_to_string().to_string();
-    let ir = ir.replace("ptr %", "i64* %").replace("ptr @", "i64* @");
-    Ok(ir)
 }
