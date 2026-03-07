@@ -21,7 +21,7 @@ pub fn parse_args() -> Args {
 }
 
 pub fn exec_command(args: Args) {
-    if let Err(e) = driver::compile_project(&args.file, args.is_debug) {
+    if let Err(e) = driver::compile(&args.file, args.is_debug) {
         eprintln!("Error: {}", e);
         process::exit(1);
     }
