@@ -1,31 +1,27 @@
 # Fiber
 
-This is a compiler project for Fiber, a language designed for performance, clarity, and control.
-The goal is to create a language and toolchain that combines low-level control with safer abstractions, ownership models, and ergonomics suited for systems programming and backend development.
+This is a compiler project for fib, a language designed for performance, clarity, and control.
+The goal is to create a language and toolchain that combines low-level control with safer abstractions and ergonomics suited for systems programming and backend development.
 
-The compiler, called Fiberc, is written in Rust but aims to be self-hosted.
+The compiler, called fibc, is written in Rust but aims to be self-hosted.
 
 ## Current Status
 
-At this stage, the compiler can read source files and tokenize input code into a stream of tokens.
+The compiler frontend is advancing with support for expressions, variable declaration statements, function declarations, and returns.
+The current compiler backend lowers to LLVM IR, although a multi-backend strategy is planned for the future (like Zig with LLVM and in house backend).
 
-The project is under active development and meant for learning, experimentation, and laying the groundwork for a modern systems programming language.
-
-## Code quality
+## Code quality and performance
 
 I will admit that this is not the best Rust out there.
-Too many clones and Box.
 
-I am just doing that in order to keep the program simpler and move faster to a point where the language can host itself and Rust is no longer needed.
-If that point is reached, I will probably keep the Rust version in its own branch for anyone who wants to support/refactor it.
+The Rust version of the compiler aims to be a bootstrap, therefore, performance and code quality is not an objective.
 
 ## Getting Started
 
-TODO: fill in the getting started section of main README.
+You can clone the repo and compile the whole toolchain using `cargo install --path cli`.
+This will leverage cargo in order to install the toolchain.
 
-### Compile a `.fib` source file:
-
-Currently, this will tokenize the input and print tokens to stdout as a debugging step.
+Then, use `fiber init <path>` to initalize a project, cd into it and run `fiber compile` in order to produce a binary.
 
 ## Contributing
 
