@@ -1,21 +1,26 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
+    // Integers 
     Plus,
     Minus,
     Multiply,
     Divide,
     Modulo,
 
+    GreaterThan,
+    LesserThan,
+    GreaterEqual,
+    LesserEqual,
+
+    LeftShift,
+    RightShift,
+
+    // 
     StructuralEquals,
     StrictlyEquals,
 
     StructuralDifferent,
     StrictlyDifferent,
-
-    GreaterThan,
-    LesserThan,
-    GreaterEqual,
-    LesserEqual,
 
     Assign,
     AddAssign,
@@ -32,9 +37,6 @@ pub enum Operator {
     Pipe,
     Tilde,
     Caret,
-
-    LeftShift,
-    RightShift,
 
     Range,
 
