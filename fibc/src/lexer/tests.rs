@@ -10,7 +10,7 @@ mod tests {
         let test_string = "// This is a comment\nlet x = 5;";
         let expected = [
             TokenKind::Comment,
-            TokenKind::Keyword(Keyword::Let),
+            TokenKind::Keyword(Keyword::Const),
             TokenKind::Identifier(Identifier {
                 identifier: "x".to_string(),
             }),
@@ -99,7 +99,7 @@ mod tests {
     fn test_let_keyword() {
         let test_string = "let";
         let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Let)))
+        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Const)))
     }
 
     #[test]
@@ -138,13 +138,6 @@ mod tests {
     }
 
     #[test]
-    fn test_mutable_keyword() {
-        let test_string = "mut";
-        let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Mutable)))
-    }
-
-    #[test]
     fn test_match_keyword() {
         let test_string = "switch";
         let lexer = Lexer::new(test_string);
@@ -156,19 +149,5 @@ mod tests {
         let test_string = "when";
         let lexer = Lexer::new(test_string);
         lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::When)))
-    }
-
-    #[test]
-    fn test_coroutine_keyword() {
-        let test_string = "coroutine";
-        let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Coroutine)))
-    }
-
-    #[test]
-    fn test_spawn_keyword() {
-        let test_string = "spawn";
-        let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Spawn)))
     }
 }

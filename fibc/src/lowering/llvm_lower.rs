@@ -7,6 +7,7 @@ use crate::hir::{
 use crate::token::Operator;
 use crate::token::builtin::BuiltinType;
 use crate::token::identifier::Identifier;
+use inkwell::IntPredicate;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -76,8 +77,8 @@ pub fn lower(
                     );
                 });
             }
-            HIRDeclaration::HIRVar(hir_var) => {
-                let ty = if let HIRSymbol::Variable(var) = compilation_unit
+            HIRDeclaration::HIRConst(hir_var) => {
+                let ty = if let HIRSymbol::Constant(var) = compilation_unit
                     .scope_root
                     .symbols
                     .get(&hir_var.name)
@@ -146,12 +147,11 @@ fn codegen_expr<'ctx>(
             .bool_type()
             .const_int(*b as u64, false)
             .as_basic_value_enum()),
-        HIRExpressionKind::Variable(name) => {
-            let ty = if let HIRSymbol::Variable(var) =
-                current_scope
-                    .symbols
-                    .get(&name)
-                    .ok_or_else(|| format!("didnt find type for name {}", name))?
+        HIRExpressionKind::Identifier(name) => {
+            let ty = if let HIRSymbol::Constant(var) = current_scope
+                .symbols
+                .get(&name)
+                .ok_or_else(|| format!("didnt find type for name {}", name))?
             {
                 map_type_to_llvm(&var.ty, ctx, current_scope.clone())?
             } else {
@@ -172,28 +172,69 @@ fn codegen_expr<'ctx>(
         } => {
             let l = codegen_expr(ctx, builder, module, vars, current_scope, &left)?;
             let r = codegen_expr(ctx, builder, module, vars, current_scope, &right)?;
-            // All arithmetic as i64 for minimal pass
-            if let Operator::Plus = operator {
-                Ok(builder
+            match operator {
+                Operator::Plus => Ok(builder
                     .build_int_add(l.into_int_value(), r.into_int_value(), "addtmp")?
-                    .as_basic_value_enum())
-            } else if let Operator::Minus = operator {
-                Ok(builder
+                    .as_basic_value_enum()),
+                Operator::Minus => Ok(builder
                     .build_int_sub(l.into_int_value(), r.into_int_value(), "subtmp")?
-                    .as_basic_value_enum())
-            } else if let Operator::Multiply = operator {
-                Ok(builder
+                    .as_basic_value_enum()),
+                Operator::Multiply => Ok(builder
                     .build_int_mul(l.into_int_value(), r.into_int_value(), "multmp")?
-                    .as_basic_value_enum())
-            } else if let Operator::Divide = operator {
-                Ok(builder
+                    .as_basic_value_enum()),
+                Operator::Divide => Ok(builder
                     .build_int_signed_div(l.into_int_value(), r.into_int_value(), "divtmp")?
-                    .as_basic_value_enum())
-            } else {
-                panic!(
+                    .as_basic_value_enum()),
+                Operator::StrictlyEquals => Ok(builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        l.into_int_value(),
+                        r.into_int_value(),
+                        "eqtmp",
+                    )?
+                    .as_basic_value_enum()),
+                Operator::GreaterThan => Ok(builder
+                    .build_int_compare(
+                        IntPredicate::UGT,
+                        l.into_int_value(),
+                        r.into_int_value(),
+                        "gttmp",
+                    )?
+                    .as_basic_value_enum()),
+                Operator::GreaterEqual => Ok(builder
+                    .build_int_compare(
+                        IntPredicate::UGE,
+                        l.into_int_value(),
+                        r.into_int_value(),
+                        "getmp",
+                    )?
+                    .as_basic_value_enum()),
+                Operator::LesserThan => Ok(builder
+                    .build_int_compare(
+                        IntPredicate::ULT,
+                        l.into_int_value(),
+                        r.into_int_value(),
+                        "lttmp",
+                    )?
+                    .as_basic_value_enum()),
+                Operator::LesserEqual => Ok(builder
+                    .build_int_compare(
+                        IntPredicate::ULE,
+                        l.into_int_value(),
+                        r.into_int_value(),
+                        "letmp",
+                    )?
+                    .as_basic_value_enum()),
+                // TODO: implement binary manipulation operations
+                Operator::LeftShift => todo!(),
+                Operator::RightShift => todo!(),
+                Operator::Ampersand => todo!(),
+                Operator::Pipe => todo!(),
+                Operator::Caret => todo!(),
+                _ => panic!(
                     "unsupported binary operatorerator in codegen: {:?}",
                     operator
-                );
+                ),
             }
         }
         HIRExpressionKind::Call { callee, args } => {
@@ -250,12 +291,7 @@ fn map_type_to_llvm<'ctx>(
             let symbol = current_scope
                 .symbols
                 .get(&identifier)
-                .ok_or_else(|| {
-                    format!(
-                        "identifier {} not found in current scope",
-                        identifier
-                    )
-                })?;
+                .ok_or_else(|| format!("identifier {} not found in current scope", identifier))?;
             if let HIRSymbol::Type(ty) = symbol {
                 return Ok(map_type_to_llvm(ty, ctx, current_scope.clone())?);
             } else {
@@ -315,8 +351,8 @@ fn codegen_stmt<'ctx>(
     stmt: &HIRStmt,
 ) -> Result<Option<BasicValueEnum<'ctx>>, Box<dyn Error>> {
     match stmt {
-        HIRStmt::Let(hir_var) => {
-            let ty = if let HIRSymbol::Variable(var) = current_scope
+        HIRStmt::Const(hir_var) => {
+            let ty = if let HIRSymbol::Constant(var) = current_scope
                 .symbols
                 .get(&hir_var.name)
                 .ok_or_else(|| format!("didnt find type for name {}", hir_var.name))?
@@ -352,6 +388,7 @@ fn codegen_stmt<'ctx>(
             vars.insert(hir_var.name.clone(), alloca);
             Ok(None)
         }
+
         HIRStmt::Assign { name, expr } => {
             let v = codegen_expr(ctx, builder, module, vars, current_scope, expr)?;
             if let Some(ptr) = vars.get(name) {
@@ -361,10 +398,12 @@ fn codegen_stmt<'ctx>(
                 panic!("assignment to unknown variable '{}' in lowering", name);
             }
         }
+
         HIRStmt::Expr(e) => {
             let _ = codegen_expr(ctx, builder, module, vars, current_scope, e)?;
             Ok(None)
         }
+
         HIRStmt::Return(opt) => {
             if let Some(e) = opt {
                 let v = codegen_expr(ctx, builder, module, vars, current_scope, e)?;
@@ -374,61 +413,59 @@ fn codegen_stmt<'ctx>(
             }
             Ok(None)
         }
-        HIRStmt::If {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
+
+        HIRStmt::If(hir_if) => {
             // create blocks
             let func = builder.get_insert_block().unwrap().get_parent().unwrap();
             let then_bb = ctx.append_basic_block(func, "then");
             let else_bb = ctx.append_basic_block(func, "else");
-            let merge_bb = ctx.append_basic_block(func, "ifcont");
+            let merge_bb = if !hir_if.then_branch_terminates() || !hir_if.else_branch_terminates() {
+                Some(ctx.append_basic_block(func, "ifcont"))
+            } else {
+                None
+            };
 
-            let cond_v = codegen_expr(ctx, builder, module, vars, current_scope, cond)?;
-            // compare cond != 0
-            // TODO: dont some other way?
-            let zero = ctx.i64_type().const_int(0, false);
-            let cond_bool = builder.build_int_compare(
-                inkwell::IntPredicate::NE,
-                cond_v.into_int_value(),
-                zero,
-                "ifcond",
-            )?;
-            let _ = builder.build_conditional_branch(cond_bool, then_bb, else_bb);
+            let cond_v = codegen_expr(ctx, builder, module, vars, current_scope, &hir_if.cond)?;
+            let _ = builder.build_conditional_branch(cond_v.into_int_value(), then_bb, else_bb);
 
             // then
             builder.position_at_end(then_bb);
-            for s in then_branch.iter() {
+            for s in hir_if.then_branch.iter() {
                 codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
             }
-            if builder
-                .get_insert_block()
-                .unwrap()
-                .get_terminator()
-                .is_none()
-            {
-                let _ = builder.build_unconditional_branch(merge_bb);
+            if let Some(mbb) = merge_bb {
+                if builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    let _ = builder.build_unconditional_branch(mbb);
+                }
             }
 
             // else
             builder.position_at_end(else_bb);
-            if let Some(eb) = else_branch {
+            if let Some(eb) = &hir_if.else_branch {
                 for s in eb.iter() {
                     codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
                 }
             }
-            if builder
-                .get_insert_block()
-                .unwrap()
-                .get_terminator()
-                .is_none()
-            {
-                let _ = builder.build_unconditional_branch(merge_bb);
+            if let Some(mbb) = merge_bb {
+                if builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    let _ = builder.build_unconditional_branch(mbb);
+                }
             }
 
             // continue
-            builder.position_at_end(merge_bb);
+            if let Some(mbb) = merge_bb {
+                builder.position_at_end(mbb);
+            }
             Ok(None)
         }
         HIRStmt::For {
