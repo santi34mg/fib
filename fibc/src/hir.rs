@@ -1,12 +1,12 @@
 use core::fmt;
 use std::collections::HashMap;
 
-use crate::token::{builtin::BuiltinType, identifier::Identifier, Operator};
+use crate::token::{Operator, builtin::BuiltinType, identifier::Identifier};
 
 #[derive(Debug, Clone)]
 pub struct CompilationUnit {
     pub scope_root: Scope,
-    pub declarations: Vec<HIRDeclaration>
+    pub declarations: Vec<HIRDeclaration>,
 }
 
 impl CompilationUnit {
@@ -37,7 +37,7 @@ impl Scope {
 pub enum HIRSymbol {
     Type(HIRTypeKind),
     Function(HIRFunction),
-    Variable(HIRVar),
+    Constant(HIRConst),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,7 +51,7 @@ impl fmt::Display for HIRTypeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Builtin(builtin) => write!(f, "{}", builtin)?,
-            _ => todo!()
+            _ => todo!(),
         };
         Ok(())
     }
@@ -60,7 +60,7 @@ impl fmt::Display for HIRTypeKind {
 #[derive(Debug, Clone)]
 pub enum HIRDeclaration {
     HIRFunction(HIRFunction),
-    HIRVar(HIRVar),
+    HIRConst(HIRConst),
 }
 
 #[derive(Debug, Clone)]
@@ -79,13 +79,14 @@ pub struct HIRExpression {
 
 #[derive(Debug, Clone)]
 pub enum HIRExpressionKind {
-    LiteralInt{
+    LiteralInt {
         value: u64,
     },
     LiteralBool(bool),
-    Variable(Identifier),
+    Identifier(Identifier),
     Binary {
         left: Box<HIRExpression>,
+        // TODO: turn this into Operation to decouple operations and operators
         operator: Operator,
         right: Box<HIRExpression>,
     },
@@ -98,18 +99,14 @@ pub enum HIRExpressionKind {
 
 #[derive(Debug, Clone)]
 pub enum HIRStmt {
-    Let(HIRVar),
+    Const(HIRConst),
     Assign {
         name: Identifier,
         expr: HIRExpression,
     },
     Expr(HIRExpression),
     Return(Option<HIRExpression>),
-    If {
-        cond: HIRExpression,
-        then_branch: Vec<HIRStmt>,
-        else_branch: Option<Vec<HIRStmt>>,
-    },
+    If(HIRIf),
     For {
         init: Option<Box<HIRStmt>>,
         cond: Option<HIRExpression>,
@@ -119,8 +116,39 @@ pub enum HIRStmt {
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRVar {
+pub struct HIRConst {
     pub name: Identifier,
     pub ty: HIRTypeKind,
     pub init: Option<HIRExpression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRIf {
+    pub cond: HIRExpression,
+    pub then_branch: Vec<HIRStmt>,
+    pub else_branch: Option<Vec<HIRStmt>>,
+}
+
+impl HIRIf {
+    pub fn then_branch_terminates(&self) -> bool {
+        for stmt in self.then_branch.iter() {
+            if let HIRStmt::Return(_) = stmt {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn else_branch_terminates(&self) -> bool {
+        if let Some(eb) = &self.else_branch {
+            for stmt in eb.iter() {
+                if let HIRStmt::Return(_) = stmt {
+                    return true;
+                }
+            }
+            return false;
+        } else {
+            return false;
+        }
+    }
 }

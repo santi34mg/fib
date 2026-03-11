@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::ast::ast::{
     Ast, DeclarationNode, Expression, Field, FunctionBody, FunctionDeclaration, FunctionParameter,
-    FunctionSignature, PointerVariant, StatementNode, TypeExpression, VariableDeclaration,
+    FunctionSignature, PointerVariant, StatementNode, TypeExpression, ConstantDeclaration,
 };
 use crate::token::builtin::Builtin;
 use crate::token::identifier::Identifier;
@@ -181,9 +181,9 @@ where
                         else_branch,
                     }
                 }
-                TokenKind::Keyword(Keyword::Let) => {
-                    let stmt = self.parse_variable_declaration()?;
-                    StatementNode::VariableDeclaration(stmt)
+                TokenKind::Keyword(Keyword::Const) => {
+                    let stmt = self.parse_constant_declaration()?;
+                    StatementNode::ConstantDeclaration(stmt)
                 }
                 TokenKind::Keyword(Keyword::Return) => {
                     self.next(); // consume 'return'
@@ -343,20 +343,20 @@ where
         Ok((identifier, expr))
     }
 
-    /// Parses a variable declaration statement: let identifier [type] [= expression][;]
-    fn parse_variable_declaration(&mut self) -> ParseResult<VariableDeclaration> {
-        let let_token = self.expect_token(
-            TokenKind::Keyword(Keyword::Let),
-            "parse_var_decl: expected 'let' keyword",
+    /// Parses a variable declaration statement:
+    fn parse_constant_declaration(&mut self) -> ParseResult<ConstantDeclaration> {
+        let const_token = self.expect_token(
+            TokenKind::Keyword(Keyword::Const),
+            "parse_constant_declaration: expected 'const' keyword",
         )?;
 
         let ident = if let TokenKind::Identifier(ident) = self
-            .expect_next("parse_var_decl: expected identifier")?
+            .expect_next("parse_constant_declaration: expected identifier")?
             .kind
         {
             ident
         } else {
-            return Err(self.error("expected identifier", let_token.line, let_token.column));
+            return Err(self.error("expected identifier", const_token.line, const_token.column));
         };
 
         println!("Got to type parsing");
@@ -366,9 +366,9 @@ where
         match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
             Some(_) => {
                 let expr = self.parse_expression()?;
-                Ok(VariableDeclaration::new(ident, var_type, Some(expr)))
+                Ok(ConstantDeclaration::new(ident, var_type, Some(expr)))
             }
-            None => Ok(VariableDeclaration::new(ident, var_type, None)),
+            None => Ok(ConstantDeclaration::new(ident, var_type, None)),
         }
     }
 

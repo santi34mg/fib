@@ -2,7 +2,7 @@
 mod tests {
     use std::path::Path;
 
-    use crate::ast::ast::{DeclarationNode, Expression, TypeExpression, VariableDeclaration};
+    use crate::ast::ast::{DeclarationNode, Expression, TypeExpression, ConstantDeclaration};
     use crate::ast::{Ast, StatementNode};
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -168,9 +168,9 @@ mod tests {
         // println!("{:#?}", ast.statements); // Removed: Ast has no 'statements' field
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementNode::VariableDeclaration(VariableDeclaration {
+        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
-            variable_type: Some(TypeExpression::Identifier(_)),
+            constant_type: Some(TypeExpression::Identifier(_)),
             expression: Some(Expression::Literal(Literal::Integer(5))),
         }) = stmts[0]
         {
@@ -186,9 +186,9 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementNode::VariableDeclaration(VariableDeclaration {
+        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
-            variable_type: None,
+            constant_type: None,
             expression: Some(Expression::Literal(Literal::Integer(5))),
         }) = stmts[0]
         {
@@ -204,9 +204,9 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementNode::VariableDeclaration(VariableDeclaration {
+        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
-            variable_type: Some(TypeExpression::Identifier(_)),
+            constant_type: Some(TypeExpression::Identifier(_)),
             expression: None,
         }) = stmts[0]
         {
@@ -222,9 +222,9 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementNode::VariableDeclaration(VariableDeclaration {
+        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
-            variable_type: Some(TypeExpression::Identifier(_)),
+            constant_type: Some(TypeExpression::Identifier(_)),
             expression: Some(Expression::Literal(Literal::Integer(5))),
         }) = stmts[0]
         {
@@ -240,9 +240,9 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementNode::VariableDeclaration(VariableDeclaration {
+        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
-            variable_type: None,
+            constant_type: None,
             expression: None,
         }) = stmts[0]
         {

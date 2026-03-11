@@ -1,13 +1,12 @@
 use std::error::Error;
 
 use crate::ast::ast::{
-    DeclarationNode, Expression as PExpr, FunctionDeclaration, TypeDeclaration, TypeExpression,
-    VariableDeclaration,
+    ConstantDeclaration, DeclarationNode, Expression as PExpr, FunctionDeclaration,
+    TypeDeclaration, TypeExpression,
 };
 use crate::ast::{Ast, StatementNode};
 use crate::hir::{
-    CompilationUnit, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction, HIRStmt,
-    HIRSymbol, HIRTypeKind, HIRVar, Scope,
+    CompilationUnit, HIRConst, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction, HIRIf, HIRStmt, HIRSymbol, HIRTypeKind, Scope
 };
 use crate::token::Operator;
 use crate::token::builtin::BuiltinType;
@@ -19,15 +18,15 @@ pub fn analyze(ast: Ast) -> Result<CompilationUnit, Box<dyn Error>> {
     let mut current_scope = Scope::new();
     let mut hir_declarations: Vec<HIRDeclaration> = Vec::new();
     for declaration in ast.declarations {
-        current_scope = name_resolution(&declaration, current_scope)?;
+        current_scope = resolve_declaration(&declaration, current_scope)?;
         let hir_declaration: Option<HIRDeclaration> = match declaration {
             DeclarationNode::FunctionDeclaration(function_declaration) => Some(
                 HIRDeclaration::HIRFunction(func_to_hir(function_declaration, &mut current_scope)?),
             ),
             DeclarationNode::TypeDeclaration(_) => None,
             DeclarationNode::Statement(stmt) => match stmt {
-                StatementNode::VariableDeclaration(var_declaration) => Some(
-                    HIRDeclaration::HIRVar(var_decl_to_hir(var_declaration, &mut current_scope)?),
+                StatementNode::ConstantDeclaration(var_declaration) => Some(
+                    HIRDeclaration::HIRConst(var_decl_to_hir(var_declaration, &mut current_scope)?),
                 ),
                 _ => todo!("analyze: statement not supported yet"),
             },
@@ -70,7 +69,7 @@ fn func_to_hir(
 
 fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt, Box<dyn Error>> {
     match stmt {
-        StatementNode::VariableDeclaration(variable_declaration) => Ok(HIRStmt::Let(
+        StatementNode::ConstantDeclaration(variable_declaration) => Ok(HIRStmt::Const(
             var_decl_to_hir(variable_declaration, current_scope)?,
         )),
         StatementNode::Assignment { identifier, expr } => {
@@ -105,11 +104,11 @@ fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt
                 }
                 None => None,
             };
-            Ok(HIRStmt::If {
+            Ok(HIRStmt::If(HIRIf {
                 cond,
                 then_branch: then_h,
                 else_branch: else_h,
-            })
+            }))
         }
         StatementNode::For {
             initializer,
@@ -144,14 +143,14 @@ fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt
 }
 
 fn var_decl_to_hir(
-    variable_declaration: VariableDeclaration,
+    variable_declaration: ConstantDeclaration,
     current_scope: &mut Scope,
-) -> Result<HIRVar, Box<dyn Error>> {
+) -> Result<HIRConst, Box<dyn Error>> {
     let mut init = match variable_declaration.expression {
         Some(e) => Some(expr_to_hir(e, current_scope)?),
         None => None,
     };
-    let ty = match variable_declaration.variable_type {
+    let ty = match variable_declaration.constant_type {
         Some(t) => map_type(t)?,
         // TODO: inferred types `let x = ...` should be done below
         None => HIRTypeKind::Builtin(BuiltinType::Void),
@@ -168,14 +167,14 @@ inferred type of expressoin: {}"#,
             .into());
         }
     }
-    let hir_var = HIRVar {
+    let hir_var = HIRConst {
         name: variable_declaration.identifier.clone(),
         ty,
         init,
     };
     current_scope.symbols.insert(
         variable_declaration.identifier,
-        HIRSymbol::Variable(hir_var.clone()),
+        HIRSymbol::Constant(hir_var.clone()),
     );
     Ok(hir_var)
 }
@@ -228,14 +227,14 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                     name, current_scope
                 )
             })? {
-                HIRSymbol::Variable(var) => var.ty.clone(),
+                HIRSymbol::Constant(var) => var.ty.clone(),
                 _ => {
                     return Err(
                         format!("expr_to_hir: identifier {} is not a variable", name).into(),
                     );
                 }
             },
-            expression: HIRExpressionKind::Variable(name),
+            expression: HIRExpressionKind::Identifier(name),
         }),
         PExpr::Binary {
             left,
@@ -340,7 +339,7 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, Box<dyn Erro
     Ok(hir_typekind)
 }
 
-fn name_resolution(
+fn resolve_declaration(
     declaration: &DeclarationNode,
     current_scope: Scope,
 ) -> Result<Scope, Box<dyn Error>> {
@@ -360,10 +359,10 @@ fn resolve_statement(
     mut current_scope: Scope,
 ) -> Result<Scope, Box<dyn Error>> {
     match statement {
-        StatementNode::VariableDeclaration(variable_declaration) => {
+        StatementNode::ConstantDeclaration(variable_declaration) => {
             current_scope.symbols.insert(
                 variable_declaration.identifier.clone(),
-                HIRSymbol::Variable(var_decl_to_hir(
+                HIRSymbol::Constant(var_decl_to_hir(
                     variable_declaration.clone(),
                     &mut current_scope.clone(),
                 )?),
@@ -371,7 +370,26 @@ fn resolve_statement(
             Ok(current_scope)
         }
         StatementNode::Return(_) => Ok(current_scope),
-        stmt => todo!("resolve_statement: statement {:?} not supported yet", stmt),
+        StatementNode::If {
+            condition: _condition,
+            then_branch,
+            else_branch,
+        } => {
+            let mut then_scope = Scope::new();
+            for stmt in then_branch {
+                then_scope = resolve_statement(stmt, then_scope)?;
+            }
+            current_scope.children_scope.push(Box::new(then_scope));
+            if let Some(else_branch) = else_branch {
+                let mut else_scope = Scope::new();
+                for stmt in else_branch {
+                    else_scope = resolve_statement(stmt, else_scope)?;
+                }
+                current_scope.children_scope.push(Box::new(else_scope));
+            }
+            Ok(current_scope)
+        }
+        stmt => todo!("resolve_statement: statement {:?}", stmt),
     }
 }
 
