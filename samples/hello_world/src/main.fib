@@ -1,6 +1,9 @@
 
-function main() uint8 {
-    let x uint8 = 5;
-    let y uint8 = 10;
-    return x + y;
+fn main() uint8 {
+    const x uint8 = 100;
+    if (x < 10) {
+        return 0;
+    } else {
+        return 1;
+    }
 }
