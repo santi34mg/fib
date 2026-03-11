@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
-use std::{error::Error, fs, path::PathBuf, process};
+use std::{fs, path::PathBuf, process};
 use tera::{Context, Tera};
 
-use fiberc;
+use fibc;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -73,7 +73,7 @@ fn compile_command(file: Option<PathBuf>) -> Result<(), Box<dyn std::error::Erro
     };
 
     println!("Compiling project {} with fiber version {}", config.package.name, config.package.version);
-    fiberc::compile_project(&file, config.package.target)
+    fibc::compile_project(&file, config.package.target)
 }
 
 fn init_command(dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
