@@ -1,3 +1,5 @@
 [workspace]
-resolver = "1"
-members = ["fibc", "cli"]
+members = [
+    "cli",
+    "fibc",
+]
