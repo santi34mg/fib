@@ -183,7 +183,7 @@ fn var_decl_to_hir(
     var_decl: VariableDeclaration,
     current_scope: &mut Scope,
 ) -> Result<HIRBinding, Box<dyn Error>> {
-    let init = if let Some(expr) = var_decl.expression {
+    let mut init = if let Some(expr) = var_decl.expression {
         expr_to_hir(expr, &current_scope)?
     } else {
         todo!("variable declarations without an init")
@@ -194,13 +194,40 @@ fn var_decl_to_hir(
     };
     // check that type matches
     if init.inferred_type != ty {
-        return Err(format!(
-            r#"initalization type does not match explicit type for {}
-explicit type: {}
-inferred type of expressoin: {}"#,
-            var_decl.identifier, ty, init.inferred_type
-        )
-        .into());
+        if let HIRTypeKind::Builtin(builtin) = &ty {
+            // FIXME: this should also check that the inferred type is kinda safe to cast
+            match builtin {
+                BuiltinType::SInt8 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::SInt8),
+                BuiltinType::SInt16 => {
+                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::SInt16)
+                }
+                BuiltinType::SInt32 => {
+                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::SInt32)
+                }
+                BuiltinType::SInt64 => {
+                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::SInt64)
+                }
+                BuiltinType::UInt8 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt8),
+                BuiltinType::UInt16 => {
+                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt16)
+                }
+                BuiltinType::UInt32 => {
+                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt32)
+                }
+                BuiltinType::UInt64 => {
+                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt64)
+                }
+                _ => {}
+            }
+        } else {
+            return Err(format!(
+                r#"initalization type does not match explicit type for {}
+explicit type: {:?}
+inferred type of expressoin: {:?}"#,
+                var_decl.identifier, ty, init.inferred_type
+            )
+            .into());
+        }
     }
     let hir_var = HIRBinding {
         name: var_decl.identifier.clone(),
@@ -276,7 +303,7 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
             right,
         } => {
             let l = expr_to_hir(*left, current_scope)?;
-            let r = expr_to_hir(*right, current_scope)?;
+            let mut r = expr_to_hir(*right, current_scope)?;
             let inferred_type = match operator {
                 // TODO: support more operations than integers
                 Operator::Plus
@@ -292,7 +319,10 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                 | Operator::Percent
                 | Operator::Ampersand
                 | Operator::Pipe
-                | Operator::Caret => HIRTypeKind::Builtin(BuiltinType::UInt64),
+                | Operator::Caret => {
+                    r.inferred_type = l.inferred_type.clone();
+                    l.inferred_type.clone()
+                }
                 _ => panic!(),
             };
             Ok(HIRExpression {
@@ -452,7 +482,10 @@ fn resolve_statement(
             current_scope.children_scope.push(Box::new(for_scope));
             Ok(current_scope)
         }
-        StatementNode::Assignment { identifier: _i, expr: _e} => {
+        StatementNode::Assignment {
+            identifier: _i,
+            expr: _e,
+        } => {
             // TODO: for now i wont do anything, perhaps do type checking in the future
             Ok(current_scope)
         }
