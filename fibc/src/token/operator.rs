@@ -18,11 +18,11 @@ pub enum Operator {
     DoubleEquals,       // ==
     Different,          // !=
 
-    PlusAssign,         // +=
-    MinusAssign,        // -=
-    StarAssign,         // *=
-    SlashAssign,        // /=
-    PercentAssign,      // %=
+    // PlusAssign,         // +=
+    // MinusAssign,        // -=
+    // StarAssign,         // *=
+    // SlashAssign,        // /=
+    // PercentAssign,      // %=
 
     LogicalAnd,         // &&
     LogicalOr,          // ||

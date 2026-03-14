@@ -44,7 +44,7 @@ pub enum StatementNode {
     For {
         initializer: Option<Box<StatementNode>>,
         condition: Option<Expression>,
-        increment: Option<Box<StatementNode>>,
+        post_operation: Option<Box<StatementNode>>,
         body: Vec<StatementNode>,
     },
 }

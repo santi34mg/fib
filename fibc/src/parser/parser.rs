@@ -3,7 +3,9 @@ use std::iter::Peekable;
 use std::path::Path;
 
 use crate::ast::ast::{
-    Ast, ConstantDeclaration, DeclarationNode, Expression, Field, FunctionBody, FunctionDeclaration, FunctionParameter, FunctionSignature, PointerVariant, StatementNode, TypeExpression, VariableDeclaration
+    Ast, ConstantDeclaration, DeclarationNode, Expression, Field, FunctionBody,
+    FunctionDeclaration, FunctionParameter, FunctionSignature, PointerVariant, StatementNode,
+    TypeExpression, VariableDeclaration,
 };
 use crate::token::builtin::Builtin;
 use crate::token::identifier::Identifier;
@@ -145,8 +147,8 @@ where
 
     fn parse_statement_some(&mut self) -> ParseResult<StatementNode> {
         match self.parse_statement()? {
-            None => todo!(),
             Some(statement) => return Ok(statement),
+            None => todo!(),
         }
     }
 
@@ -207,17 +209,30 @@ where
                         StatementNode::Return(None)
                     }
                 }
-                TokenKind::Identifier(_) => {
+                TokenKind::Identifier(id) => {
                     // Try to parse as assignment or increment/decrement
-                    if self.is_assignment()? {
-                        let stmt = self.parse_assignment()?;
-                        StatementNode::Assignment {
-                            identifier: stmt.0,
-                            expr: stmt.1,
-                        }
-                    } else {
-                        let expr = self.parse_expression()?;
-                        StatementNode::ExpressionStatement(expr)
+                    self.next();
+                    match self.peek() {
+                        Some(token) => match token.kind {
+                            TokenKind::Operator(Operator::Assign) => {
+                                self.expect_token(
+                                    TokenKind::Operator(Operator::Assign),
+                                    "expected '='",
+                                )?;
+                                let expr = self.parse_expression()?;
+                                StatementNode::Assignment {
+                                    identifier: id.to_owned(),
+                                    expr,
+                                }
+                            }
+                            _ => {
+                                let expr = self.parse_expression()?;
+                                StatementNode::ExpressionStatement(expr)
+                            }
+                        },
+                        None => StatementNode::ExpressionStatement(Expression::Identifier(
+                            id.to_owned(),
+                        )),
                     }
                 }
                 TokenKind::Keyword(Keyword::For) => {
@@ -231,11 +246,11 @@ where
                     }) {
                         Some(_) => None,
                         None => {
-                            let statement = self.parse_statement_some()?;
-                            self.expect_token(
-                                TokenKind::Punctuation(Punctuation::Semicolon),
-                                "expected semicolon after initalizer",
-                            )?;
+                            let statement = self.parse_statement()?.unwrap();
+                            // self.expect_token(
+                            //     TokenKind::Punctuation(Punctuation::Semicolon),
+                            //     "expected semicolon after initalizer",
+                            // )?;
                             Some(Box::new(statement))
                         }
                     };
@@ -252,7 +267,7 @@ where
                             Some(expression)
                         }
                     };
-                    let increment = match self.consume_if(|t| {
+                    let post_operation = match self.consume_if(|t| {
                         matches!(
                             t.kind,
                             TokenKind::Punctuation(Punctuation::ClosingParenthesis)
@@ -260,7 +275,9 @@ where
                     }) {
                         Some(_) => None,
                         None => {
-                            let statement = self.parse_statement_some()?;
+                            let statement = self
+                                .parse_statement()?
+                                .ok_or_else(|| self.error("expected statement", 0, 0))?;
                             self.expect_token(
                                 TokenKind::Punctuation(Punctuation::ClosingParenthesis),
                                 "expected ')'",
@@ -272,7 +289,7 @@ where
                     StatementNode::For {
                         initializer,
                         condition,
-                        increment,
+                        post_operation,
                         body,
                     }
                 }
@@ -313,39 +330,6 @@ where
         Ok(Some(stmt))
     }
 
-    /// Checks if the next tokens represent an assignment (identifier followed by '=')
-    fn is_assignment(&mut self) -> ParseResult<bool> {
-        let mut iter = self.tokens.clone();
-        if let Some(token) = iter.next() {
-            if let TokenKind::Identifier(_) = token.kind {
-                if let Some(next_token) = iter.next() {
-                    if let TokenKind::Operator(Operator::Assign) = next_token.kind {
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-        Ok(false)
-    }
-
-    /// Parses an assignment statement: identifier '=' expression
-    fn parse_assignment(&mut self) -> ParseResult<(Identifier, Expression)> {
-        let ident_token = self.expect_token(
-            TokenKind::Identifier(Identifier {
-                identifier: String::new(),
-            }),
-            "parse_assignment: expected identifier",
-        )?;
-        let identifier = if let TokenKind::Identifier(id) = ident_token.kind {
-            id
-        } else {
-            unreachable!()
-        };
-        self.expect_token(TokenKind::Operator(Operator::Assign), "expected '='")?;
-        let expr = self.parse_expression()?;
-        Ok((identifier, expr))
-    }
-
     /// Parses a constant declaration statement: const <type> <name> = <init>[;]
     fn parse_constant_declaration(&mut self) -> ParseResult<ConstantDeclaration> {
         let const_token = self.expect_token(
@@ -369,7 +353,7 @@ where
         let expr = self.parse_expression()?;
 
         // optional semicolon
-        self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
+        // self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
 
         Ok(ConstantDeclaration::new(ident, var_type, expr))
     }
@@ -392,13 +376,14 @@ where
             return Err(self.error("expected identifier", const_token.line, const_token.column));
         };
 
-        let expr = match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
-            Some(_) => Some(self.parse_expression()?),
-            None => None,
-        };
+        let expr =
+            match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
+                Some(_) => Some(self.parse_expression()?),
+                None => None,
+            };
 
         // optional semicolon
-        self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
+        // self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
 
         Ok(VariableDeclaration::new(ident, var_type, expr))
     }
@@ -471,7 +456,10 @@ where
         // consume ')'
         self.next();
         // expect '->'
-        let arrow = self.expect_token(TokenKind::Operator(Operator::ThinRightArrow), "expected '('")?;
+        let arrow = self.expect_token(
+            TokenKind::Operator(Operator::ThinRightArrow),
+            "expected '('",
+        )?;
         let return_type = match self.parse_type()? {
             Some(rt) => rt,
             None => {
@@ -627,9 +615,7 @@ where
 
         while let Some(token) = self.peek() {
             match &token.kind {
-                TokenKind::Operator(
-                    op @ (Operator::DoubleEquals | Operator::Different),
-                ) => {
+                TokenKind::Operator(op @ (Operator::DoubleEquals | Operator::Different)) => {
                     let op = *op;
                     self.next();
                     let right = Box::new(self.parse_comparison()?);

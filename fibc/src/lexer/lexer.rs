@@ -118,10 +118,10 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 let c = self.peek();
                 match c {
-                    Some('=') => {
-                        self.bump();
-                        Some(TokenKind::Operator(Operator::PlusAssign))
-                    }
+                    // Some('=') => {
+                    //     self.bump();
+                    //     Some(TokenKind::Operator(Operator::PlusAssign))
+                    // }
                     Some(_) => Some(TokenKind::Operator(Operator::Plus)),
                     None => todo!(),
                 }
@@ -134,10 +134,10 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::ThinRightArrow))
                     }
-                    Some('=') => {
-                        self.bump();
-                        Some(TokenKind::Operator(Operator::MinusAssign))
-                    }
+                    // Some('=') => {
+                    //     self.bump();
+                    //     Some(TokenKind::Operator(Operator::MinusAssign))
+                    // }
                     Some(_) => Some(TokenKind::Operator(Operator::Minus)),
                     None => todo!(),
                 }
@@ -146,10 +146,10 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 let c = self.peek();
                 match c {
-                    Some('=') => {
-                        self.bump();
-                        Some(TokenKind::Operator(Operator::StarAssign))
-                    }
+                    // Some('=') => {
+                    //     self.bump();
+                    //     Some(TokenKind::Operator(Operator::StarAssign))
+                    // }
                     Some(_) => Some(TokenKind::Operator(Operator::Star)),
                     None => todo!(),
                 }
@@ -163,10 +163,10 @@ impl<'input> Lexer<'input> {
                         self.skip_while(|c| c != '\n');
                         Some(TokenKind::Comment)
                     }
-                    Some('=') => {
-                        self.bump();
-                        Some(TokenKind::Operator(Operator::SlashAssign))
-                    }
+                    // Some('=') => {
+                    //     self.bump();
+                    //     Some(TokenKind::Operator(Operator::SlashAssign))
+                    // }
                     Some(_) => Some(TokenKind::Operator(Operator::Slash)),
                     None => todo!(),
                 }
@@ -175,10 +175,10 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 let c = self.peek();
                 match c {
-                    Some('=') => {
-                        self.bump();
-                        Some(TokenKind::Operator(Operator::PercentAssign))
-                    }
+                    // Some('=') => {
+                    //     self.bump();
+                    //     Some(TokenKind::Operator(Operator::PercentAssign))
+                    // }
                     Some(_) => Some(TokenKind::Operator(Operator::Percent)),
                     None => todo!(),
                 }
