@@ -2,7 +2,7 @@
 mod tests {
     use std::path::Path;
 
-    use crate::ast::ast::{DeclarationNode, Expression, TypeExpression, ConstantDeclaration};
+    use crate::ast::ast::{ConstantDeclaration, DeclarationNode, Expression, TypeExpression};
     use crate::ast::{Ast, StatementNode};
     use crate::lexer::Lexer;
     use crate::parser::Parser;
@@ -26,10 +26,10 @@ mod tests {
 
     fn module_statements(ast: &Ast) -> Vec<&StatementNode> {
         let mut stmts = Vec::new();
-            for decl in &ast.declarations {
-                if let DeclarationNode::Statement(s) = decl {
-                    stmts.push(s);
-                }
+        for decl in &ast.declarations {
+            if let DeclarationNode::Statement(s) = decl {
+                stmts.push(s);
+            }
         }
         stmts
     }
@@ -109,7 +109,7 @@ mod tests {
             let r_expr = *right.clone();
             assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
             assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
-            assert!(matches!(op, Operator::Multiply));
+            assert!(matches!(op, Operator::Star));
         } else {
             panic!("AST statement did not match expected Expression");
         }
@@ -132,7 +132,7 @@ mod tests {
             let r_expr = *right.clone();
             assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
             assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
-            assert!(matches!(op, Operator::Divide));
+            assert!(matches!(op, Operator::Slash));
         } else {
             panic!("AST statement did not match expected Expression");
         }
@@ -171,7 +171,7 @@ mod tests {
         if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
             constant_type: Some(TypeExpression::Identifier(_)),
-            expression: Some(Expression::Literal(Literal::Integer(5))),
+            expression: Expression::Literal(Literal::Integer(5)),
         }) = stmts[0]
         {
             assert_eq!(identifier.identifier, "x");
@@ -189,25 +189,7 @@ mod tests {
         if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
             constant_type: None,
-            expression: Some(Expression::Literal(Literal::Integer(5))),
-        }) = stmts[0]
-        {
-            assert_eq!(identifier.identifier, "x");
-        } else {
-            panic!("AST statement did not match expected VariableDeclaration");
-        }
-    }
-
-    #[test]
-    fn test_variable_declaration_without_expresion() {
-        let test_string = "let x int;";
-        let ast = get_ast(test_string);
-        let stmts = module_statements(&ast);
-        assert_eq!(stmts.len(), 1);
-        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
-            identifier,
-            constant_type: Some(TypeExpression::Identifier(_)),
-            expression: None,
+            expression: Expression::Literal(Literal::Integer(5)),
         }) = stmts[0]
         {
             assert_eq!(identifier.identifier, "x");
@@ -225,25 +207,7 @@ mod tests {
         if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
             constant_type: Some(TypeExpression::Identifier(_)),
-            expression: Some(Expression::Literal(Literal::Integer(5))),
-        }) = stmts[0]
-        {
-            assert_eq!(identifier.identifier, "x");
-        } else {
-            panic!("AST statement did not match expected VariableDeclaration");
-        }
-    }
-
-    #[test]
-    fn test_variable_declaration_only_identifier() {
-        let test_string = "let x";
-        let ast = get_ast(test_string);
-        let stmts = module_statements(&ast);
-        assert_eq!(stmts.len(), 1);
-        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
-            identifier,
-            constant_type: None,
-            expression: None,
+            expression: Expression::Literal(Literal::Integer(5)),
         }) = stmts[0]
         {
             assert_eq!(identifier.identifier, "x");

@@ -1,44 +1,38 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
-    // Integers 
-    Plus,
-    Minus,
-    Multiply,
-    Divide,
-    Modulo,
+    Plus,               // +
+    Minus,              // -
+    Star,               // *
+    Slash,              // /
+    Percent,            // %
 
-    GreaterThan,
-    LesserThan,
-    GreaterEqual,
-    LesserEqual,
+    GreaterThan,        // >
+    LesserThan,         // <
+    GreaterEqual,       // >=
+    LesserEqual,        // <=
 
-    LeftShift,
-    RightShift,
+    LeftShift,          // <<
+    RightShift,         // >>
 
-    // 
-    StructuralEquals,
-    StrictlyEquals,
+    Assign,             // =
+    DoubleEquals,       // ==
+    Different,          // !=
 
-    StructuralDifferent,
-    StrictlyDifferent,
+    PlusAssign,         // +=
+    MinusAssign,        // -=
+    StarAssign,         // *=
+    SlashAssign,        // /=
+    PercentAssign,      // %=
 
-    Assign,
-    AddAssign,
-    MinusAssign,
-    MultiplyAssign,
-    DivideAssign,
-    ModuloAssign,
+    LogicalAnd,         // &&
+    LogicalOr,          // ||
+    LogicalNot,         // !
 
-    LogicalAnd,
-    LogicalOr,
-    LogicalNot,
+    Ampersand,          // &
+    Pipe,               // |
+    Tilde,              // ~
+    Caret,              // ^
 
-    Ampersand,
-    Pipe,
-    Tilde,
-    Caret,
-
-    Range,
-
-    TypeReturn,
+    DoubleDot,          // ..
+    ThinRightArrow,     // ->
 }
