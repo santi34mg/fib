@@ -29,6 +29,7 @@ pub enum DeclarationNode {
 #[derive(Debug, Clone)]
 pub enum StatementNode {
     ConstantDeclaration(ConstantDeclaration),
+    VariableDeclaration(VariableDeclaration),
     ExpressionStatement(Expression),
     Assignment {
         identifier: Identifier,
@@ -150,10 +151,32 @@ pub enum PointerVariant {
 pub struct ConstantDeclaration {
     pub identifier: Identifier,
     pub constant_type: Option<TypeExpression>,
+    pub expression: Expression,
+}
+
+
+impl ConstantDeclaration {
+    pub fn new(
+        identifier: Identifier,
+        constant_type: Option<TypeExpression>,
+        expression: Expression,
+    ) -> Self {
+        Self {
+            identifier,
+            constant_type,
+            expression,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VariableDeclaration {
+    pub identifier: Identifier,
+    pub constant_type: Option<TypeExpression>,
     pub expression: Option<Expression>,
 }
 
-impl ConstantDeclaration {
+impl VariableDeclaration {
     pub fn new(
         identifier: Identifier,
         constant_type: Option<TypeExpression>,
@@ -166,7 +189,6 @@ impl ConstantDeclaration {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub enum Expression {

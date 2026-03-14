@@ -68,12 +68,7 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 if self.peek() == Some('=') {
                     self.bump();
-                    if self.peek() == Some('=') {
-                        self.bump();
-                        Some(TokenKind::Operator(Operator::StrictlyEquals))
-                    } else {
-                        Some(TokenKind::Operator(Operator::StructuralEquals))
-                    }
+                    Some(TokenKind::Operator(Operator::DoubleEquals))
                 } else {
                     Some(TokenKind::Operator(Operator::Assign))
                 }
@@ -82,12 +77,7 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 if self.peek() == Some('=') {
                     self.bump();
-                    if self.peek() == Some('=') {
-                        self.bump();
-                        Some(TokenKind::Operator(Operator::StrictlyDifferent))
-                    } else {
-                        Some(TokenKind::Operator(Operator::StructuralDifferent))
-                    }
+                    Some(TokenKind::Operator(Operator::Different))
                 } else {
                     Some(TokenKind::Operator(Operator::LogicalNot))
                 }
@@ -130,7 +120,7 @@ impl<'input> Lexer<'input> {
                 match c {
                     Some('=') => {
                         self.bump();
-                        Some(TokenKind::Operator(Operator::AddAssign))
+                        Some(TokenKind::Operator(Operator::PlusAssign))
                     }
                     Some(_) => Some(TokenKind::Operator(Operator::Plus)),
                     None => todo!(),
@@ -142,7 +132,7 @@ impl<'input> Lexer<'input> {
                 match c {
                     Some('>') => {
                         self.bump();
-                        Some(TokenKind::Operator(Operator::TypeReturn))
+                        Some(TokenKind::Operator(Operator::ThinRightArrow))
                     }
                     Some('=') => {
                         self.bump();
@@ -158,9 +148,9 @@ impl<'input> Lexer<'input> {
                 match c {
                     Some('=') => {
                         self.bump();
-                        Some(TokenKind::Operator(Operator::MultiplyAssign))
+                        Some(TokenKind::Operator(Operator::StarAssign))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::Multiply)),
+                    Some(_) => Some(TokenKind::Operator(Operator::Star)),
                     None => todo!(),
                 }
             }
@@ -175,9 +165,9 @@ impl<'input> Lexer<'input> {
                     }
                     Some('=') => {
                         self.bump();
-                        Some(TokenKind::Operator(Operator::DivideAssign))
+                        Some(TokenKind::Operator(Operator::SlashAssign))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::Divide)),
+                    Some(_) => Some(TokenKind::Operator(Operator::Slash)),
                     None => todo!(),
                 }
             }
@@ -187,9 +177,9 @@ impl<'input> Lexer<'input> {
                 match c {
                     Some('=') => {
                         self.bump();
-                        Some(TokenKind::Operator(Operator::ModuloAssign))
+                        Some(TokenKind::Operator(Operator::PercentAssign))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::Modulo)),
+                    Some(_) => Some(TokenKind::Operator(Operator::Percent)),
                     None => todo!(),
                 }
             }
@@ -243,7 +233,7 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 if self.peek() == Some('.') {
                     self.bump();
-                    Some(TokenKind::Operator(Operator::Range))
+                    Some(TokenKind::Operator(Operator::DoubleDot))
                 } else {
                     Some(TokenKind::Punctuation(Punctuation::Dot))
                 }
@@ -415,6 +405,7 @@ impl<'input> Lexer<'input> {
         // for now, "__<identifier>" is reserved for internal identifiers
         match name {
             "const" => TokenKind::Keyword(Keyword::Const),
+            "var" => TokenKind::Keyword(Keyword::Var),
             "fn" => TokenKind::Keyword(Keyword::Function),
             "switch" => TokenKind::Keyword(Keyword::Switch),
             "when" => TokenKind::Keyword(Keyword::When),

@@ -37,7 +37,7 @@ impl Scope {
 pub enum HIRSymbol {
     Type(HIRTypeKind),
     Function(HIRFunction),
-    Constant(HIRConst),
+    Binding(HIRBinding),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,7 +60,7 @@ impl fmt::Display for HIRTypeKind {
 #[derive(Debug, Clone)]
 pub enum HIRDeclaration {
     HIRFunction(HIRFunction),
-    HIRConst(HIRConst),
+    HIRConst(HIRBinding),
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +99,7 @@ pub enum HIRExpressionKind {
 
 #[derive(Debug, Clone)]
 pub enum HIRStmt {
-    Const(HIRConst),
+    Binding(HIRBinding),
     Assign {
         name: Identifier,
         expr: HIRExpression,
@@ -116,10 +116,10 @@ pub enum HIRStmt {
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRConst {
+pub struct HIRBinding {
     pub name: Identifier,
     pub ty: HIRTypeKind,
-    pub init: Option<HIRExpression>,
+    pub init: HIRExpression,
 }
 
 #[derive(Debug, Clone)]

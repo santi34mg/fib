@@ -2,11 +2,12 @@ use std::error::Error;
 
 use crate::ast::ast::{
     ConstantDeclaration, DeclarationNode, Expression as PExpr, FunctionDeclaration,
-    TypeDeclaration, TypeExpression,
+    TypeDeclaration, TypeExpression, VariableDeclaration,
 };
 use crate::ast::{Ast, StatementNode};
 use crate::hir::{
-    CompilationUnit, HIRConst, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction, HIRIf, HIRStmt, HIRSymbol, HIRTypeKind, Scope
+    CompilationUnit, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction, HIRIf, HIRStmt,
+    HIRSymbol, HIRTypeKind, HIRBinding, Scope,
 };
 use crate::token::Operator;
 use crate::token::builtin::BuiltinType;
@@ -25,9 +26,12 @@ pub fn analyze(ast: Ast) -> Result<CompilationUnit, Box<dyn Error>> {
             ),
             DeclarationNode::TypeDeclaration(_) => None,
             DeclarationNode::Statement(stmt) => match stmt {
-                StatementNode::ConstantDeclaration(var_declaration) => Some(
-                    HIRDeclaration::HIRConst(var_decl_to_hir(var_declaration, &mut current_scope)?),
-                ),
+                StatementNode::ConstantDeclaration(var_declaration) => {
+                    Some(HIRDeclaration::HIRConst(const_decl_to_hir(
+                        var_declaration,
+                        &mut current_scope,
+                    )?))
+                }
                 _ => todo!("analyze: statement not supported yet"),
             },
         };
@@ -69,7 +73,10 @@ fn func_to_hir(
 
 fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt, Box<dyn Error>> {
     match stmt {
-        StatementNode::ConstantDeclaration(variable_declaration) => Ok(HIRStmt::Const(
+        StatementNode::ConstantDeclaration(constant_declaration) => Ok(HIRStmt::Binding(
+            const_decl_to_hir(constant_declaration, current_scope)?,
+        )),
+        StatementNode::VariableDeclaration(variable_declaration) => Ok(HIRStmt::Binding(
             var_decl_to_hir(variable_declaration, current_scope)?,
         )),
         StatementNode::Assignment { identifier, expr } => {
@@ -142,40 +149,67 @@ fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt
     }
 }
 
-fn var_decl_to_hir(
-    variable_declaration: ConstantDeclaration,
+fn const_decl_to_hir(
+    const_decl: ConstantDeclaration,
     current_scope: &mut Scope,
-) -> Result<HIRConst, Box<dyn Error>> {
-    let mut init = match variable_declaration.expression {
-        Some(e) => Some(expr_to_hir(e, current_scope)?),
-        None => None,
-    };
-    let ty = match variable_declaration.constant_type {
+) -> Result<HIRBinding, Box<dyn Error>> {
+    let init = expr_to_hir(const_decl.expression, &current_scope)?;
+    let ty = match const_decl.constant_type {
         Some(t) => map_type(t)?,
-        // TODO: inferred types `let x = ...` should be done below
         None => HIRTypeKind::Builtin(BuiltinType::Void),
     };
     // check that type matches
-    if let Some(init) = &mut init {
-        if init.inferred_type != ty {
-            return Err(format!(
-                r#"initalization type does not match explicit type for {}
+    if init.inferred_type != ty {
+        return Err(format!(
+            r#"initalization type does not match explicit type for {}
 explicit type: {}
 inferred type of expressoin: {}"#,
-                variable_declaration.identifier, ty, init.inferred_type
-            )
-            .into());
-        }
+            const_decl.identifier, ty, init.inferred_type
+        )
+        .into());
     }
-    let hir_var = HIRConst {
-        name: variable_declaration.identifier.clone(),
+    let hir_bind = HIRBinding {
+        name: const_decl.identifier.clone(),
         ty,
         init,
     };
-    current_scope.symbols.insert(
-        variable_declaration.identifier,
-        HIRSymbol::Constant(hir_var.clone()),
-    );
+    current_scope
+        .symbols
+        .insert(const_decl.identifier, HIRSymbol::Binding(hir_bind.clone()));
+    Ok(hir_bind)
+}
+
+fn var_decl_to_hir(
+    var_decl: VariableDeclaration,
+    current_scope: &mut Scope,
+) -> Result<HIRBinding, Box<dyn Error>> {
+    let init = if let Some(expr) = var_decl.expression {
+        expr_to_hir(expr, &current_scope)?
+    } else {
+        todo!("variable declarations without an init")
+    };
+    let ty = match var_decl.constant_type {
+        Some(t) => map_type(t)?,
+        None => HIRTypeKind::Builtin(BuiltinType::Void),
+    };
+    // check that type matches
+    if init.inferred_type != ty {
+        return Err(format!(
+            r#"initalization type does not match explicit type for {}
+explicit type: {}
+inferred type of expressoin: {}"#,
+            var_decl.identifier, ty, init.inferred_type
+        )
+        .into());
+    }
+    let hir_var = HIRBinding {
+        name: var_decl.identifier.clone(),
+        ty,
+        init,
+    };
+    current_scope
+        .symbols
+        .insert(var_decl.identifier, HIRSymbol::Binding(hir_var.clone()));
     Ok(hir_var)
 }
 
@@ -227,7 +261,7 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                     name, current_scope
                 )
             })? {
-                HIRSymbol::Constant(var) => var.ty.clone(),
+                HIRSymbol::Binding(var) => var.ty.clone(),
                 _ => {
                     return Err(
                         format!("expr_to_hir: identifier {} is not a variable", name).into(),
@@ -247,15 +281,15 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                 // TODO: support more operations than integers
                 Operator::Plus
                 | Operator::Minus
-                | Operator::Multiply
-                | Operator::Divide
+                | Operator::Star
+                | Operator::Slash
                 | Operator::RightShift
                 | Operator::LeftShift
                 | Operator::GreaterThan
                 | Operator::GreaterEqual
                 | Operator::LesserThan
                 | Operator::LesserEqual
-                | Operator::Modulo
+                | Operator::Percent
                 | Operator::Ampersand
                 | Operator::Pipe
                 | Operator::Caret => HIRTypeKind::Builtin(BuiltinType::UInt64),
@@ -359,10 +393,20 @@ fn resolve_statement(
     mut current_scope: Scope,
 ) -> Result<Scope, Box<dyn Error>> {
     match statement {
-        StatementNode::ConstantDeclaration(variable_declaration) => {
+        StatementNode::ConstantDeclaration(constant_declaration) => {
+            current_scope.symbols.insert(
+                constant_declaration.identifier.clone(),
+                HIRSymbol::Binding(const_decl_to_hir(
+                    constant_declaration.clone(),
+                    &mut current_scope.clone(),
+                )?),
+            );
+            Ok(current_scope)
+        }
+        StatementNode::VariableDeclaration(variable_declaration) => {
             current_scope.symbols.insert(
                 variable_declaration.identifier.clone(),
-                HIRSymbol::Constant(var_decl_to_hir(
+                HIRSymbol::Binding(var_decl_to_hir(
                     variable_declaration.clone(),
                     &mut current_scope.clone(),
                 )?),

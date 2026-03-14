@@ -3,8 +3,7 @@ use std::iter::Peekable;
 use std::path::Path;
 
 use crate::ast::ast::{
-    Ast, DeclarationNode, Expression, Field, FunctionBody, FunctionDeclaration, FunctionParameter,
-    FunctionSignature, PointerVariant, StatementNode, TypeExpression, ConstantDeclaration,
+    Ast, ConstantDeclaration, DeclarationNode, Expression, Field, FunctionBody, FunctionDeclaration, FunctionParameter, FunctionSignature, PointerVariant, StatementNode, TypeExpression, VariableDeclaration
 };
 use crate::token::builtin::Builtin;
 use crate::token::identifier::Identifier;
@@ -185,6 +184,10 @@ where
                     let stmt = self.parse_constant_declaration()?;
                     StatementNode::ConstantDeclaration(stmt)
                 }
+                TokenKind::Keyword(Keyword::Var) => {
+                    let stmt = self.parse_variable_declaration()?;
+                    StatementNode::VariableDeclaration(stmt)
+                }
                 TokenKind::Keyword(Keyword::Return) => {
                     self.next(); // consume 'return'
                     // Optionally parse an expression after return
@@ -343,12 +346,14 @@ where
         Ok((identifier, expr))
     }
 
-    /// Parses a variable declaration statement:
+    /// Parses a constant declaration statement: const <type> <name> = <init>[;]
     fn parse_constant_declaration(&mut self) -> ParseResult<ConstantDeclaration> {
         let const_token = self.expect_token(
             TokenKind::Keyword(Keyword::Const),
             "parse_constant_declaration: expected 'const' keyword",
         )?;
+
+        let var_type = self.parse_type()?;
 
         let ident = if let TokenKind::Identifier(ident) = self
             .expect_next("parse_constant_declaration: expected identifier")?
@@ -359,17 +364,43 @@ where
             return Err(self.error("expected identifier", const_token.line, const_token.column));
         };
 
-        println!("Got to type parsing");
-        let var_type = self.parse_type()?;
-        println!("Next token after var_type: {:?}", self.peek());
+        self.expect_token(TokenKind::Operator(Operator::Assign), "expected = operator")?;
 
-        match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
-            Some(_) => {
-                let expr = self.parse_expression()?;
-                Ok(ConstantDeclaration::new(ident, var_type, Some(expr)))
-            }
-            None => Ok(ConstantDeclaration::new(ident, var_type, None)),
-        }
+        let expr = self.parse_expression()?;
+
+        // optional semicolon
+        self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
+
+        Ok(ConstantDeclaration::new(ident, var_type, expr))
+    }
+
+    /// Parses a variable declaration statement: var <type> <name> = <init>[;]
+    fn parse_variable_declaration(&mut self) -> ParseResult<VariableDeclaration> {
+        let const_token = self.expect_token(
+            TokenKind::Keyword(Keyword::Var),
+            "parse_variable_declaration: expected 'var' keyword",
+        )?;
+
+        let var_type = self.parse_type()?;
+
+        let ident = if let TokenKind::Identifier(ident) = self
+            .expect_next("parse_variable_declaration: expected identifier")?
+            .kind
+        {
+            ident
+        } else {
+            return Err(self.error("expected identifier", const_token.line, const_token.column));
+        };
+
+        let expr = match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
+            Some(_) => Some(self.parse_expression()?),
+            None => None,
+        };
+
+        // optional semicolon
+        self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
+
+        Ok(VariableDeclaration::new(ident, var_type, expr))
     }
 
     /// Parses a type annotation, which can be a user-defined type (type identifier), or complex type (struct, variant or function).
@@ -440,7 +471,7 @@ where
         // consume ')'
         self.next();
         // expect '->'
-        let arrow = self.expect_token(TokenKind::Operator(Operator::TypeReturn), "expected '('")?;
+        let arrow = self.expect_token(TokenKind::Operator(Operator::ThinRightArrow), "expected '('")?;
         let return_type = match self.parse_type()? {
             Some(rt) => rt,
             None => {
@@ -597,7 +628,7 @@ where
         while let Some(token) = self.peek() {
             match &token.kind {
                 TokenKind::Operator(
-                    op @ (Operator::StructuralEquals | Operator::StructuralDifferent),
+                    op @ (Operator::DoubleEquals | Operator::Different),
                 ) => {
                     let op = *op;
                     self.next();
@@ -666,7 +697,7 @@ where
 
         while let Some(token) = self.peek() {
             match &token.kind {
-                TokenKind::Operator(op @ (Operator::Multiply | Operator::Divide)) => {
+                TokenKind::Operator(op @ (Operator::Star | Operator::Slash)) => {
                     let op = *op;
                     self.next();
                     let right = Box::new(self.parse_unary()?);

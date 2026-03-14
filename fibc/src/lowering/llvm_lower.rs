@@ -77,42 +77,40 @@ pub fn lower(
                     );
                 });
             }
-            HIRDeclaration::HIRConst(hir_var) => {
-                let ty = if let HIRSymbol::Constant(var) = compilation_unit
+            HIRDeclaration::HIRConst(hir_val) => {
+                let ty = if let HIRSymbol::Binding(var) = compilation_unit
                     .scope_root
                     .symbols
-                    .get(&hir_var.name)
-                    .ok_or_else(|| format!("didnt find type for name {}", hir_var.name))?
+                    .get(&hir_val.name)
+                    .ok_or_else(|| format!("didnt find type for name {}", hir_val.name))?
                 {
                     map_type_to_llvm(&var.ty, &ctx, compilation_unit.scope_root.clone())?
                 } else {
-                    return Err(format!("codegen_expr: {} is not a variable", hir_var.name).into());
+                    return Err(format!("codegen_expr: {} is not a variable", hir_val.name).into());
                 };
-                let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_var.name)) {
+                let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_val.name)) {
                     Ok(a) => a,
                     Err(e) => {
                         eprintln!(
                             "Failed to create alloca for parameter '{}': {}",
-                            hir_var.name, e
+                            hir_val.name, e
                         );
                         continue;
                     }
                 };
                 // store the param value into the alloca
-                if let Some(expr) = hir_var.init {
-                    let _ = builder.build_store(
-                        alloca,
-                        codegen_expr(
-                            &ctx,
-                            &builder,
-                            &module,
-                            &mut vars,
-                            &mut compilation_unit.scope_root.clone(),
-                            &expr,
-                        )?,
-                    );
-                }
-                vars.insert(hir_var.name, alloca);
+                let _ = builder.build_store(
+                    alloca,
+                    codegen_expr(
+                        &ctx,
+                        &builder,
+                        &module,
+                        &mut vars,
+                        &mut compilation_unit.scope_root.clone(),
+                        &hir_val.init,
+                    )?,
+                );
+                vars.insert(hir_val.name, alloca);
             }
         }
     }
@@ -148,7 +146,7 @@ fn codegen_expr<'ctx>(
             .const_int(*b as u64, false)
             .as_basic_value_enum()),
         HIRExpressionKind::Identifier(name) => {
-            let ty = if let HIRSymbol::Constant(var) = current_scope
+            let ty = if let HIRSymbol::Binding(var) = current_scope
                 .symbols
                 .get(&name)
                 .ok_or_else(|| format!("didnt find type for name {}", name))?
@@ -179,19 +177,11 @@ fn codegen_expr<'ctx>(
                 Operator::Minus => Ok(builder
                     .build_int_sub(l.into_int_value(), r.into_int_value(), "subtmp")?
                     .as_basic_value_enum()),
-                Operator::Multiply => Ok(builder
+                Operator::Star => Ok(builder
                     .build_int_mul(l.into_int_value(), r.into_int_value(), "multmp")?
                     .as_basic_value_enum()),
-                Operator::Divide => Ok(builder
+                Operator::Slash => Ok(builder
                     .build_int_signed_div(l.into_int_value(), r.into_int_value(), "divtmp")?
-                    .as_basic_value_enum()),
-                Operator::StrictlyEquals => Ok(builder
-                    .build_int_compare(
-                        IntPredicate::EQ,
-                        l.into_int_value(),
-                        r.into_int_value(),
-                        "eqtmp",
-                    )?
                     .as_basic_value_enum()),
                 Operator::GreaterThan => Ok(builder
                     .build_int_compare(
@@ -351,41 +341,39 @@ fn codegen_stmt<'ctx>(
     stmt: &HIRStmt,
 ) -> Result<Option<BasicValueEnum<'ctx>>, Box<dyn Error>> {
     match stmt {
-        HIRStmt::Const(hir_var) => {
-            let ty = if let HIRSymbol::Constant(var) = current_scope
+        HIRStmt::Binding(hir_binding) => {
+            let ty = if let HIRSymbol::Binding(var) = current_scope
                 .symbols
-                .get(&hir_var.name)
-                .ok_or_else(|| format!("didnt find type for name {}", hir_var.name))?
+                .get(&hir_binding.name)
+                .ok_or_else(|| format!("didnt find type for name {}", hir_binding.name))?
             {
                 map_type_to_llvm(&var.ty, &ctx, current_scope.clone())?
             } else {
-                return Err(format!("codegen_expr: {} is not a variable", hir_var.name).into());
+                return Err(format!("codegen_expr: {} is not a variable", hir_binding.name).into());
             };
-            let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_var.name)) {
+            let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_binding.name)) {
                 Ok(a) => a,
                 Err(e) => {
                     return Err(format!(
                         "Failed to create alloca for parameter '{}': {}",
-                        hir_var.name, e
+                        hir_binding.name, e
                     )
                     .into());
                 }
             };
             // store the param value into the alloca
-            if let Some(expr) = &hir_var.init {
-                let _ = builder.build_store(
-                    alloca,
-                    codegen_expr(
-                        &ctx,
-                        &builder,
-                        &module,
-                        &mut vars,
-                        &mut current_scope.clone(),
-                        &expr,
-                    )?,
-                )?;
-            }
-            vars.insert(hir_var.name.clone(), alloca);
+            let _ = builder.build_store(
+                alloca,
+                codegen_expr(
+                    &ctx,
+                    &builder,
+                    &module,
+                    &mut vars,
+                    &mut current_scope.clone(),
+                    &hir_binding.init,
+                )?,
+            )?;
+            vars.insert(hir_binding.name.clone(), alloca);
             Ok(None)
         }
 
