@@ -342,10 +342,11 @@ fn codegen_stmt<'ctx>(
 ) -> Result<Option<BasicValueEnum<'ctx>>, Box<dyn Error>> {
     match stmt {
         HIRStmt::Binding(hir_binding) => {
-            let ty = if let HIRSymbol::Binding(var) = current_scope
-                .symbols
-                .get(&hir_binding.name)
-                .ok_or_else(|| format!("didnt find type for name {}", hir_binding.name))?
+            let ty = if let HIRSymbol::Binding(var) =
+                current_scope
+                    .symbols
+                    .get(&hir_binding.name)
+                    .ok_or_else(|| format!("didnt find type for name {}", hir_binding.name))?
             {
                 map_type_to_llvm(&var.ty, &ctx, current_scope.clone())?
             } else {
@@ -462,57 +463,54 @@ fn codegen_stmt<'ctx>(
             post,
             body,
         } => {
-            // Lower for to while:
             // init
             if let Some(i) = init {
                 codegen_stmt(ctx, builder, module, vars, current_scope, i)?;
             }
+
             let func = builder.get_insert_block().unwrap().get_parent().unwrap();
-            let loop_bb = ctx.append_basic_block(func, "loop");
+
+            let cond_bb = ctx.append_basic_block(func, "forcond");
+            let body_bb = ctx.append_basic_block(func, "forbody");
             let after_bb = ctx.append_basic_block(func, "afterloop");
 
-            let _ = builder.build_unconditional_branch(loop_bb);
-            builder.position_at_end(loop_bb);
+            // jump to condition first
+            builder.build_unconditional_branch(cond_bb)?;
+            builder.position_at_end(cond_bb);
 
-            // cond
+            // condition
             if let Some(c) = cond {
                 let cval = codegen_expr(ctx, builder, module, vars, current_scope, c)?;
-                let body_bb = ctx.append_basic_block(func, "forbody");
-                let _ = builder.build_conditional_branch(cval.into_int_value(), body_bb, after_bb);
-                builder.position_at_end(body_bb);
-                for s in body.iter() {
-                    codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
-                }
-                if let Some(p) = post {
-                    codegen_stmt(ctx, builder, module, vars, current_scope, p)?;
-                }
-                if builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_terminator()
-                    .is_none()
-                {
-                    let _ = builder.build_unconditional_branch(loop_bb);
-                }
-                builder.position_at_end(after_bb);
+                builder.build_conditional_branch(cval.into_int_value(), body_bb, after_bb)?;
             } else {
-                // infinite loop body
-                for s in body.iter() {
-                    codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
-                }
-                if let Some(p) = post {
-                    codegen_stmt(ctx, builder, module, vars, current_scope, p)?;
-                }
-                if builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_terminator()
-                    .is_none()
-                {
-                    let _ = builder.build_unconditional_branch(loop_bb);
-                }
-                builder.position_at_end(after_bb);
+                // no condition = infinite loop
+                builder.build_unconditional_branch(body_bb)?;
             }
+
+            // body
+            builder.position_at_end(body_bb);
+
+            for s in body.iter() {
+                codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
+            }
+
+            // post
+            if let Some(p) = post {
+                codegen_stmt(ctx, builder, module, vars, current_scope, p)?;
+            }
+
+            // jump back to condition if block didn't terminate
+            if builder
+                .get_insert_block()
+                .unwrap()
+                .get_terminator()
+                .is_none()
+            {
+                builder.build_unconditional_branch(cond_bb)?;
+            }
+
+            // continue here after loop
+            builder.position_at_end(after_bb);
 
             Ok(None)
         }
