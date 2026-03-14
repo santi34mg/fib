@@ -6,8 +6,8 @@ use crate::ast::ast::{
 };
 use crate::ast::{Ast, StatementNode};
 use crate::hir::{
-    CompilationUnit, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction, HIRIf, HIRStmt,
-    HIRSymbol, HIRTypeKind, HIRBinding, Scope,
+    CompilationUnit, HIRBinding, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction,
+    HIRIf, HIRStmt, HIRSymbol, HIRTypeKind, Scope,
 };
 use crate::token::Operator;
 use crate::token::builtin::BuiltinType;
@@ -120,7 +120,7 @@ fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt
         StatementNode::For {
             initializer,
             condition,
-            increment,
+            post_operation: increment,
             body,
         } => {
             let init_h = match initializer {
@@ -415,7 +415,7 @@ fn resolve_statement(
         }
         StatementNode::Return(_) => Ok(current_scope),
         StatementNode::If {
-            condition: _condition,
+            condition: _c,
             then_branch,
             else_branch,
         } => {
@@ -431,6 +431,29 @@ fn resolve_statement(
                 }
                 current_scope.children_scope.push(Box::new(else_scope));
             }
+            Ok(current_scope)
+        }
+        StatementNode::For {
+            initializer,
+            condition: _c,
+            post_operation,
+            body,
+        } => {
+            let mut for_scope = Scope::new();
+            if let Some(init) = initializer {
+                for_scope = resolve_statement(init, for_scope)?;
+            }
+            for stmt in body {
+                for_scope = resolve_statement(stmt, for_scope)?;
+                if let Some(po) = post_operation {
+                    for_scope = resolve_statement(po, for_scope)?;
+                }
+            }
+            current_scope.children_scope.push(Box::new(for_scope));
+            Ok(current_scope)
+        }
+        StatementNode::Assignment { identifier: _i, expr: _e} => {
+            // TODO: for now i wont do anything, perhaps do type checking in the future
             Ok(current_scope)
         }
         stmt => todo!("resolve_statement: statement {:?}", stmt),

@@ -477,16 +477,8 @@ fn codegen_stmt<'ctx>(
             // cond
             if let Some(c) = cond {
                 let cval = codegen_expr(ctx, builder, module, vars, current_scope, c)?;
-                // TODO: some other way?
-                let zero = ctx.i64_type().const_int(0, false);
-                let cond_bool = builder.build_int_compare(
-                    inkwell::IntPredicate::NE,
-                    cval.into_int_value(),
-                    zero,
-                    "forcond",
-                )?;
                 let body_bb = ctx.append_basic_block(func, "forbody");
-                let _ = builder.build_conditional_branch(cond_bool, body_bb, after_bb);
+                let _ = builder.build_conditional_branch(cval.into_int_value(), body_bb, after_bb);
                 builder.position_at_end(body_bb);
                 for s in body.iter() {
                     codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
