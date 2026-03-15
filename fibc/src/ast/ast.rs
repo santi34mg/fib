@@ -52,7 +52,7 @@ pub enum StatementNode {
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
     pub signature: FunctionSignature,
-    pub body: FunctionBody,
+    pub body: Option<FunctionBody>,
 }
 
 #[derive(Debug, Clone)]

@@ -78,6 +78,12 @@ where
         cloned.peek().cloned()
     }
 
+    fn peek_second(&self) -> Option<Token> {
+        let mut cloned = self.tokens.clone();
+        cloned.next(); // skip first token
+        cloned.peek().cloned()
+    }
+
     fn next(&mut self) -> Option<Token> {
         self.tokens.next()
     }
@@ -209,30 +215,26 @@ where
                         StatementNode::Return(None)
                     }
                 }
-                TokenKind::Identifier(id) => {
-                    // Try to parse as assignment or increment/decrement
-                    self.next();
-                    match self.peek() {
-                        Some(token) => match token.kind {
-                            TokenKind::Operator(Operator::Assign) => {
-                                self.expect_token(
-                                    TokenKind::Operator(Operator::Assign),
-                                    "expected '='",
-                                )?;
-                                let expr = self.parse_expression()?;
-                                StatementNode::Assignment {
-                                    identifier: id.to_owned(),
-                                    expr,
-                                }
-                            }
-                            _ => {
-                                let expr = self.parse_expression()?;
-                                StatementNode::ExpressionStatement(expr)
-                            }
-                        },
-                        None => StatementNode::ExpressionStatement(Expression::Identifier(
-                            id.to_owned(),
-                        )),
+                TokenKind::Identifier(_) => {
+                    // Use two-token lookahead: if the token after the identifier
+                    // is '=', parse as an assignment; otherwise delegate entirely
+                    // to parse_expression so that calls, bare identifiers, etc.
+                    // are handled by parse_atom without duplicating that logic here.
+                    if matches!(
+                        self.peek_second(),
+                        Some(Token { kind: TokenKind::Operator(Operator::Assign), .. })
+                    ) {
+                        let id = if let TokenKind::Identifier(id) = self.next().unwrap().kind {
+                            id
+                        } else {
+                            unreachable!()
+                        };
+                        self.expect_token(TokenKind::Operator(Operator::Assign), "expected '='")?;
+                        let expr = self.parse_expression()?;
+                        StatementNode::Assignment { identifier: id, expr }
+                    } else {
+                        let expr = self.parse_expression()?;
+                        StatementNode::ExpressionStatement(expr)
                     }
                 }
                 TokenKind::Keyword(Keyword::For) => {
@@ -734,6 +736,7 @@ where
             TokenKind::Literal(Literal::Character(char_literal)) => {
                 Expression::Literal(Literal::Character(char_literal))
             }
+            TokenKind::Literal(Literal::String(s)) => Expression::Literal(Literal::String(s)),
             TokenKind::Identifier(id) => Expression::Identifier(id),
             TokenKind::Punctuation(Punctuation::OpeningParenthesis) => {
                 let inner_expr = self.parse_expression()?;
@@ -877,8 +880,15 @@ where
         let return_type = self.parse_type()?;
 
         // Function body (use shared parse_body)
-        let body = FunctionBody {
-            statements: self.parse_body()?,
+        // TODO: using unwrap
+        let body = if let TokenKind::Punctuation(Punctuation::Semicolon) = self.peek().unwrap().kind
+        {
+            self.next();
+            None
+        } else {
+            Some(FunctionBody {
+                statements: self.parse_body()?,
+            })
         };
 
         Ok(FunctionDeclaration {

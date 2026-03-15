@@ -66,34 +66,50 @@ pub fn lower(
                     hir_function.clone(),
                     compilation_unit.scope_root.clone(),
                 )?;
-                let _ = hir_function.body.iter().for_each(|stmt| {
-                    let _ = codegen_stmt(
+                // Build a function-level scope that includes module symbols
+                // plus the function's own parameters, so identifier lookups
+                // (e.g. `val` in `val >= 0`) resolve correctly during codegen.
+                let mut fn_scope = compilation_unit.scope_root.clone();
+                for (param_name, param_ty) in hir_function.params.iter() {
+                    fn_scope.symbols.insert(
+                        param_name.clone(),
+                        HIRSymbol::Binding(crate::hir::HIRBinding {
+                            name: param_name.clone(),
+                            ty: param_ty.clone(),
+                            init: None,
+                        }),
+                    );
+                }
+                for stmt in hir_function.body.iter() {
+                    codegen_stmt(
                         &ctx,
                         &builder,
                         &module,
                         &mut entry_vars,
-                        &mut compilation_unit.scope_root,
-                        &stmt,
-                    );
-                });
+                        &mut fn_scope,
+                        stmt,
+                    )?;
+                }
+                // Seal any basic blocks that have no terminator (e.g. an
+                // unreachable merge block after an if where both branches
+                // return).  LLVM requires every block to have a terminator.
+                let mut bb_opt = function.get_first_basic_block();
+                while let Some(bb) = bb_opt {
+                    if bb.get_terminator().is_none() {
+                        builder.position_at_end(bb);
+                        let _ = builder.build_unreachable();
+                    }
+                    bb_opt = bb.get_next_basic_block();
+                }
             }
-            HIRDeclaration::HIRConst(hir_val) => {
-                let ty = if let HIRSymbol::Binding(var) = compilation_unit
-                    .scope_root
-                    .symbols
-                    .get(&hir_val.name)
-                    .ok_or_else(|| format!("didnt find type for name {}", hir_val.name))?
-                {
-                    map_type_to_llvm(&var.ty, &ctx, compilation_unit.scope_root.clone())?
-                } else {
-                    return Err(format!("codegen_expr: {} is not a variable", hir_val.name).into());
-                };
-                let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_val.name)) {
+            HIRDeclaration::HIRConst(hir_binding) => {
+                let ty = map_type_to_llvm(&hir_binding.ty, &ctx, compilation_unit.scope_root.clone())?;
+                let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_binding.name)) {
                     Ok(a) => a,
                     Err(e) => {
                         eprintln!(
                             "Failed to create alloca for parameter '{}': {}",
-                            hir_val.name, e
+                            hir_binding.name, e
                         );
                         continue;
                     }
@@ -107,10 +123,10 @@ pub fn lower(
                         &module,
                         &mut vars,
                         &mut compilation_unit.scope_root.clone(),
-                        &hir_val.init,
+                        &hir_binding.init.ok_or_else(|| format!("no init for binding"))?,
                     )?,
                 );
-                vars.insert(hir_val.name, alloca);
+                vars.insert(hir_binding.name, alloca);
             }
         }
     }
@@ -145,6 +161,10 @@ fn codegen_expr<'ctx>(
             .bool_type()
             .const_int(*b as u64, false)
             .as_basic_value_enum()),
+        HIRExpressionKind::LiteralString { value } => {
+            let ptr = builder.build_global_string_ptr(value, "str")?;
+            Ok(ptr.as_pointer_value().as_basic_value_enum())
+        }
         HIRExpressionKind::Identifier(name) => {
             let ty = if let HIRSymbol::Binding(var) = current_scope
                 .symbols
@@ -185,7 +205,7 @@ fn codegen_expr<'ctx>(
                     .as_basic_value_enum()),
                 Operator::GreaterThan => Ok(builder
                     .build_int_compare(
-                        IntPredicate::UGT,
+                        IntPredicate::SGT,
                         l.into_int_value(),
                         r.into_int_value(),
                         "gttmp",
@@ -193,7 +213,7 @@ fn codegen_expr<'ctx>(
                     .as_basic_value_enum()),
                 Operator::GreaterEqual => Ok(builder
                     .build_int_compare(
-                        IntPredicate::UGE,
+                        IntPredicate::SGE,
                         l.into_int_value(),
                         r.into_int_value(),
                         "getmp",
@@ -201,7 +221,7 @@ fn codegen_expr<'ctx>(
                     .as_basic_value_enum()),
                 Operator::LesserThan => Ok(builder
                     .build_int_compare(
-                        IntPredicate::ULT,
+                        IntPredicate::SLT,
                         l.into_int_value(),
                         r.into_int_value(),
                         "lttmp",
@@ -209,7 +229,7 @@ fn codegen_expr<'ctx>(
                     .as_basic_value_enum()),
                 Operator::LesserEqual => Ok(builder
                     .build_int_compare(
-                        IntPredicate::ULE,
+                        IntPredicate::SLE,
                         l.into_int_value(),
                         r.into_int_value(),
                         "letmp",
@@ -233,20 +253,21 @@ fn codegen_expr<'ctx>(
                 let av = codegen_expr(ctx, builder, module, vars, current_scope, a)?;
                 arg_values.push(av);
             }
-            // lookup function by name
-            if let Some(fnval) = module.get_function(&callee.identifier) {
-                // convert BasicValueEnum args into BasicMetadataValueEnum expected by build_call
-                let mut md_args: Vec<BasicMetadataValueEnum> = Vec::new();
-                for (i, _) in fnval.get_type().get_param_types().iter().enumerate() {
-                    let v = arg_values[i].clone();
-                    md_args.push(v.into());
+            // Lookup function; if not declared yet, auto-declare it as an external
+            // function using the argument types observed at this call site.
+            let fnval = match module.get_function(&callee.identifier) {
+                Some(f) => f,
+                None => {
+                    let param_types: Vec<BasicMetadataTypeEnum> =
+                        arg_values.iter().map(|v| v.get_type().into()).collect();
+                    let fn_ty = ctx.i32_type().fn_type(&param_types, false);
+                    module.add_function(&callee.identifier, fn_ty, None)
                 }
-                let call_site = builder.build_call(fnval, &md_args, "calltmp")?;
-                // try_as_basic_value left is a BasicValueOption; for our minimal lowering assume a value
-                Ok(call_site.try_as_basic_value().unwrap_basic())
-            } else {
-                panic!("unknown function '{}' in lowering", callee);
-            }
+            };
+            let md_args: Vec<BasicMetadataValueEnum> =
+                arg_values.into_iter().map(|v| v.into()).collect();
+            let call_site = builder.build_call(fnval, &md_args, "calltmp")?;
+            Ok(call_site.try_as_basic_value().unwrap_basic())
         }
     }
 }
@@ -273,6 +294,9 @@ fn map_type_to_llvm<'ctx>(
                 BuiltinType::Float32 => BasicTypeEnum::FloatType(ctx.f32_type()),
                 BuiltinType::Float64 => BasicTypeEnum::FloatType(ctx.f64_type()),
                 BuiltinType::Float128 => BasicTypeEnum::FloatType(ctx.f128_type()),
+                BuiltinType::String => {
+                    BasicTypeEnum::PointerType(ctx.ptr_type(inkwell::AddressSpace::default()))
+                }
                 _ => todo!("type not implemented yet"),
             };
             Ok(any_ty)
@@ -342,16 +366,7 @@ fn codegen_stmt<'ctx>(
 ) -> Result<Option<BasicValueEnum<'ctx>>, Box<dyn Error>> {
     match stmt {
         HIRStmt::Binding(hir_binding) => {
-            let ty = if let HIRSymbol::Binding(var) =
-                current_scope
-                    .symbols
-                    .get(&hir_binding.name)
-                    .ok_or_else(|| format!("didnt find type for name {}", hir_binding.name))?
-            {
-                map_type_to_llvm(&var.ty, &ctx, current_scope.clone())?
-            } else {
-                return Err(format!("codegen_expr: {} is not a variable", hir_binding.name).into());
-            };
+            let ty = map_type_to_llvm(&hir_binding.ty, &ctx, current_scope.clone())?;
             let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_binding.name)) {
                 Ok(a) => a,
                 Err(e) => {
@@ -371,10 +386,20 @@ fn codegen_stmt<'ctx>(
                     &module,
                     &mut vars,
                     &mut current_scope.clone(),
-                    &hir_binding.init,
+                    &hir_binding.init.as_ref().ok_or_else(|| format!("no init for binding"))?.clone(),
                 )?,
             )?;
             vars.insert(hir_binding.name.clone(), alloca);
+            // Register the binding in the scope so subsequent expressions
+            // (e.g. `return x`) can look up its type via codegen_expr.
+            current_scope.symbols.insert(
+                hir_binding.name.clone(),
+                HIRSymbol::Binding(crate::hir::HIRBinding {
+                    name: hir_binding.name.clone(),
+                    ty: hir_binding.ty.clone(),
+                    init: None,
+                }),
+            );
             Ok(None)
         }
 
@@ -396,7 +421,24 @@ fn codegen_stmt<'ctx>(
         HIRStmt::Return(opt) => {
             if let Some(e) = opt {
                 let v = codegen_expr(ctx, builder, module, vars, current_scope, e)?;
-                let _ = builder.build_return(Some(&v));
+                // Cast to the function's declared return type when it differs
+                // (e.g. literal `0` inferred as i32 inside a function returning i8).
+                let func = builder.get_insert_block().unwrap().get_parent().unwrap();
+                let ret_val = match (v, func.get_type().get_return_type()) {
+                    (BasicValueEnum::IntValue(iv), Some(BasicTypeEnum::IntType(it))) => {
+                        let src_bits = iv.get_type().get_bit_width();
+                        let dst_bits = it.get_bit_width();
+                        if src_bits > dst_bits {
+                            builder.build_int_truncate(iv, it, "trunctmp")?.as_basic_value_enum()
+                        } else if src_bits < dst_bits {
+                            builder.build_int_s_extend(iv, it, "sextmp")?.as_basic_value_enum()
+                        } else {
+                            iv.as_basic_value_enum()
+                        }
+                    }
+                    (v, _) => v,
+                };
+                let _ = builder.build_return(Some(&ret_val));
             } else {
                 let _ = builder.build_return(None);
             }
@@ -404,57 +446,68 @@ fn codegen_stmt<'ctx>(
         }
 
         HIRStmt::If(hir_if) => {
-            // create blocks
+            // Retrieve the current function so we can append basic blocks to it.
             let func = builder.get_insert_block().unwrap().get_parent().unwrap();
-            let then_bb = ctx.append_basic_block(func, "then");
-            let else_bb = ctx.append_basic_block(func, "else");
-            let merge_bb = if !hir_if.then_branch_terminates() || !hir_if.else_branch_terminates() {
-                Some(ctx.append_basic_block(func, "ifcont"))
-            } else {
-                None
-            };
 
+            // The merge block is always created.  When both branches terminate
+            // (e.g. both end with `return`) the merge block will be unreachable,
+            // but we still need the builder to be positioned somewhere valid for
+            // any statements that follow the `if` in the enclosing block.  LLVM
+            // will discard the unreachable block during optimisation / verification
+            // is not bothered by it.
+            let merge_bb = ctx.append_basic_block(func, "ifcont");
+
+            // For an if-without-else, the false branch jumps straight to the
+            // merge block, avoiding a superfluous empty `else` block.
+            let else_bb = if hir_if.else_branch.is_some() {
+                ctx.append_basic_block(func, "else")
+            } else {
+                merge_bb
+            };
+            // The then block is always needed.
+            let then_bb = ctx.append_basic_block(func, "then");
+
+            // Emit the condition in the current (predecessor) block, then
+            // branch to the appropriate successors.  This terminates the
+            // predecessor block.
             let cond_v = codegen_expr(ctx, builder, module, vars, current_scope, &hir_if.cond)?;
             let _ = builder.build_conditional_branch(cond_v.into_int_value(), then_bb, else_bb);
 
-            // then
+            // --- then branch ---
             builder.position_at_end(then_bb);
             for s in hir_if.then_branch.iter() {
                 codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
             }
-            if let Some(mbb) = merge_bb {
-                if builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_terminator()
-                    .is_none()
-                {
-                    let _ = builder.build_unconditional_branch(mbb);
-                }
+            // Only emit the fallthrough branch if the block has no terminator
+            // yet (i.e. the branch body did not end with `return`).
+            if builder
+                .get_insert_block()
+                .unwrap()
+                .get_terminator()
+                .is_none()
+            {
+                let _ = builder.build_unconditional_branch(merge_bb);
             }
 
-            // else
-            builder.position_at_end(else_bb);
+            // --- else branch (only when one exists) ---
             if let Some(eb) = &hir_if.else_branch {
+                builder.position_at_end(else_bb);
                 for s in eb.iter() {
                     codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
                 }
-            }
-            if let Some(mbb) = merge_bb {
                 if builder
                     .get_insert_block()
                     .unwrap()
                     .get_terminator()
                     .is_none()
                 {
-                    let _ = builder.build_unconditional_branch(mbb);
+                    let _ = builder.build_unconditional_branch(merge_bb);
                 }
             }
 
-            // continue
-            if let Some(mbb) = merge_bb {
-                builder.position_at_end(mbb);
-            }
+            // Position the builder at the merge block so that subsequent
+            // statements in the enclosing block are emitted there.
+            builder.position_at_end(merge_bb);
             Ok(None)
         }
         HIRStmt::For {
