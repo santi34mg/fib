@@ -23,6 +23,7 @@ pub enum BuiltinType {
     Float128= 12,
     Char    = 13,
     Boolean = 14,
+    String  = 15,
 }
 
 impl fmt::Display for BuiltinType {
@@ -43,6 +44,7 @@ impl fmt::Display for BuiltinType {
             Self::Float128 => write!(f, "float128"),
             Self::Char => write!(f, "char"),
             Self::Boolean => write!(f, "bool"),
+            Self::String => write!(f, "string"),
         }?;
         Ok(())
     }

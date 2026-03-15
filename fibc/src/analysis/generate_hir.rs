@@ -52,16 +52,35 @@ fn func_to_hir(
     current_scope: &mut Scope,
 ) -> Result<HIRFunction, Box<dyn Error>> {
     let mut params = Vec::new();
-    for param in function_declaration.signature.parameters {
-        params.push((param.parameter_name, map_type(param.parameter_type)?))
+    for param in &function_declaration.signature.parameters {
+        params.push((param.parameter_name.clone(), map_type(param.parameter_type.clone())?))
     }
-    let return_type = match function_declaration.signature.return_type {
+    let return_type = match function_declaration.signature.return_type.clone() {
         Some(rt) => map_type(rt)?,
         None => HIRTypeKind::Builtin(BuiltinType::Void),
     };
+
+    // Build a body-level scope that inherits all module-level symbols and also
+    // includes the function's own parameters.  This ensures that both other
+    // functions (for call resolution) and the parameter bindings are visible
+    // when we lower each statement in the body.
+    let mut body_scope = current_scope.clone();
+    for param in &function_declaration.signature.parameters {
+        body_scope.symbols.insert(
+            param.parameter_name.clone(),
+            HIRSymbol::Binding(HIRBinding {
+                name: param.parameter_name.clone(),
+                ty: map_type(param.parameter_type.clone())?,
+                init: None,
+            }),
+        );
+    }
+
     let mut body = Vec::new();
-    for stmt in function_declaration.body.statements {
-        body.push(stmt_to_hir(stmt, current_scope)?);
+    if let Some(fb) = function_declaration.body {
+        for stmt in fb.statements {
+            body.push(stmt_to_hir(stmt, &mut body_scope)?);
+        }
     }
     Ok(HIRFunction {
         name: function_declaration.signature.name,
@@ -171,7 +190,7 @@ inferred type of expressoin: {}"#,
     let hir_bind = HIRBinding {
         name: const_decl.identifier.clone(),
         ty,
-        init,
+        init: Some(init),
     };
     current_scope
         .symbols
@@ -232,7 +251,7 @@ inferred type of expressoin: {:?}"#,
     let hir_var = HIRBinding {
         name: var_decl.identifier.clone(),
         ty,
-        init,
+        init: Some(init),
     };
     current_scope
         .symbols
@@ -243,21 +262,9 @@ inferred type of expressoin: {:?}"#,
 fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<dyn Error>> {
     match expr {
         PExpr::Literal(Literal::Integer(value)) => {
-            // infer type to be as small as possible
-            let inferred_type: HIRTypeKind;
-            if value <= (1 << 8) - 1 {
-                inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt8)
-            } else if 1 << 8 <= value && value <= (1 << 16) - 1 {
-                inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt16)
-            } else if 1 << 16 <= value && value <= (1 << 32) - 1 {
-                inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt32)
-            } else if 1 << 32 <= value {
-                inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt64)
-            } else {
-                unreachable!()
-            }
+            // Default to SInt32 (i32); explicit type annotations coerce as needed.
             Ok(HIRExpression {
-                inferred_type,
+                inferred_type: HIRTypeKind::Builtin(BuiltinType::SInt32),
                 expression: HIRExpressionKind::LiteralInt { value },
             })
         }
@@ -273,10 +280,13 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
             "expr_to_hir: Character literals are not supported in minimal semantic pass"
         )
         .into()),
-        PExpr::Literal(Literal::String(_)) => Err(format!(
-            "expr_to_hir: String literals are not supported in minimal semantic pass"
-        )
-        .into()),
+        PExpr::Literal(Literal::String(raw)) => {
+            let value = process_escape_sequences(&raw)?;
+            Ok(HIRExpression {
+                inferred_type: HIRTypeKind::Builtin(BuiltinType::String),
+                expression: HIRExpressionKind::LiteralString { value },
+            })
+        }
         PExpr::Literal(Literal::Null) => Ok(HIRExpression {
             inferred_type: HIRTypeKind::Builtin(BuiltinType::Void),
             expression: HIRExpressionKind::Null,
@@ -342,18 +352,19 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                     for a in args {
                         hargs.push(expr_to_hir(a, current_scope)?);
                     }
-                    let inferred_type: HIRTypeKind;
-                    if let HIRSymbol::Function(func) =
-                        current_scope.symbols.get(&name).ok_or_else(|| {
-                            format!("expr_to_hir: function {} not found in current scope", name)
-                        })?
-                    {
-                        inferred_type = func.return_type.clone();
-                    } else {
-                        return Err(
-                            format!("expr_to_hir: symbol {} is not a function", name).into()
-                        );
-                    }
+                    // If the function is declared in scope use its return type;
+                    // otherwise assume it is an external (C) function returning SInt32.
+                    let inferred_type = match current_scope.symbols.get(&name) {
+                        Some(HIRSymbol::Function(func)) => func.return_type.clone(),
+                        Some(_) => {
+                            return Err(format!(
+                                "expr_to_hir: symbol {} is not a function",
+                                name
+                            )
+                            .into())
+                        }
+                        None => HIRTypeKind::Builtin(BuiltinType::SInt32),
+                    };
                     Ok(HIRExpression {
                         inferred_type,
                         expression: HIRExpressionKind::Call {
@@ -489,6 +500,7 @@ fn resolve_statement(
             // TODO: for now i wont do anything, perhaps do type checking in the future
             Ok(current_scope)
         }
+        StatementNode::ExpressionStatement(_) => Ok(current_scope),
         stmt => todo!("resolve_statement: statement {:?}", stmt),
     }
 }
@@ -532,24 +544,97 @@ fn resolve_type_decl(
     Ok(current_scope)
 }
 
+fn process_escape_sequences(raw: &str) -> Result<String, Box<dyn Error>> {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next().ok_or("trailing backslash in string literal")? {
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            't' => out.push('\t'),
+            '\\' => out.push('\\'),
+            '\'' => out.push('\''),
+            '"' => out.push('"'),
+            '0' => out.push('\0'),
+            'x' => {
+                let h1 = chars.next().ok_or("expected hex digit after \\x")?;
+                let h2 = chars.next().ok_or("expected two hex digits after \\x")?;
+                let byte = u8::from_str_radix(&format!("{}{}", h1, h2), 16)
+                    .map_err(|_| format!("invalid hex escape \\x{}{}", h1, h2))?;
+                out.push(byte as char);
+            }
+            'u' => {
+                if chars.next() != Some('{') {
+                    return Err("expected '{' after \\u".into());
+                }
+                let mut hex = String::new();
+                loop {
+                    match chars.next() {
+                        Some('}') => break,
+                        Some(d) => hex.push(d),
+                        None => return Err("unterminated \\u{...} escape".into()),
+                    }
+                }
+                let codepoint = u32::from_str_radix(&hex, 16)
+                    .map_err(|_| format!("invalid unicode escape \\u{{{}}}", hex))?;
+                let ch = char::from_u32(codepoint)
+                    .ok_or_else(|| format!("invalid unicode scalar \\u{{{}}}", hex))?;
+                out.push(ch);
+            }
+            other => return Err(format!("unknown escape sequence \\{}", other).into()),
+        }
+    }
+    Ok(out)
+}
+
 fn resolve_function_decl(
     function_declaration: &FunctionDeclaration,
     mut current_scope: Scope,
 ) -> Result<Scope, Box<dyn Error>> {
+    // Start the function's child scope with all symbols already visible at
+    // module level so that body expressions can reference previously-declared
+    // functions (e.g. calls to other top-level fns).
+    let mut new_scope = Scope::new();
+
+    // Copy module-level symbols first so they are available during body
+    // resolution below.
+    for (name, symbol) in &current_scope.symbols {
+        new_scope.symbols.insert(name.clone(), symbol.clone());
+    }
+
+    // Parameters — inserted after the module-level copy so they shadow any
+    // hypothetical module-level name collision (though that should not occur
+    // in practice given the language semantics).
+    for param in function_declaration.signature.parameters.clone() {
+        new_scope.symbols.insert(
+            param.parameter_name.clone(),
+            HIRSymbol::Binding(HIRBinding {
+                name: param.parameter_name,
+                ty: map_type(param.parameter_type)?,
+                init: None,
+            }),
+        );
+    }
+
+    // Resolve all statements in the body so local bindings are registered.
+    if let Some(fb) = &function_declaration.body {
+        for stmt in fb.statements.iter() {
+            new_scope = resolve_statement(stmt, new_scope)?;
+        }
+    }
+
+    // Add new scope to current scope
     current_scope.symbols.insert(
         function_declaration.signature.name.clone(),
         HIRSymbol::Function(func_to_hir(
             function_declaration.clone(),
-            &mut current_scope.clone(),
+            &mut new_scope.clone(),
         )?),
     );
-    let mut new_scope = Scope::new();
-    for stmt in function_declaration.body.statements.iter() {
-        new_scope = resolve_statement(stmt, new_scope)?;
-    }
-    for (name, symbol) in &current_scope.symbols {
-        new_scope.symbols.insert(name.clone(), symbol.clone());
-    }
     current_scope.children_scope.push(Box::new(new_scope));
     Ok(current_scope)
 }

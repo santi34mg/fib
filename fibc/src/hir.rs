@@ -83,6 +83,7 @@ pub enum HIRExpressionKind {
         value: u64,
     },
     LiteralBool(bool),
+    LiteralString { value: String },
     Identifier(Identifier),
     Binary {
         left: Box<HIRExpression>,
@@ -119,7 +120,7 @@ pub enum HIRStmt {
 pub struct HIRBinding {
     pub name: Identifier,
     pub ty: HIRTypeKind,
-    pub init: HIRExpression,
+    pub init: Option<HIRExpression>,
 }
 
 #[derive(Debug, Clone)]
