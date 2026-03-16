@@ -105,6 +105,36 @@ fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt
                 expr: e,
             })
         }
+        StatementNode::FieldAssign { object, field, expr } => {
+            // Look up the object's type to find the field index
+            let obj_ty = match current_scope.symbols.get(&object).ok_or_else(|| {
+                format!("stmt_to_hir: identifier {} not found in scope", object)
+            })? {
+                HIRSymbol::Binding(b) => b.ty.clone(),
+                _ => return Err(format!("stmt_to_hir: {} is not a variable", object).into()),
+            };
+            let struct_fields = match &obj_ty {
+                HIRTypeKind::Struct { fields } => fields.clone(),
+                HIRTypeKind::Identifier(_) => {
+                    // Resolve through type alias
+                    resolve_struct_fields(&obj_ty, current_scope)?
+                }
+                _ => return Err(format!("stmt_to_hir: {} is not a struct", object).into()),
+            };
+            let field_index = struct_fields
+                .iter()
+                .position(|(name, _)| name == &field.identifier)
+                .ok_or_else(|| {
+                    format!("stmt_to_hir: field {} not found in struct {}", field.identifier, object)
+                })?;
+            let e = expr_to_hir(expr, current_scope)?;
+            Ok(HIRStmt::FieldAssign {
+                object,
+                field: field.identifier,
+                field_index,
+                expr: e,
+            })
+        }
         StatementNode::ExpressionStatement(e) => Ok(HIRStmt::Expr(expr_to_hir(e, current_scope)?)),
         StatementNode::Return(opt) => Ok(HIRStmt::Return(match opt {
             Some(e) => Some(expr_to_hir(e, current_scope)?),
@@ -165,6 +195,8 @@ fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt
                 body: body_h,
             })
         }
+        StatementNode::Break => Ok(HIRStmt::Break),
+        StatementNode::Continue => Ok(HIRStmt::Continue),
     }
 }
 
@@ -202,18 +234,59 @@ fn var_decl_to_hir(
     var_decl: VariableDeclaration,
     current_scope: &mut Scope,
 ) -> Result<HIRBinding, Box<dyn Error>> {
-    let mut init = if let Some(expr) = var_decl.expression {
-        expr_to_hir(expr, &current_scope)?
-    } else {
-        todo!("variable declarations without an init")
-    };
     let ty = match var_decl.constant_type {
         Some(t) => map_type(t)?,
         None => HIRTypeKind::Builtin(BuiltinType::Void),
     };
-    // check that type matches
+    let mut init = if let Some(expr) = var_decl.expression {
+        expr_to_hir(expr, &current_scope)?
+    } else {
+        // Zero-initialize based on declared type when no initializer is present
+        match &ty {
+            HIRTypeKind::Builtin(BuiltinType::Boolean) => HIRExpression {
+                inferred_type: HIRTypeKind::Builtin(BuiltinType::Boolean),
+                expression: HIRExpressionKind::LiteralBool(false),
+            },
+            HIRTypeKind::Builtin(
+                BuiltinType::SInt8
+                | BuiltinType::SInt16
+                | BuiltinType::SInt32
+                | BuiltinType::SInt64
+                | BuiltinType::UInt8
+                | BuiltinType::UInt16
+                | BuiltinType::UInt32
+                | BuiltinType::UInt64,
+            ) => HIRExpression {
+                inferred_type: ty.clone(),
+                expression: HIRExpressionKind::LiteralInt { value: 0 },
+            },
+            _ => {
+                return Err("var declaration requires type or initializer".into())
+            }
+        }
+    };
+    // check that type matches; allow struct-by-name to match struct literal type
     if init.inferred_type != ty {
-        if let HIRTypeKind::Builtin(builtin) = &ty {
+        // When the declared type is an identifier (e.g. `Point`) and the init
+        // expression is a StructConstruct, the inferred type is the resolved
+        // HIRTypeKind::Struct directly.  In that case, accept the match by
+        // annotating the init expression with the identifier type so the rest
+        // of the pipeline sees a consistent declared type.
+        let resolved_ty_match = match &ty {
+            HIRTypeKind::Identifier(id) => {
+                match current_scope.symbols.get(id) {
+                    Some(HIRSymbol::Type(inner)) => *inner == init.inferred_type,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if resolved_ty_match {
+            // Replace the init's inferred type with the declared identifier type
+            // so that subsequent lookups (e.g. binding type in codegen) return
+            // the identifier-keyed type.
+            init.inferred_type = ty.clone();
+        } else if let HIRTypeKind::Builtin(builtin) = &ty {
             // FIXME: this should also check that the inferred type is kinda safe to cast
             match builtin {
                 BuiltinType::SInt8 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::SInt8),
@@ -315,25 +388,32 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
             let l = expr_to_hir(*left, current_scope)?;
             let mut r = expr_to_hir(*right, current_scope)?;
             let inferred_type = match operator {
-                // TODO: support more operations than integers
+                // Arithmetic/bitwise: result type = LHS type
                 Operator::Plus
                 | Operator::Minus
                 | Operator::Star
                 | Operator::Slash
+                | Operator::Percent
                 | Operator::RightShift
                 | Operator::LeftShift
-                | Operator::GreaterThan
-                | Operator::GreaterEqual
-                | Operator::LesserThan
-                | Operator::LesserEqual
-                | Operator::Percent
                 | Operator::Ampersand
                 | Operator::Pipe
                 | Operator::Caret => {
                     r.inferred_type = l.inferred_type.clone();
                     l.inferred_type.clone()
                 }
-                _ => panic!(),
+                // Comparison/logical: result type = bool
+                Operator::DoubleEquals
+                | Operator::Different
+                | Operator::GreaterThan
+                | Operator::GreaterEqual
+                | Operator::LesserThan
+                | Operator::LesserEqual
+                | Operator::LogicalAnd
+                | Operator::LogicalOr => HIRTypeKind::Builtin(BuiltinType::Boolean),
+                op => {
+                    return Err(format!("unsupported binary operator {:?}", op).into())
+                }
             };
             Ok(HIRExpression {
                 inferred_type,
@@ -380,13 +460,106 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                 .into()),
             }
         }
+        PExpr::FieldAccess { object, field } => {
+            let obj_hir = expr_to_hir(*object, current_scope)?;
+            let struct_fields = resolve_struct_fields(&obj_hir.inferred_type, current_scope)?;
+            let field_index = struct_fields
+                .iter()
+                .position(|(name, _)| name == &field.identifier)
+                .ok_or_else(|| {
+                    format!(
+                        "expr_to_hir: field {} not found in struct type {:?}",
+                        field.identifier, obj_hir.inferred_type
+                    )
+                })?;
+            let field_ty = *struct_fields[field_index].1.clone();
+            Ok(HIRExpression {
+                inferred_type: field_ty,
+                expression: HIRExpressionKind::FieldAccess {
+                    object: Box::new(obj_hir),
+                    field: field.identifier,
+                    field_index,
+                },
+            })
+        }
+        PExpr::StructConstruct { type_name, fields } => {
+            // Look up the struct type in scope
+            let struct_ty = match current_scope.symbols.get(&type_name).ok_or_else(|| {
+                format!("expr_to_hir: type {} not found in scope", type_name)
+            })? {
+                HIRSymbol::Type(ty) => ty.clone(),
+                _ => {
+                    return Err(
+                        format!("expr_to_hir: {} is not a type", type_name).into(),
+                    )
+                }
+            };
+            let struct_fields = resolve_struct_fields(&struct_ty, current_scope)?;
+            let mut hir_fields = Vec::new();
+            for (fname, fexpr) in fields {
+                // verify the field exists
+                let _field_idx = struct_fields
+                    .iter()
+                    .position(|(name, _)| name == &fname.identifier)
+                    .ok_or_else(|| {
+                        format!(
+                            "expr_to_hir: field {} not found in struct {}",
+                            fname.identifier, type_name
+                        )
+                    })?;
+                let fval = expr_to_hir(fexpr, current_scope)?;
+                hir_fields.push((fname.identifier, fval));
+            }
+            Ok(HIRExpression {
+                inferred_type: struct_ty,
+                expression: HIRExpressionKind::StructConstruct {
+                    type_name: type_name.identifier,
+                    fields: hir_fields,
+                },
+            })
+        }
         PExpr::Unary {
             operator,
             expression,
-        } => {
-            // represent unary as binary with a zero/true literal where appropriate for now
-            todo!()
+        } => match operator {
+            Operator::Minus => expr_to_hir(
+                PExpr::Binary {
+                    left: Box::new(PExpr::Literal(Literal::Integer(0))),
+                    operator: Operator::Minus,
+                    right: expression,
+                },
+                current_scope,
+            ),
+            Operator::LogicalNot => expr_to_hir(
+                PExpr::Binary {
+                    left: expression,
+                    operator: Operator::DoubleEquals,
+                    right: Box::new(PExpr::Literal(Literal::Boolean(false))),
+                },
+                current_scope,
+            ),
+            op => Err(format!("unsupported unary operator {:?}", op).into()),
+        },
+    }
+}
+
+/// Resolve a HIRTypeKind (possibly an Identifier alias) to its struct fields.
+fn resolve_struct_fields(
+    ty: &HIRTypeKind,
+    current_scope: &Scope,
+) -> Result<Vec<(String, Box<HIRTypeKind>)>, Box<dyn Error>> {
+    match ty {
+        HIRTypeKind::Struct { fields } => Ok(fields.clone()),
+        HIRTypeKind::Identifier(id) => {
+            let symbol = current_scope.symbols.get(id).ok_or_else(|| {
+                format!("resolve_struct_fields: type {} not found in scope", id)
+            })?;
+            match symbol {
+                HIRSymbol::Type(inner_ty) => resolve_struct_fields(inner_ty, current_scope),
+                _ => Err(format!("resolve_struct_fields: {} is not a type", id).into()),
+            }
         }
+        _ => Err(format!("resolve_struct_fields: {:?} is not a struct type", ty).into()),
     }
 }
 
@@ -395,7 +568,11 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, Box<dyn Erro
         TypeExpression::Builtin(builtin) => HIRTypeKind::Builtin(builtin),
         TypeExpression::Identifier(identifier) => HIRTypeKind::Identifier(identifier),
         TypeExpression::Struct { fields } => {
-            todo!("map_type: struct type expression not supported yet")
+            let mut hir_fields = Vec::new();
+            for f in fields {
+                hir_fields.push((f.label.identifier.clone(), Box::new(map_type(f.type_id)?)));
+            }
+            HIRTypeKind::Struct { fields: hir_fields }
         }
         TypeExpression::Function {
             argument_types,
@@ -455,6 +632,8 @@ fn resolve_statement(
             Ok(current_scope)
         }
         StatementNode::Return(_) => Ok(current_scope),
+        StatementNode::Break => Ok(current_scope),
+        StatementNode::Continue => Ok(current_scope),
         StatementNode::If {
             condition: _c,
             then_branch,
@@ -500,6 +679,7 @@ fn resolve_statement(
             // TODO: for now i wont do anything, perhaps do type checking in the future
             Ok(current_scope)
         }
+        StatementNode::FieldAssign { .. } => Ok(current_scope),
         StatementNode::ExpressionStatement(_) => Ok(current_scope),
         stmt => todo!("resolve_statement: statement {:?}", stmt),
     }
@@ -533,7 +713,10 @@ fn resolve_type_decl(
             pointer_variant,
             pointed_type,
         } => {}
-        TypeExpression::Struct { fields } => {}
+        TypeExpression::Struct { fields } => {
+            let hir_type = map_type(TypeExpression::Struct { fields: fields.clone() })?;
+            current_scope.symbols.insert(lhs_td, HIRSymbol::Type(hir_type));
+        }
         TypeExpression::Builtin(builtin_type) => {
             current_scope.symbols.insert(
                 lhs_td,

@@ -14,4 +14,5 @@ pub enum Keyword {
     Struct,
     Enum,
     Union,
+    Type,
 }

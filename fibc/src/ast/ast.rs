@@ -35,6 +35,11 @@ pub enum StatementNode {
         identifier: Identifier,
         expr: Expression,
     },
+    FieldAssign {
+        object: Identifier,
+        field: Identifier,
+        expr: Expression,
+    },
     Return(Option<Expression>),
     If {
         condition: Expression,
@@ -47,6 +52,8 @@ pub enum StatementNode {
         post_operation: Option<Box<StatementNode>>,
         body: Vec<StatementNode>,
     },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]
@@ -208,5 +215,13 @@ pub enum Expression {
     Call {
         callee: Box<Expression>,
         args: Vec<Expression>,
+    },
+    FieldAccess {
+        object: Box<Expression>,
+        field: Identifier,
+    },
+    StructConstruct {
+        type_name: Identifier,
+        fields: Vec<(Identifier, Expression)>,
     },
 }

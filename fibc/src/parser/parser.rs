@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::ast::ast::{
     Ast, ConstantDeclaration, DeclarationNode, Expression, Field, FunctionBody,
     FunctionDeclaration, FunctionParameter, FunctionSignature, PointerVariant, StatementNode,
-    TypeExpression, VariableDeclaration,
+    TypeDeclaration, TypeExpression, VariableDeclaration,
 };
 use crate::token::builtin::Builtin;
 use crate::token::identifier::Identifier;
@@ -133,6 +133,16 @@ where
                     let func = self.parse_function_declaration()?;
                     declarations.push(DeclarationNode::FunctionDeclaration(func));
                 }
+                // `const type <Name> = <type expression>` — top-level type declaration
+                TokenKind::Keyword(Keyword::Const)
+                    if matches!(
+                        self.peek_second(),
+                        Some(Token { kind: TokenKind::Keyword(Keyword::Type), .. })
+                    ) =>
+                {
+                    let type_decl = self.parse_type_declaration()?;
+                    declarations.push(DeclarationNode::TypeDeclaration(type_decl));
+                }
                 // For now, treat other top-level constructs as statements or ignore
                 _ => {
                     // try to parse a statement and keep it as a top-level declaration
@@ -196,6 +206,24 @@ where
                     let stmt = self.parse_variable_declaration()?;
                     StatementNode::VariableDeclaration(stmt)
                 }
+                TokenKind::Keyword(Keyword::Break) => {
+                    self.next(); // consume 'break'
+                    if let Some(t) = self.peek() {
+                        if matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)) {
+                            self.next();
+                        }
+                    }
+                    StatementNode::Break
+                }
+                TokenKind::Keyword(Keyword::Continue) => {
+                    self.next(); // consume 'continue'
+                    if let Some(t) = self.peek() {
+                        if matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)) {
+                            self.next();
+                        }
+                    }
+                    StatementNode::Continue
+                }
                 TokenKind::Keyword(Keyword::Return) => {
                     self.next(); // consume 'return'
                     // Optionally parse an expression after return
@@ -232,6 +260,55 @@ where
                         self.expect_token(TokenKind::Operator(Operator::Assign), "expected '='")?;
                         let expr = self.parse_expression()?;
                         StatementNode::Assignment { identifier: id, expr }
+                    } else if matches!(
+                        self.peek_second(),
+                        Some(Token { kind: TokenKind::Punctuation(Punctuation::Dot), .. })
+                    ) {
+                        // Could be a field assignment: `obj.field = expr`
+                        // We parse the identifier and dot, check for field name then '='.
+                        // If the next token after the field name is '=', it's a field assign.
+                        // Otherwise fall back to expression statement.
+                        let obj_id = if let TokenKind::Identifier(id) = self.next().unwrap().kind {
+                            id
+                        } else {
+                            unreachable!()
+                        };
+                        // consume '.'
+                        self.next();
+                        let field_token = self.expect_next("expected field name after '.'")?;
+                        let field_id = if let TokenKind::Identifier(f) = field_token.kind {
+                            f
+                        } else {
+                            return Err(self.error(
+                                "expected field name",
+                                field_token.line,
+                                field_token.column,
+                            ));
+                        };
+                        // if next is '=', it's a field assignment
+                        if matches!(
+                            self.peek(),
+                            Some(Token { kind: TokenKind::Operator(Operator::Assign), .. })
+                        ) {
+                            self.next(); // consume '='
+                            let expr = self.parse_expression()?;
+                            StatementNode::FieldAssign {
+                                object: obj_id,
+                                field: field_id,
+                                expr,
+                            }
+                        } else {
+                            // Rebuild a FieldAccess expression and continue as expression statement
+                            let base = Expression::FieldAccess {
+                                object: Box::new(Expression::Identifier(obj_id)),
+                                field: field_id,
+                            };
+                            // We already consumed the field access; now parse rest of the expression
+                            // by treating `base` as the already-parsed left side.
+                            // Since we can't easily re-enter the expression parser mid-stream,
+                            // just wrap as an expression statement.
+                            StatementNode::ExpressionStatement(base)
+                        }
                     } else {
                         let expr = self.parse_expression()?;
                         StatementNode::ExpressionStatement(expr)
@@ -332,14 +409,25 @@ where
         Ok(Some(stmt))
     }
 
-    /// Parses a constant declaration statement: const <type> <name> = <init>[;]
+    /// Parses a constant declaration statement: const [<type>] <name> = <init>[;]
     fn parse_constant_declaration(&mut self) -> ParseResult<ConstantDeclaration> {
         let const_token = self.expect_token(
             TokenKind::Keyword(Keyword::Const),
             "parse_constant_declaration: expected 'const' keyword",
         )?;
 
-        let var_type = self.parse_type()?;
+        // Lookahead: if the next token is an identifier immediately followed by `=`,
+        // there is no type annotation (e.g. `const x = 5`).
+        let var_type = if matches!(self.peek(), Some(Token { kind: TokenKind::Identifier(_), .. }))
+            && matches!(
+                self.peek_second(),
+                Some(Token { kind: TokenKind::Operator(Operator::Assign), .. })
+            )
+        {
+            None
+        } else {
+            self.parse_type()?
+        };
 
         let ident = if let TokenKind::Identifier(ident) = self
             .expect_next("parse_constant_declaration: expected identifier")?
@@ -388,6 +476,41 @@ where
         // self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
 
         Ok(VariableDeclaration::new(ident, var_type, expr))
+    }
+
+    /// Parses a type declaration: `const type <Name> = <type expression>`
+    fn parse_type_declaration(&mut self) -> ParseResult<TypeDeclaration> {
+        self.expect_token(
+            TokenKind::Keyword(Keyword::Const),
+            "parse_type_declaration: expected 'const'",
+        )?;
+        self.expect_token(
+            TokenKind::Keyword(Keyword::Type),
+            "parse_type_declaration: expected 'type'",
+        )?;
+        let name_token = self.expect_next("parse_type_declaration: expected type name")?;
+        let name = if let TokenKind::Identifier(id) = name_token.kind {
+            id
+        } else {
+            return Err(self.error("expected identifier", name_token.line, name_token.column));
+        };
+        self.expect_token(
+            TokenKind::Operator(Operator::Assign),
+            "parse_type_declaration: expected '='",
+        )?;
+        let type_expression = match self.parse_type()? {
+            Some(te) => te,
+            None => {
+                return Err(self.error(
+                    "parse_type_declaration: expected a type expression",
+                    name_token.line,
+                    name_token.column,
+                ));
+            }
+        };
+        // optional semicolon
+        self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
+        Ok(TypeDeclaration { name, type_expression })
     }
 
     /// Parses a type annotation, which can be a user-defined type (type identifier), or complex type (struct, variant or function).
@@ -737,7 +860,46 @@ where
                 Expression::Literal(Literal::Character(char_literal))
             }
             TokenKind::Literal(Literal::String(s)) => Expression::Literal(Literal::String(s)),
-            TokenKind::Identifier(id) => Expression::Identifier(id),
+            TokenKind::Identifier(id) => {
+                // Check if next token is '{' — struct construction: TypeName { field: val, ... }
+                if matches!(
+                    self.peek(),
+                    Some(Token { kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace), .. })
+                ) {
+                    self.next(); // consume '{'
+                    let mut fields = Vec::new();
+                    while !matches!(
+                        self.peek(),
+                        Some(Token { kind: TokenKind::Punctuation(Punctuation::ClosingCurlyBrace), .. })
+                            | None
+                    ) {
+                        let fname_token = self.expect_next("expected field name in struct construction")?;
+                        let fname = if let TokenKind::Identifier(f) = fname_token.kind {
+                            f
+                        } else {
+                            return Err(self.error(
+                                "expected field name",
+                                fname_token.line,
+                                fname_token.column,
+                            ));
+                        };
+                        self.expect_token(
+                            TokenKind::Punctuation(Punctuation::Colon),
+                            "expected ':' after field name in struct construction",
+                        )?;
+                        let val = self.parse_expression()?;
+                        fields.push((fname, val));
+                        // optional comma
+                        self.consume_if(|t| {
+                            matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma))
+                        });
+                    }
+                    self.next(); // consume '}'
+                    Expression::StructConstruct { type_name: id, fields }
+                } else {
+                    Expression::Identifier(id)
+                }
+            }
             TokenKind::Punctuation(Punctuation::OpeningParenthesis) => {
                 let inner_expr = self.parse_expression()?;
                 self.expect_token(
@@ -755,42 +917,65 @@ where
             }
         };
 
-        // Parse function call if '(' follows
-        while let Some(token) = self.peek() {
-            if matches!(
-                token.kind,
-                TokenKind::Punctuation(Punctuation::OpeningParenthesis)
-            ) {
-                self.next(); // consume '('
-                let mut args = Vec::new();
-                if let Some(token) = self.peek() {
-                    if !matches!(
-                        token.kind,
-                        TokenKind::Punctuation(Punctuation::ClosingParenthesis)
-                    ) {
-                        loop {
-                            args.push(self.parse_expression()?);
-                            if let Some(token) = self.peek() {
-                                if matches!(token.kind, TokenKind::Punctuation(Punctuation::Comma))
-                                {
-                                    self.next(); // consume ','
+        // Parse postfix operations: function calls and field access
+        loop {
+            if let Some(token) = self.peek() {
+                if matches!(
+                    token.kind,
+                    TokenKind::Punctuation(Punctuation::OpeningParenthesis)
+                ) {
+                    self.next(); // consume '('
+                    let mut args = Vec::new();
+                    if let Some(token) = self.peek() {
+                        if !matches!(
+                            token.kind,
+                            TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+                        ) {
+                            loop {
+                                args.push(self.parse_expression()?);
+                                if let Some(token) = self.peek() {
+                                    if matches!(
+                                        token.kind,
+                                        TokenKind::Punctuation(Punctuation::Comma)
+                                    ) {
+                                        self.next(); // consume ','
+                                    } else {
+                                        break;
+                                    }
                                 } else {
                                     break;
                                 }
-                            } else {
-                                break;
                             }
                         }
                     }
+                    self.expect_token(
+                        TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+                        "parse_atom: expected ')' after function call arguments",
+                    )?;
+                    expr = Expression::Call {
+                        callee: Box::new(expr),
+                        args,
+                    };
+                } else if matches!(token.kind, TokenKind::Punctuation(Punctuation::Dot)) {
+                    self.next(); // consume '.'
+                    let field_token =
+                        self.expect_next("parse_atom: expected field name after '.'")?;
+                    let field = if let TokenKind::Identifier(f) = field_token.kind {
+                        f
+                    } else {
+                        return Err(self.error(
+                            "expected field name",
+                            field_token.line,
+                            field_token.column,
+                        ));
+                    };
+                    expr = Expression::FieldAccess {
+                        object: Box::new(expr),
+                        field,
+                    };
+                } else {
+                    break;
                 }
-                self.expect_token(
-                    TokenKind::Punctuation(Punctuation::ClosingParenthesis),
-                    "parse_atom: expected ')' after function call arguments",
-                )?;
-                expr = Expression::Call {
-                    callee: Box::new(expr),
-                    args,
-                };
             } else {
                 break;
             }
@@ -917,7 +1102,9 @@ where
                 self.next();
                 break;
             }
-            stmts.push(self.parse_statement_some()?);
+            if let Some(stmt) = self.parse_statement()? {
+                stmts.push(stmt);
+            }
         }
         Ok(stmts)
     }

@@ -7,7 +7,7 @@ mod tests {
 
     #[test]
     fn test_comment() {
-        let test_string = "// This is a comment\nlet x = 5;";
+        let test_string = "// This is a comment\nconst x = 5;";
         let expected = [
             TokenKind::Comment,
             TokenKind::Keyword(Keyword::Const),
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_let_keyword() {
-        let test_string = "let";
+        let test_string = "const";
         let lexer = Lexer::new(test_string);
         lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Const)))
     }
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_function_keyword() {
-        let test_string = "function";
+        let test_string = "fn";
         let lexer = Lexer::new(test_string);
         lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Function)))
     }

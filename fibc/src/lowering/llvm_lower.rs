@@ -12,9 +12,15 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType};
+use inkwell::basic_block::BasicBlock;
 use inkwell::values::BasicMetadataValueEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use std::error::Error;
+
+struct LoopContext<'ctx> {
+    break_bb: BasicBlock<'ctx>,
+    continue_bb: BasicBlock<'ctx>,
+}
 
 /// Lower HIR into LLVM IR represented as a string.
 pub fn lower(
@@ -47,7 +53,7 @@ pub fn lower(
 
                 let fn_ty: FunctionType;
                 if let HIRTypeKind::Builtin(BuiltinType::Void) = hir_function.return_type {
-                    todo!()
+                    fn_ty = ctx.void_type().fn_type(&fn_params, false);
                 } else {
                     let ret_ty = map_type_to_llvm(
                         &hir_function.return_type,
@@ -88,6 +94,7 @@ pub fn lower(
                         &mut entry_vars,
                         &mut fn_scope,
                         stmt,
+                        None,
                     )?;
                 }
                 // Seal any basic blocks that have no terminator (e.g. an
@@ -235,16 +242,44 @@ fn codegen_expr<'ctx>(
                         "letmp",
                     )?
                     .as_basic_value_enum()),
-                // TODO: implement binary manipulation operations
-                Operator::LeftShift => todo!(),
-                Operator::RightShift => todo!(),
-                Operator::Ampersand => todo!(),
-                Operator::Pipe => todo!(),
-                Operator::Caret => todo!(),
-                _ => panic!(
-                    "unsupported binary operatorerator in codegen: {:?}",
-                    operator
-                ),
+                Operator::DoubleEquals => Ok(builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        l.into_int_value(),
+                        r.into_int_value(),
+                        "eqtmp",
+                    )?
+                    .as_basic_value_enum()),
+                Operator::Different => Ok(builder
+                    .build_int_compare(
+                        IntPredicate::NE,
+                        l.into_int_value(),
+                        r.into_int_value(),
+                        "netmp",
+                    )?
+                    .as_basic_value_enum()),
+                Operator::LogicalAnd => Ok(builder
+                    .build_and(l.into_int_value(), r.into_int_value(), "andtmp")?
+                    .as_basic_value_enum()),
+                Operator::LogicalOr => Ok(builder
+                    .build_or(l.into_int_value(), r.into_int_value(), "ortmp")?
+                    .as_basic_value_enum()),
+                Operator::LeftShift => Ok(builder
+                    .build_left_shift(l.into_int_value(), r.into_int_value(), "shltmp")?
+                    .as_basic_value_enum()),
+                Operator::RightShift => Ok(builder
+                    .build_right_shift(l.into_int_value(), r.into_int_value(), false, "shrtmp")?
+                    .as_basic_value_enum()),
+                Operator::Ampersand => Ok(builder
+                    .build_and(l.into_int_value(), r.into_int_value(), "bandtmp")?
+                    .as_basic_value_enum()),
+                Operator::Pipe => Ok(builder
+                    .build_or(l.into_int_value(), r.into_int_value(), "bortmp")?
+                    .as_basic_value_enum()),
+                Operator::Caret => Ok(builder
+                    .build_xor(l.into_int_value(), r.into_int_value(), "xortmp")?
+                    .as_basic_value_enum()),
+                op => Err(format!("unsupported binary operator in codegen: {:?}", op).into()),
             }
         }
         HIRExpressionKind::Call { callee, args } => {
@@ -268,6 +303,50 @@ fn codegen_expr<'ctx>(
                 arg_values.into_iter().map(|v| v.into()).collect();
             let call_site = builder.build_call(fnval, &md_args, "calltmp")?;
             Ok(call_site.try_as_basic_value().unwrap_basic())
+        }
+        HIRExpressionKind::FieldAccess { object, field: _, field_index } => {
+            // We need the pointer to the struct object, then GEP into it.
+            // The object expression should be an Identifier whose alloca we can find.
+            let struct_ptr = match &object.expression {
+                HIRExpressionKind::Identifier(name) => {
+                    *vars.get(name).ok_or_else(|| {
+                        format!("codegen_expr: no alloca for struct identifier {}", name)
+                    })?
+                }
+                _ => {
+                    // For more complex cases (e.g. nested field access), codegen
+                    // the object and store it to a temporary alloca first.
+                    let obj_val = codegen_expr(ctx, builder, module, vars, current_scope, object)?;
+                    let tmp = builder.build_alloca(obj_val.get_type(), "struct_tmp")?;
+                    builder.build_store(tmp, obj_val)?;
+                    tmp
+                }
+            };
+            let struct_ty = map_type_to_llvm(&object.inferred_type, ctx, current_scope.clone())?;
+            let BasicTypeEnum::StructType(st) = struct_ty else {
+                return Err(format!("codegen_expr: FieldAccess on non-struct type").into());
+            };
+            let gep = builder.build_struct_gep(st, struct_ptr, *field_index as u32, "fieldptr")?;
+            let field_ty = st
+                .get_field_type_at_index(*field_index as u32)
+                .ok_or_else(|| format!("codegen_expr: no field at index {}", field_index))?;
+            let loaded = builder.build_load(field_ty, gep, "fieldload")?;
+            Ok(loaded)
+        }
+        HIRExpressionKind::StructConstruct { type_name: _, fields } => {
+            // Allocate a struct, fill each field, then load the whole value.
+            let struct_ty = map_type_to_llvm(&expr.inferred_type, ctx, current_scope.clone())?;
+            let BasicTypeEnum::StructType(st) = struct_ty else {
+                return Err(format!("codegen_expr: StructConstruct on non-struct type").into());
+            };
+            let alloca = builder.build_alloca(st, "structtmp")?;
+            for (idx, (_, field_expr)) in fields.iter().enumerate() {
+                let val = codegen_expr(ctx, builder, module, vars, current_scope, field_expr)?;
+                let gep = builder.build_struct_gep(st, alloca, idx as u32, "fieldptr")?;
+                builder.build_store(gep, val)?;
+            }
+            let loaded = builder.build_load(st, alloca, "structload")?;
+            Ok(loaded)
         }
     }
 }
@@ -312,7 +391,13 @@ fn map_type_to_llvm<'ctx>(
                 return Err(format!("symbol {:?} is not a type", symbol).into());
             }
         }
-        HIRTypeKind::Struct => todo!("map_type_to_llvm: struct type kind not implemented yet"),
+        HIRTypeKind::Struct { fields } => {
+            let field_types: Vec<BasicTypeEnum> = fields
+                .iter()
+                .map(|(_, ty)| map_type_to_llvm(ty, ctx, current_scope.clone()))
+                .collect::<Result<_, _>>()?;
+            Ok(ctx.struct_type(&field_types, false).into())
+        }
     }
 }
 
@@ -363,6 +448,7 @@ fn codegen_stmt<'ctx>(
     mut vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
     current_scope: &mut Scope,
     stmt: &HIRStmt,
+    loop_ctx: Option<&LoopContext<'ctx>>,
 ) -> Result<Option<BasicValueEnum<'ctx>>, Box<dyn Error>> {
     match stmt {
         HIRStmt::Binding(hir_binding) => {
@@ -411,6 +497,26 @@ fn codegen_stmt<'ctx>(
             } else {
                 panic!("assignment to unknown variable '{}' in lowering", name);
             }
+        }
+
+        HIRStmt::FieldAssign { object, field: _, field_index, expr } => {
+            let struct_ptr = *vars.get(object).ok_or_else(|| {
+                format!("codegen_stmt: no alloca for struct variable {}", object)
+            })?;
+            // Get the struct type from the binding in scope
+            let obj_ty = if let Some(HIRSymbol::Binding(b)) = current_scope.symbols.get(object) {
+                map_type_to_llvm(&b.ty, ctx, current_scope.clone())?
+            } else {
+                return Err(format!("codegen_stmt: {} not found in scope", object).into());
+            };
+            let BasicTypeEnum::StructType(st) = obj_ty else {
+                return Err(format!("codegen_stmt: {} is not a struct", object).into());
+            };
+            let gep =
+                builder.build_struct_gep(st, struct_ptr, *field_index as u32, "fieldassignptr")?;
+            let val = codegen_expr(ctx, builder, module, vars, current_scope, expr)?;
+            builder.build_store(gep, val)?;
+            Ok(None)
         }
 
         HIRStmt::Expr(e) => {
@@ -476,7 +582,7 @@ fn codegen_stmt<'ctx>(
             // --- then branch ---
             builder.position_at_end(then_bb);
             for s in hir_if.then_branch.iter() {
-                codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
+                codegen_stmt(ctx, builder, module, vars, current_scope, s, loop_ctx)?;
             }
             // Only emit the fallthrough branch if the block has no terminator
             // yet (i.e. the branch body did not end with `return`).
@@ -493,7 +599,7 @@ fn codegen_stmt<'ctx>(
             if let Some(eb) = &hir_if.else_branch {
                 builder.position_at_end(else_bb);
                 for s in eb.iter() {
-                    codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
+                    codegen_stmt(ctx, builder, module, vars, current_scope, s, loop_ctx)?;
                 }
                 if builder
                     .get_insert_block()
@@ -516,16 +622,24 @@ fn codegen_stmt<'ctx>(
             post,
             body,
         } => {
-            // init
+            // init (no loop context yet)
             if let Some(i) = init {
-                codegen_stmt(ctx, builder, module, vars, current_scope, i)?;
+                codegen_stmt(ctx, builder, module, vars, current_scope, i, None)?;
             }
 
             let func = builder.get_insert_block().unwrap().get_parent().unwrap();
 
             let cond_bb = ctx.append_basic_block(func, "forcond");
             let body_bb = ctx.append_basic_block(func, "forbody");
+            let post_bb = ctx.append_basic_block(func, "forpost");
             let after_bb = ctx.append_basic_block(func, "afterloop");
+
+            // continue jumps to post_bb if there is a post-op, otherwise to cond_bb
+            let continue_target = if post.is_some() { post_bb } else { cond_bb };
+            let for_loop_ctx = LoopContext {
+                break_bb: after_bb,
+                continue_bb: continue_target,
+            };
 
             // jump to condition first
             builder.build_unconditional_branch(cond_bb)?;
@@ -542,29 +656,43 @@ fn codegen_stmt<'ctx>(
 
             // body
             builder.position_at_end(body_bb);
-
             for s in body.iter() {
-                codegen_stmt(ctx, builder, module, vars, current_scope, s)?;
+                codegen_stmt(ctx, builder, module, vars, current_scope, s, Some(&for_loop_ctx))?;
+            }
+            // fall through to post if no terminator
+            if builder.get_insert_block().unwrap().get_terminator().is_none() {
+                builder.build_unconditional_branch(post_bb)?;
             }
 
             // post
+            builder.position_at_end(post_bb);
             if let Some(p) = post {
-                codegen_stmt(ctx, builder, module, vars, current_scope, p)?;
+                codegen_stmt(ctx, builder, module, vars, current_scope, p, Some(&for_loop_ctx))?;
             }
-
             // jump back to condition if block didn't terminate
-            if builder
-                .get_insert_block()
-                .unwrap()
-                .get_terminator()
-                .is_none()
-            {
+            if builder.get_insert_block().unwrap().get_terminator().is_none() {
                 builder.build_unconditional_branch(cond_bb)?;
             }
 
             // continue here after loop
             builder.position_at_end(after_bb);
 
+            Ok(None)
+        }
+        HIRStmt::Break => {
+            let lc = loop_ctx.ok_or("break outside of loop")?;
+            builder.build_unconditional_branch(lc.break_bb)?;
+            let func = builder.get_insert_block().unwrap().get_parent().unwrap();
+            let dead_bb = ctx.append_basic_block(func, "dead");
+            builder.position_at_end(dead_bb);
+            Ok(None)
+        }
+        HIRStmt::Continue => {
+            let lc = loop_ctx.ok_or("continue outside of loop")?;
+            builder.build_unconditional_branch(lc.continue_bb)?;
+            let func = builder.get_insert_block().unwrap().get_parent().unwrap();
+            let dead_bb = ctx.append_basic_block(func, "dead");
+            builder.position_at_end(dead_bb);
             Ok(None)
         }
     }
