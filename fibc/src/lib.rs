@@ -7,6 +7,7 @@ pub mod lowering;
 pub mod parser;
 pub mod analysis;
 pub mod token;
+mod integration_tests;
 
 use std::path::Path;
 

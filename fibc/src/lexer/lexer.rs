@@ -409,6 +409,7 @@ impl<'input> Lexer<'input> {
             "fn" => TokenKind::Keyword(Keyword::Function),
             "switch" => TokenKind::Keyword(Keyword::Switch),
             "when" => TokenKind::Keyword(Keyword::When),
+            "type" => TokenKind::Keyword(Keyword::Type),
             "struct" => TokenKind::Keyword(Keyword::Struct),
             "enum" => TokenKind::Keyword(Keyword::Enum),
             "union" => TokenKind::Keyword(Keyword::Union),

@@ -1,9 +1,4 @@
-
-fn main() uint8 {
-    const x uint8 = 100;
-    if (x < 10) {
-        return 0;
-    } else {
-        return 1;
-    }
+fn main() sint32 {
+    printf("Hello, World!\n")
+    return 0
 }

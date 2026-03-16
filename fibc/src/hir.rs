@@ -44,14 +44,15 @@ pub enum HIRSymbol {
 pub enum HIRTypeKind {
     Builtin(BuiltinType),
     Identifier(Identifier),
-    Struct,
+    Struct { fields: Vec<(String, Box<HIRTypeKind>)> },
 }
 
 impl fmt::Display for HIRTypeKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Builtin(builtin) => write!(f, "{}", builtin)?,
-            _ => todo!(),
+            Self::Identifier(id) => write!(f, "{}", id)?,
+            Self::Struct { fields } => write!(f, "struct {{ {:?} }}", fields)?,
         };
         Ok(())
     }
@@ -95,6 +96,15 @@ pub enum HIRExpressionKind {
         callee: Identifier,
         args: Vec<HIRExpression>,
     },
+    FieldAccess {
+        object: Box<HIRExpression>,
+        field: String,
+        field_index: usize,
+    },
+    StructConstruct {
+        type_name: String,
+        fields: Vec<(String, HIRExpression)>,
+    },
     Null,
 }
 
@@ -103,6 +113,12 @@ pub enum HIRStmt {
     Binding(HIRBinding),
     Assign {
         name: Identifier,
+        expr: HIRExpression,
+    },
+    FieldAssign {
+        object: Identifier,
+        field: String,
+        field_index: usize,
         expr: HIRExpression,
     },
     Expr(HIRExpression),
@@ -114,6 +130,8 @@ pub enum HIRStmt {
         post: Option<Box<HIRStmt>>,
         body: Vec<HIRStmt>,
     },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]
@@ -133,7 +151,7 @@ pub struct HIRIf {
 impl HIRIf {
     pub fn then_branch_terminates(&self) -> bool {
         for stmt in self.then_branch.iter() {
-            if let HIRStmt::Return(_) = stmt {
+            if matches!(stmt, HIRStmt::Return(_) | HIRStmt::Break | HIRStmt::Continue) {
                 return true;
             }
         }
@@ -143,7 +161,7 @@ impl HIRIf {
     pub fn else_branch_terminates(&self) -> bool {
         if let Some(eb) = &self.else_branch {
             for stmt in eb.iter() {
-                if let HIRStmt::Return(_) = stmt {
+                if matches!(stmt, HIRStmt::Return(_) | HIRStmt::Break | HIRStmt::Continue) {
                     return true;
                 }
             }

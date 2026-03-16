@@ -9,12 +9,7 @@ mod tests {
     use crate::token::{Literal, Operator, Token};
 
     fn get_ast(test_string: &str) -> Ast {
-        // ensure input is wrapped in a module for parser.parse_module
-        let src = if test_string.trim_start().starts_with("module") {
-            test_string.to_string()
-        } else {
-            format!("module test; {}", test_string)
-        };
+        let src = test_string.to_string();
         let lexer = Lexer::new(&src);
         let tokens: Vec<Token> = lexer.collect();
         let mut parser = Parser::new(tokens.into_iter(), Path::new("test_instance"), src.clone());
@@ -163,14 +158,13 @@ mod tests {
 
     #[test]
     fn test_full_variable_declaration() {
-        let test_string = "let x int = 5;";
+        let test_string = "const sint32 x = 5;";
         let ast = get_ast(test_string);
-        // println!("{:#?}", ast.statements); // Removed: Ast has no 'statements' field
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
         if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
-            constant_type: Some(TypeExpression::Identifier(_)),
+            constant_type: Some(TypeExpression::Builtin(_)),
             expression: Expression::Literal(Literal::Integer(5)),
         }) = stmts[0]
         {
@@ -182,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_variable_declaration_without_type() {
-        let test_string = "let x = 5;";
+        let test_string = "const x = 5;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -200,13 +194,13 @@ mod tests {
 
     #[test]
     fn test_variable_declaration_without_semicolon() {
-        let test_string = "let x int = 5";
+        let test_string = "const sint32 x = 5";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
         if let StatementNode::ConstantDeclaration(ConstantDeclaration {
             identifier,
-            constant_type: Some(TypeExpression::Identifier(_)),
+            constant_type: Some(TypeExpression::Builtin(_)),
             expression: Expression::Literal(Literal::Integer(5)),
         }) = stmts[0]
         {
