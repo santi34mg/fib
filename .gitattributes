@@ -1,0 +1,2 @@
+*.fib linguist-language=Fib
+docs/* linguist-documentation=true
