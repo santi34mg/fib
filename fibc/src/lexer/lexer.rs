@@ -118,10 +118,10 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 let c = self.peek();
                 match c {
-                    // Some('=') => {
-                    //     self.bump();
-                    //     Some(TokenKind::Operator(Operator::PlusAssign))
-                    // }
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::PlusAssign))
+                    }
                     Some(_) => Some(TokenKind::Operator(Operator::Plus)),
                     None => todo!(),
                 }
@@ -134,10 +134,10 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::ThinRightArrow))
                     }
-                    // Some('=') => {
-                    //     self.bump();
-                    //     Some(TokenKind::Operator(Operator::MinusAssign))
-                    // }
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::MinusAssign))
+                    }
                     Some(_) => Some(TokenKind::Operator(Operator::Minus)),
                     None => todo!(),
                 }
@@ -146,10 +146,10 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 let c = self.peek();
                 match c {
-                    // Some('=') => {
-                    //     self.bump();
-                    //     Some(TokenKind::Operator(Operator::StarAssign))
-                    // }
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::StarAssign))
+                    }
                     Some(_) => Some(TokenKind::Operator(Operator::Star)),
                     None => todo!(),
                 }
@@ -163,10 +163,10 @@ impl<'input> Lexer<'input> {
                         self.skip_while(|c| c != '\n');
                         Some(TokenKind::Comment)
                     }
-                    // Some('=') => {
-                    //     self.bump();
-                    //     Some(TokenKind::Operator(Operator::SlashAssign))
-                    // }
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::SlashAssign))
+                    }
                     Some(_) => Some(TokenKind::Operator(Operator::Slash)),
                     None => todo!(),
                 }
@@ -175,10 +175,10 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 let c = self.peek();
                 match c {
-                    // Some('=') => {
-                    //     self.bump();
-                    //     Some(TokenKind::Operator(Operator::PercentAssign))
-                    // }
+                    Some('=') => {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::PercentAssign))
+                    }
                     Some(_) => Some(TokenKind::Operator(Operator::Percent)),
                     None => todo!(),
                 }
@@ -233,7 +233,12 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 if self.peek() == Some('.') {
                     self.bump();
-                    Some(TokenKind::Operator(Operator::DoubleDot))
+                    if self.peek() == Some('.') {
+                        self.bump();
+                        Some(TokenKind::Operator(Operator::Ellipsis))
+                    } else {
+                        Some(TokenKind::Operator(Operator::DoubleDot))
+                    }
                 } else {
                     Some(TokenKind::Punctuation(Punctuation::Dot))
                 }
@@ -419,22 +424,27 @@ impl<'input> Lexer<'input> {
             "break" => TokenKind::Keyword(Keyword::Break),
             "continue" => TokenKind::Keyword(Keyword::Continue),
             "return" => TokenKind::Keyword(Keyword::Return),
+            "as" => TokenKind::Keyword(Keyword::As),
+            "extern" => TokenKind::Keyword(Keyword::Extern),
+            "defer" => TokenKind::Keyword(Keyword::Defer),
             "true" => TokenKind::Literal(Literal::Boolean(true)),
             "false" => TokenKind::Literal(Literal::Boolean(false)),
             "null" => TokenKind::Literal(Literal::Null),
             "void" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Void)),
-            "uint8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt8)),
+            "uint8"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt8)),
             "uint16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt16)),
             "uint32" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt32)),
             "uint64" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt64)),
-            "sint8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::SInt8)),
-            "sint16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::SInt16)),
-            "sint32" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::SInt32)),
-            "sint64" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::SInt64)),
+            "int8"   => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int8)),
+            "int16"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int16)),
+            "int32"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int32)),
+            "int64"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int64)),
             "float32" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float32)),
             "float64" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float64)),
+            "string" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::String)),
             "char" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Char)),
             "bool" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Boolean)),
+            "never" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Never)),
             _ => TokenKind::Identifier(Identifier {
                 identifier: name.to_string(),
             }),
