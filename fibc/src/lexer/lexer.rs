@@ -1,4 +1,3 @@
-use core::panic;
 use std::char;
 
 use crate::token::{
@@ -94,8 +93,7 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::GreaterEqual))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::GreaterThan)),
-                    None => todo!(),
+                    _ => Some(TokenKind::Operator(Operator::GreaterThan)),
                 }
             }
             '<' => {
@@ -110,8 +108,7 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::LesserEqual))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::LesserThan)),
-                    None => todo!(),
+                    _ => Some(TokenKind::Operator(Operator::LesserThan)),
                 }
             }
             '+' => {
@@ -122,8 +119,7 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::PlusAssign))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::Plus)),
-                    None => todo!(),
+                    _ => Some(TokenKind::Operator(Operator::Plus)),
                 }
             }
             '-' => {
@@ -138,8 +134,7 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::MinusAssign))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::Minus)),
-                    None => todo!(),
+                    _ => Some(TokenKind::Operator(Operator::Minus)),
                 }
             }
             '*' => {
@@ -150,8 +145,7 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::StarAssign))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::Star)),
-                    None => todo!(),
+                    _ => Some(TokenKind::Operator(Operator::Star)),
                 }
             }
             '/' => {
@@ -167,8 +161,7 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::SlashAssign))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::Slash)),
-                    None => todo!(),
+                    _ => Some(TokenKind::Operator(Operator::Slash)),
                 }
             }
             '%' => {
@@ -179,8 +172,7 @@ impl<'input> Lexer<'input> {
                         self.bump();
                         Some(TokenKind::Operator(Operator::PercentAssign))
                     }
-                    Some(_) => Some(TokenKind::Operator(Operator::Percent)),
-                    None => todo!(),
+                    _ => Some(TokenKind::Operator(Operator::Percent)),
                 }
             }
             '&' => {
@@ -279,7 +271,7 @@ impl<'input> Lexer<'input> {
                 Some(TokenKind::Unknown(c))
             }
         };
-        Some(Token::new(kind?, start_line, start_col))
+        Some(Token::with_end(kind?, start_line, start_col, self.line, self.column.saturating_sub(1)))
     }
 
     fn lex_char_literal(&mut self) -> Option<TokenKind> {
@@ -305,14 +297,13 @@ impl<'input> Lexer<'input> {
                         if c.is_ascii_hexdigit() {
                             hex.push(c);
                         } else {
-                            panic!("Invalid hex escape sequence");
+                            return Some(TokenKind::Error("Invalid hex escape sequence".into()));
                         }
                     }
-                    let value = u8::from_str_radix(&hex, 16).unwrap_or_else(|e| {
-                        eprintln!("Error: {}\nfor hex string \"{}\"", e, hex);
-                        panic!();
-                    });
-                    value as char
+                    match u8::from_str_radix(&hex, 16) {
+                        Ok(value) => value as char,
+                        Err(_) => return Some(TokenKind::Error(format!("Invalid hex escape: \\x{}", hex))),
+                    }
                 }
                 'u' => {
                     if self.peek() == Some('{') {
@@ -326,23 +317,24 @@ impl<'input> Lexer<'input> {
                                 hex.push(c);
                                 self.bump();
                             } else {
-                                panic!("Invalid unicode escape sequence");
+                                return Some(TokenKind::Error("Invalid unicode escape sequence".into()));
                             }
                         }
                         self.bump(); // consume '}'
-                        let value = u32::from_str_radix(&hex, 16).unwrap_or_else(|e| {
-                            eprintln!("Error: {}\nfor unicode hex string \"{}\"", e, hex);
-                            panic!();
-                        });
-                        char::from_u32(value).unwrap_or_else(|| {
-                            panic!("Invalid unicode code point: {}", value);
-                        })
+                        let value = match u32::from_str_radix(&hex, 16) {
+                            Ok(v) => v,
+                            Err(_) => return Some(TokenKind::Error(format!("Invalid unicode escape: \\u{{{}}}", hex))),
+                        };
+                        match char::from_u32(value) {
+                            Some(c) => c,
+                            None => return Some(TokenKind::Error(format!("Invalid unicode code point: {}", value))),
+                        }
                     } else {
-                        panic!("Invalid unicode escape sequence");
+                        return Some(TokenKind::Error("Invalid unicode escape sequence: expected '{{'".into()));
                     }
                 }
                 c => {
-                    panic!("Invalid escape sequence: \\{}", c);
+                    return Some(TokenKind::Error(format!("Invalid escape sequence: \\{}", c)));
                 }
             }
         } else {
@@ -394,11 +386,10 @@ impl<'input> Lexer<'input> {
             let value = ("0".to_string() + num_str).parse::<f32>().ok()?;
             return Some(TokenKind::Literal(Literal::Float(value)));
         } else {
-            let value = u64::from_str_radix(num_str, base).unwrap_or_else(|e| {
-                eprintln!("Error: {}\nfor string \"{}\"", e, num_str);
-                // TODO: better errors
-                panic!();
-            });
+            let value = match u64::from_str_radix(num_str, base) {
+                Ok(v) => v,
+                Err(e) => return Some(TokenKind::Error(format!("Invalid integer literal '{}': {}", num_str, e))),
+            };
             return Some(TokenKind::Literal(Literal::Integer(value)));
         }
     }
