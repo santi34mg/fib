@@ -93,6 +93,7 @@ pub fn lower(
                             name: param_name.clone(),
                             ty: param_ty.clone(),
                             init: None,
+                            mutable: true,
                         }),
                     );
                 }
@@ -761,6 +762,7 @@ fn codegen_stmt<'ctx>(
                     name: hir_binding.name.clone(),
                     ty: hir_binding.ty.clone(),
                     init: None,
+                    mutable: hir_binding.mutable,
                 }),
             );
             Ok(None)
