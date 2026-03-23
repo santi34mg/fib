@@ -1,0 +1,52 @@
+fn pack_ipv4(a uint32, b uint32, c uint32, d uint32) uint32 {
+    return (a << 24) | (b << 16) | (c << 8) | d
+}
+
+fn popcount(x uint32) uint32 {
+    var uint32 count = 0
+    var uint32 v = x
+    for (;v != 0 as uint32;) {
+        count = count + (v & 1)
+        v = v >> 1
+    }
+    return count
+}
+
+fn main() sint32 {
+    const uint32 ip = pack_ipv4(192, 168, 1, 100)
+    printf("Packed IPv4: 0x%08X\n", ip)
+    printf("Octet 0: %u\n", (ip >> 24) & 255)
+    printf("Octet 1: %u\n", (ip >> 16) & 255)
+    printf("Octet 2: %u\n", (ip >> 8) & 255)
+    printf("Octet 3: %u\n", ip & 255)
+
+    const uint32 PERM_READ   = 1
+    const uint32 PERM_WRITE  = 2
+    const uint32 PERM_EXEC   = 4
+    const uint32 PERM_DELETE = 8
+
+    var uint32 perms = PERM_READ | PERM_WRITE
+    printf("\nInitial permissions: 0x%X\n", perms)
+
+    perms = perms | PERM_EXEC
+    printf("After grant EXEC:    0x%X\n", perms)
+
+    perms = perms & ~PERM_WRITE
+    printf("After revoke WRITE:  0x%X\n", perms)
+
+    if (perms & PERM_READ) != 0 {
+        printf("  [x] READ\n")
+    }
+    if (perms & PERM_WRITE) != 0 {
+        printf("  [x] WRITE\n")
+    }
+    if (perms & PERM_EXEC) != 0 {
+        printf("  [x] EXEC\n")
+    }
+    if (perms & PERM_DELETE) != 0 {
+        printf("  [x] DELETE\n")
+    }
+
+    printf("Bits set in perms: %u\n", popcount(perms))
+    return 0
+}

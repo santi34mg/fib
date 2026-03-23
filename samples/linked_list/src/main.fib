@@ -1,0 +1,62 @@
+const type Node = struct {
+    data sint32,
+    next *Node,
+}
+
+fn push(head *Node, val sint32) *Node {
+    var *Node node = malloc(16 as uint64) as *Node
+    node.* = Node { data: val, next: head }
+    return node
+}
+
+fn list_length(head *Node) sint32 {
+    var sint32 count = 0
+    var *Node cur = head
+    for (;;) {
+        if cur as uint64 == 0 as uint64 {
+            break
+        }
+        count += 1
+        cur = cur.*.next
+    }
+    return count
+}
+
+fn print_list(head *Node) void {
+    var *Node cur = head
+    for (;;) {
+        if cur as uint64 == 0 as uint64 {
+            break
+        }
+        printf("%d -> ", cur.*.data)
+        cur = cur.*.next
+    }
+    printf("null\n")
+}
+
+fn free_list(head *Node) void {
+    var *Node cur = head
+    for (;;) {
+        if cur as uint64 == 0 as uint64 {
+            break
+        }
+        var *Node next = cur.*.next
+        free(cur as *void)
+        cur = next
+    }
+}
+
+fn main() sint32 {
+    var *Node head
+    defer free_list(head)
+
+    head = push(head, 30)
+    head = push(head, 20)
+    head = push(head, 10)
+
+    printf("List:   ")
+    print_list(head)
+    printf("Length: %d\n", list_length(head))
+
+    return 0
+}
