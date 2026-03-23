@@ -40,6 +40,15 @@ pub enum StatementNode {
         field: Identifier,
         expr: Expression,
     },
+    DerefAssign {
+        pointer: Expression,
+        expr: Expression,
+    },
+    IndexAssign {
+        object: Expression,
+        index: Expression,
+        expr: Expression,
+    },
     Return(Option<Expression>),
     If {
         condition: Expression,
@@ -54,12 +63,15 @@ pub enum StatementNode {
     },
     Break,
     Continue,
+    Defer(Box<StatementNode>),
 }
 
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
     pub signature: FunctionSignature,
     pub body: Option<FunctionBody>,
+    pub is_extern: bool,
+    pub is_variadic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +113,10 @@ pub enum TypeExpression {
     Struct {
         fields: Vec<Field>,
     },
+    Array {
+        element_type: Box<TypeExpression>,
+        size: u64,
+    },
 }
 
 impl fmt::Display for TypeExpression {
@@ -118,6 +134,9 @@ impl fmt::Display for TypeExpression {
             TypeExpression::Struct { fields } => {
                 write!(f, "struct {{ {:?} }}", fields)?;
             }
+            TypeExpression::Array { element_type, size } => {
+                write!(f, "{}[{}]", element_type, size)?;
+            }
             TypeExpression::Pointer { pointer_variant, pointed_type } => {
                 match pointer_variant {
                     PointerVariant::Unique => {
@@ -130,7 +149,7 @@ impl fmt::Display for TypeExpression {
                         write!(f, "weak &{}", *pointed_type)?;
                     }
                     PointerVariant::Raw => {
-                        write!(f, "&{}", *pointed_type)?;
+                        write!(f, "*{}", *pointed_type)?;
                     }
                 }
             }
@@ -220,8 +239,21 @@ pub enum Expression {
         object: Box<Expression>,
         field: Identifier,
     },
+    AddressOf(Box<Expression>),
+    Dereference(Box<Expression>),
     StructConstruct {
         type_name: Identifier,
         fields: Vec<(Identifier, Expression)>,
+    },
+    Cast {
+        expr: Box<Expression>,
+        target_type: TypeExpression,
+    },
+    IndexAccess {
+        object: Box<Expression>,
+        index: Box<Expression>,
+    },
+    ArrayLiteral {
+        elements: Vec<Expression>,
     },
 }
