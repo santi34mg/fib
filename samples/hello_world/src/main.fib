@@ -1,4 +1,4 @@
-fn main() sint32 {
+fn main() int32 {
     printf("Hello, World!\n")
     return 0
 }
