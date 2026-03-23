@@ -38,11 +38,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_literal_integer_fail() {
+        // Invalid binary literal should produce an Error token rather than panicking
         let test_string = "0b4";
-        let lexer = Lexer::new(test_string);
-        let _tokens: Vec<_> = lexer.collect();
+        let tokens: Vec<_> = Lexer::new(test_string).collect();
+        assert!(tokens.iter().any(|t| matches!(t.kind, TokenKind::Error(_))));
     }
 
     #[test]
