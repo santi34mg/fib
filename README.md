@@ -12,9 +12,7 @@ The current compiler backend lowers to LLVM IR, although a multi-backend strateg
 
 ## Code quality and performance
 
-I will admit that this is not the best Rust out there.
-
-The Rust version of the compiler aims to be a bootstrap, therefore, performance and code quality is not an objective.
+The Rust compiler is a bootstrap but I still want to train my Rust skills with it. I will try my best to provide the best performance.
 
 ## Getting Started
 
