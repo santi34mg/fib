@@ -174,6 +174,7 @@ pub struct HIRBinding {
     pub name: Identifier,
     pub ty: HIRTypeKind,
     pub init: Option<HIRExpression>,
+    pub mutable: bool,
 }
 
 #[derive(Debug, Clone)]

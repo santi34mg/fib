@@ -32,7 +32,7 @@ pub fn analyze(ast: Ast) -> Result<CompilationUnit, Box<dyn Error>> {
                         &mut current_scope,
                     )?))
                 }
-                _ => todo!("analyze: statement not supported yet"),
+                _ => None,
             },
         };
         if let Some(hir_declaration) = hir_declaration {
@@ -72,6 +72,7 @@ fn func_to_hir(
                 name: param.parameter_name.clone(),
                 ty: map_type(param.parameter_type.clone())?,
                 init: None,
+                mutable: true,
             }),
         );
     }
@@ -101,6 +102,11 @@ fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt
             var_decl_to_hir(variable_declaration, current_scope)?,
         )),
         StatementNode::Assignment { identifier, expr } => {
+            if let Some(HIRSymbol::Binding(binding)) = current_scope.symbols.get(&identifier) {
+                if !binding.mutable {
+                    return Err(format!("cannot assign to constant '{}'", identifier).into());
+                }
+            }
             let e = expr_to_hir(expr, current_scope)?;
             Ok(HIRStmt::Assign {
                 name: identifier,
@@ -112,7 +118,12 @@ fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt
             let obj_ty = match current_scope.symbols.get(&object).ok_or_else(|| {
                 format!("stmt_to_hir: identifier {} not found in scope", object)
             })? {
-                HIRSymbol::Binding(b) => b.ty.clone(),
+                HIRSymbol::Binding(b) => {
+                    if !b.mutable {
+                        return Err(format!("cannot assign to field of constant '{}'", object).into());
+                    }
+                    b.ty.clone()
+                }
                 _ => return Err(format!("stmt_to_hir: {} is not a variable", object).into()),
             };
             let struct_fields = match &obj_ty {
@@ -288,6 +299,7 @@ inferred type of expression: {}"#,
         name: const_decl.identifier.clone(),
         ty,
         init: Some(init),
+        mutable: false,
     };
     current_scope
         .symbols
@@ -412,6 +424,7 @@ inferred type of expression: {:?}"#,
         name: var_decl.identifier.clone(),
         ty,
         init: Some(init),
+        mutable: true,
     };
     current_scope
         .symbols
@@ -830,6 +843,7 @@ fn resolve_statement(
                     name: constant_declaration.identifier.clone(),
                     ty,
                     init: None,
+                    mutable: false,
                 }),
             );
             Ok(current_scope)
@@ -846,6 +860,7 @@ fn resolve_statement(
                     name: variable_declaration.identifier.clone(),
                     ty,
                     init: None,
+                    mutable: true,
                 }),
             );
             Ok(current_scope)
@@ -903,7 +918,7 @@ fn resolve_statement(
         StatementNode::IndexAssign { .. } => Ok(current_scope),
         StatementNode::ExpressionStatement(_) => Ok(current_scope),
         StatementNode::Defer(_) => Ok(current_scope),
-        stmt => todo!("resolve_statement: statement {:?}", stmt),
+        _stmt => Ok(current_scope),
     }
 }
 
@@ -1025,6 +1040,7 @@ fn resolve_function_decl(
                 name: param.parameter_name,
                 ty: map_type(param.parameter_type)?,
                 init: None,
+                mutable: true,
             }),
         );
     }
