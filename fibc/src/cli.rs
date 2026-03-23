@@ -20,6 +20,7 @@ pub fn parse_args() -> Args {
     Args::parse()
 }
 
+#[cfg(feature = "llvm")]
 pub fn exec_command(args: Args) {
     if let Err(e) = driver::compile(&args.file, args.is_debug) {
         eprintln!("Error: {}", e);

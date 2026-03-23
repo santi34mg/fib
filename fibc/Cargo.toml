@@ -3,12 +3,16 @@ name = "fibc"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["llvm"]
+llvm = ["inkwell"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9.8"
 clap = { version = "4.5.60", features = ["derive"]}
 regex = "1.12.3"
-inkwell = { version = "0.8.0", features = ["llvm16-0"] }
+inkwell = { version = "0.8.0", features = ["llvm16-0"], optional = true }
 walkdir = "2.3.4"
 petgraph = "0.6.1"
 either = "1.15.0"

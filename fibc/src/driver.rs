@@ -1,17 +1,92 @@
+#[cfg(feature = "llvm")]
 use std::error::Error;
-use std::fs;
 use std::path::Path;
 
 use crate::ast::Ast;
-use crate::lowering;
 use crate::parser::Parser;
-use crate::parser::parser::ParseResult;
+use crate::parser::parser::{ParseError, ParseResult};
 use crate::analysis::analyze;
-use crate::{lexer::Lexer, token::Token};
+use crate::hir::CompilationUnit;
+use crate::{lexer::Lexer, token::{Token, TokenKind}};
 
 const STDLIB_PRELUDE: &str = include_str!("../../std/libc.fib");
 
+/// Result of running the compiler frontend (lex + parse + analyze) without LLVM lowering.
+/// Always contains as much data as could be produced before the first fatal error.
+pub struct FrontendResult {
+    pub tokens: Vec<Token>,
+    pub parse_errors: Vec<ParseError>,
+    pub analysis_errors: Vec<String>,
+    pub ast: Option<Ast>,
+    pub hir: Option<CompilationUnit>,
+}
+
+/// Run lex → parse → analyze on `source` and return all results, even on partial failure.
+/// This is the entry point for the LSP server.
+pub fn compile_frontend(source: &str, filename: &Path) -> FrontendResult {
+    // Lex user source; collect Error tokens as diagnostics
+    let raw_tokens = run_lexer(source);
+    let mut parse_errors: Vec<ParseError> = Vec::new();
+
+    let tokens: Vec<Token> = raw_tokens
+        .into_iter()
+        .filter(|t| {
+            if let TokenKind::Error(msg) = &t.kind {
+                parse_errors.push(ParseError {
+                    filename: filename.into(),
+                    message: msg.clone(),
+                    line: t.line,
+                    column: t.column,
+                    source_line: String::new(),
+                });
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    // Parse stdlib prelude (should never fail; errors here are a compiler bug)
+    let prelude_tokens = run_lexer(STDLIB_PRELUDE);
+    let prelude_ast = match run_parser(prelude_tokens, Path::new("<stdlib>"), STDLIB_PRELUDE.to_string()) {
+        Ok(ast) => ast,
+        Err(_) => return FrontendResult { tokens, parse_errors, analysis_errors: vec![], ast: None, hir: None },
+    };
+
+    // Parse user source
+    let user_ast = match run_parser(tokens.clone(), filename, source.to_string()) {
+        Ok(ast) => ast,
+        Err(pe) => {
+            parse_errors.push(pe);
+            return FrontendResult { tokens, parse_errors, analysis_errors: vec![], ast: None, hir: None };
+        }
+    };
+
+    // Combine prelude + user declarations
+    let mut combined_declarations = prelude_ast.declarations;
+    combined_declarations.extend(user_ast.declarations);
+    let ast = Ast { declarations: combined_declarations };
+
+    // Semantic analysis
+    let mut analysis_errors: Vec<String> = Vec::new();
+    let hir = match analyze(ast.clone()) {
+        Ok(hir) => Some(hir),
+        Err(e) => {
+            analysis_errors.push(e.to_string());
+            None
+        }
+    };
+
+    FrontendResult { tokens, parse_errors, analysis_errors, ast: Some(ast), hir }
+}
+
+#[cfg(feature = "llvm")]
+use std::fs;
+#[cfg(feature = "llvm")]
+use crate::lowering;
+
 /// Library-friendly compile function. Returns Err with a message on failure.
+#[cfg(feature = "llvm")]
 pub fn compile(file: &Path, is_debug_mode: bool) -> Result<(), Box<dyn Error>> {
     if !file.is_file() {
         return Err(format!("Not a file. Found {:?}", file).into());
@@ -53,9 +128,6 @@ pub fn compile(file: &Path, is_debug_mode: bool) -> Result<(), Box<dyn Error>> {
         show_ast(&ast);
     }
 
-    // I should probably canonicalize the names, not sure how to do it right now tho
-    // let canonicalized_ast = semantic_analysis::canonicalization::canonicalize(&ast);
-
     let hir = analyze(ast).map_err(|e| format!("Analysis failed: {}", e))?;
 
     let c_src = lowering::lower(hir, &filename).map_err(|e| format!("Lowering failed: {}", e))?;
@@ -89,6 +161,7 @@ pub fn compile(file: &Path, is_debug_mode: bool) -> Result<(), Box<dyn Error>> {
 }
 
 /// Legacy binary entrypoint wrapper that exits the process on error.
+#[cfg(feature = "llvm")]
 pub fn run_pipeline(file: &Path, is_debug_mode: bool) {
     match compile(file, is_debug_mode) {
         Ok(()) => {}
@@ -99,10 +172,8 @@ pub fn run_pipeline(file: &Path, is_debug_mode: bool) {
     }
 }
 
-fn run_lexer(src: &String) -> Vec<Token> {
-    let lexer = Lexer::new(&src);
-    let tokens = lexer.collect();
-    tokens
+fn run_lexer(src: &str) -> Vec<Token> {
+    Lexer::new(src).collect()
 }
 
 fn run_parser<'a>(tokens: Vec<Token>, filename: &Path, source: String) -> ParseResult<Ast> {
