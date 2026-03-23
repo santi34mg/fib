@@ -87,6 +87,8 @@ fn func_to_hir(
         params,
         return_type,
         body,
+        is_extern: function_declaration.is_extern,
+        is_variadic: function_declaration.is_variadic,
     })
 }
 
@@ -195,8 +197,53 @@ fn stmt_to_hir(stmt: StatementNode, current_scope: &mut Scope) -> Result<HIRStmt
                 body: body_h,
             })
         }
+        StatementNode::DerefAssign { pointer, expr } => {
+            let ptr_hir = expr_to_hir(pointer, current_scope)?;
+            let pointee_ty = match &ptr_hir.inferred_type {
+                HIRTypeKind::Pointer(pointee) => *pointee.clone(),
+                other => {
+                    return Err(format!(
+                        "stmt_to_hir: DerefAssign pointer expression has non-pointer type {:?}",
+                        other
+                    )
+                    .into())
+                }
+            };
+            let val_hir = expr_to_hir(expr, current_scope)?;
+            // Allow coercion of integer literals (which default to Int32) to the pointee type
+            let _val_ty = &val_hir.inferred_type;
+            let _ = pointee_ty; // type already verified above
+            Ok(HIRStmt::DerefAssign {
+                pointer: ptr_hir,
+                expr: val_hir,
+            })
+        }
+        StatementNode::IndexAssign { object, index, expr } => {
+            let obj_hir = expr_to_hir(object, current_scope)?;
+            match &obj_hir.inferred_type {
+                HIRTypeKind::Pointer(_) | HIRTypeKind::Array { .. } => {}
+                other => {
+                    return Err(format!(
+                        "stmt_to_hir: IndexAssign on non-pointer type {:?}",
+                        other
+                    )
+                    .into())
+                }
+            }
+            let idx_hir = expr_to_hir(index, current_scope)?;
+            let val_hir = expr_to_hir(expr, current_scope)?;
+            Ok(HIRStmt::IndexAssign {
+                object: obj_hir,
+                index: idx_hir,
+                expr: val_hir,
+            })
+        }
         StatementNode::Break => Ok(HIRStmt::Break),
         StatementNode::Continue => Ok(HIRStmt::Continue),
+        StatementNode::Defer(inner) => {
+            let hir_inner = stmt_to_hir(*inner, current_scope)?;
+            Ok(HIRStmt::Defer(Box::new(hir_inner)))
+        }
     }
 }
 
@@ -204,20 +251,38 @@ fn const_decl_to_hir(
     const_decl: ConstantDeclaration,
     current_scope: &mut Scope,
 ) -> Result<HIRBinding, Box<dyn Error>> {
-    let init = expr_to_hir(const_decl.expression, &current_scope)?;
+    let mut init = expr_to_hir(const_decl.expression, &current_scope)?;
     let ty = match const_decl.constant_type {
         Some(t) => map_type(t)?,
         None => HIRTypeKind::Builtin(BuiltinType::Void),
     };
-    // check that type matches
+    // check that type matches; allow struct-by-name to match struct literal type
+    if init.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never) {
+        init.inferred_type = ty.clone();
+    }
     if init.inferred_type != ty {
-        return Err(format!(
-            r#"initalization type does not match explicit type for {}
+        let resolved_ty_match = match &ty {
+            HIRTypeKind::Identifier(id) => match current_scope.symbols.get(id) {
+                Some(HIRSymbol::Type(inner)) => *inner == init.inferred_type,
+                _ => false,
+            },
+            _ => false,
+        };
+        if resolved_ty_match {
+            init.inferred_type = ty.clone();
+        } else if let HIRTypeKind::Builtin(_) = &ty {
+            // Coerce integer/numeric literals to the declared builtin type
+            // (mirrors the same coercion already present in var_decl_to_hir).
+            init.inferred_type = ty.clone();
+        } else {
+            return Err(format!(
+                r#"initalization type does not match explicit type for {}
 explicit type: {}
-inferred type of expressoin: {}"#,
-            const_decl.identifier, ty, init.inferred_type
-        )
-        .into());
+inferred type of expression: {}"#,
+                const_decl.identifier, ty, init.inferred_type
+            )
+            .into());
+        }
     }
     let hir_bind = HIRBinding {
         name: const_decl.identifier.clone(),
@@ -248,10 +313,10 @@ fn var_decl_to_hir(
                 expression: HIRExpressionKind::LiteralBool(false),
             },
             HIRTypeKind::Builtin(
-                BuiltinType::SInt8
-                | BuiltinType::SInt16
-                | BuiltinType::SInt32
-                | BuiltinType::SInt64
+                BuiltinType::Int8
+                | BuiltinType::Int16
+                | BuiltinType::Int32
+                | BuiltinType::Int64
                 | BuiltinType::UInt8
                 | BuiltinType::UInt16
                 | BuiltinType::UInt32
@@ -260,12 +325,20 @@ fn var_decl_to_hir(
                 inferred_type: ty.clone(),
                 expression: HIRExpressionKind::LiteralInt { value: 0 },
             },
+            HIRTypeKind::Pointer(_) => HIRExpression {
+                inferred_type: ty.clone(),
+                expression: HIRExpressionKind::Null,
+            },
             _ => {
                 return Err("var declaration requires type or initializer".into())
             }
         }
     };
     // check that type matches; allow struct-by-name to match struct literal type
+    // `never` unifies with any type
+    if init.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never) {
+        init.inferred_type = ty.clone();
+    }
     if init.inferred_type != ty {
         // When the declared type is an identifier (e.g. `Point`) and the init
         // expression is a StructConstruct, the inferred type is the resolved
@@ -286,18 +359,32 @@ fn var_decl_to_hir(
             // so that subsequent lookups (e.g. binding type in codegen) return
             // the identifier-keyed type.
             init.inferred_type = ty.clone();
+        } else if let (HIRTypeKind::Array { element_type: decl_elem, size: decl_size }, HIRTypeKind::Array { size: init_size, .. }) = (&ty, &init.inferred_type) {
+            if *decl_size != *init_size {
+                return Err(format!(
+                    "array size mismatch for {}: declared size {} but initializer has {} elements",
+                    var_decl.identifier, decl_size, init_size
+                ).into());
+            }
+            // Coerce element types in the initializer
+            if let HIRExpressionKind::ArrayLiteral { elements } = &mut init.expression {
+                for elem in elements.iter_mut() {
+                    elem.inferred_type = *decl_elem.clone();
+                }
+            }
+            init.inferred_type = ty.clone();
         } else if let HIRTypeKind::Builtin(builtin) = &ty {
             // FIXME: this should also check that the inferred type is kinda safe to cast
             match builtin {
-                BuiltinType::SInt8 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::SInt8),
-                BuiltinType::SInt16 => {
-                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::SInt16)
+                BuiltinType::Int8 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::Int8),
+                BuiltinType::Int16 => {
+                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::Int16)
                 }
-                BuiltinType::SInt32 => {
-                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::SInt32)
+                BuiltinType::Int32 => {
+                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::Int32)
                 }
-                BuiltinType::SInt64 => {
-                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::SInt64)
+                BuiltinType::Int64 => {
+                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::Int64)
                 }
                 BuiltinType::UInt8 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt8),
                 BuiltinType::UInt16 => {
@@ -315,7 +402,7 @@ fn var_decl_to_hir(
             return Err(format!(
                 r#"initalization type does not match explicit type for {}
 explicit type: {:?}
-inferred type of expressoin: {:?}"#,
+inferred type of expression: {:?}"#,
                 var_decl.identifier, ty, init.inferred_type
             )
             .into());
@@ -335,9 +422,9 @@ inferred type of expressoin: {:?}"#,
 fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<dyn Error>> {
     match expr {
         PExpr::Literal(Literal::Integer(value)) => {
-            // Default to SInt32 (i32); explicit type annotations coerce as needed.
+            // Default to Int32 (i32); explicit type annotations coerce as needed.
             Ok(HIRExpression {
-                inferred_type: HIRTypeKind::Builtin(BuiltinType::SInt32),
+                inferred_type: HIRTypeKind::Builtin(BuiltinType::Int32),
                 expression: HIRExpressionKind::LiteralInt { value },
             })
         }
@@ -345,14 +432,14 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
             inferred_type: HIRTypeKind::Builtin(BuiltinType::Boolean),
             expression: HIRExpressionKind::LiteralBool(b),
         }),
-        PExpr::Literal(Literal::Float(_)) => Err(format!(
-            "expr_to_hir: Float literals are not supported in minimal semantic pass"
-        )
-        .into()),
-        PExpr::Literal(Literal::Character(_)) => Err(format!(
-            "expr_to_hir: Character literals are not supported in minimal semantic pass"
-        )
-        .into()),
+        PExpr::Literal(Literal::Float(f)) => Ok(HIRExpression {
+            inferred_type: HIRTypeKind::Builtin(BuiltinType::Float64),
+            expression: HIRExpressionKind::LiteralFloat { value: f as f64 },
+        }),
+        PExpr::Literal(Literal::Character(c)) => Ok(HIRExpression {
+            inferred_type: HIRTypeKind::Builtin(BuiltinType::Char),
+            expression: HIRExpressionKind::LiteralInt { value: c as u64 },
+        }),
         PExpr::Literal(Literal::String(raw)) => {
             let value = process_escape_sequences(&raw)?;
             Ok(HIRExpression {
@@ -399,7 +486,10 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                 | Operator::Ampersand
                 | Operator::Pipe
                 | Operator::Caret => {
-                    r.inferred_type = l.inferred_type.clone();
+                    // For pointer arithmetic, keep pointer type; don't coerce RHS
+                    if !matches!(l.inferred_type, HIRTypeKind::Pointer(_)) {
+                        r.inferred_type = l.inferred_type.clone();
+                    }
                     l.inferred_type.clone()
                 }
                 // Comparison/logical: result type = bool
@@ -433,7 +523,7 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                         hargs.push(expr_to_hir(a, current_scope)?);
                     }
                     // If the function is declared in scope use its return type;
-                    // otherwise assume it is an external (C) function returning SInt32.
+                    // otherwise return an error (use extern declarations for external functions).
                     let inferred_type = match current_scope.symbols.get(&name) {
                         Some(HIRSymbol::Function(func)) => func.return_type.clone(),
                         Some(_) => {
@@ -443,7 +533,13 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                             )
                             .into())
                         }
-                        None => HIRTypeKind::Builtin(BuiltinType::SInt32),
+                        None => {
+                            return Err(format!(
+                                "expr_to_hir: unknown function '{}' — did you forget an extern declaration?",
+                                name
+                            )
+                            .into())
+                        }
                     };
                     Ok(HIRExpression {
                         inferred_type,
@@ -518,6 +614,94 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                 },
             })
         }
+        PExpr::AddressOf(inner) => {
+            let inner_hir = expr_to_hir(*inner, current_scope)?;
+            let ptr_ty = HIRTypeKind::Pointer(Box::new(inner_hir.inferred_type.clone()));
+            Ok(HIRExpression {
+                inferred_type: ptr_ty,
+                expression: HIRExpressionKind::AddressOf(Box::new(inner_hir)),
+            })
+        }
+        PExpr::Dereference(inner) => {
+            let inner_hir = expr_to_hir(*inner, current_scope)?;
+            let pointee_ty = match &inner_hir.inferred_type {
+                HIRTypeKind::Pointer(pointee) => *pointee.clone(),
+                other => {
+                    return Err(format!(
+                        "expr_to_hir: dereference of non-pointer type {:?}",
+                        other
+                    )
+                    .into())
+                }
+            };
+            Ok(HIRExpression {
+                inferred_type: pointee_ty,
+                expression: HIRExpressionKind::Deref(Box::new(inner_hir)),
+            })
+        }
+        PExpr::Cast { expr, target_type } => {
+            let mut inner_hir = expr_to_hir(*expr, current_scope)?;
+            let hir_target = map_type(target_type)?;
+            // If the inner expression is a function call to an unknown external function,
+            // propagate the cast target type so the auto-declaration uses the right return type.
+            if let HIRExpressionKind::Call { .. } = &inner_hir.expression {
+                if inner_hir.inferred_type == HIRTypeKind::Builtin(BuiltinType::Int32) {
+                    inner_hir.inferred_type = hir_target.clone();
+                }
+            }
+            Ok(HIRExpression {
+                inferred_type: hir_target.clone(),
+                expression: HIRExpressionKind::Cast {
+                    expr: Box::new(inner_hir),
+                    target_type: hir_target,
+                },
+            })
+        }
+        PExpr::IndexAccess { object, index } => {
+            let obj_hir = expr_to_hir(*object, current_scope)?;
+            let idx_hir = expr_to_hir(*index, current_scope)?;
+            let pointee_ty = match &obj_hir.inferred_type {
+                HIRTypeKind::Pointer(inner) => *inner.clone(),
+                HIRTypeKind::Array { element_type, .. } => *element_type.clone(),
+                other => {
+                    return Err(format!(
+                        "expr_to_hir: index access on non-pointer type {:?}",
+                        other
+                    )
+                    .into())
+                }
+            };
+            Ok(HIRExpression {
+                inferred_type: pointee_ty,
+                expression: HIRExpressionKind::IndexAccess {
+                    object: Box::new(obj_hir),
+                    index: Box::new(idx_hir),
+                },
+            })
+        }
+        PExpr::ArrayLiteral { elements } => {
+            let hir_elements: Vec<HIRExpression> = elements
+                .into_iter()
+                .map(|e| expr_to_hir(e, current_scope))
+                .collect::<Result<_, _>>()?;
+            if hir_elements.is_empty() {
+                return Err("array literal must have at least one element".into());
+            }
+            let elem_ty = hir_elements[0].inferred_type.clone();
+            for (i, e) in hir_elements.iter().enumerate() {
+                if e.inferred_type != elem_ty {
+                    return Err(format!(
+                        "array literal: element {} has type {:?}, expected {:?}",
+                        i, e.inferred_type, elem_ty
+                    ).into());
+                }
+            }
+            let size = hir_elements.len() as u64;
+            Ok(HIRExpression {
+                inferred_type: HIRTypeKind::Array { element_type: Box::new(elem_ty), size },
+                expression: HIRExpressionKind::ArrayLiteral { elements: hir_elements },
+            })
+        }
         PExpr::Unary {
             operator,
             expression,
@@ -538,6 +722,22 @@ fn expr_to_hir(expr: PExpr, current_scope: &Scope) -> Result<HIRExpression, Box<
                 },
                 current_scope,
             ),
+            Operator::Tilde => {
+                // Desugar ~x to x ^ (-1) which in two's complement flips all bits
+                let inner = expr_to_hir(*expression, current_scope)?;
+                let minus_one = HIRExpression {
+                    inferred_type: inner.inferred_type.clone(),
+                    expression: HIRExpressionKind::LiteralInt { value: u64::MAX },
+                };
+                Ok(HIRExpression {
+                    inferred_type: inner.inferred_type.clone(),
+                    expression: HIRExpressionKind::Binary {
+                        left: Box::new(inner),
+                        operator: Operator::Caret,
+                        right: Box::new(minus_one),
+                    },
+                })
+            }
             op => Err(format!("unsupported unary operator {:?}", op).into()),
         },
     }
@@ -581,10 +781,14 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, Box<dyn Erro
             todo!("map_type: function type expression not supported yet")
         }
         TypeExpression::Pointer {
-            pointer_variant,
+            pointer_variant: _,
             pointed_type,
         } => {
-            todo!("map_type: pointer type expression not supported yet")
+            let inner = map_type(*pointed_type)?;
+            HIRTypeKind::Pointer(Box::new(inner))
+        }
+        TypeExpression::Array { element_type, size } => {
+            HIRTypeKind::Array { element_type: Box::new(map_type(*element_type)?), size }
         }
     };
 
@@ -612,22 +816,37 @@ fn resolve_statement(
 ) -> Result<Scope, Box<dyn Error>> {
     match statement {
         StatementNode::ConstantDeclaration(constant_declaration) => {
+            // Resolve pass: register the binding with its declared type only.
+            // Full init evaluation happens in stmt_to_hir; doing it here would
+            // fail when the init expression references outer-scope variables
+            // that aren't visible in the narrow local scope used for resolve.
+            let ty = match &constant_declaration.constant_type {
+                Some(t) => map_type(t.clone())?,
+                None => HIRTypeKind::Builtin(BuiltinType::Void),
+            };
             current_scope.symbols.insert(
                 constant_declaration.identifier.clone(),
-                HIRSymbol::Binding(const_decl_to_hir(
-                    constant_declaration.clone(),
-                    &mut current_scope.clone(),
-                )?),
+                HIRSymbol::Binding(HIRBinding {
+                    name: constant_declaration.identifier.clone(),
+                    ty,
+                    init: None,
+                }),
             );
             Ok(current_scope)
         }
         StatementNode::VariableDeclaration(variable_declaration) => {
+            // Resolve pass: register the binding with its declared type only.
+            let ty = match &variable_declaration.constant_type {
+                Some(t) => map_type(t.clone())?,
+                None => HIRTypeKind::Builtin(BuiltinType::Void),
+            };
             current_scope.symbols.insert(
                 variable_declaration.identifier.clone(),
-                HIRSymbol::Binding(var_decl_to_hir(
-                    variable_declaration.clone(),
-                    &mut current_scope.clone(),
-                )?),
+                HIRSymbol::Binding(HIRBinding {
+                    name: variable_declaration.identifier.clone(),
+                    ty,
+                    init: None,
+                }),
             );
             Ok(current_scope)
         }
@@ -680,7 +899,10 @@ fn resolve_statement(
             Ok(current_scope)
         }
         StatementNode::FieldAssign { .. } => Ok(current_scope),
+        StatementNode::DerefAssign { .. } => Ok(current_scope),
+        StatementNode::IndexAssign { .. } => Ok(current_scope),
         StatementNode::ExpressionStatement(_) => Ok(current_scope),
+        StatementNode::Defer(_) => Ok(current_scope),
         stmt => todo!("resolve_statement: statement {:?}", stmt),
     }
 }
@@ -722,6 +944,10 @@ fn resolve_type_decl(
                 lhs_td,
                 HIRSymbol::Type(HIRTypeKind::Builtin(builtin_type.clone())),
             );
+        }
+        TypeExpression::Array { .. } => {
+            let hir_type = map_type(type_declaration.type_expression.clone())?;
+            current_scope.symbols.insert(lhs_td, HIRSymbol::Type(hir_type));
         }
     }
     Ok(current_scope)
