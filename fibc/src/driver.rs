@@ -9,6 +9,8 @@ use crate::parser::parser::ParseResult;
 use crate::analysis::analyze;
 use crate::{lexer::Lexer, token::Token};
 
+const STDLIB_PRELUDE: &str = include_str!("../../std/libc.fib");
+
 /// Library-friendly compile function. Returns Err with a message on failure.
 pub fn compile(file: &Path, is_debug_mode: bool) -> Result<(), Box<dyn Error>> {
     if !file.is_file() {
@@ -21,17 +23,32 @@ pub fn compile(file: &Path, is_debug_mode: bool) -> Result<(), Box<dyn Error>> {
     let file_contents = fs::read_to_string(file)?;
     let filename = file.to_string_lossy().to_string();
 
+    // Parse the stdlib prelude and prepend its declarations to the user's AST.
+    let prelude_tokens = run_lexer(&STDLIB_PRELUDE.to_string());
+    let prelude_ast = match run_parser(prelude_tokens, Path::new("<stdlib>"), STDLIB_PRELUDE.to_string()) {
+        Ok(ast) => ast,
+        Err(pe) => {
+            return Err(format!("Stdlib parse error: {}", pe).into());
+        }
+    };
+
     let tokens = run_lexer(&file_contents);
     if is_debug_mode {
         show_tokens(&tokens);
     }
-    let ast = match run_parser(tokens, file, file_contents) {
+    let user_ast = match run_parser(tokens, file, file_contents) {
         Ok(ast) => ast,
         Err(pe) => {
             eprintln!("{}", pe);
             return Err(format!("Parser error.").into());
         }
     };
+
+    // Combine prelude declarations (first) with user declarations.
+    let mut combined_declarations = prelude_ast.declarations;
+    combined_declarations.extend(user_ast.declarations);
+    let ast = Ast { declarations: combined_declarations };
+
     if is_debug_mode {
         show_ast(&ast);
     }
@@ -45,6 +62,7 @@ pub fn compile(file: &Path, is_debug_mode: bool) -> Result<(), Box<dyn Error>> {
 
     // Write LLVM IR to a temporary file and attempt to compile with clang
     // TODO: dont hard code out path
+    fs::create_dir_all("out").map_err(|e| format!("Failed to create out directory: {}", e))?;
     let out_ll = format!("out/{}.ll", file.file_stem().unwrap().to_string_lossy().to_string());
     fs::write(&out_ll, &c_src)
         .map_err(|e| format!("Failed to write LLVM IR to {}: {}", out_ll, e))?;

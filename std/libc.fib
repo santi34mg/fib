@@ -1,0 +1,7 @@
+extern fn printf(fmt string, ...) int32
+extern fn malloc(size uint64) *void
+extern fn free(ptr *void) void
+extern fn memcpy(dest *void, src *void, n uint64) *void
+extern fn exit(status int32) void
+extern fn strlen(s string) uint64
+extern fn puts(s string) int32
