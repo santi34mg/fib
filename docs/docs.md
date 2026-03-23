@@ -1,96 +1,21 @@
-# Lexicons
+# Fiber Language Documentation
 
-## [Comments](lexicons/comments.md#comments)
+Reference documentation for the Fiber programming language.
 
-## Keywords
+## Language Reference
 
-- [`module`]()
-- [`use`]()
-- [`public`]()
-- [`private`]()
-- [`let`](lexicons/keywords/let.md)
-- [`mut`]()
-- [`if`]()
-- [`else`]()
-- [`for`]()
-- [`break`]()
-- [`contine`]()
-- [`return`]()
-- [`function`](lexicons/keywords/function.md#function-keyword)
-- [`match`]()
-- [`when`]()
-- [`coroutine`]()
-- [`spawn`]()
-- [`resume`]()
-- [`yield`]()
-- [`addressof`]()
-- [`deref`]()
-- [`contract`]()
-- [`impl`]()
-- [`type`]()
-- [`struct`]()
-- [`variant`]()
-- [`int`]()
-- [`float`]()
-- [`string`]()
-- [`bool`]()
-- [`char`]()
-- [`unit`]()
-- [`unique`]()
-- [`shared`]()
-- [`weak`]()
-- [`dynamic`]()
-- [`blob`]()
-- [`never`]()
+- [Types](types.md) — Built-in types, type declarations, structs, arrays, pointers
+- [Functions](functions.md) — Function declarations, parameters, return types
+- [Variables](variables.md) — Variable and constant declarations
+- [Control Flow](control_flow.md) — `if`/`else`, `for`, `break`, `continue`, `defer`
+- [Expressions](expressions.md) — Operators, precedence, casts, struct construction
+- [Literals](literals.md) — Integer, float, boolean, character, string literals
 
-## [Literals](lexicons/literals/overview.md)
+## Lexicons
 
-- [Integers](lexicons/literals/integers.md#integer-literal)
-- [Floats](lexicons/literals/floats.md#float-literals)
-- [`true`](lexicons/literals/booleans.md#boolean-literals)
-- [`false`](lexicons/literals/booleans.md#boolean-literals)
-- [Characters](lexicons/literals/characters.md#character-literals)
-- [Strings](lexicons/literals/strings.md#string-literals)
+- [Comments](lexicons/comments.md)
+- [Literals](lexicons/literals/overview.md)
 
-## Operators
+## Philosophy
 
-- [`+`]()
-- [`-`]()
-- [`*`]()
-- [`/`]()
-- [`==`]()
-- [`===`]()
-- [`!=`]()
-- [`!==`]()
-- [`>=`]()
-- [`<=`]()
-- [`>`]()
-- [`<`]()
-- [`=`]()
-- [`+=`]()
-- [`-=`]()
-- [`&&`]()
-- [`||`]()
-- [`!`]()
-- [`&`]()
-- [`|`]()
-- [`~`]()
-- [`^`]()
-- [`>>`]()
-- [`<<`]()
-- [`->`]()
-- [`..`]()
-
-## Punctuation
-
-- [`(`]()
-- [`)`]()
-- [`{`]()
-- [`}`]()
-- [`[`]()
-- [`]`]()
-- [`;`]()
-- [`:`]()
-- [`,`]()
-- [`.`]()
-- [`@`]()
+- [Language Philosophy](language_philosophy.md)
