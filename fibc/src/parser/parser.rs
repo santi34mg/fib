@@ -11,7 +11,7 @@ use crate::token::builtin::Builtin;
 use crate::token::identifier::Identifier;
 use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParseError {
     pub filename: Box<Path>,
     pub message: String,
