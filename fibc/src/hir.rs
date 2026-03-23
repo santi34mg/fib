@@ -45,6 +45,11 @@ pub enum HIRTypeKind {
     Builtin(BuiltinType),
     Identifier(Identifier),
     Struct { fields: Vec<(String, Box<HIRTypeKind>)> },
+    Pointer(Box<HIRTypeKind>),
+    Array {
+        element_type: Box<HIRTypeKind>,
+        size: u64,
+    },
 }
 
 impl fmt::Display for HIRTypeKind {
@@ -53,6 +58,8 @@ impl fmt::Display for HIRTypeKind {
             Self::Builtin(builtin) => write!(f, "{}", builtin)?,
             Self::Identifier(id) => write!(f, "{}", id)?,
             Self::Struct { fields } => write!(f, "struct {{ {:?} }}", fields)?,
+            Self::Pointer(inner) => write!(f, "*{}", inner)?,
+            Self::Array { element_type, size } => write!(f, "{}[{}]", element_type, size)?,
         };
         Ok(())
     }
@@ -70,6 +77,8 @@ pub struct HIRFunction {
     pub params: Vec<(Identifier, HIRTypeKind)>,
     pub return_type: HIRTypeKind,
     pub body: Vec<HIRStmt>,
+    pub is_extern: bool,
+    pub is_variadic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +91,9 @@ pub struct HIRExpression {
 pub enum HIRExpressionKind {
     LiteralInt {
         value: u64,
+    },
+    LiteralFloat {
+        value: f64,
     },
     LiteralBool(bool),
     LiteralString { value: String },
@@ -106,6 +118,19 @@ pub enum HIRExpressionKind {
         fields: Vec<(String, HIRExpression)>,
     },
     Null,
+    AddressOf(Box<HIRExpression>),
+    Deref(Box<HIRExpression>),
+    Cast {
+        expr: Box<HIRExpression>,
+        target_type: HIRTypeKind,
+    },
+    IndexAccess {
+        object: Box<HIRExpression>,
+        index: Box<HIRExpression>,
+    },
+    ArrayLiteral {
+        elements: Vec<HIRExpression>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +157,16 @@ pub enum HIRStmt {
     },
     Break,
     Continue,
+    Defer(Box<HIRStmt>),
+    DerefAssign {
+        pointer: HIRExpression,
+        expr: HIRExpression,
+    },
+    IndexAssign {
+        object: HIRExpression,
+        index: HIRExpression,
+        expr: HIRExpression,
+    },
 }
 
 #[derive(Debug, Clone)]
