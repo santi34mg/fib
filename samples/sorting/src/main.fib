@@ -1,9 +1,22 @@
 
-fn sort(*int) 
-
 fn main() int32 {
-    var int32[3] a = [0, 1, 2];
-    printf("[%d, %d, %d]\n", a.[0], a.[1], a.[2]);
+    // insertion sort
+    var int32[8] arr = [3, 8, 5, 10, 2, 1, 6, 7]
+    for (var int32 i = 1; i < 8; i += 1) {
+        for (var int32 j = i; j > 0; j -= 1) {
+            if (arr.[j] < arr.[j - 1]) {
+                printf("Swapped %d with %d\n", arr.[j], arr.[j - 1])
+                const int32 t = arr.[j]
+                arr.[j] = arr.[j - 1]
+                arr.[j - 1] = t
+            }
+        }
+    }
+    printf("[")
+    for (var int32 i = 0; i < 8; i += 1) {
+        printf(" %d ", arr.[i])
+    }
+    printf("]\n")
 
-    return 0;
+    return 0
 }
