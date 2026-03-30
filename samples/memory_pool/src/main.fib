@@ -1,3 +1,5 @@
+import std::libc
+
 const type Pool = struct {
     start      uint64,
     block_size uint64,
@@ -7,7 +9,7 @@ const type Pool = struct {
 
 fn pool_create(block_size uint64, capacity uint64) Pool {
     var uint64 total = block_size * capacity
-    var *void buf = malloc(total)
+    var *void buf = libc::malloc(total)
     return Pool { start: buf as uint64, block_size: block_size, capacity: capacity, used: 0 as uint64 }
 }
 
@@ -24,28 +26,28 @@ fn pool_alloc(pool *Pool) *void {
 }
 
 fn pool_destroy(pool *Pool) void {
-    free(pool.*.start as *void)
+    libc::free(pool.*.start as *void)
 }
 
 fn main() sint32 {
     var Pool pool = pool_create(4 as uint64, 6 as uint64)
     defer pool_destroy(pool.&)
 
-    printf("Pool: block_size=%d, capacity=%d\n",
+    libc::printf("Pool: block_size=%d, capacity=%d\n",
         pool.block_size as sint32,
         pool.capacity as sint32)
 
     for (var sint32 i = 0; i < 8; i += 1) {
         var *void block = pool_alloc(pool.&)
         if block as uint64 == 0 as uint64 {
-            printf("Alloc %d failed: pool exhausted\n", i)
+            libc::printf("Alloc %d failed: pool exhausted\n", i)
             break
         }
         var *sint32 val = block as *sint32
         val.* = (i + 1) * 7
-        printf("Block %d: wrote %d\n", i, val.*)
+        libc::printf("Block %d: wrote %d\n", i, val.*)
     }
 
-    printf("Used: %d / %d\n", pool.used as sint32, pool.capacity as sint32)
+    libc::printf("Used: %d / %d\n", pool.used as sint32, pool.capacity as sint32)
     return 0
 }
