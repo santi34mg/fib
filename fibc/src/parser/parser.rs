@@ -4,11 +4,10 @@ use std::path::Path;
 
 use crate::ast::ast::{
     Ast, ConstantDeclaration, DeclarationNode, Expression, Field, FunctionBody,
-    FunctionDeclaration, FunctionParameter, FunctionSignature, PointerVariant, StatementNode,
-    TypeDeclaration, TypeExpression, VariableDeclaration,
+    FunctionDeclaration, FunctionParameter, FunctionSignature, ImportDeclaration, PointerVariant,
+    StatementNode, TypeExpression, VariableDeclaration,
 };
 use crate::token::builtin::Builtin;
-use crate::token::identifier::Identifier;
 use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
 
 #[derive(Debug, Clone)]
@@ -100,7 +99,17 @@ where
     /// Consume and check the next token matches the token kind provided, or error.
     fn expect_token(&mut self, token_kind: TokenKind, msg: &str) -> ParseResult<Token> {
         let token = self.expect_next(msg)?;
-        if std::mem::discriminant(&token.kind) == std::mem::discriminant(&token_kind) {
+        if token.kind == token_kind {
+            Ok(token)
+        } else {
+            Err(self.error(msg, token.line, token.column))
+        }
+    }
+
+    /// Consume the next token if it is any identifier, returning it. Errors otherwise.
+    fn expect_identifier(&mut self, msg: &str) -> ParseResult<Token> {
+        let token = self.expect_next(msg)?;
+        if matches!(token.kind, TokenKind::Identifier(_)) {
             Ok(token)
         } else {
             Err(self.error(msg, token.line, token.column))
@@ -129,6 +138,10 @@ where
                     self.next();
                     continue;
                 }
+                TokenKind::Keyword(Keyword::Import) => {
+                    let import = self.parse_import_declaration()?;
+                    declarations.push(DeclarationNode::ImportDeclaration(import));
+                }
                 TokenKind::Keyword(Keyword::Function) => {
                     let func = self.parse_function_declaration()?;
                     declarations.push(DeclarationNode::FunctionDeclaration(func));
@@ -136,16 +149,6 @@ where
                 TokenKind::Keyword(Keyword::Extern) => {
                     let func = self.parse_function_declaration()?;
                     declarations.push(DeclarationNode::FunctionDeclaration(func));
-                }
-                // `const type <Name> = <type expression>` — top-level type declaration
-                TokenKind::Keyword(Keyword::Const)
-                    if matches!(
-                        self.peek_second(),
-                        Some(Token { kind: TokenKind::Keyword(Keyword::Type), .. })
-                    ) =>
-                {
-                    let type_decl = self.parse_type_declaration()?;
-                    declarations.push(DeclarationNode::TypeDeclaration(type_decl));
                 }
                 // For now, treat other top-level constructs as statements or ignore
                 _ => {
@@ -166,9 +169,16 @@ where
     }
 
     fn parse_statement_some(&mut self) -> ParseResult<StatementNode> {
-        match self.parse_statement()? {
-            Some(statement) => return Ok(statement),
-            None => todo!(),
+        loop {
+            match self.parse_statement()? {
+                Some(statement) => return Ok(statement),
+                None => {
+                    // A comment was consumed; keep trying or error at EOF
+                    if self.peek().is_none() {
+                        return Err(self.error("expected a statement", 0, 0));
+                    }
+                }
+            }
         }
     }
 
@@ -259,7 +269,10 @@ where
                     // are handled by parse_atom without duplicating that logic here.
                     if matches!(
                         self.peek_second(),
-                        Some(Token { kind: TokenKind::Operator(Operator::Assign), .. })
+                        Some(Token {
+                            kind: TokenKind::Operator(Operator::Assign),
+                            ..
+                        })
                     ) {
                         let id = if let TokenKind::Identifier(id) = self.next().unwrap().kind {
                             id
@@ -268,16 +281,22 @@ where
                         };
                         self.expect_token(TokenKind::Operator(Operator::Assign), "expected '='")?;
                         let expr = self.parse_expression()?;
-                        StatementNode::Assignment { identifier: id, expr }
+                        StatementNode::Assignment {
+                            identifier: id,
+                            expr,
+                        }
                     } else if matches!(
                         self.peek_second(),
-                        Some(Token { kind: TokenKind::Operator(
-                            Operator::PlusAssign
-                            | Operator::MinusAssign
-                            | Operator::StarAssign
-                            | Operator::SlashAssign
-                            | Operator::PercentAssign
-                        ), .. })
+                        Some(Token {
+                            kind: TokenKind::Operator(
+                                Operator::PlusAssign
+                                    | Operator::MinusAssign
+                                    | Operator::StarAssign
+                                    | Operator::SlashAssign
+                                    | Operator::PercentAssign
+                            ),
+                            ..
+                        })
                     ) {
                         let id = if let TokenKind::Identifier(id) = self.next().unwrap().kind {
                             id
@@ -300,10 +319,16 @@ where
                             operator: binary_op,
                             right: Box::new(rhs),
                         };
-                        StatementNode::Assignment { identifier: id, expr }
+                        StatementNode::Assignment {
+                            identifier: id,
+                            expr,
+                        }
                     } else if matches!(
                         self.peek_second(),
-                        Some(Token { kind: TokenKind::Punctuation(Punctuation::Dot), .. })
+                        Some(Token {
+                            kind: TokenKind::Punctuation(Punctuation::Dot),
+                            ..
+                        })
                     ) {
                         // Could be a field assignment: `obj.field = expr`
                         // We parse the identifier and dot, check for field name then '='.
@@ -332,7 +357,10 @@ where
                             )?;
                             if matches!(
                                 self.peek(),
-                                Some(Token { kind: TokenKind::Operator(Operator::Assign), .. })
+                                Some(Token {
+                                    kind: TokenKind::Operator(Operator::Assign),
+                                    ..
+                                })
                             ) {
                                 self.next(); // consume '='
                                 let rhs = self.parse_expression()?;
@@ -349,60 +377,70 @@ where
                                 })
                             }
                         } else {
-                        let after_dot_token = self.expect_next("expected field name or operator after '.'")?;
-                        // Check if it's `.*` (deref assign) or a field name
-                        if matches!(after_dot_token.kind, TokenKind::Operator(Operator::Star)) {
-                            // `obj.* = expr` — dereference assignment
-                            if matches!(
-                                self.peek(),
-                                Some(Token { kind: TokenKind::Operator(Operator::Assign), .. })
-                            ) {
-                                self.next(); // consume '='
-                                let expr = self.parse_expression()?;
-                                StatementNode::DerefAssign {
-                                    pointer: Expression::Identifier(obj_id),
-                                    expr,
+                            let after_dot_token =
+                                self.expect_next("expected field name or operator after '.'")?;
+                            // Check if it's `.*` (deref assign) or a field name
+                            if matches!(after_dot_token.kind, TokenKind::Operator(Operator::Star)) {
+                                // `obj.* = expr` — dereference assignment
+                                if matches!(
+                                    self.peek(),
+                                    Some(Token {
+                                        kind: TokenKind::Operator(Operator::Assign),
+                                        ..
+                                    })
+                                ) {
+                                    self.next(); // consume '='
+                                    let expr = self.parse_expression()?;
+                                    StatementNode::DerefAssign {
+                                        pointer: Expression::Identifier(obj_id),
+                                        expr,
+                                    }
+                                } else {
+                                    // `obj.*` as expression statement
+                                    let base = Expression::Dereference(Box::new(
+                                        Expression::Identifier(obj_id),
+                                    ));
+                                    StatementNode::ExpressionStatement(base)
                                 }
                             } else {
-                                // `obj.*` as expression statement
-                                let base = Expression::Dereference(Box::new(Expression::Identifier(obj_id)));
-                                StatementNode::ExpressionStatement(base)
-                            }
-                        } else {
-                            let field_id = if let TokenKind::Identifier(f) = after_dot_token.kind {
-                                f
-                            } else {
-                                return Err(self.error(
-                                    "expected field name",
-                                    after_dot_token.line,
-                                    after_dot_token.column,
-                                ));
-                            };
-                            // if next is '=', it's a field assignment
-                            if matches!(
-                                self.peek(),
-                                Some(Token { kind: TokenKind::Operator(Operator::Assign), .. })
-                            ) {
-                                self.next(); // consume '='
-                                let expr = self.parse_expression()?;
-                                StatementNode::FieldAssign {
-                                    object: obj_id,
-                                    field: field_id,
-                                    expr,
+                                let field_id =
+                                    if let TokenKind::Identifier(f) = after_dot_token.kind {
+                                        f
+                                    } else {
+                                        return Err(self.error(
+                                            "expected field name",
+                                            after_dot_token.line,
+                                            after_dot_token.column,
+                                        ));
+                                    };
+                                // if next is '=', it's a field assignment
+                                if matches!(
+                                    self.peek(),
+                                    Some(Token {
+                                        kind: TokenKind::Operator(Operator::Assign),
+                                        ..
+                                    })
+                                ) {
+                                    self.next(); // consume '='
+                                    let expr = self.parse_expression()?;
+                                    StatementNode::FieldAssign {
+                                        object: obj_id,
+                                        field: field_id,
+                                        expr,
+                                    }
+                                } else {
+                                    // Rebuild a FieldAccess expression and continue as expression statement
+                                    let base = Expression::FieldAccess {
+                                        object: Box::new(Expression::Identifier(obj_id)),
+                                        field: field_id,
+                                    };
+                                    // We already consumed the field access; now parse rest of the expression
+                                    // by treating `base` as the already-parsed left side.
+                                    // Since we can't easily re-enter the expression parser mid-stream,
+                                    // just wrap as an expression statement.
+                                    StatementNode::ExpressionStatement(base)
                                 }
-                            } else {
-                                // Rebuild a FieldAccess expression and continue as expression statement
-                                let base = Expression::FieldAccess {
-                                    object: Box::new(Expression::Identifier(obj_id)),
-                                    field: field_id,
-                                };
-                                // We already consumed the field access; now parse rest of the expression
-                                // by treating `base` as the already-parsed left side.
-                                // Since we can't easily re-enter the expression parser mid-stream,
-                                // just wrap as an expression statement.
-                                StatementNode::ExpressionStatement(base)
                             }
-                        }
                         } // close else { for non-.[ case
                     } else {
                         let expr = self.parse_expression()?;
@@ -420,11 +458,7 @@ where
                     }) {
                         Some(_) => None,
                         None => {
-                            let statement = self.parse_statement()?.unwrap();
-                            // self.expect_token(
-                            //     TokenKind::Punctuation(Punctuation::Semicolon),
-                            //     "expected semicolon after initalizer",
-                            // )?;
+                            let statement = self.parse_statement_some()?;
                             Some(Box::new(statement))
                         }
                     };
@@ -479,20 +513,29 @@ where
                     let expr = self.parse_expression()?;
                     StatementNode::ExpressionStatement(expr)
                 }
+                TokenKind::Keyword(Keyword::While) => {
+                    self.next(); // consume "while"
+                    self.expect_token(
+                        TokenKind::Punctuation(Punctuation::OpeningParenthesis),
+                        "expected '('",
+                    )?;
+                    let expr = self.parse_expression()?;
+                    self.expect_token(
+                        TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+                        "expected ')'",
+                    )?;
+                    let body = self.parse_body()?;
+                    StatementNode::For { initializer: None, condition: Some(expr), post_operation: None, body }
+                }
                 TokenKind::Keyword(Keyword::Else)
                 | TokenKind::Operator(_)
                 | TokenKind::Punctuation(_)
+                | TokenKind::Builtin(_)
+                | TokenKind::Error(_)
+                | TokenKind::Keyword(_)
                 | TokenKind::Unknown(_) => {
                     let t = token.clone();
                     return Err(self.error("unsupported", t.line, t.column));
-                }
-                _ => {
-                    let t = token.clone();
-                    return Err(self.error(
-                        &format!("not implemented yet: {:?}", t.kind),
-                        t.line,
-                        t.column,
-                    ));
                 }
             }
         } else {
@@ -513,12 +556,19 @@ where
 
         // Lookahead: if the next token is an identifier immediately followed by `=`,
         // there is no type annotation (e.g. `const x = 5`).
-        let var_type = if matches!(self.peek(), Some(Token { kind: TokenKind::Identifier(_), .. }))
-            && matches!(
-                self.peek_second(),
-                Some(Token { kind: TokenKind::Operator(Operator::Assign), .. })
-            )
-        {
+        let var_type = if matches!(
+            self.peek(),
+            Some(Token {
+                kind: TokenKind::Identifier(_),
+                ..
+            })
+        ) && matches!(
+            self.peek_second(),
+            Some(Token {
+                kind: TokenKind::Operator(Operator::Assign),
+                ..
+            })
+        ) {
             None
         } else {
             self.parse_type()?
@@ -535,10 +585,19 @@ where
 
         self.expect_token(TokenKind::Operator(Operator::Assign), "expected = operator")?;
 
-        let expr = self.parse_expression()?;
-
-        // optional semicolon
-        // self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
+        // When the type annotation is `type`, parse the RHS as a type expression
+        // and wrap it in Expression::TypeValue so it flows through the normal const path.
+        let expr = if matches!(var_type, Some(TypeExpression::TypeKeyword)) {
+            let te = self.parse_type()?.ok_or_else(|| {
+                let (line, col) = self.peek().map_or((0, 0), |t| (t.line, t.column));
+                self.error("expected a type expression after '='", line, col)
+            })?;
+            // consume optional semicolon
+            self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
+            Expression::TypeValue(te)
+        } else {
+            self.parse_expression()?
+        };
 
         Ok(ConstantDeclaration::new(ident, var_type, expr))
     }
@@ -573,41 +632,6 @@ where
         Ok(VariableDeclaration::new(ident, var_type, expr))
     }
 
-    /// Parses a type declaration: `const type <Name> = <type expression>`
-    fn parse_type_declaration(&mut self) -> ParseResult<TypeDeclaration> {
-        self.expect_token(
-            TokenKind::Keyword(Keyword::Const),
-            "parse_type_declaration: expected 'const'",
-        )?;
-        self.expect_token(
-            TokenKind::Keyword(Keyword::Type),
-            "parse_type_declaration: expected 'type'",
-        )?;
-        let name_token = self.expect_next("parse_type_declaration: expected type name")?;
-        let name = if let TokenKind::Identifier(id) = name_token.kind {
-            id
-        } else {
-            return Err(self.error("expected identifier", name_token.line, name_token.column));
-        };
-        self.expect_token(
-            TokenKind::Operator(Operator::Assign),
-            "parse_type_declaration: expected '='",
-        )?;
-        let type_expression = match self.parse_type()? {
-            Some(te) => te,
-            None => {
-                return Err(self.error(
-                    "parse_type_declaration: expected a type expression",
-                    name_token.line,
-                    name_token.column,
-                ));
-            }
-        };
-        // optional semicolon
-        self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
-        Ok(TypeDeclaration { name, type_expression })
-    }
-
     /// Parses a type annotation, which can be a user-defined type (type identifier), or complex type (struct, variant or function).
     /// Returns `Ok(Some(TypeIdentifier))` if a type is successfully parsed, `Ok(None)` if the next token is not a type, or `Err` if there's a syntax error while parsing a type.
     pub fn parse_type(&mut self) -> ParseResult<Option<TypeExpression>> {
@@ -626,6 +650,7 @@ where
                 match keyword {
                     Keyword::Struct => self.parse_struct_literal(&type_token)?,
                     Keyword::Function => self.parse_function_type(&type_token)?,
+                    Keyword::Type => TypeExpression::TypeKeyword,
                     _ => return Err(self.error("not a type", type_token.line, type_token.column)),
                 }
             }
@@ -633,9 +658,27 @@ where
                 self.next();
                 self.parse_pointer_type(PointerVariant::Raw, type_token)?
             }
-            TokenKind::Identifier(identifier) => {
+            TokenKind::Identifier(module) => {
                 self.next();
-                TypeExpression::Identifier(identifier)
+                // Check for `::` — qualified type: module::TypeName
+                if matches!(
+                    self.peek(),
+                    Some(Token {
+                        kind: TokenKind::Punctuation(Punctuation::DoubleColon),
+                        ..
+                    })
+                ) {
+                    self.next(); // consume `::`
+                    let name_token = self.expect_identifier("expected type name after '::'")?;
+                    let name = if let TokenKind::Identifier(id) = name_token.kind {
+                        id
+                    } else {
+                        unreachable!()
+                    };
+                    TypeExpression::QualifiedIdentifier { module, name }
+                } else {
+                    TypeExpression::Identifier(module)
+                }
             }
             _ => {
                 return Ok(None);
@@ -644,20 +687,30 @@ where
         // Postfix array type: type[size]
         let var_type = if matches!(
             self.peek(),
-            Some(Token { kind: TokenKind::Punctuation(Punctuation::OpeningSquareBrace), .. })
+            Some(Token {
+                kind: TokenKind::Punctuation(Punctuation::OpeningSquareBrace),
+                ..
+            })
         ) {
             self.next(); // consume '['
             let size_token = self.expect_next("expected array size")?;
             let size = if let TokenKind::Literal(Literal::Integer(n)) = size_token.kind {
                 n
             } else {
-                return Err(self.error("expected integer array size", size_token.line, size_token.column));
+                return Err(self.error(
+                    "expected integer array size",
+                    size_token.line,
+                    size_token.column,
+                ));
             };
             self.expect_token(
                 TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
                 "expected ']' after array size",
             )?;
-            TypeExpression::Array { element_type: Box::new(var_type), size }
+            TypeExpression::Array {
+                element_type: Box::new(var_type),
+                size,
+            }
         } else {
             var_type
         };
@@ -670,7 +723,13 @@ where
             "expected '('",
         )?;
         let mut argument_types: Vec<TypeExpression> = Vec::new();
-        loop {
+        while let Some(t) = self.peek() {
+            if matches!(
+                t.kind,
+                TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+            ) {
+                break;
+            }
             let argument_type = match self.parse_type()? {
                 Some(type_id) => type_id,
                 None => {
@@ -683,13 +742,11 @@ where
             };
             argument_types.push(argument_type);
             if let Some(t) = self.peek()
-                && matches!(
+                && !matches!(
                     t.kind,
                     TokenKind::Punctuation(Punctuation::ClosingParenthesis)
                 )
             {
-                break;
-            } else {
                 self.expect_token(TokenKind::Punctuation(Punctuation::Comma), "expected ','")?;
             }
         }
@@ -698,12 +755,12 @@ where
         // expect '->'
         let arrow = self.expect_token(
             TokenKind::Operator(Operator::ThinRightArrow),
-            "expected '('",
+            "expected '->'",
         )?;
         let return_type = match self.parse_type()? {
             Some(rt) => rt,
             None => {
-                return Err(self.error("expected a return typr", arrow.line, arrow.column));
+                return Err(self.error("expected a return type", arrow.line, arrow.column));
             }
         };
         Ok(TypeExpression::Function {
@@ -743,6 +800,7 @@ where
     }
 
     fn parse_struct_literal(&mut self, type_token: &Token) -> ParseResult<TypeExpression> {
+        // consume 'struct' keyword
         match self.next() {
             Some(first_token) => match first_token.kind {
                 TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => {
@@ -777,29 +835,22 @@ where
                 }
                 _ => {}
             }
-            let label = if let TokenKind::Identifier(id) = &next_token.kind {
-                id
-            } else {
-                let next_token = self.next().unwrap();
-                return Err(self.error(
-                    "expected an identifier",
-                    next_token.line,
-                    next_token.column,
-                ));
-            };
-            self.next();
+            let line = next_token.line;
+            let column = next_token.column;
             let field_type = match self.parse_type()? {
                 Some(field_type) => field_type,
                 None => {
-                    return Err(self.error(
-                        "expected a type identifier",
-                        next_token.line,
-                        next_token.column,
-                    ));
+                    return Err(self.error("expected a type identifier", line, column));
                 }
             };
+            let name_token = self.expect_identifier("expected field name")?;
+            let label = if let TokenKind::Identifier(id) = name_token.kind {
+                id
+            } else {
+                unreachable!()
+            };
             fields.push(Field {
-                label: label.clone(),
+                label,
                 type_id: field_type,
             });
             self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
@@ -1018,7 +1069,9 @@ where
 
         while let Some(token) = self.peek() {
             match &token.kind {
-                TokenKind::Operator(op @ (Operator::Star | Operator::Slash | Operator::Percent)) => {
+                TokenKind::Operator(
+                    op @ (Operator::Star | Operator::Slash | Operator::Percent),
+                ) => {
                     let op = *op;
                     self.next();
                     let right = Box::new(self.parse_unary()?);
@@ -1085,19 +1138,41 @@ where
             }
             TokenKind::Literal(Literal::String(s)) => Expression::Literal(Literal::String(s)),
             TokenKind::Identifier(id) => {
-                // Check if next token is '{' — struct construction: TypeName { field: val, ... }
+                // Check if next token is `::` — qualified access: module::member
                 if matches!(
                     self.peek(),
-                    Some(Token { kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace), .. })
+                    Some(Token {
+                        kind: TokenKind::Punctuation(Punctuation::DoubleColon),
+                        ..
+                    })
+                ) {
+                    self.next(); // consume `::`
+                    let member_token = self.expect_identifier("expected member name after '::'")?;
+                    let member = if let TokenKind::Identifier(m) = member_token.kind {
+                        m
+                    } else {
+                        unreachable!()
+                    };
+                    Expression::QualifiedAccess { module: id, member }
+                // Check if next token is '{' — struct construction: TypeName { field: val, ... }
+                } else if matches!(
+                    self.peek(),
+                    Some(Token {
+                        kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
+                        ..
+                    })
                 ) {
                     self.next(); // consume '{'
                     let mut fields = Vec::new();
                     while !matches!(
                         self.peek(),
-                        Some(Token { kind: TokenKind::Punctuation(Punctuation::ClosingCurlyBrace), .. })
-                            | None
+                        Some(Token {
+                            kind: TokenKind::Punctuation(Punctuation::ClosingCurlyBrace),
+                            ..
+                        }) | None
                     ) {
-                        let fname_token = self.expect_next("expected field name in struct construction")?;
+                        let fname_token =
+                            self.expect_next("expected field name in struct construction")?;
                         let fname = if let TokenKind::Identifier(f) = fname_token.kind {
                             f
                         } else {
@@ -1119,7 +1194,10 @@ where
                         });
                     }
                     self.next(); // consume '}'
-                    Expression::StructConstruct { type_name: id, fields }
+                    Expression::StructConstruct {
+                        type_name: id,
+                        fields,
+                    }
                 } else {
                     Expression::Identifier(id)
                 }
@@ -1128,10 +1206,15 @@ where
                 let mut elements = Vec::new();
                 while !matches!(
                     self.peek(),
-                    Some(Token { kind: TokenKind::Punctuation(Punctuation::ClosingSquareBrace), .. }) | None
+                    Some(Token {
+                        kind: TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
+                        ..
+                    }) | None
                 ) {
                     elements.push(self.parse_expression()?);
-                    self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
+                    self.consume_if(|t| {
+                        matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma))
+                    });
                 }
                 self.expect_token(
                     TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
@@ -1147,6 +1230,12 @@ where
                 )?;
                 Expression::Grouping(Box::new(inner_expr))
             }
+            // A builtin type token in expression position — produces a comptime type value.
+            // This allows passing builtin types as generic arguments: `identity(sint32, 42)`
+            TokenKind::Builtin(crate::token::builtin::Builtin::BuiltinType(bt)) => {
+                Expression::TypeValue(TypeExpression::Builtin(bt))
+            }
+            TokenKind::Literal(Literal::Null) => Expression::Literal(Literal::Null),
             _ => {
                 return Err(self.error(
                     &format!("parse_atom: expected an atom, found {:?}", token.kind),
@@ -1216,29 +1305,29 @@ where
                             index: Box::new(index),
                         };
                     } else {
-                    let next_token =
-                        self.expect_next("parse_atom: expected field name or operator after '.'")?;
-                    match next_token.kind {
-                        TokenKind::Operator(Operator::Star) => {
-                            expr = Expression::Dereference(Box::new(expr));
+                        let next_token = self
+                            .expect_next("parse_atom: expected field name or operator after '.'")?;
+                        match next_token.kind {
+                            TokenKind::Operator(Operator::Star) => {
+                                expr = Expression::Dereference(Box::new(expr));
+                            }
+                            TokenKind::Operator(Operator::Ampersand) => {
+                                expr = Expression::AddressOf(Box::new(expr));
+                            }
+                            TokenKind::Identifier(f) => {
+                                expr = Expression::FieldAccess {
+                                    object: Box::new(expr),
+                                    field: f,
+                                };
+                            }
+                            _ => {
+                                return Err(self.error(
+                                    "expected field name, '.*', '.&', or '.[' after '.'",
+                                    next_token.line,
+                                    next_token.column,
+                                ));
+                            }
                         }
-                        TokenKind::Operator(Operator::Ampersand) => {
-                            expr = Expression::AddressOf(Box::new(expr));
-                        }
-                        TokenKind::Identifier(f) => {
-                            expr = Expression::FieldAccess {
-                                object: Box::new(expr),
-                                field: f,
-                            };
-                        }
-                        _ => {
-                            return Err(self.error(
-                                "expected field name, '.*', '.&', or '.[' after '.'",
-                                next_token.line,
-                                next_token.column,
-                            ));
-                        }
-                    }
                     }
                 } else {
                     break;
@@ -1251,11 +1340,116 @@ where
         Ok(expr)
     }
 
+    /// Parses an import declaration: `import a::b::c`, `import a::b as x`, `import a::b::{X, y}`
+    fn parse_import_declaration(&mut self) -> ParseResult<ImportDeclaration> {
+        self.expect_token(TokenKind::Keyword(Keyword::Import), "expected 'import'")?;
+
+        // Parse the first path segment (must be an identifier)
+        let first = self.expect_identifier("expected module path after 'import'")?;
+        let first_id = if let TokenKind::Identifier(id) = first.kind {
+            id
+        } else {
+            unreachable!()
+        };
+        let mut path = vec![first_id];
+
+        // Continue consuming `::identifier` segments
+        while let Some(token) = self.peek() {
+            if !matches!(token.kind, TokenKind::Punctuation(Punctuation::DoubleColon)) {
+                break;
+            }
+            // Peek at what follows the `::`
+            if let Some(next) = self.peek_second() {
+                match &next.kind {
+                    TokenKind::Identifier(_) => {
+                        self.next(); // consume `::`
+                        let seg_token = self.next().unwrap();
+                        if let TokenKind::Identifier(id) = seg_token.kind {
+                            path.push(id);
+                        }
+                    }
+                    TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => {
+                        // `::{ ... }` selective import
+                        self.next(); // consume `::`
+                        self.next(); // consume `{`
+                        let mut selective = Vec::new();
+                        loop {
+                            let name_token =
+                                self.expect_identifier("expected symbol name in selective import")?;
+                            if let TokenKind::Identifier(id) = name_token.kind {
+                                selective.push(id);
+                            }
+                            if self
+                                .consume_if(|t| {
+                                    matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma))
+                                })
+                                .is_none()
+                            {
+                                break;
+                            }
+                        }
+                        self.expect_token(
+                            TokenKind::Punctuation(Punctuation::ClosingCurlyBrace),
+                            "expected '}' to close selective import",
+                        )?;
+                        return Ok(ImportDeclaration {
+                            path,
+                            alias: None,
+                            selective: Some(selective),
+                        });
+                    }
+                    _ => {
+                        // consume the `::` so it doesn't leak into the outer parser
+                        self.next();
+                        let t = next.clone();
+                        return Err(self.error(
+                            "expected identifier or '{' after '::'",
+                            t.line,
+                            t.column,
+                        ));
+                    }
+                }
+            } else {
+                // `::` at end of input — consume it and report the error
+                let dc = self.next().unwrap();
+                return Err(self.error(
+                    "expected identifier or '{' after '::'",
+                    dc.line,
+                    dc.column,
+                ));
+            }
+        }
+
+        // Check for `as alias`
+        let alias = if let Some(token) = self.peek()
+            && matches!(token.kind, TokenKind::Keyword(Keyword::As))
+        {
+            self.next(); // consume `as`
+            let alias_token = self.expect_identifier("expected alias name after 'as'")?;
+            if let TokenKind::Identifier(id) = alias_token.kind {
+                Some(id)
+            } else {
+                unreachable!()
+            }
+        } else {
+            None
+        };
+
+        Ok(ImportDeclaration {
+            path,
+            alias,
+            selective: None,
+        })
+    }
+
     fn parse_function_declaration(&mut self) -> ParseResult<FunctionDeclaration> {
         // Check for optional 'extern' prefix
         let is_extern = if matches!(
             self.peek(),
-            Some(Token { kind: TokenKind::Keyword(Keyword::Extern), .. })
+            Some(Token {
+                kind: TokenKind::Keyword(Keyword::Extern),
+                ..
+            })
         ) {
             self.next(); // consume 'extern'
             true
@@ -1269,12 +1463,8 @@ where
         )?;
 
         // Function name
-        let name_token = self.expect_token(
-            TokenKind::Identifier(Identifier {
-                identifier: String::new(),
-            }),
-            "parse_function_declaration: expected function name",
-        )?;
+        let name_token =
+            self.expect_identifier("parse_function_declaration: expected function name")?;
         let name = if let TokenKind::Identifier(n) = name_token.kind {
             n
         } else {
@@ -1303,28 +1493,23 @@ where
                     )?;
                     break;
                 }
-                TokenKind::Identifier(_) => {
-                    let param_name_token = self.expect_token(
-                        TokenKind::Identifier(Identifier {
-                            identifier: String::new(),
-                        }),
-                        "parse_function_declaration: expected parameter name",
-                    )?;
-                    let argument_name = if let TokenKind::Identifier(n) = param_name_token.kind {
-                        n
-                    } else {
-                        unreachable!()
-                    };
+                _ => {
+                    let line = token.line;
+                    let column = token.column;
 
                     let argument_type = match self.parse_type()? {
                         Some(type_id) => type_id,
                         None => {
-                            return Err(self.error(
-                                "expected parameter type",
-                                token.line,
-                                token.column,
-                            ));
+                            return Err(self.error("expected parameter type", line, column));
                         }
+                    };
+
+                    let param_name_token = self
+                        .expect_identifier("parse_function_declaration: expected parameter name")?;
+                    let argument_name = if let TokenKind::Identifier(n) = param_name_token.kind {
+                        n
+                    } else {
+                        unreachable!()
                     };
 
                     args.push(FunctionParameter {
@@ -1336,15 +1521,6 @@ where
                     self.consume_if(|t| {
                         matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma))
                     });
-                }
-                _ => {
-                    let line = token.line;
-                    let column = token.column;
-                    return Err(self.error(
-                        "parse_func_decl: unexpected token in parameter list",
-                        line,
-                        column,
-                    ));
                 }
             }
         }
@@ -1389,13 +1565,21 @@ where
         )?;
 
         let mut stmts = Vec::new();
-        while let Some(token) = self.peek() {
-            if matches!(
-                token.kind,
-                TokenKind::Punctuation(Punctuation::ClosingCurlyBrace)
-            ) {
-                self.next();
-                break;
+        loop {
+            match self.peek() {
+                None => {
+                    return Err(self.error("unclosed block: expected '}'", 0, 0));
+                }
+                Some(token)
+                    if matches!(
+                        token.kind,
+                        TokenKind::Punctuation(Punctuation::ClosingCurlyBrace)
+                    ) =>
+                {
+                    self.next();
+                    break;
+                }
+                _ => {}
             }
             if let Some(stmt) = self.parse_statement()? {
                 stmts.push(stmt);

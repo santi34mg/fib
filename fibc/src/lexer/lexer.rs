@@ -241,7 +241,12 @@ impl<'input> Lexer<'input> {
             }
             ':' => {
                 self.bump();
-                Some(TokenKind::Punctuation(Punctuation::Colon))
+                if self.peek() == Some(':') {
+                    self.bump();
+                    Some(TokenKind::Punctuation(Punctuation::DoubleColon))
+                } else {
+                    Some(TokenKind::Punctuation(Punctuation::Colon))
+                }
             }
             '\'' => self.lex_char_literal(),
             '[' => {
@@ -254,18 +259,41 @@ impl<'input> Lexer<'input> {
             }
             '\"' => {
                 self.bump();
-                let starting_pos = self.position;
-                self.skip_while(|c| c != '\"');
-                let s: &str = &self.input[starting_pos..self.position];
-                self.bump(); // consume closing quote
-                Some(TokenKind::Literal(Literal::String(s.to_string())))
+                let mut escaped = String::new();
+                let mut lex_error: Option<&str> = None;
+                loop {
+                    match self.peek() {
+                        None => { lex_error = Some("unterminated string literal"); break; }
+                        Some('\"') => { self.bump(); break; }
+                        Some('\\') => {
+                            self.bump();
+                            match self.bump() {
+                                None => { lex_error = Some("unterminated string escape"); break; }
+                                Some('n') => escaped.push('\n'),
+                                Some('t') => escaped.push('\t'),
+                                Some('\\') => escaped.push('\\'),
+                                Some('\"') => escaped.push('\"'),
+                                Some('\'') => escaped.push('\''),
+                                Some('0') => escaped.push('\0'),
+                                Some('r') => escaped.push('\r'),
+                                Some(c) => { escaped.push('\\'); escaped.push(c); }
+                            }
+                        }
+                        Some(c) => { self.bump(); escaped.push(c); }
+                    }
+                }
+                if let Some(e) = lex_error {
+                    Some(TokenKind::Error(e.into()))
+                } else {
+                    Some(TokenKind::Literal(Literal::String(escaped)))
+                }
             }
             '@' => {
                 self.bump();
                 Some(TokenKind::Punctuation(Punctuation::At))
             }
             c if c.is_ascii_digit() => self.lex_numeric(c),
-            c if c.is_alphabetic() => Some(self.lex_identifier_or_keyword()),
+            c if c.is_alphabetic() || c == '_' => Some(self.lex_identifier_or_keyword()),
             c => {
                 self.bump();
                 Some(TokenKind::Unknown(c))
@@ -349,7 +377,10 @@ impl<'input> Lexer<'input> {
         // first char is 0 might be 0x... or might be 0123
         let (base, f): (u32, fn(char) -> bool) = if first == '0' {
             self.bump();
-            let second = self.peek()?;
+            let second = match self.peek() {
+                Some(c) => c,
+                None => return Some(TokenKind::Literal(Literal::Integer(0))),
+            };
             match second {
                 'x' => {
                     self.bump();
@@ -358,12 +389,13 @@ impl<'input> Lexer<'input> {
                 }
                 'd' => {
                     self.bump();
+                    start = self.position;
                     (10, |c: char| c.is_ascii_digit())
                 }
                 'o' => {
                     self.bump();
                     start = self.position;
-                    (8, |c: char| c == '0' || c == '1')
+                    (8, |c: char| c.is_digit(8))
                 }
                 'b' => {
                     self.bump();
@@ -383,7 +415,7 @@ impl<'input> Lexer<'input> {
         self.skip_while(|c| f(c));
         let num_str = &self.input[start..self.position];
         if num_str.contains('.') {
-            let value = ("0".to_string() + num_str).parse::<f32>().ok()?;
+            let value = ("0".to_string() + num_str).parse::<f64>().ok()?;
             return Some(TokenKind::Literal(Literal::Float(value)));
         } else {
             let value = match u64::from_str_radix(num_str, base) {
@@ -412,26 +444,31 @@ impl<'input> Lexer<'input> {
             "if" => TokenKind::Keyword(Keyword::If),
             "else" => TokenKind::Keyword(Keyword::Else),
             "for" => TokenKind::Keyword(Keyword::For),
+            "while" => TokenKind::Keyword(Keyword::While),
             "break" => TokenKind::Keyword(Keyword::Break),
             "continue" => TokenKind::Keyword(Keyword::Continue),
             "return" => TokenKind::Keyword(Keyword::Return),
             "as" => TokenKind::Keyword(Keyword::As),
             "extern" => TokenKind::Keyword(Keyword::Extern),
             "defer" => TokenKind::Keyword(Keyword::Defer),
+            "import" => TokenKind::Keyword(Keyword::Import),
             "true" => TokenKind::Literal(Literal::Boolean(true)),
             "false" => TokenKind::Literal(Literal::Boolean(false)),
             "null" => TokenKind::Literal(Literal::Null),
             "void" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Void)),
-            "uint8"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt8)),
+            "uint"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt1)),
+            "uint2" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt2)),
+            "uint4" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt4)),
+            "uint8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt8)),
             "uint16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt16)),
-            "uint32" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt32)),
-            "uint64" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt64)),
-            "int8"   => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int8)),
+            "int"   => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int1)),
+            "int2"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int2)),
+            "int4"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int4)),
+            "int8"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int8)),
             "int16"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int16)),
-            "int32"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int32)),
-            "int64"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int64)),
-            "float32" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float32)),
-            "float64" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float64)),
+            "float4" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float4)),
+            "float8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float8)),
+            "float16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float16)),
             "string" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::String)),
             "char" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Char)),
             "bool" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Boolean)),

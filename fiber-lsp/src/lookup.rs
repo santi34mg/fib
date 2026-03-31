@@ -3,6 +3,7 @@ use fibc::token::{Token, TokenKind};
 use fibc::token::identifier::Identifier;
 use fibc::token::punctuation::Punctuation;
 use fibc::token::Operator;
+use fibc::token::keyword::Keyword;
 
 /// Find the token whose span contains `(line, col)` (1-based).
 pub fn token_at(tokens: &[Token], line: usize, col: usize) -> Option<&Token> {
@@ -12,12 +13,30 @@ pub fn token_at(tokens: &[Token], line: usize, col: usize) -> Option<&Token> {
 }
 
 /// Look up an identifier name recursively through all scopes.
+/// Children are searched first so inner (more local) scopes shadow outer ones.
 pub fn find_symbol<'a>(name: &Identifier, scope: &'a Scope) -> Option<&'a HIRSymbol> {
-    if let Some(sym) = scope.symbols.get(name) {
-        return Some(sym);
-    }
     for child in &scope.children_scope {
         if let Some(sym) = find_symbol(name, child) {
+            return Some(sym);
+        }
+    }
+    scope.symbols.get(name)
+}
+
+/// Look up a qualified name (`module_name::member_name`) by searching the module exports
+/// registered in the given scope and its children.
+pub fn find_module_symbol<'a>(
+    module_name: &str,
+    member_name: &Identifier,
+    scope: &'a Scope,
+) -> Option<&'a HIRSymbol> {
+    if let Some(module) = scope.modules.get(module_name) {
+        if let Some(sym) = module.exports.get(member_name) {
+            return Some(sym);
+        }
+    }
+    for child in &scope.children_scope {
+        if let Some(sym) = find_module_symbol(module_name, member_name, child) {
             return Some(sym);
         }
     }
@@ -30,8 +49,6 @@ pub fn find_symbol<'a>(name: &Identifier, scope: &'a Scope) -> Option<&'a HIRSym
 /// - `fn name`, `var name`, `const name`, `type name`
 /// - Function parameters: `(name :` or `, name :`
 pub fn find_declaration<'a>(name: &Identifier, tokens: &'a [Token]) -> Option<&'a Token> {
-    use fibc::token::keyword::Keyword;
-
     let decl_keywords = [Keyword::Function, Keyword::Var, Keyword::Const, Keyword::Type];
 
     for (i, tok) in tokens.iter().enumerate() {

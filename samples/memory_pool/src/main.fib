@@ -1,19 +1,19 @@
 import std::libc
 
 const type Pool = struct {
-    start      uint64,
-    block_size uint64,
-    capacity   uint64,
-    used       uint64,
+    uint64 start,
+    uint64 block_size,
+    uint64 capacity,
+    uint64 used,
 }
 
-fn pool_create(block_size uint64, capacity uint64) Pool {
+fn pool_create(uint64 block_size, uint64 capacity) Pool {
     var uint64 total = block_size * capacity
     var *void buf = libc::malloc(total)
     return Pool { start: buf as uint64, block_size: block_size, capacity: capacity, used: 0 as uint64 }
 }
 
-fn pool_alloc(pool *Pool) *void {
+fn pool_alloc(*Pool pool) *void {
     if pool.*.used >= pool.*.capacity {
         return 0 as uint64 as *void
     }
@@ -25,7 +25,7 @@ fn pool_alloc(pool *Pool) *void {
     return addr as *void
 }
 
-fn pool_destroy(pool *Pool) void {
+fn pool_destroy(*Pool pool) void {
     libc::free(pool.*.start as *void)
 }
 
