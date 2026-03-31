@@ -525,7 +525,12 @@ where
                         "expected ')'",
                     )?;
                     let body = self.parse_body()?;
-                    StatementNode::For { initializer: None, condition: Some(expr), post_operation: None, body }
+                    StatementNode::For {
+                        initializer: None,
+                        condition: Some(expr),
+                        post_operation: None,
+                        body,
+                    }
                 }
                 TokenKind::Keyword(Keyword::Else)
                 | TokenKind::Operator(_)

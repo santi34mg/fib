@@ -1,39 +1,39 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
-    Plus,               // +
-    Minus,              // -
-    Star,               // *
-    Slash,              // /
-    Percent,            // %
+    Plus,    // +
+    Minus,   // -
+    Star,    // *
+    Slash,   // /
+    Percent, // %
 
-    GreaterThan,        // >
-    LesserThan,         // <
-    GreaterEqual,       // >=
-    LesserEqual,        // <=
+    GreaterThan,  // >
+    LesserThan,   // <
+    GreaterEqual, // >=
+    LesserEqual,  // <=
 
-    LeftShift,          // <<
-    RightShift,         // >>
+    LeftShift,  // <<
+    RightShift, // >>
 
-    Assign,             // =
-    DoubleEquals,       // ==
-    Different,          // !=
+    Assign,       // =
+    DoubleEquals, // ==
+    Different,    // !=
 
-    PlusAssign,         // +=
-    MinusAssign,        // -=
-    StarAssign,         // *=
-    SlashAssign,        // /=
-    PercentAssign,      // %=
+    PlusAssign,    // +=
+    MinusAssign,   // -=
+    StarAssign,    // *=
+    SlashAssign,   // /=
+    PercentAssign, // %=
 
-    LogicalAnd,         // &&
-    LogicalOr,          // ||
-    LogicalNot,         // !
+    LogicalAnd, // &&
+    LogicalOr,  // ||
+    LogicalNot, // !
 
-    Ampersand,          // &
-    Pipe,               // |
-    Tilde,              // ~
-    Caret,              // ^
+    Ampersand, // &
+    Pipe,      // |
+    Tilde,     // ~
+    Caret,     // ^
 
-    DoubleDot,          // ..
-    Ellipsis,           // ...
-    ThinRightArrow,     // ->
+    DoubleDot,      // ..
+    Ellipsis,       // ...
+    ThinRightArrow, // ->
 }

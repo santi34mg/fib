@@ -7,8 +7,14 @@ pub fn parse_error_to_diagnostic(e: &ParseError) -> Diagnostic {
     let col = e.column.saturating_sub(1) as u32;
     Diagnostic {
         range: Range {
-            start: Position { line, character: col },
-            end: Position { line, character: col + 1 },
+            start: Position {
+                line,
+                character: col,
+            },
+            end: Position {
+                line,
+                character: col + 1,
+            },
         },
         severity: Some(DiagnosticSeverity::ERROR),
         message: e.message.clone(),
@@ -22,8 +28,14 @@ pub fn parse_error_to_diagnostic(e: &ParseError) -> Diagnostic {
 pub fn analysis_error_to_diagnostic(msg: &str) -> Diagnostic {
     Diagnostic {
         range: Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 1 },
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 1,
+            },
         },
         severity: Some(DiagnosticSeverity::ERROR),
         message: msg.to_string(),

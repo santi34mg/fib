@@ -22,7 +22,10 @@ mod tests {
     fn test_constant_return() {
         let src = "fn answer() sint32 { return 42; }";
         let ir = compile_to_ir(src);
-        assert!(ir.contains("answer"), "IR should contain function name 'answer'");
+        assert!(
+            ir.contains("answer"),
+            "IR should contain function name 'answer'"
+        );
         assert!(ir.contains("ret"), "IR should contain a ret instruction");
     }
 
@@ -31,7 +34,10 @@ mod tests {
         let src = "fn add(sint32 a, sint32 b) sint32 { return a + b; }";
         let ir = compile_to_ir(src);
         assert!(ir.contains("add"), "IR should contain function name 'add'");
-        assert!(ir.contains("add nsw") || ir.contains("add i32"), "IR should contain add instruction");
+        assert!(
+            ir.contains("add nsw") || ir.contains("add i32"),
+            "IR should contain add instruction"
+        );
     }
 
     #[test]
@@ -43,8 +49,14 @@ mod tests {
     return x;
 }"#;
         let ir = compile_to_ir(src);
-        assert!(ir.contains("abs_val"), "IR should contain function name 'abs_val'");
-        assert!(ir.contains("icmp"), "IR should contain comparison instruction");
+        assert!(
+            ir.contains("abs_val"),
+            "IR should contain function name 'abs_val'"
+        );
+        assert!(
+            ir.contains("icmp"),
+            "IR should contain comparison instruction"
+        );
         assert!(ir.contains("br"), "IR should contain branch instruction");
     }
 
@@ -52,7 +64,10 @@ mod tests {
     fn test_void_function() {
         let src = "fn noop() void { return; }";
         let ir = compile_to_ir(src);
-        assert!(ir.contains("noop"), "IR should contain function name 'noop'");
+        assert!(
+            ir.contains("noop"),
+            "IR should contain function name 'noop'"
+        );
         assert!(ir.contains("ret void"), "IR should contain 'ret void'");
     }
 
@@ -60,8 +75,14 @@ mod tests {
     fn test_equality_comparison() {
         let src = "fn is_zero(sint32 x) bool { return x == 0; }";
         let ir = compile_to_ir(src);
-        assert!(ir.contains("is_zero"), "IR should contain function name 'is_zero'");
-        assert!(ir.contains("icmp eq"), "IR should contain equality comparison");
+        assert!(
+            ir.contains("is_zero"),
+            "IR should contain function name 'is_zero'"
+        );
+        assert!(
+            ir.contains("icmp eq"),
+            "IR should contain equality comparison"
+        );
     }
 
     #[test]
@@ -77,7 +98,10 @@ mod tests {
 }"#;
         let ir = compile_to_ir(src);
         assert!(ir.contains("find_five"), "IR should contain function name");
-        assert!(ir.contains("afterloop"), "IR should contain afterloop block for break");
+        assert!(
+            ir.contains("afterloop"),
+            "IR should contain afterloop block for break"
+        );
         assert!(ir.contains("forcond"), "IR should contain forcond block");
     }
 
@@ -96,8 +120,14 @@ mod tests {
 }"#;
         let ir = compile_to_ir(src);
         assert!(ir.contains("sum_even"), "IR should contain function name");
-        assert!(ir.contains("forpost"), "IR should contain forpost block for continue");
-        assert!(ir.contains("afterloop"), "IR should contain afterloop block");
+        assert!(
+            ir.contains("forpost"),
+            "IR should contain forpost block for continue"
+        );
+        assert!(
+            ir.contains("afterloop"),
+            "IR should contain afterloop block"
+        );
     }
 
     #[test]
@@ -119,7 +149,10 @@ mod tests {
 }"#;
         let ir = compile_to_ir(src);
         assert!(ir.contains("first_neg"), "IR should contain function name");
-        assert!(ir.contains("afterloop"), "IR should contain afterloop block");
+        assert!(
+            ir.contains("afterloop"),
+            "IR should contain afterloop block"
+        );
     }
 
     #[test]
@@ -139,7 +172,10 @@ mod tests {
         let ir = compile_to_ir(src);
         assert!(ir.contains("nested"), "IR should contain function name");
         // Two separate afterloop blocks exist (one per loop)
-        assert!(ir.matches("afterloop").count() >= 2, "IR should contain at least 2 afterloop blocks for nested loops");
+        assert!(
+            ir.matches("afterloop").count() >= 2,
+            "IR should contain at least 2 afterloop blocks for nested loops"
+        );
     }
 
     #[test]
@@ -156,7 +192,10 @@ fn main() int32 {
 "#;
         let ir = compile_to_ir(src);
         // The monomorphized function should appear with the mangled name
-        assert!(ir.contains("identity__int32"), "IR should contain mangled generic instantiation 'identity__int32'");
+        assert!(
+            ir.contains("identity__int32"),
+            "IR should contain mangled generic instantiation 'identity__int32'"
+        );
         assert!(ir.contains("main"), "IR should contain 'main'");
         assert!(ir.contains("ret"), "IR should contain a ret instruction");
     }
@@ -176,8 +215,14 @@ fn main() int32 {
 }
 "#;
         let ir = compile_to_ir(src);
-        assert!(ir.contains("wrap__int32"), "IR should contain 'wrap__int32' instantiation");
-        assert!(ir.contains("wrap__bool"), "IR should contain 'wrap__bool' instantiation");
+        assert!(
+            ir.contains("wrap__int32"),
+            "IR should contain 'wrap__int32' instantiation"
+        );
+        assert!(
+            ir.contains("wrap__bool"),
+            "IR should contain 'wrap__bool' instantiation"
+        );
     }
 
     #[test]
@@ -206,7 +251,6 @@ fn main() int32 {
         assert!(ir.contains("main"), "IR should contain main");
     }
 
-
     #[test]
     fn test_generic_sort() {
         // Models the sorting sample: a generic insertion sort over a pointer+length.
@@ -229,7 +273,10 @@ fn main() int32 {
 }
 "#;
         let ir = compile_to_ir(src);
-        assert!(ir.contains("insertion_sort__int32"), "IR should contain mangled sort instantiation");
+        assert!(
+            ir.contains("insertion_sort__int32"),
+            "IR should contain mangled sort instantiation"
+        );
         assert!(ir.contains("main"), "IR should contain main");
     }
 
@@ -244,7 +291,10 @@ fn answer() MyInt {
 }
 "#;
         let ir = compile_to_ir(src);
-        assert!(ir.contains("answer"), "IR should contain function name 'answer'");
+        assert!(
+            ir.contains("answer"),
+            "IR should contain function name 'answer'"
+        );
         assert!(ir.contains("ret"), "IR should contain a ret instruction");
     }
 
@@ -263,12 +313,20 @@ fn main() int32 {
 }
 "#;
         let ir = compile_to_ir(src);
-        assert!(ir.contains("twice__int32"), "IR should contain 'twice__int32'");
+        assert!(
+            ir.contains("twice__int32"),
+            "IR should contain 'twice__int32'"
+        );
         // LLVM IR defines functions with `define ... @name(` at the start of a line.
         // Count only definition lines (not call sites) to verify deduplication.
-        let define_count = ir.lines()
+        let define_count = ir
+            .lines()
             .filter(|l| l.contains("define") && l.contains("twice__int32"))
             .count();
-        assert_eq!(define_count, 1, "twice__int32 should be defined exactly once, found {}", define_count);
+        assert_eq!(
+            define_count, 1,
+            "twice__int32 should be defined exactly once, found {}",
+            define_count
+        );
     }
 }

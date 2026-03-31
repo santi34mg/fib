@@ -1,5 +1,5 @@
 use fibc::driver::FrontendResponse;
-use fibc::hir::{HIRBinding, HIRFunction, HIRSymbol, HIRTypeKind, GenericFunctionTemplate};
+use fibc::hir::{GenericFunctionTemplate, HIRBinding, HIRFunction, HIRSymbol, HIRTypeKind};
 use fibc::token::TokenKind;
 use fibc::token::punctuation::Punctuation;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
@@ -21,7 +21,10 @@ pub fn hover_info(result: &FrontendResponse, line: usize, col: usize) -> Option<
     let symbol = if tok_idx >= 2 {
         let maybe_dcolon = &result.tokens[tok_idx - 1];
         let maybe_module = &result.tokens[tok_idx - 2];
-        if matches!(maybe_dcolon.kind, TokenKind::Punctuation(Punctuation::DoubleColon)) {
+        if matches!(
+            maybe_dcolon.kind,
+            TokenKind::Punctuation(Punctuation::DoubleColon)
+        ) {
             if let TokenKind::Identifier(module_id) = &maybe_module.kind {
                 find_module_symbol(module_id.identifier.as_str(), name, &hir.scope_root)
             } else {
@@ -68,8 +71,18 @@ fn format_generic_function(g: &GenericFunctionTemplate) -> String {
         .as_ref()
         .map(|t| format!(" {}", t))
         .unwrap_or_default();
-    let prefix = if g.ast_decl.is_extern { "extern fn" } else { "fn" };
-    format!("{} {}({}){}", prefix, g.ast_decl.signature.name, params.join(", "), ret)
+    let prefix = if g.ast_decl.is_extern {
+        "extern fn"
+    } else {
+        "fn"
+    };
+    format!(
+        "{} {}({}){}",
+        prefix,
+        g.ast_decl.signature.name,
+        params.join(", "),
+        ret
+    )
 }
 
 fn format_function(f: &HIRFunction) -> String {
@@ -79,7 +92,13 @@ fn format_function(f: &HIRFunction) -> String {
         .map(|(name, ty)| format!("{} {}", name, format_type(ty)))
         .collect();
     let prefix = if f.is_extern { "extern fn" } else { "fn" };
-    format!("{} {}({}) {}", prefix, f.name, params.join(", "), format_type(&f.return_type))
+    format!(
+        "{} {}({}) {}",
+        prefix,
+        f.name,
+        params.join(", "),
+        format_type(&f.return_type)
+    )
 }
 
 fn format_binding(b: &HIRBinding) -> String {

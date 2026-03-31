@@ -24,7 +24,10 @@ pub fn goto_definition(
     let tok_idx = result.tokens.iter().position(|t| std::ptr::eq(t, tok))?;
     if tok_idx >= 2 {
         let maybe_dcolon = &result.tokens[tok_idx - 1];
-        if matches!(maybe_dcolon.kind, TokenKind::Punctuation(Punctuation::DoubleColon)) {
+        if matches!(
+            maybe_dcolon.kind,
+            TokenKind::Punctuation(Punctuation::DoubleColon)
+        ) {
             return None;
         }
     }
@@ -38,8 +41,14 @@ pub fn goto_definition(
     Some(Location {
         uri,
         range: Range {
-            start: Position { line: start_line, character: start_col },
-            end: Position { line: start_line, character: start_col + name.identifier.len() as u32 },
+            start: Position {
+                line: start_line,
+                character: start_col,
+            },
+            end: Position {
+                line: start_line,
+                character: start_col + name.identifier.len() as u32,
+            },
         },
     })
 }

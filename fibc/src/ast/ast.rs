@@ -1,7 +1,7 @@
 use core::fmt;
 
-use crate::token::builtin::BuiltinType;
 use crate::token::Operator;
+use crate::token::builtin::BuiltinType;
 use crate::token::identifier::Identifier;
 use crate::token::literal::Literal;
 
@@ -26,7 +26,6 @@ impl Ast {
         };
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub enum DeclarationNode {
@@ -137,7 +136,10 @@ impl fmt::Display for TypeExpression {
             TypeExpression::Identifier(identifier) => {
                 write!(f, "{}", identifier)?;
             }
-            TypeExpression::Function { argument_types, return_type } => {
+            TypeExpression::Function {
+                argument_types,
+                return_type,
+            } => {
                 write!(f, "function({:?}) -> {}", argument_types, return_type)?;
             }
             TypeExpression::Struct { fields } => {
@@ -152,27 +154,27 @@ impl fmt::Display for TypeExpression {
             TypeExpression::TypeKeyword => {
                 write!(f, "type")?;
             }
-            TypeExpression::Pointer { pointer_variant, pointed_type } => {
-                match pointer_variant {
-                    PointerVariant::Unique => {
-                        write!(f, "unique &{}", *pointed_type)?;
-                    }
-                    PointerVariant::Shared => {
-                        write!(f, "shared &{}", *pointed_type)?;
-                    }
-                    PointerVariant::Weak => {
-                        write!(f, "weak &{}", *pointed_type)?;
-                    }
-                    PointerVariant::Raw => {
-                        write!(f, "*{}", *pointed_type)?;
-                    }
+            TypeExpression::Pointer {
+                pointer_variant,
+                pointed_type,
+            } => match pointer_variant {
+                PointerVariant::Unique => {
+                    write!(f, "unique &{}", *pointed_type)?;
                 }
-            }
+                PointerVariant::Shared => {
+                    write!(f, "shared &{}", *pointed_type)?;
+                }
+                PointerVariant::Weak => {
+                    write!(f, "weak &{}", *pointed_type)?;
+                }
+                PointerVariant::Raw => {
+                    write!(f, "*{}", *pointed_type)?;
+                }
+            },
         }
         Ok(())
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Field {
@@ -194,7 +196,6 @@ pub struct ConstantDeclaration {
     pub constant_type: Option<TypeExpression>,
     pub expression: Expression,
 }
-
 
 impl ConstantDeclaration {
     pub fn new(

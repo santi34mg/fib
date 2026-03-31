@@ -72,7 +72,9 @@ pub struct GenericFunctionTemplate {
 pub enum HIRTypeKind {
     Builtin(BuiltinType),
     Identifier(Identifier),
-    Struct { fields: Vec<(String, Box<HIRTypeKind>)> },
+    Struct {
+        fields: Vec<(String, Box<HIRTypeKind>)>,
+    },
     Pointer(Box<HIRTypeKind>),
     Array {
         element_type: Box<HIRTypeKind>,
@@ -99,7 +101,10 @@ impl fmt::Display for HIRTypeKind {
             Self::Struct { fields } => write!(f, "struct {{ {:?} }}", fields)?,
             Self::Pointer(inner) => write!(f, "*{}", inner)?,
             Self::Array { element_type, size } => write!(f, "{}[{}]", element_type, size)?,
-            Self::Function { argument_types, return_type } => write!(f, "fn({:?}) -> {}", argument_types, *return_type)?,
+            Self::Function {
+                argument_types,
+                return_type,
+            } => write!(f, "fn({:?}) -> {}", argument_types, *return_type)?,
             Self::QualifiedIdentifier { module, name } => write!(f, "{}::{}", module, name)?,
             Self::Type => write!(f, "type")?,
         };
@@ -138,7 +143,9 @@ pub enum HIRExpressionKind {
         value: f64,
     },
     LiteralBool(bool),
-    LiteralString { value: String },
+    LiteralString {
+        value: String,
+    },
     Identifier(Identifier),
     Binary {
         left: Box<HIRExpression>,
@@ -236,7 +243,10 @@ pub struct HIRIf {
 impl HIRIf {
     pub fn then_branch_terminates(&self) -> bool {
         for stmt in self.then_branch.iter() {
-            if matches!(stmt, HIRStmt::Return(_) | HIRStmt::Break | HIRStmt::Continue) {
+            if matches!(
+                stmt,
+                HIRStmt::Return(_) | HIRStmt::Break | HIRStmt::Continue
+            ) {
                 return true;
             }
         }
@@ -246,7 +256,10 @@ impl HIRIf {
     pub fn else_branch_terminates(&self) -> bool {
         if let Some(eb) = &self.else_branch {
             for stmt in eb.iter() {
-                if matches!(stmt, HIRStmt::Return(_) | HIRStmt::Break | HIRStmt::Continue) {
+                if matches!(
+                    stmt,
+                    HIRStmt::Return(_) | HIRStmt::Break | HIRStmt::Continue
+                ) {
                     return true;
                 }
             }

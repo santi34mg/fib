@@ -7,8 +7,8 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::diagnostics::{analysis_error_to_diagnostic, parse_error_to_diagnostic};
 use crate::definition::goto_definition;
+use crate::diagnostics::{analysis_error_to_diagnostic, parse_error_to_diagnostic};
 use crate::hover::hover_info;
 
 struct DocumentState {
@@ -22,7 +22,10 @@ pub struct FiberLanguageServer {
 
 impl FiberLanguageServer {
     pub fn new(client: Client) -> Self {
-        Self { client, documents: DashMap::new() }
+        Self {
+            client,
+            documents: DashMap::new(),
+        }
     }
 
     async fn analyze_and_publish(&self, uri: Url, text: String) {
@@ -30,25 +33,41 @@ impl FiberLanguageServer {
             .to_file_path()
             .unwrap_or_else(|_| Path::new("<unknown>").to_path_buf());
 
-        let opts = CompilationOptions { project_path: path, source: Some(&text), include_paths: Vec::new() };
+        let opts = CompilationOptions {
+            project_path: path,
+            source: Some(&text),
+            include_paths: Vec::new(),
+        };
         // Convert to (Option<FrontendResponse>, Option<String>) so the non-Send error is
         // fully dropped before the first await point.
-        // FIXME: 
+        // FIXME:
         let (frontend_result, frontend_error) = match compile_frontend(opts) {
             Ok(r) => (Some(r), None),
             Err(e) => (None, Some(format!("{}", e))),
         };
         if let Some(msg) = frontend_error {
-            self.client.publish_diagnostics(uri, vec![Diagnostic {
-                range: Range {
-                    start: Position { line: 0, character: 0 },
-                    end: Position { line: 0, character: 1 },
-                },
-                severity: Some(DiagnosticSeverity::ERROR),
-                message: msg,
-                source: Some("fiber".into()),
-                ..Default::default()
-            }], None).await;
+            self.client
+                .publish_diagnostics(
+                    uri,
+                    vec![Diagnostic {
+                        range: Range {
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 1,
+                            },
+                        },
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        message: msg,
+                        source: Some("fiber".into()),
+                        ..Default::default()
+                    }],
+                    None,
+                )
+                .await;
             return;
         }
         let result = frontend_result.unwrap();
@@ -62,8 +81,11 @@ impl FiberLanguageServer {
             diagnostics.push(analysis_error_to_diagnostic(msg));
         }
 
-        self.documents.insert(uri.clone(), Arc::new(DocumentState { result }));
-        self.client.publish_diagnostics(uri, diagnostics, None).await;
+        self.documents
+            .insert(uri.clone(), Arc::new(DocumentState { result }));
+        self.client
+            .publish_diagnostics(uri, diagnostics, None)
+            .await;
     }
 }
 
@@ -91,7 +113,9 @@ impl LanguageServer for FiberLanguageServer {
     }
 
     async fn initialized(&self, _params: InitializedParams) {
-        self.client.log_message(MessageType::INFO, "fiber-lsp initialized").await;
+        self.client
+            .log_message(MessageType::INFO, "fiber-lsp initialized")
+            .await;
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -113,14 +137,22 @@ impl LanguageServer for FiberLanguageServer {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         self.documents.remove(&params.text_document.uri);
-        self.client.publish_diagnostics(params.text_document.uri, vec![], None).await;
+        self.client
+            .publish_diagnostics(params.text_document.uri, vec![], None)
+            .await;
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let Some(state) = self.documents.get(uri) else { return Ok(None) };
-        Ok(hover_info(&state.result, pos.line as usize + 1, pos.character as usize + 1))
+        let Some(state) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        Ok(hover_info(
+            &state.result,
+            pos.line as usize + 1,
+            pos.character as usize + 1,
+        ))
     }
 
     async fn goto_definition(
@@ -129,7 +161,9 @@ impl LanguageServer for FiberLanguageServer {
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let Some(state) = self.documents.get(uri) else { return Ok(None) };
+        let Some(state) = self.documents.get(uri) else {
+            return Ok(None);
+        };
 
         let location = goto_definition(
             &state.result,

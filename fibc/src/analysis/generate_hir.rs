@@ -19,7 +19,7 @@ use crate::token::literal::Literal;
 
 #[derive(Debug)]
 pub struct AnalysisError {
-    pub msg: String
+    pub msg: String,
 }
 
 impl std::error::Error for AnalysisError {}
@@ -32,9 +32,7 @@ impl fmt::Display for AnalysisError {
 
 impl From<String> for AnalysisError {
     fn from(value: String) -> Self {
-        Self {
-            msg: value,
-        }
+        Self { msg: value }
     }
 }
 

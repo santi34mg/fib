@@ -263,12 +263,21 @@ impl<'input> Lexer<'input> {
                 let mut lex_error: Option<&str> = None;
                 loop {
                     match self.peek() {
-                        None => { lex_error = Some("unterminated string literal"); break; }
-                        Some('\"') => { self.bump(); break; }
+                        None => {
+                            lex_error = Some("unterminated string literal");
+                            break;
+                        }
+                        Some('\"') => {
+                            self.bump();
+                            break;
+                        }
                         Some('\\') => {
                             self.bump();
                             match self.bump() {
-                                None => { lex_error = Some("unterminated string escape"); break; }
+                                None => {
+                                    lex_error = Some("unterminated string escape");
+                                    break;
+                                }
                                 Some('n') => escaped.push('\n'),
                                 Some('t') => escaped.push('\t'),
                                 Some('\\') => escaped.push('\\'),
@@ -276,10 +285,16 @@ impl<'input> Lexer<'input> {
                                 Some('\'') => escaped.push('\''),
                                 Some('0') => escaped.push('\0'),
                                 Some('r') => escaped.push('\r'),
-                                Some(c) => { escaped.push('\\'); escaped.push(c); }
+                                Some(c) => {
+                                    escaped.push('\\');
+                                    escaped.push(c);
+                                }
                             }
                         }
-                        Some(c) => { self.bump(); escaped.push(c); }
+                        Some(c) => {
+                            self.bump();
+                            escaped.push(c);
+                        }
                     }
                 }
                 if let Some(e) = lex_error {
@@ -299,7 +314,13 @@ impl<'input> Lexer<'input> {
                 Some(TokenKind::Unknown(c))
             }
         };
-        Some(Token::with_end(kind?, start_line, start_col, self.line, self.column.saturating_sub(1)))
+        Some(Token::with_end(
+            kind?,
+            start_line,
+            start_col,
+            self.line,
+            self.column.saturating_sub(1),
+        ))
     }
 
     fn lex_char_literal(&mut self) -> Option<TokenKind> {
@@ -330,7 +351,12 @@ impl<'input> Lexer<'input> {
                     }
                     match u8::from_str_radix(&hex, 16) {
                         Ok(value) => value as char,
-                        Err(_) => return Some(TokenKind::Error(format!("Invalid hex escape: \\x{}", hex))),
+                        Err(_) => {
+                            return Some(TokenKind::Error(format!(
+                                "Invalid hex escape: \\x{}",
+                                hex
+                            )));
+                        }
                     }
                 }
                 'u' => {
@@ -345,24 +371,41 @@ impl<'input> Lexer<'input> {
                                 hex.push(c);
                                 self.bump();
                             } else {
-                                return Some(TokenKind::Error("Invalid unicode escape sequence".into()));
+                                return Some(TokenKind::Error(
+                                    "Invalid unicode escape sequence".into(),
+                                ));
                             }
                         }
                         self.bump(); // consume '}'
                         let value = match u32::from_str_radix(&hex, 16) {
                             Ok(v) => v,
-                            Err(_) => return Some(TokenKind::Error(format!("Invalid unicode escape: \\u{{{}}}", hex))),
+                            Err(_) => {
+                                return Some(TokenKind::Error(format!(
+                                    "Invalid unicode escape: \\u{{{}}}",
+                                    hex
+                                )));
+                            }
                         };
                         match char::from_u32(value) {
                             Some(c) => c,
-                            None => return Some(TokenKind::Error(format!("Invalid unicode code point: {}", value))),
+                            None => {
+                                return Some(TokenKind::Error(format!(
+                                    "Invalid unicode code point: {}",
+                                    value
+                                )));
+                            }
                         }
                     } else {
-                        return Some(TokenKind::Error("Invalid unicode escape sequence: expected '{{'".into()));
+                        return Some(TokenKind::Error(
+                            "Invalid unicode escape sequence: expected '{{'".into(),
+                        ));
                     }
                 }
                 c => {
-                    return Some(TokenKind::Error(format!("Invalid escape sequence: \\{}", c)));
+                    return Some(TokenKind::Error(format!(
+                        "Invalid escape sequence: \\{}",
+                        c
+                    )));
                 }
             }
         } else {
@@ -420,7 +463,12 @@ impl<'input> Lexer<'input> {
         } else {
             let value = match u64::from_str_radix(num_str, base) {
                 Ok(v) => v,
-                Err(e) => return Some(TokenKind::Error(format!("Invalid integer literal '{}': {}", num_str, e))),
+                Err(e) => {
+                    return Some(TokenKind::Error(format!(
+                        "Invalid integer literal '{}': {}",
+                        num_str, e
+                    )));
+                }
             };
             return Some(TokenKind::Literal(Literal::Integer(value)));
         }
@@ -456,16 +504,16 @@ impl<'input> Lexer<'input> {
             "false" => TokenKind::Literal(Literal::Boolean(false)),
             "null" => TokenKind::Literal(Literal::Null),
             "void" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Void)),
-            "uint"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt1)),
+            "uint" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt1)),
             "uint2" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt2)),
             "uint4" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt4)),
             "uint8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt8)),
             "uint16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt16)),
-            "int"   => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int1)),
-            "int2"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int2)),
-            "int4"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int4)),
-            "int8"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int8)),
-            "int16"  => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int16)),
+            "int" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int1)),
+            "int2" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int2)),
+            "int4" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int4)),
+            "int8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int8)),
+            "int16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int16)),
             "float4" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float4)),
             "float8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float8)),
             "float16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float16)),

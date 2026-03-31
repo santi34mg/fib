@@ -7,14 +7,14 @@ use crate::hir::{
 use crate::token::Operator;
 use crate::token::builtin::BuiltinType;
 use crate::token::identifier::Identifier;
-use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
+use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType};
-use inkwell::basic_block::BasicBlock;
 use inkwell::values::BasicMetadataValueEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
+use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use std::error::Error;
 
 struct LoopContext<'ctx> {
@@ -53,7 +53,9 @@ pub fn lower(
 
                 let fn_ty: FunctionType;
                 if let HIRTypeKind::Builtin(BuiltinType::Void) = hir_function.return_type {
-                    fn_ty = ctx.void_type().fn_type(&fn_params, hir_function.is_variadic);
+                    fn_ty = ctx
+                        .void_type()
+                        .fn_type(&fn_params, hir_function.is_variadic);
                 } else {
                     let ret_ty = map_type_to_llvm(
                         &hir_function.return_type,
@@ -122,7 +124,14 @@ pub fn lower(
                 if let HIRTypeKind::Builtin(BuiltinType::Void) = hir_function.return_type {
                     if let Some(cur_bb) = builder.get_insert_block() {
                         if cur_bb.get_terminator().is_none() {
-                            emit_deferred(&ctx, &builder, &module, &mut entry_vars, &mut fn_scope, &fn_deferred)?;
+                            emit_deferred(
+                                &ctx,
+                                &builder,
+                                &module,
+                                &mut entry_vars,
+                                &mut fn_scope,
+                                &fn_deferred,
+                            )?;
                             let _ = builder.build_return(None);
                         }
                     }
@@ -140,7 +149,8 @@ pub fn lower(
                 }
             }
             HIRDeclaration::HIRConst(hir_binding) => {
-                let ty = map_type_to_llvm(&hir_binding.ty, &ctx, compilation_unit.scope_root.clone())?;
+                let ty =
+                    map_type_to_llvm(&hir_binding.ty, &ctx, compilation_unit.scope_root.clone())?;
                 let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_binding.name)) {
                     Ok(a) => a,
                     Err(e) => {
@@ -160,7 +170,9 @@ pub fn lower(
                         &module,
                         &mut vars,
                         &mut compilation_unit.scope_root.clone(),
-                        &hir_binding.init.ok_or_else(|| format!("no init for binding"))?,
+                        &hir_binding
+                            .init
+                            .ok_or_else(|| format!("no init for binding"))?,
                     )?,
                 );
                 vars.insert(hir_binding.name, alloca);
@@ -686,9 +698,7 @@ fn map_type_to_llvm<'ctx>(
                 .collect::<Result<_, _>>()?;
             Ok(ctx.struct_type(&field_types, false).into())
         }
-        HIRTypeKind::Pointer(_) => {
-            Ok(ctx.ptr_type(AddressSpace::default()).into())
-        }
+        HIRTypeKind::Pointer(_) => Ok(ctx.ptr_type(AddressSpace::default()).into()),
         HIRTypeKind::Array { element_type, size } => {
             let elem_ty = map_type_to_llvm(element_type, ctx, current_scope)?;
             Ok(elem_ty.array_type(*size as u32).into())
@@ -706,7 +716,10 @@ fn map_type_to_llvm<'ctx>(
                 format!("map_type_to_llvm: module '{}' not found in scope", module)
             })?;
             let sym = module_data.exports.get(name).ok_or_else(|| {
-                format!("map_type_to_llvm: '{}' not found in module '{}'", name, module)
+                format!(
+                    "map_type_to_llvm: '{}' not found in module '{}'",
+                    name, module
+                )
             })?;
             if let HIRSymbol::Type(inner_ty) = sym {
                 let inner_ty = inner_ty.clone();
@@ -768,7 +781,16 @@ fn emit_deferred<'ctx>(
 ) -> Result<(), Box<dyn Error>> {
     // Emit deferred statements in reverse order (LIFO)
     for stmt in deferred.iter().rev() {
-        codegen_stmt(ctx, builder, module, vars, current_scope, stmt, None, &mut vec![])?;
+        codegen_stmt(
+            ctx,
+            builder,
+            module,
+            vars,
+            current_scope,
+            stmt,
+            None,
+            &mut vec![],
+        )?;
     }
     Ok(())
 }
@@ -805,7 +827,11 @@ fn codegen_stmt<'ctx>(
                     &module,
                     &mut vars,
                     &mut current_scope.clone(),
-                    &hir_binding.init.as_ref().ok_or_else(|| format!("no init for binding"))?.clone(),
+                    &hir_binding
+                        .init
+                        .as_ref()
+                        .ok_or_else(|| format!("no init for binding"))?
+                        .clone(),
                 )?,
             )?;
             vars.insert(hir_binding.name.clone(), alloca);
@@ -833,10 +859,15 @@ fn codegen_stmt<'ctx>(
             }
         }
 
-        HIRStmt::FieldAssign { object, field: _, field_index, expr } => {
-            let struct_ptr = *vars.get(object).ok_or_else(|| {
-                format!("codegen_stmt: no alloca for struct variable {}", object)
-            })?;
+        HIRStmt::FieldAssign {
+            object,
+            field: _,
+            field_index,
+            expr,
+        } => {
+            let struct_ptr = *vars
+                .get(object)
+                .ok_or_else(|| format!("codegen_stmt: no alloca for struct variable {}", object))?;
             // Get the struct type from the binding in scope
             let obj_ty = if let Some(HIRSymbol::Binding(b)) = current_scope.symbols.get(object) {
                 map_type_to_llvm(&b.ty, ctx, current_scope.clone())?
@@ -860,17 +891,25 @@ fn codegen_stmt<'ctx>(
             Ok(None)
         }
 
-        HIRStmt::IndexAssign { object, index, expr } => {
+        HIRStmt::IndexAssign {
+            object,
+            index,
+            expr,
+        } => {
             let idx_val = codegen_expr(ctx, builder, module, vars, current_scope, index)?;
             let val = codegen_expr(ctx, builder, module, vars, current_scope, expr)?;
             match &object.inferred_type {
                 HIRTypeKind::Array { .. } => {
-                    let arr_ty = map_type_to_llvm(&object.inferred_type, ctx, current_scope.clone())?;
+                    let arr_ty =
+                        map_type_to_llvm(&object.inferred_type, ctx, current_scope.clone())?;
                     // Get the alloca for the array identifier directly
                     let arr_ptr = if let HIRExpressionKind::Identifier(name) = &object.expression {
-                        *vars.get(name).ok_or_else(|| format!("IndexAssign: array {} not found", name))?
+                        *vars
+                            .get(name)
+                            .ok_or_else(|| format!("IndexAssign: array {} not found", name))?
                     } else {
-                        let arr_val = codegen_expr(ctx, builder, module, vars, current_scope, object)?;
+                        let arr_val =
+                            codegen_expr(ctx, builder, module, vars, current_scope, object)?;
                         let alloca = builder.build_alloca(arr_ty, "idxassigntmp")?;
                         builder.build_store(alloca, arr_val)?;
                         alloca
@@ -901,7 +940,9 @@ fn codegen_stmt<'ctx>(
                     builder.build_store(gep, val)?;
                     Ok(None)
                 }
-                other => Err(format!("codegen_stmt: IndexAssign on non-pointer/array {:?}", other).into()),
+                other => Err(
+                    format!("codegen_stmt: IndexAssign on non-pointer/array {:?}", other).into(),
+                ),
             }
         }
 
@@ -929,9 +970,13 @@ fn codegen_stmt<'ctx>(
                         let src_bits = iv.get_type().get_bit_width();
                         let dst_bits = it.get_bit_width();
                         if src_bits > dst_bits {
-                            builder.build_int_truncate(iv, it, "trunctmp")?.as_basic_value_enum()
+                            builder
+                                .build_int_truncate(iv, it, "trunctmp")?
+                                .as_basic_value_enum()
                         } else if src_bits < dst_bits {
-                            builder.build_int_s_extend(iv, it, "sextmp")?.as_basic_value_enum()
+                            builder
+                                .build_int_s_extend(iv, it, "sextmp")?
+                                .as_basic_value_enum()
                         } else {
                             iv.as_basic_value_enum()
                         }
@@ -977,7 +1022,16 @@ fn codegen_stmt<'ctx>(
             builder.position_at_end(then_bb);
             let mut then_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
             for s in hir_if.then_branch.iter() {
-                codegen_stmt(ctx, builder, module, vars, current_scope, s, loop_ctx, &mut then_deferred)?;
+                codegen_stmt(
+                    ctx,
+                    builder,
+                    module,
+                    vars,
+                    current_scope,
+                    s,
+                    loop_ctx,
+                    &mut then_deferred,
+                )?;
             }
             // Only emit the fallthrough branch if the block has no terminator
             // yet (i.e. the branch body did not end with `return`).
@@ -996,7 +1050,16 @@ fn codegen_stmt<'ctx>(
                 builder.position_at_end(else_bb);
                 let mut else_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
                 for s in eb.iter() {
-                    codegen_stmt(ctx, builder, module, vars, current_scope, s, loop_ctx, &mut else_deferred)?;
+                    codegen_stmt(
+                        ctx,
+                        builder,
+                        module,
+                        vars,
+                        current_scope,
+                        s,
+                        loop_ctx,
+                        &mut else_deferred,
+                    )?;
                 }
                 if builder
                     .get_insert_block()
@@ -1056,10 +1119,24 @@ fn codegen_stmt<'ctx>(
             builder.position_at_end(body_bb);
             let mut body_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
             for s in body.iter() {
-                codegen_stmt(ctx, builder, module, vars, current_scope, s, Some(&for_loop_ctx), &mut body_deferred)?;
+                codegen_stmt(
+                    ctx,
+                    builder,
+                    module,
+                    vars,
+                    current_scope,
+                    s,
+                    Some(&for_loop_ctx),
+                    &mut body_deferred,
+                )?;
             }
             // fall through to post if no terminator
-            if builder.get_insert_block().unwrap().get_terminator().is_none() {
+            if builder
+                .get_insert_block()
+                .unwrap()
+                .get_terminator()
+                .is_none()
+            {
                 emit_deferred(ctx, builder, module, vars, current_scope, &body_deferred)?;
                 builder.build_unconditional_branch(post_bb)?;
             }
@@ -1067,10 +1144,24 @@ fn codegen_stmt<'ctx>(
             // post
             builder.position_at_end(post_bb);
             if let Some(p) = post {
-                codegen_stmt(ctx, builder, module, vars, current_scope, p, Some(&for_loop_ctx), deferred)?;
+                codegen_stmt(
+                    ctx,
+                    builder,
+                    module,
+                    vars,
+                    current_scope,
+                    p,
+                    Some(&for_loop_ctx),
+                    deferred,
+                )?;
             }
             // jump back to condition if block didn't terminate
-            if builder.get_insert_block().unwrap().get_terminator().is_none() {
+            if builder
+                .get_insert_block()
+                .unwrap()
+                .get_terminator()
+                .is_none()
+            {
                 builder.build_unconditional_branch(cond_bb)?;
             }
 

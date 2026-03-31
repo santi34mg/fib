@@ -2,17 +2,17 @@ use std::collections::HashMap;
 #[cfg(feature = "llvm")]
 use std::error::Error;
 use std::fmt::Debug;
-use std::{fs, io};
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use std::fmt;
 
-use crate::analysis::{analyze, AnalysisError};
+use crate::analysis::{AnalysisError, analyze};
 use crate::ast::{Ast, ast::DeclarationNode};
 use crate::hir::{CompilationUnit, HIRModule};
 use crate::lowering;
 use crate::parser::Parser;
-use crate::parser::parser::{ParseError};
+use crate::parser::parser::ParseError;
 use crate::token::identifier::Identifier as FibIdentifier;
 use crate::{lexer::Lexer, token::Token};
 
@@ -47,7 +47,7 @@ impl<'a> CompilationOptions<'a> {
 
 #[derive(Debug)]
 struct DriverError {
-    msg: String
+    msg: String,
 }
 
 impl Error for DriverError {}
@@ -60,25 +60,21 @@ impl fmt::Display for DriverError {
 
 impl From<String> for DriverError {
     fn from(value: String) -> Self {
-        Self {
-            msg: value,
-        }
+        Self { msg: value }
     }
 }
 
 impl From<io::Error> for DriverError {
     fn from(value: io::Error) -> Self {
         Self {
-            msg: value.to_string()
+            msg: value.to_string(),
         }
     }
 }
 
 impl From<AnalysisError> for DriverError {
     fn from(value: AnalysisError) -> Self {
-        Self {
-            msg: value.msg,
-        }
+        Self { msg: value.msg }
     }
 }
 
@@ -219,7 +215,8 @@ fn resolve_module(
     // FIXME: run compilation for imported modules instead of doing lexing and parsing manually
     let tokens: Vec<Token> = Lexer::new(&source).collect();
     let mut parser = Parser::new(tokens.into_iter(), &file_path.as_path(), source);
-    let ast = parser.parse()
+    let ast = parser
+        .parse()
         .map_err(|e| format!("parse error in module '{}': {}", path.join("::"), e))?;
 
     // Recursively resolve this module's imports first
