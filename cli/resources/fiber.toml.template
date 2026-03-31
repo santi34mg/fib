@@ -1,8 +1,7 @@
 [package]
 name = "{{ package_name }}"
 version = "{{ language_version }}"
-src_root = "src"
-main_module = "main.fib"
-target = "debug"
-out_dir = "out"
+
+[dependencies]
+std = "$FIBER_HOME/std"
 

@@ -5,6 +5,7 @@ pub enum Keyword {
     If,
     Else,
     For,
+    While,
     Break,
     Continue,
     Return,
@@ -18,4 +19,5 @@ pub enum Keyword {
     As,
     Extern,
     Defer,
+    Import,
 }

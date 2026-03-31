@@ -1,19 +1,24 @@
+use std::collections::HashMap;
 #[cfg(feature = "llvm")]
 use std::error::Error;
-use std::path::Path;
+use std::fmt::Debug;
+use std::{fs, io};
+use std::path::{Path, PathBuf};
 
-use crate::ast::Ast;
+use std::fmt;
+
+use crate::analysis::{analyze, AnalysisError};
+use crate::ast::{Ast, ast::DeclarationNode};
+use crate::hir::{CompilationUnit, HIRModule};
+use crate::lowering;
 use crate::parser::Parser;
-use crate::parser::parser::{ParseError, ParseResult};
-use crate::analysis::analyze;
-use crate::hir::CompilationUnit;
-use crate::{lexer::Lexer, token::{Token, TokenKind}};
-
-const STDLIB_PRELUDE: &str = include_str!("../../std/libc.fib");
+use crate::parser::parser::{ParseError};
+use crate::token::identifier::Identifier as FibIdentifier;
+use crate::{lexer::Lexer, token::Token};
 
 /// Result of running the compiler frontend (lex + parse + analyze) without LLVM lowering.
 /// Always contains as much data as could be produced before the first fatal error.
-pub struct FrontendResult {
+pub struct FrontendResponse {
     pub tokens: Vec<Token>,
     pub parse_errors: Vec<ParseError>,
     pub analysis_errors: Vec<String>,
@@ -21,97 +26,82 @@ pub struct FrontendResult {
     pub hir: Option<CompilationUnit>,
 }
 
-/// Run lex → parse → analyze on `source` and return all results, even on partial failure.
-/// This is the entry point for the LSP server.
-pub fn compile_frontend(source: &str, filename: &Path) -> FrontendResult {
-    // Lex user source; collect Error tokens as diagnostics
-    let raw_tokens = run_lexer(source);
-    let mut parse_errors: Vec<ParseError> = Vec::new();
-
-    let tokens: Vec<Token> = raw_tokens
-        .into_iter()
-        .filter(|t| {
-            if let TokenKind::Error(msg) = &t.kind {
-                parse_errors.push(ParseError {
-                    filename: filename.into(),
-                    message: msg.clone(),
-                    line: t.line,
-                    column: t.column,
-                    source_line: String::new(),
-                });
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
-
-    // Parse stdlib prelude (should never fail; errors here are a compiler bug)
-    let prelude_tokens = run_lexer(STDLIB_PRELUDE);
-    let prelude_ast = match run_parser(prelude_tokens, Path::new("<stdlib>"), STDLIB_PRELUDE.to_string()) {
-        Ok(ast) => ast,
-        Err(_) => return FrontendResult { tokens, parse_errors, analysis_errors: vec![], ast: None, hir: None },
-    };
-
-    // Parse user source
-    let user_ast = match run_parser(tokens.clone(), filename, source.to_string()) {
-        Ok(ast) => ast,
-        Err(pe) => {
-            parse_errors.push(pe);
-            return FrontendResult { tokens, parse_errors, analysis_errors: vec![], ast: None, hir: None };
-        }
-    };
-
-    // Combine prelude + user declarations
-    let mut combined_declarations = prelude_ast.declarations;
-    combined_declarations.extend(user_ast.declarations);
-    let ast = Ast { declarations: combined_declarations };
-
-    // Semantic analysis
-    let mut analysis_errors: Vec<String> = Vec::new();
-    let hir = match analyze(ast.clone()) {
-        Ok(hir) => Some(hir),
-        Err(e) => {
-            analysis_errors.push(e.to_string());
-            None
-        }
-    };
-
-    FrontendResult { tokens, parse_errors, analysis_errors, ast: Some(ast), hir }
+#[derive(Debug)]
+pub struct CompilationOptions<'a> {
+    pub project_path: PathBuf,
+    pub source: Option<&'a str>,
+    /// Extra directories to search when resolving imports, in addition to the source file's directory.
+    pub include_paths: Vec<PathBuf>,
 }
 
-#[cfg(feature = "llvm")]
-use std::fs;
-#[cfg(feature = "llvm")]
-use crate::lowering;
+impl<'a> CompilationOptions<'a> {
+    #[cfg(feature = "llvm")]
+    pub fn new(args: crate::cli::Args) -> Self {
+        CompilationOptions {
+            project_path: args.file,
+            source: None,
+            include_paths: Vec::new(),
+        }
+    }
+}
 
-/// Library-friendly compile function. Returns Err with a message on failure.
+#[derive(Debug)]
+struct DriverError {
+    msg: String
+}
+
+impl Error for DriverError {}
+
+impl fmt::Display for DriverError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "DriverError: {}", self.msg)
+    }
+}
+
+impl From<String> for DriverError {
+    fn from(value: String) -> Self {
+        Self {
+            msg: value,
+        }
+    }
+}
+
+impl From<io::Error> for DriverError {
+    fn from(value: io::Error) -> Self {
+        Self {
+            msg: value.to_string()
+        }
+    }
+}
+
+impl From<AnalysisError> for DriverError {
+    fn from(value: AnalysisError) -> Self {
+        Self {
+            msg: value.msg,
+        }
+    }
+}
+
+/// Lexes, parses, analyzes and lowers
 #[cfg(feature = "llvm")]
-pub fn compile(file: &Path, is_debug_mode: bool) -> Result<(), Box<dyn Error>> {
+pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Error>> {
+    let file = &compilation_options.project_path;
     if !file.is_file() {
         return Err(format!("Not a file. Found {:?}", file).into());
     }
+
     if file.extension().and_then(|s| s.to_str()) != Some("fib") {
         return Err(format!("Not a fib file. Found {:?}", file).into());
     }
 
-    let file_contents = fs::read_to_string(file)?;
+    let file_contents = fs::read_to_string(file).map_err(|e| DriverError::from(e))?;
     let filename = file.to_string_lossy().to_string();
+    let src_root = file.parent().unwrap_or(Path::new("."));
 
-    // Parse the stdlib prelude and prepend its declarations to the user's AST.
-    let prelude_tokens = run_lexer(&STDLIB_PRELUDE.to_string());
-    let prelude_ast = match run_parser(prelude_tokens, Path::new("<stdlib>"), STDLIB_PRELUDE.to_string()) {
-        Ok(ast) => ast,
-        Err(pe) => {
-            return Err(format!("Stdlib parse error: {}", pe).into());
-        }
-    };
+    let tokens: Vec<Token> = Lexer::new(&file_contents).collect();
 
-    let tokens = run_lexer(&file_contents);
-    if is_debug_mode {
-        show_tokens(&tokens);
-    }
-    let user_ast = match run_parser(tokens, file, file_contents) {
+    let mut parser = Parser::new(tokens.into_iter(), file, file_contents);
+    let ast = match parser.parse() {
         Ok(ast) => ast,
         Err(pe) => {
             eprintln!("{}", pe);
@@ -119,28 +109,60 @@ pub fn compile(file: &Path, is_debug_mode: bool) -> Result<(), Box<dyn Error>> {
         }
     };
 
-    // Combine prelude declarations (first) with user declarations.
-    let mut combined_declarations = prelude_ast.declarations;
-    combined_declarations.extend(user_ast.declarations);
-    let ast = Ast { declarations: combined_declarations };
+    // Build resolved module map (stdlib + user imports)
+    let mut resolved_modules = HashMap::new();
+    let mut resolving = Vec::new();
+    let mut search_roots = vec![src_root];
+    search_roots.extend(
+        compilation_options
+            .include_paths
+            .iter()
+            .map(|p| p.as_path()),
+    );
+    println!("Search roots: {:#?}", search_roots);
 
-    if is_debug_mode {
-        show_ast(&ast);
+    for decl in &ast.declarations {
+        if let DeclarationNode::ImportDeclaration(import_decl) = decl {
+            let import_paths: Vec<String> = import_decl
+                .path
+                .iter()
+                .map(|id| id.identifier.clone())
+                .collect();
+            if !resolved_modules.contains_key(&import_paths) {
+                resolve_module(
+                    &import_paths,
+                    &search_roots,
+                    &mut resolved_modules,
+                    &mut resolving,
+                )
+                .map_err(|e| format!("Import error: {}", e))?;
+            }
+        }
     }
 
-    let hir = analyze(ast).map_err(|e| format!("Analysis failed: {}", e))?;
+    let mut hir = analyze(ast, &resolved_modules).map_err(|e| format!("Analysis failed: {}", e))?;
+
+    // Merge imported declarations into the main compilation unit for lowering
+    let all_decls: Vec<_> = hir
+        .imported_declarations
+        .drain(..)
+        .chain(hir.declarations.drain(..))
+        .collect();
+    hir.declarations = all_decls;
 
     let c_src = lowering::lower(hir, &filename).map_err(|e| format!("Lowering failed: {}", e))?;
 
-    // Write LLVM IR to a temporary file and attempt to compile with clang
-    // TODO: dont hard code out path
+    // Write LLVM IR and compile with clang
+    // TODO: don't hard code out path
     fs::create_dir_all("out").map_err(|e| format!("Failed to create out directory: {}", e))?;
-    let out_ll = format!("out/{}.ll", file.file_stem().unwrap().to_string_lossy().to_string());
+    let stem = file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| format!("Invalid file path: {:?}", file))?;
+    let out_ll = format!("out/{}.ll", stem);
+    let out_bin = format!("out/{}", stem);
     fs::write(&out_ll, &c_src)
         .map_err(|e| format!("Failed to write LLVM IR to {}: {}", out_ll, e))?;
-    // Try to compile with clang
-    let out_bin = out_ll.clone();
-    let out_bin = out_bin.split(".").into_iter().next().unwrap();
     let output = std::process::Command::new("clang-17")
         .arg(out_ll)
         .arg("-o")
@@ -160,37 +182,83 @@ pub fn compile(file: &Path, is_debug_mode: bool) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Legacy binary entrypoint wrapper that exits the process on error.
-#[cfg(feature = "llvm")]
-pub fn run_pipeline(file: &Path, is_debug_mode: bool) {
-    match compile(file, is_debug_mode) {
-        Ok(()) => {}
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
+/// Resolve an imported module from disk, recursively resolving its own imports.
+/// `search_roots` is tried in order; the first root containing the module file wins.
+fn resolve_module(
+    path: &[String],
+    search_roots: &[&Path],
+    resolved: &mut HashMap<Vec<String>, HIRModule>,
+    resolving: &mut Vec<Vec<String>>,
+) -> Result<(), DriverError> {
+    if resolved.contains_key(path) {
+        return Ok(()); // already resolved
+    }
+    if resolving.contains(&path.to_vec()) {
+        return Err(format!("circular import detected: {}", path.join("::")).into());
+    }
+    resolving.push(path.to_vec());
+
+    // Try each search root in order: ["math", "vec3"] -> <root>/math/vec3.fib
+    let (file_path, source) = search_roots
+        .iter()
+        .find_map(|root| {
+            let mut p = root.to_path_buf();
+            for segment in &path[1..] {
+                p.push(segment);
+            }
+            p.set_extension("fib");
+            std::fs::read_to_string(&p).ok().map(|s| (p, s))
+        })
+        .ok_or_else(|| {
+            format!(
+                "cannot read module '{}': No such file or directory",
+                path.join("::")
+            )
+        })?;
+
+    // FIXME: run compilation for imported modules instead of doing lexing and parsing manually
+    let tokens: Vec<Token> = Lexer::new(&source).collect();
+    let mut parser = Parser::new(tokens.into_iter(), &file_path.as_path(), source);
+    let ast = parser.parse()
+        .map_err(|e| format!("parse error in module '{}': {}", path.join("::"), e))?;
+
+    // Recursively resolve this module's imports first
+    for decl in &ast.declarations {
+        if let DeclarationNode::ImportDeclaration(import) = decl {
+            let import_path: Vec<String> =
+                import.path.iter().map(|id| id.identifier.clone()).collect();
+            if !resolved.contains_key(&import_path) {
+                resolve_module(&import_path, search_roots, resolved, resolving)?;
+            }
         }
     }
+
+    let cu = analyze(ast, resolved)?;
+    let module_name = path.last().cloned().unwrap_or_default();
+    let module = HIRModule {
+        name: module_name,
+        path: path
+            .iter()
+            .map(|s| FibIdentifier {
+                identifier: s.clone(),
+            })
+            .collect(),
+        exports: cu.scope_root.symbols,
+        declarations: [cu.declarations, cu.imported_declarations].concat(),
+    };
+    resolved.insert(path.to_vec(), module);
+    resolving.retain(|p| p != path);
+    Ok(())
 }
 
-fn run_lexer(src: &str) -> Vec<Token> {
-    Lexer::new(src).collect()
-}
-
-fn run_parser<'a>(tokens: Vec<Token>, filename: &Path, source: String) -> ParseResult<Ast> {
-    let mut parser = Parser::new(tokens.into_iter(), filename, source);
-    parser.parse()
-}
-
-pub(crate) fn show_tokens(tokens: &Vec<Token>) {
-    println!("====START TOKENS=======");
+fn dump_tokens(tokens: &[Token], path: &Path) {
     for token in tokens {
         println!("{:?}", token);
     }
-    println!("====END TOKENS=========");
+    todo!()
 }
 
-pub(crate) fn show_ast(ast: &Ast) {
-    println!("====START AST==========");
+fn dump_ast(ast: &Ast, path: &Path) {
     println!("{:#?}", ast);
-    println!("====END AST============");
+    todo!()
 }

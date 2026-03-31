@@ -12,3 +12,5 @@ fibc = { path = "../fibc", default-features = false }
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
 dashmap = "6"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }

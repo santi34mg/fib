@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use fibc::driver::{FrontendResult, compile_frontend};
+use fibc::driver::{CompilationOptions, FrontendResponse};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -12,8 +12,7 @@ use crate::definition::goto_definition;
 use crate::hover::hover_info;
 
 struct DocumentState {
-    text: String,
-    result: FrontendResult,
+    result: FrontendResponse,
 }
 
 pub struct FiberLanguageServer {
@@ -31,7 +30,28 @@ impl FiberLanguageServer {
             .to_file_path()
             .unwrap_or_else(|_| Path::new("<unknown>").to_path_buf());
 
-        let result = compile_frontend(&text, &path);
+        let opts = CompilationOptions { project_path: path, source: Some(&text), include_paths: Vec::new() };
+        // Convert to (Option<FrontendResponse>, Option<String>) so the non-Send error is
+        // fully dropped before the first await point.
+        // FIXME: 
+        let (frontend_result, frontend_error) = match compile_frontend(opts) {
+            Ok(r) => (Some(r), None),
+            Err(e) => (None, Some(format!("{}", e))),
+        };
+        if let Some(msg) = frontend_error {
+            self.client.publish_diagnostics(uri, vec![Diagnostic {
+                range: Range {
+                    start: Position { line: 0, character: 0 },
+                    end: Position { line: 0, character: 1 },
+                },
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: msg,
+                source: Some("fiber".into()),
+                ..Default::default()
+            }], None).await;
+            return;
+        }
+        let result = frontend_result.unwrap();
 
         let mut diagnostics: Vec<Diagnostic> = result
             .parse_errors
@@ -42,9 +62,13 @@ impl FiberLanguageServer {
             diagnostics.push(analysis_error_to_diagnostic(msg));
         }
 
-        self.documents.insert(uri.clone(), Arc::new(DocumentState { text, result }));
+        self.documents.insert(uri.clone(), Arc::new(DocumentState { result }));
         self.client.publish_diagnostics(uri, diagnostics, None).await;
     }
+}
+
+fn compile_frontend(opts: CompilationOptions) -> Result<FrontendResponse> {
+    unimplemented!()
 }
 
 #[tower_lsp::async_trait]

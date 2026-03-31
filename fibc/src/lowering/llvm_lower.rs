@@ -7,7 +7,7 @@ use crate::hir::{
 use crate::token::Operator;
 use crate::token::builtin::BuiltinType;
 use crate::token::identifier::Identifier;
-use inkwell::{FloatPredicate, IntPredicate};
+use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -73,7 +73,12 @@ pub fn lower(
                     continue;
                 }
 
-                let function = module.add_function(&function_name, fn_ty, None);
+                // Reuse an existing forward declaration (e.g. auto-declared at a call site)
+                // rather than creating a duplicate with a mangled name.
+                let function = match module.get_function(&function_name) {
+                    Some(f) => f,
+                    None => module.add_function(&function_name, fn_ty, None),
+                };
                 let entry = ctx.append_basic_block(function, "entry");
                 builder.position_at_end(entry);
                 let mut entry_vars = create_entry_allocas(
@@ -184,7 +189,17 @@ fn codegen_expr<'ctx>(
             if let BasicTypeEnum::IntType(ty) =
                 map_type_to_llvm(&expr.inferred_type, ctx, Scope::new())?
             {
-                Ok(ty.const_int(*value as u64, true).as_basic_value_enum())
+                let sign_extend = !matches!(
+                    expr.inferred_type,
+                    HIRTypeKind::Builtin(
+                        BuiltinType::UInt1
+                        | BuiltinType::UInt2
+                        | BuiltinType::UInt4
+                        | BuiltinType::UInt8
+                        | BuiltinType::UInt16
+                    )
+                );
+                Ok(ty.const_int(*value as u64, sign_extend).as_basic_value_enum())
             } else {
                 unreachable!()
             }
@@ -223,7 +238,7 @@ fn codegen_expr<'ctx>(
             Ok(load)
         }
         HIRExpressionKind::Null => {
-            Ok(ctx.ptr_type(inkwell::AddressSpace::default()).const_null().as_basic_value_enum())
+            Ok(ctx.ptr_type(AddressSpace::default()).const_null().as_basic_value_enum())
         }
         HIRExpressionKind::Binary {
             left,
@@ -235,19 +250,20 @@ fn codegen_expr<'ctx>(
             let is_float = matches!(
                 left.inferred_type,
                 HIRTypeKind::Builtin(
-                    BuiltinType::Float16
-                    | BuiltinType::Float32
-                    | BuiltinType::Float64
-                    | BuiltinType::Float128
+                    BuiltinType::Float2
+                    | BuiltinType::Float4
+                    | BuiltinType::Float8
+                    | BuiltinType::Float16
                 )
             );
             let is_unsigned = matches!(
                 left.inferred_type,
                 HIRTypeKind::Builtin(
-                    BuiltinType::UInt8
+                    BuiltinType::UInt1
+                    | BuiltinType::UInt2
+                    | BuiltinType::UInt4
+                    | BuiltinType::UInt8
                     | BuiltinType::UInt16
-                    | BuiltinType::UInt32
-                    | BuiltinType::UInt64
                 )
             );
             match operator {
@@ -377,7 +393,7 @@ fn codegen_expr<'ctx>(
                     .build_left_shift(l.into_int_value(), r.into_int_value(), "shltmp")?
                     .as_basic_value_enum()),
                 Operator::RightShift => Ok(builder
-                    .build_right_shift(l.into_int_value(), r.into_int_value(), false, "shrtmp")?
+                    .build_right_shift(l.into_int_value(), r.into_int_value(), !is_unsigned, "shrtmp")?
                     .as_basic_value_enum()),
                 Operator::Ampersand => Ok(builder
                     .build_and(l.into_int_value(), r.into_int_value(), "bandtmp")?
@@ -404,13 +420,17 @@ fn codegen_expr<'ctx>(
                 None => {
                     let param_types: Vec<BasicMetadataTypeEnum> =
                         arg_values.iter().map(|v| v.get_type().into()).collect();
-                    let ret_ty = map_type_to_llvm(&expr.inferred_type, ctx, current_scope.clone())?;
-                    let fn_ty = match ret_ty {
-                        BasicTypeEnum::IntType(it) => it.fn_type(&param_types, false),
-                        BasicTypeEnum::PointerType(pt) => pt.fn_type(&param_types, false),
-                        BasicTypeEnum::FloatType(ft) => ft.fn_type(&param_types, false),
-                        BasicTypeEnum::StructType(st) => st.fn_type(&param_types, false),
-                        other => return Err(format!("unsupported return type for auto-declared function: {:?}", other).into()),
+                    let fn_ty = if let HIRTypeKind::Builtin(BuiltinType::Void) = &expr.inferred_type {
+                        ctx.void_type().fn_type(&param_types, false)
+                    } else {
+                        let ret_ty = map_type_to_llvm(&expr.inferred_type, ctx, current_scope.clone())?;
+                        match ret_ty {
+                            BasicTypeEnum::IntType(it) => it.fn_type(&param_types, false),
+                            BasicTypeEnum::PointerType(pt) => pt.fn_type(&param_types, false),
+                            BasicTypeEnum::FloatType(ft) => ft.fn_type(&param_types, false),
+                            BasicTypeEnum::StructType(st) => st.fn_type(&param_types, false),
+                            other => return Err(format!("unsupported return type for auto-declared function: {:?}", other).into()),
+                        }
                     };
                     module.add_function(&callee.identifier, fn_ty, None)
                 }
@@ -504,10 +524,11 @@ fn codegen_expr<'ctx>(
                         let signed = matches!(
                             inner.inferred_type,
                             HIRTypeKind::Builtin(
-                                BuiltinType::Int8
+                                BuiltinType::Int1
+                                | BuiltinType::Int2
+                                | BuiltinType::Int4
+                                | BuiltinType::Int8
                                 | BuiltinType::Int16
-                                | BuiltinType::Int32
-                                | BuiltinType::Int64
                             )
                         );
                         if signed {
@@ -541,11 +562,6 @@ fn codegen_expr<'ctx>(
         }
         HIRExpressionKind::ArrayLiteral { elements } => {
             let arr_ty = map_type_to_llvm(&expr.inferred_type, ctx, current_scope.clone())?;
-            let elem_ty = if let HIRTypeKind::Array { element_type, .. } = &expr.inferred_type {
-                map_type_to_llvm(element_type, ctx, current_scope.clone())?
-            } else {
-                unreachable!("ArrayLiteral inferred_type must be Array")
-            };
             let alloca = builder.build_alloca(arr_ty, "arrtmp")?;
             let i32_zero = ctx.i32_type().const_int(0, false);
             for (i, elem) in elements.iter().enumerate() {
@@ -601,6 +617,21 @@ fn codegen_expr<'ctx>(
                 }
             }
         }
+        HIRExpressionKind::QualifiedAccess { module: module_name, name } => {
+            // Qualified access: look up the mangled name in the LLVM module.
+            let mangled = format!("{}__{}", module_name, name.identifier);
+            if let Some(ptr) = vars.get(name) {
+                let ty = map_type_to_llvm(&expr.inferred_type, ctx, current_scope.clone())?;
+                Ok(builder.build_load(ty, *ptr, &mangled)?)
+            } else if let Some(func) = module.get_function(&mangled) {
+                Ok(func.as_global_value().as_pointer_value().as_basic_value_enum())
+            } else {
+                Err(format!("QualifiedAccess: '{}::{}' not found in lowering", module_name, name).into())
+            }
+        }
+        HIRExpressionKind::ComptimeType(_) => {
+            Err("compiler bug: ComptimeType expression reached LLVM lowering — type values must not appear in runtime code".into())
+        }
     }
 }
 
@@ -614,20 +645,22 @@ fn map_type_to_llvm<'ctx>(
             let any_ty = match builtin {
                 BuiltinType::Boolean => BasicTypeEnum::IntType(ctx.bool_type()),
                 // TODO: make unsigned truly unsigned
-                BuiltinType::UInt8 => BasicTypeEnum::IntType(ctx.i8_type()),
-                BuiltinType::UInt16 => BasicTypeEnum::IntType(ctx.i16_type()),
-                BuiltinType::UInt32 => BasicTypeEnum::IntType(ctx.i32_type()),
-                BuiltinType::UInt64 => BasicTypeEnum::IntType(ctx.i64_type()),
-                BuiltinType::Int8 => BasicTypeEnum::IntType(ctx.i8_type()),
-                BuiltinType::Int16 => BasicTypeEnum::IntType(ctx.i16_type()),
-                BuiltinType::Int32 => BasicTypeEnum::IntType(ctx.i32_type()),
-                BuiltinType::Int64 => BasicTypeEnum::IntType(ctx.i64_type()),
-                BuiltinType::Float16 => BasicTypeEnum::FloatType(ctx.f16_type()),
-                BuiltinType::Float32 => BasicTypeEnum::FloatType(ctx.f32_type()),
-                BuiltinType::Float64 => BasicTypeEnum::FloatType(ctx.f64_type()),
-                BuiltinType::Float128 => BasicTypeEnum::FloatType(ctx.f128_type()),
+                BuiltinType::UInt1 => BasicTypeEnum::IntType(ctx.i8_type()),
+                BuiltinType::UInt2 => BasicTypeEnum::IntType(ctx.i16_type()),
+                BuiltinType::UInt4 => BasicTypeEnum::IntType(ctx.i32_type()),
+                BuiltinType::UInt8 => BasicTypeEnum::IntType(ctx.i64_type()),
+                BuiltinType::UInt16 => BasicTypeEnum::IntType(ctx.i128_type()),
+                BuiltinType::Int1 => BasicTypeEnum::IntType(ctx.i8_type()),
+                BuiltinType::Int2 => BasicTypeEnum::IntType(ctx.i16_type()),
+                BuiltinType::Int4 => BasicTypeEnum::IntType(ctx.i32_type()),
+                BuiltinType::Int8 => BasicTypeEnum::IntType(ctx.i64_type()),
+                BuiltinType::Int16 => BasicTypeEnum::IntType(ctx.i128_type()),
+                BuiltinType::Float2 => BasicTypeEnum::FloatType(ctx.f16_type()),
+                BuiltinType::Float4 => BasicTypeEnum::FloatType(ctx.f16_type()),
+                BuiltinType::Float8 => BasicTypeEnum::FloatType(ctx.f64_type()),
+                BuiltinType::Float16 => BasicTypeEnum::FloatType(ctx.f128_type()),
                 BuiltinType::String => {
-                    BasicTypeEnum::PointerType(ctx.ptr_type(inkwell::AddressSpace::default()))
+                    BasicTypeEnum::PointerType(ctx.ptr_type(AddressSpace::default()))
                 }
                 BuiltinType::Char => BasicTypeEnum::IntType(ctx.i8_type()),
                 BuiltinType::Never => BasicTypeEnum::IntType(ctx.bool_type()),
@@ -654,11 +687,33 @@ fn map_type_to_llvm<'ctx>(
             Ok(ctx.struct_type(&field_types, false).into())
         }
         HIRTypeKind::Pointer(_) => {
-            Ok(ctx.ptr_type(inkwell::AddressSpace::default()).into())
+            Ok(ctx.ptr_type(AddressSpace::default()).into())
         }
         HIRTypeKind::Array { element_type, size } => {
             let elem_ty = map_type_to_llvm(element_type, ctx, current_scope)?;
             Ok(elem_ty.array_type(*size as u32).into())
+        }
+        HIRTypeKind::Function { .. } => {
+            // Function pointers are opaque `ptr` in LLVM 16.
+            Ok(ctx.ptr_type(AddressSpace::default()).into())
+        }
+        HIRTypeKind::Type => {
+            return Err("compiler bug: HIRTypeKind::Type reached LLVM lowering — comptime type values must not appear in runtime code".into());
+        }
+        HIRTypeKind::QualifiedIdentifier { module, name } => {
+            // Resolve through the scope's imported modules
+            let module_data = current_scope.modules.get(module).ok_or_else(|| {
+                format!("map_type_to_llvm: module '{}' not found in scope", module)
+            })?;
+            let sym = module_data.exports.get(name).ok_or_else(|| {
+                format!("map_type_to_llvm: '{}' not found in module '{}'", name, module)
+            })?;
+            if let HIRSymbol::Type(inner_ty) = sym {
+                let inner_ty = inner_ty.clone();
+                map_type_to_llvm(&inner_ty, ctx, current_scope)
+            } else {
+                Err(format!("map_type_to_llvm: '{}::{}' is not a type", module, name).into())
+            }
         }
     }
 }
@@ -774,7 +829,7 @@ fn codegen_stmt<'ctx>(
                 let _ = builder.build_store(*ptr, v);
                 Ok(None)
             } else {
-                panic!("assignment to unknown variable '{}' in lowering", name);
+                Err(format!("assignment to unknown variable '{}' in lowering", name).into())
             }
         }
 
@@ -809,9 +864,8 @@ fn codegen_stmt<'ctx>(
             let idx_val = codegen_expr(ctx, builder, module, vars, current_scope, index)?;
             let val = codegen_expr(ctx, builder, module, vars, current_scope, expr)?;
             match &object.inferred_type {
-                HIRTypeKind::Array { element_type, .. } => {
+                HIRTypeKind::Array { .. } => {
                     let arr_ty = map_type_to_llvm(&object.inferred_type, ctx, current_scope.clone())?;
-                    let elem_ty = map_type_to_llvm(element_type, ctx, current_scope.clone())?;
                     // Get the alloca for the array identifier directly
                     let arr_ptr = if let HIRExpressionKind::Identifier(name) = &object.expression {
                         *vars.get(name).ok_or_else(|| format!("IndexAssign: array {} not found", name))?

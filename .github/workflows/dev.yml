@@ -14,10 +14,6 @@ jobs:
     name: Build and run tests
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: fiberc
-
     steps:
       - uses: actions/checkout@v4
 
@@ -38,12 +34,19 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - uses: actions-rs/toolchain@v1
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          components: clippy, rustfmt
 
       - name: Check
         run: cargo check
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
 
       - name: Build
         run: cargo build

@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::{fs, path::PathBuf, process};
 use tera::{Context, Tera};
 
-use fibc;
+use fibc::{self, driver::CompilationOptions};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -31,13 +31,23 @@ struct PackageConfig {
     version: String,
     src_root: String,
     main_module: String,
-    target: String,
+    include_paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DefaultConfigs {
+    src_root: String,
+    main_module: String,
+    out_dir: String,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     Compile {
         file: Option<PathBuf>,
+        /// Additional include directories to search when resolving imports (repeatable: -I path)
+        #[arg(short = 'I', long = "include", value_name = "PATH")]
+        include: Vec<PathBuf>,
     },
     Init {
         dir: PathBuf,
@@ -52,7 +62,7 @@ fn main() {
     let cli = Cli::parse();
     let command_result = match cli.command {
         Some(Commands::Init { dir }) => init_command(dir),
-        Some(Commands::Compile { file }) => compile_command(file),
+        Some(Commands::Compile { file, include }) => compile_command(file, include),
         Some(Commands::Deps { urls, dest }) => deps_command(urls, dest),
         None => {
             eprintln!("Specify a command: compile, init, deps");
@@ -60,20 +70,48 @@ fn main() {
         }
     };
     match command_result {
-        Ok(_) => {},
-        Err(e) => eprintln!("Command failed: \n{}", e)
+        Ok(_) => {}
+        Err(e) => eprintln!("Command failed: \n{}", e),
     }
 }
 
-fn compile_command(file: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+fn compile_command(
+    file: Option<PathBuf>,
+    cli_includes: Vec<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let config: Cfg = toml::from_str::<Cfg>(&fs::read_to_string(CONFIG_PATH)?)?;
     let file = match file {
         Some(f) => f,
-        None => PathBuf::from(format!("{}/{}", config.package.src_root, config.package.main_module)),
+        None => PathBuf::from(format!(
+            "{}/{}",
+            config.package.src_root, config.package.main_module
+        )),
     };
 
-    println!("Compiling project {} with fiber version {}", config.package.name, config.package.version);
-    fibc::compile_project(&file, config.package.target)
+    // Merge include paths from fiber.toml and CLI flags
+    let mut include_paths: Vec<PathBuf> = config
+        .package
+        .include_paths
+        .unwrap_or_default()
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    include_paths.extend(cli_includes);
+
+    let include_refs: Vec<&std::path::Path> = include_paths.iter().map(|p| p.as_path()).collect();
+
+    println!(
+        "Compiling project {} with fiber version {}",
+        config.package.name, config.package.version
+    );
+    println!("Include paths: {:#?}", include_refs);
+
+    let compilation_options = CompilationOptions {
+        project_path: file,
+        source: None,
+        include_paths,
+    };
+    fibc::compile_project(compilation_options)
 }
 
 fn init_command(dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -87,9 +125,12 @@ fn init_command(dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let config_template = CONFIG_TEMPLATE_STR;
     let mut tera = Tera::default();
     let mut context = Context::new();
+
     tera.add_raw_template("default_config", config_template)?;
+
     context.insert("package_name", &package_name);
     context.insert("language_version", VERSION);
+
     let config = tera.render("default_config", &context)?;
 
     fs::write(dir.join(CONFIG_PATH), config)?;

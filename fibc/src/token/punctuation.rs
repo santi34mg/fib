@@ -9,6 +9,7 @@ pub enum Punctuation {
     Semicolon,
     Comma,
     Colon,
+    DoubleColon,
     Dot,
     At,
 }

@@ -5,6 +5,15 @@ use crate::token::Operator;
 use crate::token::identifier::Identifier;
 use crate::token::literal::Literal;
 
+pub type ModulePath = Vec<Identifier>;
+
+#[derive(Debug, Clone)]
+pub struct ImportDeclaration {
+    pub path: ModulePath,
+    pub alias: Option<Identifier>,
+    pub selective: Option<Vec<Identifier>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Ast {
     pub declarations: Vec<DeclarationNode>,
@@ -21,8 +30,8 @@ impl Ast {
 
 #[derive(Debug, Clone)]
 pub enum DeclarationNode {
+    ImportDeclaration(ImportDeclaration),
     FunctionDeclaration(FunctionDeclaration),
-    TypeDeclaration(TypeDeclaration),
     Statement(StatementNode),
 }
 
@@ -92,12 +101,6 @@ pub struct FunctionBody {
     pub statements: Vec<StatementNode>,
 }
 
-#[derive(Debug, Clone)]
-pub struct TypeDeclaration {
-    pub name: Identifier,
-    pub type_expression: TypeExpression,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpression {
     Builtin(BuiltinType),
@@ -117,6 +120,12 @@ pub enum TypeExpression {
         element_type: Box<TypeExpression>,
         size: u64,
     },
+    QualifiedIdentifier {
+        module: Identifier,
+        name: Identifier,
+    },
+    /// The `type` keyword used as a type annotation — indicates this binding holds a compile-time type value.
+    TypeKeyword,
 }
 
 impl fmt::Display for TypeExpression {
@@ -136,6 +145,12 @@ impl fmt::Display for TypeExpression {
             }
             TypeExpression::Array { element_type, size } => {
                 write!(f, "{}[{}]", element_type, size)?;
+            }
+            TypeExpression::QualifiedIdentifier { module, name } => {
+                write!(f, "{}::{}", module, name)?;
+            }
+            TypeExpression::TypeKeyword => {
+                write!(f, "type")?;
             }
             TypeExpression::Pointer { pointer_variant, pointed_type } => {
                 match pointer_variant {
@@ -256,4 +271,10 @@ pub enum Expression {
     ArrayLiteral {
         elements: Vec<Expression>,
     },
+    QualifiedAccess {
+        module: Identifier,
+        member: Identifier,
+    },
+    /// A compile-time type value used in expression position (e.g., as a generic argument).
+    TypeValue(TypeExpression),
 }

@@ -1,10 +1,10 @@
 import std::libc
 
-fn pack_ipv4(a uint32, b uint32, c uint32, d uint32) uint32 {
+fn pack_ipv4(uint32 a, uint32 b, uint32 c, uint32 d) uint32 {
     return (a << 24) | (b << 16) | (c << 8) | d
 }
 
-fn popcount(x uint32) uint32 {
+fn popcount(uint32 x) uint32 {
     var uint32 count = 0
     var uint32 v = x
     for (;v != 0 as uint32;) {
