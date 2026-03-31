@@ -22,8 +22,6 @@ use crate::driver::CompilationOptions;
 /// `include_paths` is a list of additional directories searched when resolving imports.
 /// Returns Ok(()) on success or Err(message) on failure.
 #[cfg(feature = "llvm")]
-pub fn compile_project(
-    compilation_options: CompilationOptions,
-) -> Result<(), Box<dyn Error>> {
+pub fn compile_project(compilation_options: CompilationOptions) -> Result<(), Box<dyn Error>> {
     driver::compile(compilation_options)
 }

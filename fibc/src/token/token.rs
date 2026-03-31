@@ -1,9 +1,9 @@
 use crate::token::builtin::Builtin;
+use crate::token::identifier::Identifier;
 use crate::token::keyword::Keyword;
 use crate::token::literal::Literal;
 use crate::token::operator::Operator;
 use crate::token::punctuation::Punctuation;
-use crate::token::identifier::Identifier;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -30,11 +30,28 @@ pub struct Token {
 
 impl Token {
     pub fn new(kind: TokenKind, line: usize, column: usize) -> Self {
-        return Self { kind, line, column, end_line: line, end_column: column };
+        return Self {
+            kind,
+            line,
+            column,
+            end_line: line,
+            end_column: column,
+        };
     }
 
-    pub fn with_end(kind: TokenKind, line: usize, column: usize, end_line: usize, end_column: usize) -> Self {
-        Self { kind, line, column, end_line, end_column }
+    pub fn with_end(
+        kind: TokenKind,
+        line: usize,
+        column: usize,
+        end_line: usize,
+        end_column: usize,
+    ) -> Self {
+        Self {
+            kind,
+            line,
+            column,
+            end_line,
+            end_column,
+        }
     }
 }
-

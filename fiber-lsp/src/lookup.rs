@@ -1,15 +1,15 @@
 use fibc::hir::{HIRSymbol, Scope};
-use fibc::token::{Token, TokenKind};
-use fibc::token::identifier::Identifier;
-use fibc::token::punctuation::Punctuation;
 use fibc::token::Operator;
+use fibc::token::identifier::Identifier;
 use fibc::token::keyword::Keyword;
+use fibc::token::punctuation::Punctuation;
+use fibc::token::{Token, TokenKind};
 
 /// Find the token whose span contains `(line, col)` (1-based).
 pub fn token_at(tokens: &[Token], line: usize, col: usize) -> Option<&Token> {
-    tokens.iter().find(|t| {
-        t.line == line && t.column <= col && col <= t.end_column
-    })
+    tokens
+        .iter()
+        .find(|t| t.line == line && t.column <= col && col <= t.end_column)
 }
 
 /// Look up an identifier name recursively through all scopes.
@@ -49,7 +49,12 @@ pub fn find_module_symbol<'a>(
 /// - `fn name`, `var name`, `const name`, `type name`
 /// - Function parameters: `(name :` or `, name :`
 pub fn find_declaration<'a>(name: &Identifier, tokens: &'a [Token]) -> Option<&'a Token> {
-    let decl_keywords = [Keyword::Function, Keyword::Var, Keyword::Const, Keyword::Type];
+    let decl_keywords = [
+        Keyword::Function,
+        Keyword::Var,
+        Keyword::Const,
+        Keyword::Type,
+    ];
 
     for (i, tok) in tokens.iter().enumerate() {
         match &tok.kind {
@@ -91,7 +96,8 @@ pub fn find_declaration<'a>(name: &Identifier, tokens: &'a [Token]) -> Option<&'
                     if let TokenKind::Identifier(id) = &next.kind {
                         if id == name {
                             if let Some(after) = tokens.get(i + 2) {
-                                if matches!(after.kind, TokenKind::Punctuation(Punctuation::Colon)) {
+                                if matches!(after.kind, TokenKind::Punctuation(Punctuation::Colon))
+                                {
                                     return Some(next);
                                 }
                             }
