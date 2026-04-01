@@ -12,6 +12,6 @@ async fn main() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, socket) = LspService::new(|client| FiberLanguageServer::new(client));
+    let (service, socket) = LspService::new(FiberLanguageServer::new);
     Server::new(stdin, stdout, socket).serve(service).await;
 }

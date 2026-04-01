@@ -2,13 +2,13 @@ use std::fmt;
 use std::iter::Peekable;
 use std::path::Path;
 
-use crate::ast::ast::{
+use crate::ast::{
     Ast, ConstantDeclaration, DeclarationNode, Expression, Field, FunctionBody,
     FunctionDeclaration, FunctionParameter, FunctionSignature, ImportDeclaration, PointerVariant,
     StatementNode, TypeExpression, VariableDeclaration,
 };
-use crate::token::builtin::Builtin;
-use crate::token::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
+use crate::tokens::builtin::Builtin;
+use crate::tokens::{Keyword, Literal, Operator, Punctuation, Token, TokenKind};
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
@@ -56,7 +56,7 @@ where
         }
     }
 
-    fn error<'err>(&'err self, message: &str, line: usize, column: usize) -> ParseError {
+    fn error(&self, message: &str, line: usize, column: usize) -> ParseError {
         let source_line = self
             .source_lines
             .get(line.saturating_sub(1))
@@ -121,10 +121,10 @@ where
     where
         F: FnOnce(&Token) -> bool,
     {
-        if let Some(token) = self.peek() {
-            if pred(&token) {
-                return self.next();
-            }
+        if let Some(token) = self.peek()
+            && pred(&token)
+        {
+            return self.next();
         }
         None
     }
@@ -227,19 +227,19 @@ where
                 }
                 TokenKind::Keyword(Keyword::Break) => {
                     self.next(); // consume 'break'
-                    if let Some(t) = self.peek() {
-                        if matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)) {
-                            self.next();
-                        }
+                    if let Some(t) = self.peek()
+                        && matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon))
+                    {
+                        self.next();
                     }
                     StatementNode::Break
                 }
                 TokenKind::Keyword(Keyword::Continue) => {
                     self.next(); // consume 'continue'
-                    if let Some(t) = self.peek() {
-                        if matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)) {
-                            self.next();
-                        }
+                    if let Some(t) = self.peek()
+                        && matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon))
+                    {
+                        self.next();
                     }
                     StatementNode::Continue
                 }
@@ -812,33 +812,26 @@ where
                     let fields = self.parse_type_fields()?;
                     Ok(TypeExpression::Struct { fields })
                 }
-                _ => {
-                    return Err(self.error(
-                        "expected an open curly brace",
-                        first_token.line,
-                        first_token.column,
-                    ));
-                }
+                _ => Err(self.error(
+                    "expected an open curly brace",
+                    first_token.line,
+                    first_token.column,
+                )),
             },
-            None => {
-                return Err(self.error(
-                    "expected a type keyword",
-                    type_token.line,
-                    type_token.column,
-                ));
-            }
+            None => Err(self.error(
+                "expected a type keyword",
+                type_token.line,
+                type_token.column,
+            )),
         }
     }
 
     fn parse_type_fields(&mut self) -> ParseResult<Vec<Field>> {
         let mut fields: Vec<Field> = Vec::new();
         while let Some(next_token) = self.peek() {
-            match next_token.kind {
-                TokenKind::Punctuation(Punctuation::ClosingCurlyBrace) => {
-                    self.next(); // consume the closing curly brace
-                    break;
-                }
-                _ => {}
+            if let TokenKind::Punctuation(Punctuation::ClosingCurlyBrace) = next_token.kind {
+                self.next(); // consume the closing curly brace
+                break;
             }
             let line = next_token.line;
             let column = next_token.column;
@@ -1237,7 +1230,7 @@ where
             }
             // A builtin type token in expression position — produces a comptime type value.
             // This allows passing builtin types as generic arguments: `identity(sint32, 42)`
-            TokenKind::Builtin(crate::token::builtin::Builtin::BuiltinType(bt)) => {
+            TokenKind::Builtin(Builtin::BuiltinType(bt)) => {
                 Expression::TypeValue(TypeExpression::Builtin(bt))
             }
             TokenKind::Literal(Literal::Null) => Expression::Literal(Literal::Null),
@@ -1251,91 +1244,84 @@ where
         };
 
         // Parse postfix operations: function calls and field access
-        loop {
-            if let Some(token) = self.peek() {
+        while let Some(token) = self.peek() {
+            if matches!(
+                token.kind,
+                TokenKind::Punctuation(Punctuation::OpeningParenthesis)
+            ) {
+                self.next(); // consume '('
+                let mut args = Vec::new();
+                if let Some(token) = self.peek()
+                    && !matches!(
+                        token.kind,
+                        TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+                    )
+                {
+                    loop {
+                        args.push(self.parse_expression()?);
+                        if let Some(token) = self.peek() {
+                            if matches!(token.kind, TokenKind::Punctuation(Punctuation::Comma)) {
+                                self.next(); // consume ','
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect_token(
+                    TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+                    "parse_atom: expected ')' after function call arguments",
+                )?;
+                expr = Expression::Call {
+                    callee: Box::new(expr),
+                    args,
+                };
+            } else if matches!(token.kind, TokenKind::Punctuation(Punctuation::Dot)) {
+                self.next(); // consume '.'
+                // Check for `.[ index ]` before consuming
                 if matches!(
-                    token.kind,
-                    TokenKind::Punctuation(Punctuation::OpeningParenthesis)
+                    self.peek(),
+                    Some(Token {
+                        kind: TokenKind::Punctuation(Punctuation::OpeningSquareBrace),
+                        ..
+                    })
                 ) {
-                    self.next(); // consume '('
-                    let mut args = Vec::new();
-                    if let Some(token) = self.peek() {
-                        if !matches!(
-                            token.kind,
-                            TokenKind::Punctuation(Punctuation::ClosingParenthesis)
-                        ) {
-                            loop {
-                                args.push(self.parse_expression()?);
-                                if let Some(token) = self.peek() {
-                                    if matches!(
-                                        token.kind,
-                                        TokenKind::Punctuation(Punctuation::Comma)
-                                    ) {
-                                        self.next(); // consume ','
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    self.next(); // consume '['
+                    let index = self.parse_expression()?;
                     self.expect_token(
-                        TokenKind::Punctuation(Punctuation::ClosingParenthesis),
-                        "parse_atom: expected ')' after function call arguments",
+                        TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
+                        "parse_atom: expected ']' after index expression",
                     )?;
-                    expr = Expression::Call {
-                        callee: Box::new(expr),
-                        args,
+                    expr = Expression::IndexAccess {
+                        object: Box::new(expr),
+                        index: Box::new(index),
                     };
-                } else if matches!(token.kind, TokenKind::Punctuation(Punctuation::Dot)) {
-                    self.next(); // consume '.'
-                    // Check for `.[ index ]` before consuming
-                    if matches!(
-                        self.peek(),
-                        Some(Token {
-                            kind: TokenKind::Punctuation(Punctuation::OpeningSquareBrace),
-                            ..
-                        })
-                    ) {
-                        self.next(); // consume '['
-                        let index = self.parse_expression()?;
-                        self.expect_token(
-                            TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
-                            "parse_atom: expected ']' after index expression",
-                        )?;
-                        expr = Expression::IndexAccess {
-                            object: Box::new(expr),
-                            index: Box::new(index),
-                        };
-                    } else {
-                        let next_token = self
-                            .expect_next("parse_atom: expected field name or operator after '.'")?;
-                        match next_token.kind {
-                            TokenKind::Operator(Operator::Star) => {
-                                expr = Expression::Dereference(Box::new(expr));
-                            }
-                            TokenKind::Operator(Operator::Ampersand) => {
-                                expr = Expression::AddressOf(Box::new(expr));
-                            }
-                            TokenKind::Identifier(f) => {
-                                expr = Expression::FieldAccess {
-                                    object: Box::new(expr),
-                                    field: f,
-                                };
-                            }
-                            _ => {
-                                return Err(self.error(
-                                    "expected field name, '.*', '.&', or '.[' after '.'",
-                                    next_token.line,
-                                    next_token.column,
-                                ));
-                            }
+                } else {
+                    let next_token =
+                        self.expect_next("parse_atom: expected field name or operator after '.'")?;
+                    match next_token.kind {
+                        TokenKind::Operator(Operator::Star) => {
+                            expr = Expression::Dereference(Box::new(expr));
+                        }
+                        TokenKind::Operator(Operator::Ampersand) => {
+                            expr = Expression::AddressOf(Box::new(expr));
+                        }
+                        TokenKind::Identifier(f) => {
+                            expr = Expression::FieldAccess {
+                                object: Box::new(expr),
+                                field: f,
+                            };
+                        }
+                        _ => {
+                            return Err(self.error(
+                                "expected field name, '.*', '.&', or '.[' after '.'",
+                                next_token.line,
+                                next_token.column,
+                            ));
                         }
                     }
-                } else {
-                    break;
                 }
             } else {
                 break;

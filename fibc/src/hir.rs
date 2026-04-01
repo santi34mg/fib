@@ -1,8 +1,8 @@
 use core::fmt;
 use std::collections::HashMap;
 
-use crate::ast::ast::{FunctionDeclaration, ModulePath};
-use crate::token::{Operator, builtin::BuiltinType, identifier::Identifier};
+use crate::ast::{FunctionDeclaration, ModulePath};
+use crate::tokens::{Operator, builtin::BuiltinType, identifier::Identifier};
 
 /// A resolved module — one `.fib` file's exported symbols.
 #[derive(Debug, Clone)]
@@ -24,11 +24,17 @@ pub struct CompilationUnit {
 
 impl CompilationUnit {
     pub fn new() -> Self {
-        return Self {
+        Self {
             scope_root: Scope::new(),
             declarations: Vec::new(),
             imported_declarations: Vec::new(),
-        };
+        }
+    }
+}
+
+impl Default for CompilationUnit {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -42,11 +48,17 @@ pub struct Scope {
 
 impl Scope {
     pub fn new() -> Self {
-        return Self {
+        Self {
             symbols: HashMap::new(),
             modules: HashMap::new(),
             children_scope: Vec::new(),
-        };
+        }
+    }
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -250,7 +262,7 @@ impl HIRIf {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     pub fn else_branch_terminates(&self) -> bool {
@@ -263,9 +275,9 @@ impl HIRIf {
                     return true;
                 }
             }
-            return false;
+            false
         } else {
-            return false;
+            false
         }
     }
 }

@@ -1,6 +1,6 @@
 use fibc::driver::FrontendResponse;
-use fibc::token::TokenKind;
-use fibc::token::punctuation::Punctuation;
+use fibc::tokens::TokenKind;
+use fibc::tokens::punctuation::Punctuation;
 use tower_lsp::lsp_types::{Location, Position, Range, Url};
 
 use crate::lookup::{find_declaration, token_at};

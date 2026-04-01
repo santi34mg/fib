@@ -2,7 +2,7 @@
 mod tests {
     use crate::{
         lexer::Lexer,
-        token::{Keyword, Literal, Operator, Punctuation, TokenKind, identifier::Identifier},
+        tokens::{Keyword, Literal, Operator, Punctuation, TokenKind, identifier::Identifier},
     };
 
     #[test]

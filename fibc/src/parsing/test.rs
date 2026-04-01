@@ -5,8 +5,8 @@ mod tests {
     use crate::ast::ast::{ConstantDeclaration, DeclarationNode, Expression, TypeExpression};
     use crate::ast::{Ast, StatementNode};
     use crate::lexer::Lexer;
-    use crate::parser::Parser;
-    use crate::token::{Literal, Operator, Token};
+    use crate::parsing::Parser;
+    use crate::tokens::{Literal, Operator, Token};
 
     fn get_ast(test_string: &str) -> Ast {
         let src = test_string.to_string();

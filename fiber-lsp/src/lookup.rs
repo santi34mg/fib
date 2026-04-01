@@ -1,9 +1,9 @@
 use fibc::hir::{HIRSymbol, Scope};
-use fibc::token::Operator;
-use fibc::token::identifier::Identifier;
-use fibc::token::keyword::Keyword;
-use fibc::token::punctuation::Punctuation;
-use fibc::token::{Token, TokenKind};
+use fibc::tokens::Operator;
+use fibc::tokens::identifier::Identifier;
+use fibc::tokens::keyword::Keyword;
+use fibc::tokens::punctuation::Punctuation;
+use fibc::tokens::{Token, TokenKind};
 
 /// Find the token whose span contains `(line, col)` (1-based).
 pub fn token_at(tokens: &[Token], line: usize, col: usize) -> Option<&Token> {
@@ -30,10 +30,10 @@ pub fn find_module_symbol<'a>(
     member_name: &Identifier,
     scope: &'a Scope,
 ) -> Option<&'a HIRSymbol> {
-    if let Some(module) = scope.modules.get(module_name) {
-        if let Some(sym) = module.exports.get(member_name) {
-            return Some(sym);
-        }
+    if let Some(module) = scope.modules.get(module_name)
+        && let Some(sym) = module.exports.get(member_name)
+    {
+        return Some(sym);
     }
     for child in &scope.children_scope {
         if let Some(sym) = find_module_symbol(module_name, member_name, child) {
@@ -92,17 +92,13 @@ pub fn find_declaration<'a>(name: &Identifier, tokens: &'a [Token]) -> Option<&'
             // function parameter: `( name :` or `, name :`
             TokenKind::Punctuation(Punctuation::OpeningParenthesis)
             | TokenKind::Punctuation(Punctuation::Comma) => {
-                if let Some(next) = tokens.get(i + 1) {
-                    if let TokenKind::Identifier(id) = &next.kind {
-                        if id == name {
-                            if let Some(after) = tokens.get(i + 2) {
-                                if matches!(after.kind, TokenKind::Punctuation(Punctuation::Colon))
-                                {
-                                    return Some(next);
-                                }
-                            }
-                        }
-                    }
+                if let Some(next) = tokens.get(i + 1)
+                    && let TokenKind::Identifier(id) = &next.kind
+                    && id == name
+                    && let Some(after) = tokens.get(i + 2)
+                    && matches!(after.kind, TokenKind::Punctuation(Punctuation::Colon))
+                {
+                    return Some(next);
                 }
             }
             _ => {}

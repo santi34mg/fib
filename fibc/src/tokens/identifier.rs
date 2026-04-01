@@ -13,6 +13,6 @@ impl Display for Identifier {
 
 impl Identifier {
     pub fn new(identifier: String) -> Self {
-        return Self { identifier };
+        Self { identifier }
     }
 }
