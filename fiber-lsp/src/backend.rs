@@ -89,7 +89,7 @@ impl FiberLanguageServer {
     }
 }
 
-fn compile_frontend(opts: CompilationOptions) -> Result<FrontendResponse> {
+fn compile_frontend(_opts: CompilationOptions) -> Result<FrontendResponse> {
     unimplemented!()
 }
 

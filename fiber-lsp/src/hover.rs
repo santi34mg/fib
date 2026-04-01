@@ -1,7 +1,7 @@
 use fibc::driver::FrontendResponse;
 use fibc::hir::{GenericFunctionTemplate, HIRBinding, HIRFunction, HIRSymbol, HIRTypeKind};
-use fibc::token::TokenKind;
-use fibc::token::punctuation::Punctuation;
+use fibc::tokens::TokenKind;
+use fibc::tokens::punctuation::Punctuation;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
 use crate::lookup::{find_module_symbol, find_symbol, token_at};

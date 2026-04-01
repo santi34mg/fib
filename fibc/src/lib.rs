@@ -3,11 +3,11 @@ pub mod ast;
 pub mod cli;
 pub mod driver;
 pub mod hir;
-pub mod lexer;
+pub mod lexing;
 #[cfg(feature = "llvm")]
 pub mod lowering;
-pub mod parser;
-pub mod token;
+pub mod parsing;
+pub mod tokens;
 
 #[cfg(test)]
 mod integration_tests;

@@ -1,4 +1,4 @@
-use fibc::parser::parser::ParseError;
+use fibc::parsing::parser::ParseError;
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
 /// Convert a `ParseError` (which carries a 1-based line/column) into an LSP `Diagnostic`.

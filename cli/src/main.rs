@@ -34,6 +34,8 @@ struct PackageConfig {
     include_paths: Option<Vec<String>>,
 }
 
+// TODO: remove allow dead code
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct DefaultConfigs {
     src_root: String,
@@ -120,7 +122,7 @@ fn init_command(dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 
     // get the directory name, if dir is '.' get the current directory name
     let abs_path = dir.canonicalize()?;
-    let package_name = abs_path.to_str().unwrap().split('/').last().unwrap();
+    let package_name = abs_path.to_str().unwrap().split('/').next_back().unwrap();
 
     let config_template = CONFIG_TEMPLATE_STR;
     let mut tera = Tera::default();
@@ -155,7 +157,7 @@ fn deps_command(
     for url in urls {
         match ureq::get(&url).call() {
             Ok(response) => {
-                let fname = url.split('/').last().unwrap_or("file.bin");
+                let fname = url.split('/').next_back().unwrap_or("file.bin");
                 let path = dest.join(fname);
                 let mut out = fs::File::create(&path).unwrap_or_else(|e| {
                     eprintln!("Failed to create {}: {}", path.display(), e);

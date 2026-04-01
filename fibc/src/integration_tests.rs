@@ -6,8 +6,8 @@ mod tests {
     use crate::analysis::analyze;
     use crate::lexer::Lexer;
     use crate::lowering::lower;
-    use crate::parser::Parser;
-    use crate::token::Token;
+    use crate::parsing::Parser;
+    use crate::tokens::Token;
 
     fn compile_to_ir(src: &str) -> String {
         let lexer = Lexer::new(src);

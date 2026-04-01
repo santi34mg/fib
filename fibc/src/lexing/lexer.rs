@@ -1,6 +1,6 @@
 use std::char;
 
-use crate::token::{
+use crate::tokens::{
     Keyword, Literal, Operator, Punctuation, Token, TokenKind,
     builtin::{Builtin, BuiltinType},
     identifier::Identifier,
@@ -455,11 +455,11 @@ impl<'input> Lexer<'input> {
         } else {
             (10, |c: char| c.is_ascii_digit() || c == '.')
         };
-        self.skip_while(|c| f(c));
+        self.skip_while(f);
         let num_str = &self.input[start..self.position];
         if num_str.contains('.') {
             let value = ("0".to_string() + num_str).parse::<f64>().ok()?;
-            return Some(TokenKind::Literal(Literal::Float(value)));
+            Some(TokenKind::Literal(Literal::Float(value)))
         } else {
             let value = match u64::from_str_radix(num_str, base) {
                 Ok(v) => v,
@@ -470,7 +470,7 @@ impl<'input> Lexer<'input> {
                     )));
                 }
             };
-            return Some(TokenKind::Literal(Literal::Integer(value)));
+            Some(TokenKind::Literal(Literal::Integer(value)))
         }
     }
 

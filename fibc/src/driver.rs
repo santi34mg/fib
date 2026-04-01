@@ -8,13 +8,13 @@ use std::{fs, io};
 use std::fmt;
 
 use crate::analysis::{AnalysisError, analyze};
-use crate::ast::{Ast, ast::DeclarationNode};
+use crate::ast::{Ast, DeclarationNode};
 use crate::hir::{CompilationUnit, HIRModule};
 use crate::lowering;
-use crate::parser::Parser;
-use crate::parser::parser::ParseError;
-use crate::token::identifier::Identifier as FibIdentifier;
-use crate::{lexer::Lexer, token::Token};
+use crate::parsing::Parser;
+use crate::parsing::parser::ParseError;
+use crate::tokens::identifier::Identifier as FibIdentifier;
+use crate::{lexing::Lexer, tokens::Token};
 
 /// Result of running the compiler frontend (lex + parse + analyze) without LLVM lowering.
 /// Always contains as much data as could be produced before the first fatal error.
@@ -90,7 +90,7 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
         return Err(format!("Not a fib file. Found {:?}", file).into());
     }
 
-    let file_contents = fs::read_to_string(file).map_err(|e| DriverError::from(e))?;
+    let file_contents = fs::read_to_string(file).map_err(DriverError::from)?;
     let filename = file.to_string_lossy().to_string();
     let src_root = file.parent().unwrap_or(Path::new("."));
 
@@ -101,7 +101,7 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
         Ok(ast) => ast,
         Err(pe) => {
             eprintln!("{}", pe);
-            return Err(format!("Parser error.").into());
+            return Err("Parser error.".to_string().into());
         }
     };
 
@@ -214,7 +214,7 @@ fn resolve_module(
 
     // FIXME: run compilation for imported modules instead of doing lexing and parsing manually
     let tokens: Vec<Token> = Lexer::new(&source).collect();
-    let mut parser = Parser::new(tokens.into_iter(), &file_path.as_path(), source);
+    let mut parser = Parser::new(tokens.into_iter(), file_path.as_path(), source);
     let ast = parser
         .parse()
         .map_err(|e| format!("parse error in module '{}': {}", path.join("::"), e))?;
@@ -246,16 +246,4 @@ fn resolve_module(
     resolved.insert(path.to_vec(), module);
     resolving.retain(|p| p != path);
     Ok(())
-}
-
-fn dump_tokens(tokens: &[Token], path: &Path) {
-    for token in tokens {
-        println!("{:?}", token);
-    }
-    todo!()
-}
-
-fn dump_ast(ast: &Ast, path: &Path) {
-    println!("{:#?}", ast);
-    todo!()
 }

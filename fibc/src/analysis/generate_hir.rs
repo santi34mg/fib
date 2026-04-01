@@ -1,21 +1,19 @@
-use std::error::Error;
-
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ast::ast::{
-    ConstantDeclaration, DeclarationNode, Expression as PExpr, FunctionDeclaration,
+use crate::ast::{Ast, StatementNode};
+use crate::ast::{
+    ConstantDeclaration, DeclarationNode, Expression as PExpr, Field, FunctionDeclaration,
     StatementNode as ASTStatementNode, TypeExpression, VariableDeclaration,
 };
-use crate::ast::{Ast, StatementNode};
 use crate::hir::{
     CompilationUnit, HIRBinding, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction,
     HIRIf, HIRModule, HIRStmt, HIRSymbol, HIRTypeKind, Scope,
 };
-use crate::token::Operator;
-use crate::token::builtin::BuiltinType;
-use crate::token::identifier::Identifier;
-use crate::token::literal::Literal;
+use crate::tokens::Operator;
+use crate::tokens::builtin::BuiltinType;
+use crate::tokens::identifier::Identifier;
+use crate::tokens::literal::Literal;
 
 #[derive(Debug)]
 pub struct AnalysisError {
@@ -81,13 +79,13 @@ pub fn analyze(
     }
     // Also collect selectively imported declarations
     for declaration in &ast.declarations {
-        if let DeclarationNode::ImportDeclaration(import) = declaration {
-            if import.selective.is_some() {
-                let path_strs: Vec<String> =
-                    import.path.iter().map(|id| id.identifier.clone()).collect();
-                if let Some(module) = resolved_modules.get(&path_strs) {
-                    imported_declarations.extend(module.declarations.clone());
-                }
+        if let DeclarationNode::ImportDeclaration(import) = declaration
+            && import.selective.is_some()
+        {
+            let path_strs: Vec<String> =
+                import.path.iter().map(|id| id.identifier.clone()).collect();
+            if let Some(module) = resolved_modules.get(&path_strs) {
+                imported_declarations.extend(module.declarations.clone());
             }
         }
     }
@@ -216,10 +214,10 @@ fn stmt_to_hir(
             var_decl_to_hir(variable_declaration, current_scope, generic_cache)?,
         )),
         StatementNode::Assignment { identifier, expr } => {
-            if let Some(HIRSymbol::Binding(binding)) = current_scope.symbols.get(&identifier) {
-                if !binding.mutable {
-                    return Err(format!("cannot assign to constant '{}'", identifier).into());
-                }
+            if let Some(HIRSymbol::Binding(binding)) = current_scope.symbols.get(&identifier)
+                && !binding.mutable
+            {
+                return Err(format!("cannot assign to constant '{}'", identifier).into());
             }
             let e = expr_to_hir(expr, current_scope, generic_cache)?;
             Ok(HIRStmt::Assign {
@@ -393,7 +391,7 @@ fn const_decl_to_hir(
     current_scope: &mut Scope,
     generic_cache: &mut HashMap<String, HIRFunction>,
 ) -> Result<HIRBinding, AnalysisError> {
-    let mut init = expr_to_hir(const_decl.expression, &current_scope, generic_cache)?;
+    let mut init = expr_to_hir(const_decl.expression, current_scope, generic_cache)?;
     let ty = match const_decl.constant_type {
         Some(t) => map_type(t)?,
         None => HIRTypeKind::Builtin(BuiltinType::Void),
@@ -445,13 +443,13 @@ fn var_decl_to_hir(
 ) -> Result<HIRBinding, AnalysisError> {
     let ty = match var_decl.constant_type {
         Some(TypeExpression::TypeKeyword) => {
-            return Err(format!("mutable type bindings (`var type`) are not yet supported; use `const type` for compile-time type aliases").into());
+            return Err("mutable type bindings (`var type`) are not yet supported; use `const type` for compile-time type aliases".to_string().into());
         }
         Some(t) => map_type(t)?,
         None => HIRTypeKind::Builtin(BuiltinType::Void),
     };
     let mut init = if let Some(expr) = var_decl.expression {
-        expr_to_hir(expr, &current_scope, generic_cache)?
+        expr_to_hir(expr, current_scope, generic_cache)?
     } else {
         // Zero-initialize based on declared type when no initializer is present
         match &ty {
@@ -478,7 +476,11 @@ fn var_decl_to_hir(
                 inferred_type: ty.clone(),
                 expression: HIRExpressionKind::Null,
             },
-            _ => return Err(format!("var declaration requires type or initializer").into()),
+            _ => {
+                return Err("var declaration requires type or initializer"
+                    .to_string()
+                    .into());
+            }
         }
     };
     // check that type matches; allow struct-by-name to match struct literal type
@@ -621,9 +623,7 @@ fn expr_to_hir(
                     })
                 }
                 HIRSymbol::GenericFunction(_) | HIRSymbol::Function(_) => {
-                    return Err(
-                        format!("expr_to_hir: identifier {} is not a variable", name).into(),
-                    );
+                    Err(format!("expr_to_hir: identifier {} is not a variable", name).into())
                 }
             }
         }
@@ -775,10 +775,11 @@ fn expr_to_hir(
                     })
                 }
                 // Only accept identifier/qualified callees
-                _ => Err(format!(
+                _ => Err(
                     "expr_to_hir: call target must be an identifier or qualified access"
-                )
-                .into()),
+                        .to_string()
+                        .into(),
+                ),
             }
         }
         PExpr::FieldAccess { object, field } => {
@@ -867,10 +868,10 @@ fn expr_to_hir(
             let hir_target = map_type(target_type)?;
             // If the inner expression is a function call to an unknown external function,
             // propagate the cast target type so the auto-declaration uses the right return type.
-            if let HIRExpressionKind::Call { .. } = &inner_hir.expression {
-                if inner_hir.inferred_type == HIRTypeKind::Builtin(BuiltinType::Int4) {
-                    inner_hir.inferred_type = hir_target.clone();
-                }
+            if let HIRExpressionKind::Call { .. } = &inner_hir.expression
+                && inner_hir.inferred_type == HIRTypeKind::Builtin(BuiltinType::Int4)
+            {
+                inner_hir.inferred_type = hir_target.clone();
             }
             Ok(HIRExpression {
                 inferred_type: hir_target.clone(),
@@ -908,7 +909,9 @@ fn expr_to_hir(
                 .map(|e| expr_to_hir(e, current_scope, generic_cache))
                 .collect::<Result<_, _>>()?;
             if hir_elements.is_empty() {
-                return Err(format!("array literal must have at least one element").into());
+                return Err("array literal must have at least one element"
+                    .to_string()
+                    .into());
             }
             let elem_ty = hir_elements[0].inferred_type.clone();
             for (i, e) in hir_elements.iter().enumerate() {
@@ -1094,7 +1097,7 @@ fn resolve_declaration(
     match declaration {
         DeclarationNode::ImportDeclaration(_) => Ok(current_scope), // handled in analyze()
         DeclarationNode::FunctionDeclaration(function_declaration) => {
-            resolve_function_decl(&function_declaration, current_scope)
+            resolve_function_decl(function_declaration, current_scope)
         }
         DeclarationNode::Statement(statement) => resolve_statement(statement, current_scope),
     }
@@ -1115,10 +1118,11 @@ fn resolve_statement(
                 let inner_type = match &constant_declaration.expression {
                     PExpr::TypeValue(te) => map_type(te.clone())?,
                     _ => {
-                        return Err(format!(
+                        return Err(
                             "const type declaration must have a type expression as its value"
-                        )
-                        .into());
+                                .to_string()
+                                .into(),
+                        );
                     }
                 };
                 current_scope.symbols.insert(
@@ -1272,7 +1276,7 @@ fn substitute_type(te: &TypeExpression, subs: &HashMap<String, TypeExpression>) 
         TypeExpression::Struct { fields } => TypeExpression::Struct {
             fields: fields
                 .iter()
-                .map(|f| crate::ast::ast::Field {
+                .map(|f| Field {
                     label: f.label.clone(),
                     type_id: substitute_type(&f.type_id, subs),
                 })
@@ -1521,7 +1525,7 @@ fn process_escape_sequences(raw: &str) -> Result<String, AnalysisError> {
         }
         match chars
             .next()
-            .ok_or(format!("trailing backslash in string literal"))?
+            .ok_or("trailing backslash in string literal".to_string())?
         {
             'n' => out.push('\n'),
             'r' => out.push('\r'),
@@ -1533,24 +1537,24 @@ fn process_escape_sequences(raw: &str) -> Result<String, AnalysisError> {
             'x' => {
                 let h1 = chars
                     .next()
-                    .ok_or(format!("expected hex digit after \\x"))?;
+                    .ok_or("expected hex digit after \\x".to_string())?;
                 let h2 = chars
                     .next()
-                    .ok_or(format!("expected two hex digits after \\x"))?;
+                    .ok_or("expected two hex digits after \\x".to_string())?;
                 let byte = u8::from_str_radix(&format!("{}{}", h1, h2), 16)
                     .map_err(|_| format!("invalid hex escape \\x{}{}", h1, h2))?;
                 out.push(byte as char);
             }
             'u' => {
                 if chars.next() != Some('{') {
-                    return Err(format!("expected '{{' after \\u").into());
+                    return Err("expected '{{' after \\u".to_string().into());
                 }
                 let mut hex = String::new();
                 loop {
                     match chars.next() {
                         Some('}') => break,
                         Some(d) => hex.push(d),
-                        None => return Err(format!("unterminated \\u{{...}} escape").into()),
+                        None => return Err("unterminated \\u{{...}} escape".to_string().into()),
                     }
                 }
                 let codepoint = u32::from_str_radix(&hex, 16)

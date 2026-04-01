@@ -1,9 +1,9 @@
 use core::fmt;
 
-use crate::token::Operator;
-use crate::token::builtin::BuiltinType;
-use crate::token::identifier::Identifier;
-use crate::token::literal::Literal;
+use crate::tokens::Operator;
+use crate::tokens::builtin::BuiltinType;
+use crate::tokens::identifier::Identifier;
+use crate::tokens::literal::Literal;
 
 pub type ModulePath = Vec<Identifier>;
 
@@ -21,9 +21,15 @@ pub struct Ast {
 
 impl Ast {
     pub fn new() -> Self {
-        return Self {
+        Self {
             declarations: Vec::new(),
-        };
+        }
+    }
+}
+
+impl Default for Ast {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
