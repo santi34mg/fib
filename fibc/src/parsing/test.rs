@@ -171,7 +171,10 @@ mod tests {
         {
             assert_eq!(identifier.identifier, "x");
         } else {
-            panic!("AST statement did not match expected ConstantDeclaration, got: {:#?}", stmts);
+            panic!(
+                "AST statement did not match expected ConstantDeclaration, got: {:#?}",
+                stmts
+            );
         }
     }
 
@@ -189,7 +192,10 @@ mod tests {
         {
             assert_eq!(identifier.identifier, "x");
         } else {
-            panic!("AST statement did not match expected ConstantDeclaration, got: {:#?}", stmts);
+            panic!(
+                "AST statement did not match expected ConstantDeclaration, got: {:#?}",
+                stmts
+            );
         }
     }
 
@@ -207,7 +213,10 @@ mod tests {
         {
             assert_eq!(identifier.identifier, "x");
         } else {
-            panic!("AST statement did not match expected ConstantDeclaration, got: {:#?}", stmts);
+            panic!(
+                "AST statement did not match expected ConstantDeclaration, got: {:#?}",
+                stmts
+            );
         }
     }
 }
