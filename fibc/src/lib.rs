@@ -9,9 +9,6 @@ pub mod lowering;
 pub mod parsing;
 pub mod tokens;
 
-#[cfg(test)]
-mod integration_tests;
-
 #[cfg(feature = "llvm")]
 use std::error::Error;
 

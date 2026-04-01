@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        lexer::Lexer,
+        lexing::Lexer,
         tokens::{Keyword, Literal, Operator, Punctuation, TokenKind, identifier::Identifier},
     };
 

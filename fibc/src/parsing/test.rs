@@ -2,9 +2,10 @@
 mod tests {
     use std::path::Path;
 
-    use crate::ast::ast::{ConstantDeclaration, DeclarationNode, Expression, TypeExpression};
-    use crate::ast::{Ast, StatementNode};
-    use crate::lexer::Lexer;
+    use crate::ast::{
+        Ast, ConstantDeclaration, DeclarationNode, Expression, StatementNode, TypeExpression,
+    };
+    use crate::lexing::Lexer;
     use crate::parsing::Parser;
     use crate::tokens::{Literal, Operator, Token};
 
@@ -157,8 +158,8 @@ mod tests {
     }
 
     #[test]
-    fn test_full_variable_declaration() {
-        let test_string = "const sint32 x = 5;";
+    fn test_full_const_declaration() {
+        let test_string = "const int4 x = 5;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -170,12 +171,12 @@ mod tests {
         {
             assert_eq!(identifier.identifier, "x");
         } else {
-            panic!("AST statement did not match expected VariableDeclaration");
+            panic!("AST statement did not match expected ConstantDeclaration, got: {:#?}", stmts);
         }
     }
 
     #[test]
-    fn test_variable_declaration_without_type() {
+    fn test_const_declaration_without_type() {
         let test_string = "const x = 5;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
@@ -188,13 +189,13 @@ mod tests {
         {
             assert_eq!(identifier.identifier, "x");
         } else {
-            panic!("AST statement did not match expected VariableDeclaration");
+            panic!("AST statement did not match expected ConstantDeclaration, got: {:#?}", stmts);
         }
     }
 
     #[test]
-    fn test_variable_declaration_without_semicolon() {
-        let test_string = "const sint32 x = 5";
+    fn test_const_declaration_without_semicolon() {
+        let test_string = "const int4 x = 5";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -206,7 +207,7 @@ mod tests {
         {
             assert_eq!(identifier.identifier, "x");
         } else {
-            panic!("AST statement did not match expected VariableDeclaration");
+            panic!("AST statement did not match expected ConstantDeclaration, got: {:#?}", stmts);
         }
     }
 }
