@@ -1,6 +1,6 @@
-
+# Rust outputs
 target/
 
-.claude
-CLAUDE.md
-
+# Fib outputs
+samples/**/out/
+*.ll
