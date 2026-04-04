@@ -1,43 +1,29 @@
-# Fiber
+# Fib
 
 Fib is a systems programming language designed for performance, clarity, and developer control. 
 
-Fiber is fib's official toolchain.
-
 ## Compiler
 
-The compiler **`fibc`** is written in Rust. Future plans include a self-hosted compiler.
+The compiler is written in Rust. Future plans include a self-hosted compiler.
 
 The compiler has two backends.
 The first is an LLVM backend, which is the default setting (for now).
 The second is a custom backend made for specialized builds.
 
-## Compilation Pipeline
+## Installation
 
-`fiber` tool allows project wide compilation while `fibc` can be used for single source file compilation.
-
-```
-Source (.fib) -> Lexer -> Tokens -> Parser -> AST -> Analysis -> HIR -> Backend -> Binary
-```
-
-## Prerequisites
+### Prerequisites
 
 - **Rust toolchain** (stable): install via [rustup](https://rustup.rs)
 - **clang-17**: must be on `$PATH` in case of using the LLVM backend.
 
-## Getting Started
+### Building from source
 
 ```bash
-# Install the fiber CLI
-cargo install --path cli
+git clone https://github.com/santi34mg/fib.git
+cd fib
 
-# Create a new project
-fiber init my_project
-cd my_project
-
-# Compile and run
-fiber compile
-./out/main
+cargo build
 ```
 
 ## Language Features
@@ -48,30 +34,11 @@ fiber compile
 - **Expressions**: arithmetic, bitwise, logical, comparison, compound assignment, type casting (`as`), field/index access, address-of (`.&`), dereference (`.*`), struct construction, array literals
 - **Memory**: manual `malloc`/`free`, pointer arithmetic, defer for cleanup
 
-See `docs/` for language documentation and `samples/` for working example programs (hello world, linked list, memory pool, Fibonacci benchmark, bitwise ops, insertion sort).
-
-## Editor Support
-
-An LSP server (`fiber-lsp`) provides diagnostics, hover, and go-to-definition. Build it with:
-
-```bash
-cargo build -p fiber-lsp
-```
-
-## Project Layout
-
-```
-fibc/        — core compiler library and binary (lex, parse, analyze, lower)
-cli/         — user-facing `fiber` CLI (init, compile, deps)
-fiber-lsp/   — LSP server (frontend only, no LLVM dependency)
-std/         — standard library prelude (libc.fib)
-samples/     — example Fiber programs
-docs/        — language documentation
-```
+See `docs/` for language documentation and `samples/` for working example programs.
 
 ## Contributing
 
-Contributions, suggestions, and bug reports are welcome. This project is a personal exploration of compiler design and language implementation.
+Contributions, suggestions, and bug reports are welcome. See [CONTRIBUTING](CONTRIBUTING) for details.
 
 ## License
 
