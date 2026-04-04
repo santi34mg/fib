@@ -1,5 +1,0 @@
-import std::libc;
-fn main() int32 {
-    printf("Hello, World!\n")
-    return 0
-}
