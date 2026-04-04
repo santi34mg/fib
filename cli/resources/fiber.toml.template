@@ -1,7 +1,0 @@
-[package]
-name = "{{ package_name }}"
-version = "{{ language_version }}"
-
-[dependencies]
-std = "$FIBER_HOME/std"
-
