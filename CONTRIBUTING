@@ -1,0 +1,14 @@
+# CONTRIBUTING
+
+If you are reading this it means that you are probably interested in contributing to the language.
+I am glad!
+
+## How to contribute?
+
+Feel free to create issues and discussions.
+
+Contributions must be made through a comprehensive pull request to the `dev` branch.
+
+## Coding conventions
+
+Please follow the rules defined by the formatter and linters in use.
