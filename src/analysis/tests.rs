@@ -50,7 +50,7 @@ mod tests {
 
     #[test]
     fn test_integer_literal_defaults_to_int4() {
-        let cu = get_hir("fn f() int4 { return 42 }");
+        let cu = get_hir("fn f() int4 { ret 42 }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[0] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_float_literal_defaults_to_float8() {
-        let cu = get_hir("fn f() float8 { return 3.14 }");
+        let cu = get_hir("fn f() float8 { ret 3.14 }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[0] {
             assert_eq!(
@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn test_bool_literal_type() {
-        let cu = get_hir("fn f() bool { return true }");
+        let cu = get_hir("fn f() bool { ret true }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[0] {
             assert_eq!(
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_string_literal_type() {
-        let cu = get_hir(r#"fn f() string { return "hi" }"#);
+        let cu = get_hir(r#"fn f() string { ret "hi" }"#);
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[0] {
             assert_eq!(
@@ -111,46 +111,45 @@ mod tests {
 
     #[test]
     fn test_null_literal_type_is_void() {
-        let cu = get_hir("fn f() { const int4 x = 1\n return }");
-        // Just ensure null expression evaluates without error; type is Void
+        let cu = get_hir("fn f() { x: int4 = 1\n ret }");
+        // Just ensure void return analyzes without error.
         let _ = cu;
     }
 
-    // ── Const & var bindings ──────────────────────────────────────────────────
+    // ── Type aliases & var bindings ───────────────────────────────────────────
 
     #[test]
-    fn test_const_declaration_typed() {
-        let cu = get_hir("const int4 x = 10;");
+    fn test_type_declaration_typed() {
+        let cu = get_hir("type Num int4");
         let binding = cu
             .declarations
             .iter()
             .find_map(|d| {
-                if let HIRDeclaration::HIRConst(b) = d {
-                    Some(b)
+                if let HIRDeclaration::HIRType(t) = d {
+                    Some(t)
                 } else {
                     None
                 }
             })
-            .expect("expected HIRConst");
-        assert_eq!(binding.name.identifier, "x");
+            .expect("expected HIRType");
+        assert_eq!(binding.name.identifier, "Num");
         assert_eq!(binding.ty, HIRTypeKind::Builtin(BuiltinType::Int4));
-        assert!(!binding.mutable);
     }
 
     #[test]
-    fn test_const_declaration_float_typed() {
-        let cu = get_hir("const float8 pi = 3.14;");
+    fn test_type_declaration_float_typed() {
+        let cu = get_hir("type Float float8");
         let binding = cu
             .declarations
             .iter()
             .find_map(|d| {
-                if let HIRDeclaration::HIRConst(b) = d {
-                    Some(b)
+                if let HIRDeclaration::HIRType(t) = d {
+                    Some(t)
                 } else {
                     None
                 }
             })
-            .expect("expected HIRConst");
+            .expect("expected HIRType");
         assert_eq!(binding.ty, HIRTypeKind::Builtin(BuiltinType::Float8));
     }
 
@@ -184,6 +183,47 @@ mod tests {
     }
 
     #[test]
+    fn test_colon_var_declaration_with_type() {
+        let cu = get_hir("fn f() { x: int4 = 0 } ");
+        let f = get_function(&cu, "f");
+        if let HIRStmt::Binding(b) = &f.body[0] {
+            assert!(b.mutable);
+            assert_eq!(b.ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+        } else {
+            panic!("expected Binding statement");
+        }
+    }
+
+    #[test]
+    fn test_colon_var_declaration_infers_type() {
+        let cu = get_hir("fn f() { x := 0 } ");
+        let f = get_function(&cu, "f");
+        if let HIRStmt::Binding(b) = &f.body[0] {
+            assert!(b.mutable);
+            assert_eq!(b.ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+        } else {
+            panic!("expected Binding statement");
+        }
+    }
+
+    #[test]
+    fn test_multi_var_declaration_infers_tuple_types() {
+        let cu = get_hir(
+            "fn divmod(int4 a, int4 b) (int4, int4) { ret a / b, a % b }\nfn f() { q, r := divmod(17, 5) }",
+        );
+        let f = get_function(&cu, "f");
+        if let HIRStmt::MultiBinding { bindings, .. } = &f.body[0] {
+            assert_eq!(bindings.len(), 2);
+            assert_eq!(bindings[0].name.identifier, "q");
+            assert_eq!(bindings[0].ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+            assert_eq!(bindings[1].name.identifier, "r");
+            assert_eq!(bindings[1].ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+        } else {
+            panic!("expected MultiBinding statement");
+        }
+    }
+
+    #[test]
     fn test_var_bool_zero_init_is_false() {
         let cu = get_hir("fn f() { var bool b }");
         let f = get_function(&cu, "f");
@@ -213,11 +253,11 @@ mod tests {
     }
 
     #[test]
-    fn test_const_is_not_mutable() {
-        let cu = get_hir("fn f() { const int4 x = 5 }");
+    fn test_colon_var_declaration_is_mutable() {
+        let cu = get_hir("fn f() { x: int4 = 5 }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Binding(b) = &f.body[0] {
-            assert!(!b.mutable);
+            assert!(b.mutable);
         } else {
             panic!("expected Binding");
         }
@@ -227,14 +267,14 @@ mod tests {
 
     #[test]
     fn test_function_return_type() {
-        let cu = get_hir("fn add(int4 a, int4 b) int4 { return a }");
+        let cu = get_hir("fn add(int4 a, int4 b) int4 { ret a }");
         let f = get_function(&cu, "add");
         assert_eq!(f.return_type, HIRTypeKind::Builtin(BuiltinType::Int4));
     }
 
     #[test]
     fn test_function_params_count_and_types() {
-        let cu = get_hir("fn add(int4 a, int4 b) int4 { return a }");
+        let cu = get_hir("fn add(int4 a, int4 b) int4 { ret a }");
         let f = get_function(&cu, "add");
         assert_eq!(f.params.len(), 2);
         assert_eq!(f.params[0].0.identifier, "a");
@@ -275,9 +315,7 @@ mod tests {
 
     #[test]
     fn test_binary_add_type_is_lhs() {
-        let cu = get_hir(
-            "fn f() int4 { const int4 a = 1\n const int4 b = 2\n return a + b }",
-        );
+        let cu = get_hir("fn f() int4 { a: int4 = 1\n b: int4 = 2\n ret a + b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
@@ -288,9 +326,7 @@ mod tests {
 
     #[test]
     fn test_binary_sub_type_is_lhs() {
-        let cu = get_hir(
-            "fn f() int4 { const int4 a = 10\n const int4 b = 3\n return a - b }",
-        );
+        let cu = get_hir("fn f() int4 { a: int4 = 10\n b: int4 = 3\n ret a - b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
@@ -301,9 +337,7 @@ mod tests {
 
     #[test]
     fn test_comparison_result_is_bool() {
-        let cu = get_hir(
-            "fn f() bool { const int4 a = 1\n const int4 b = 2\n return a < b }",
-        );
+        let cu = get_hir("fn f() bool { a: int4 = 1\n b: int4 = 2\n ret a < b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
@@ -317,9 +351,7 @@ mod tests {
 
     #[test]
     fn test_equality_result_is_bool() {
-        let cu = get_hir(
-            "fn f() bool { const int4 a = 1\n const int4 b = 1\n return a == b }",
-        );
+        let cu = get_hir("fn f() bool { a: int4 = 1\n b: int4 = 1\n ret a == b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
@@ -332,10 +364,30 @@ mod tests {
     }
 
     #[test]
+    fn test_comparison_coerces_right_integer_literal_to_left_type() {
+        let cu = get_hir("fn f() bool { a: int4 = 1\n ret a as uint8 != 0 }");
+        let f = get_function(&cu, "f");
+        if let HIRStmt::Return(Some(expr)) = &f.body[1] {
+            assert_eq!(
+                expr.inferred_type,
+                HIRTypeKind::Builtin(BuiltinType::Boolean)
+            );
+            if let HIRExpressionKind::Binary { right, .. } = &expr.expression {
+                assert_eq!(
+                    right.inferred_type,
+                    HIRTypeKind::Builtin(BuiltinType::UInt8)
+                );
+            } else {
+                panic!("expected Binary expression");
+            }
+        } else {
+            panic!("expected Return");
+        }
+    }
+
+    #[test]
     fn test_logical_and_result_is_bool() {
-        let cu = get_hir(
-            "fn f() bool { const bool a = true\n const bool b = false\n return a && b }",
-        );
+        let cu = get_hir("fn f() bool { a: bool = true\n b: bool = false\n ret a && b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
@@ -349,9 +401,7 @@ mod tests {
 
     #[test]
     fn test_logical_or_result_is_bool() {
-        let cu = get_hir(
-            "fn f() bool { const bool a = true\n const bool b = false\n return a || b }",
-        );
+        let cu = get_hir("fn f() bool { a: bool = true\n b: bool = false\n ret a || b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
@@ -399,14 +449,14 @@ mod tests {
 
     #[test]
     fn test_for_loop_in_hir() {
-        let cu = get_hir("fn f() { for ;; { break } }");
+        let cu = get_hir("fn f() { for (;;) { break } }");
         let f = get_function(&cu, "f");
         assert!(matches!(f.body[0], HIRStmt::For { .. }));
     }
 
     #[test]
     fn test_break_continue_in_hir() {
-        let cu = get_hir("fn f() { for ;; { break continue } }");
+        let cu = get_hir("fn f() { for (;;) { break continue } }");
         let f = get_function(&cu, "f");
         if let HIRStmt::For { body, .. } = &f.body[0] {
             assert!(matches!(body[0], HIRStmt::Break));
@@ -425,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_return_void_in_hir() {
-        let cu = get_hir("fn f() { return }");
+        let cu = get_hir("fn f() { ret }");
         let f = get_function(&cu, "f");
         assert!(matches!(f.body[0], HIRStmt::Return(None)));
     }
@@ -434,14 +484,11 @@ mod tests {
 
     #[test]
     fn test_identifier_resolves_to_binding_type() {
-        let cu = get_hir("fn f() int4 { const int4 x = 5\n return x }");
+        let cu = get_hir("fn f() int4 { x: int4 = 5\n ret x }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[1] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
-            assert!(matches!(
-                expr.expression,
-                HIRExpressionKind::Identifier(_)
-            ));
+            assert!(matches!(expr.expression, HIRExpressionKind::Identifier(_)));
         } else {
             panic!("expected Return");
         }
@@ -449,7 +496,7 @@ mod tests {
 
     #[test]
     fn test_undefined_identifier_errors() {
-        let err = get_hir_err("fn f() int4 { return undefined_var }");
+        let err = get_hir_err("fn f() int4 { ret undefined_var }");
         assert!(
             err.contains("undefined_var"),
             "error should mention 'undefined_var', got: {}",
@@ -459,9 +506,7 @@ mod tests {
 
     #[test]
     fn test_type_mismatch_struct_vs_int_errors() {
-        let err = get_hir_err(
-            "const type Point = struct { int4 x, int4 y }\nconst Point p = 5;",
-        );
+        let err = get_hir_err("type Point struct { int4 x, int4 y }\nfn f() { p: Point = 5 }");
         assert!(!err.is_empty(), "expected type mismatch error");
     }
 
@@ -470,7 +515,7 @@ mod tests {
     #[test]
     fn test_type_declaration_produces_no_hir_decl() {
         // Type aliases should be in scope but not emit HIRDeclarations
-        let cu = get_hir("const type Num = int4\nfn f() { }");
+        let cu = get_hir("type Num int4\nfn f() { }");
         let const_decls: Vec<_> = cu
             .declarations
             .iter()
@@ -483,14 +528,11 @@ mod tests {
 
     #[test]
     fn test_cast_changes_inferred_type() {
-        let cu = get_hir("fn f() int8 { const int4 x = 5\n return x as int8 }");
+        let cu = get_hir("fn f() int8 { x: int4 = 5\n ret x as int8 }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[1] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int8));
-            assert!(matches!(
-                expr.expression,
-                HIRExpressionKind::Cast { .. }
-            ));
+            assert!(matches!(expr.expression, HIRExpressionKind::Cast { .. }));
         } else {
             panic!("expected Return with cast");
         }
@@ -511,14 +553,10 @@ mod tests {
 
     #[test]
     fn test_function_calling_another_function() {
-        let cu =
-            get_hir("fn helper() int4 { return 1 }\nfn main() int4 { return helper() }");
+        let cu = get_hir("fn helper() int4 { ret 1 }\nfn main() int4 { ret helper() }");
         let main_f = get_function(&cu, "main");
         if let HIRStmt::Return(Some(expr)) = &main_f.body[0] {
-            assert!(matches!(
-                expr.expression,
-                HIRExpressionKind::Call { .. }
-            ));
+            assert!(matches!(expr.expression, HIRExpressionKind::Call { .. }));
         } else {
             panic!("expected Return with Call");
         }
@@ -538,7 +576,7 @@ mod tests {
 
     #[test]
     fn test_address_of_produces_pointer_type() {
-        let cu = get_hir("fn f() { const int4 x = 5\n const *int4 p = x.& }");
+        let cu = get_hir("fn f() { x: int4 = 5\n p: *int4 = x.& }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Binding(b) = &f.body[1] {
             assert!(matches!(b.ty, HIRTypeKind::Pointer(_)));
