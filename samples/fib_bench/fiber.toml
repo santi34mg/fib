@@ -1,7 +1,0 @@
-[package]
-name = "fib_bench"
-version = "0.1.0"
-src_root = "src"
-main_module = "main.fib"
-target = "debug"
-out_dir = "out"

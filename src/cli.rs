@@ -10,6 +10,8 @@ pub struct Args {
     /// Path to the Fiber source file to compile
     #[arg(value_name = "FILE")]
     pub file: PathBuf,
+    #[arg(short = 'I')]
+    pub include_path: Vec<PathBuf>,
 }
 
 pub fn parse_args() -> Args {

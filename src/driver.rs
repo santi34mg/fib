@@ -40,7 +40,7 @@ impl<'a> CompilationOptions<'a> {
         CompilationOptions {
             project_path: args.file,
             source: None,
-            include_paths: Vec::new(),
+            include_paths: args.include_path,
         }
     }
 }

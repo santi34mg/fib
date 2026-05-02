@@ -26,6 +26,15 @@ cd fib
 cargo build
 ```
 
+### Running hello world
+
+To run any of the samples you can do so directly with cargo from the project root:
+
+```
+cargo run -- samples/hello_world.fib -I=std
+./out/hello_world
+```
+
 ## Language Features
 
 - **Types**: `int8/16/32/64`, `uint8/16/32/64`, `float32/64`, `bool`, `char`, `string`, structs, arrays, raw pointers
