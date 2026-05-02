@@ -1,0 +1,43 @@
+import std::core::error::{Error}
+import std::fs::path::{Path}
+
+type Stream struct {
+    int4 unused,
+}
+
+extern fn fopen(string path, string mode) *Stream
+extern fn fclose(*Stream stream) int4
+extern fn fgetc(*Stream stream) int4
+
+fn stream_open(Path path) *Stream {
+    stream: *Stream = fopen(path, "r")
+    ret stream
+}
+
+fn stream_is_open(Stream stream) bool {
+    ret stream.unused != 0
+}
+
+fn stream_mark_eof(*Stream stream) void {
+    stream.*.unused = 1
+}
+
+fn stream_next(*Stream stream) (char, Error) {
+    if !(stream_is_open(stream.*)) {
+        ret 0 as char, Error { message: "stream is not open", code: 1 }
+    }
+
+    ch: int4 = fgetc(stream.*)
+    if ch == -1 {
+        stream_mark_eof(stream)
+        ret 0 as char, Error { message: "stream is empty", code: 1 }
+    }
+    ret ch as char, Error { message: "", code: 0 }
+}
+
+fn stream_close(*Stream stream) void {
+    if stream.*.unused as uint8 != 0 {
+        fclose(stream.*)
+        stream.*.unused = 0
+    }
+}
