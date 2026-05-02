@@ -115,7 +115,6 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
             .iter()
             .map(|p| p.as_path()),
     );
-    println!("Search roots: {:#?}", search_roots);
 
     for decl in &ast.declarations {
         if let DeclarationNode::ImportDeclaration(import_decl) = decl {
