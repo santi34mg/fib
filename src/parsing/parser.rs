@@ -358,25 +358,6 @@ where
                     self.next(); // consume 'switch'
                     self.parse_switch_statement()?
                 }
-                TokenKind::Keyword(Keyword::While) => {
-                    self.next(); // consume "while"
-                    self.expect_token(
-                        TokenKind::Punctuation(Punctuation::OpeningParenthesis),
-                        "expected '('",
-                    )?;
-                    let expr = self.parse_expression()?;
-                    self.expect_token(
-                        TokenKind::Punctuation(Punctuation::ClosingParenthesis),
-                        "expected ')'",
-                    )?;
-                    let body = self.parse_body()?;
-                    StatementNode::For {
-                        initializer: None,
-                        condition: Some(expr),
-                        post_operation: None,
-                        body,
-                    }
-                }
                 TokenKind::Keyword(Keyword::Else)
                 | TokenKind::Operator(_)
                 | TokenKind::Punctuation(_)

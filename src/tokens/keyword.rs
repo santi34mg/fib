@@ -4,7 +4,6 @@ pub enum Keyword {
     If,
     Else,
     For,
-    While,
     Break,
     Continue,
     Return,
