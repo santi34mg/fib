@@ -106,6 +106,9 @@ pub enum HIRTypeKind {
         argument_types: Vec<HIRTypeKind>,
         return_type: Box<HIRTypeKind>,
     },
+    Tuple {
+        elements: Vec<HIRTypeKind>,
+    },
     /// A type from an imported module: `module::TypeName`
     QualifiedIdentifier {
         module: String,
@@ -128,6 +131,7 @@ impl fmt::Display for HIRTypeKind {
                 argument_types,
                 return_type,
             } => write!(f, "fn({:?}) -> {}", argument_types, *return_type)?,
+            Self::Tuple { elements } => write!(f, "({:?})", elements)?,
             Self::QualifiedIdentifier { module, name } => write!(f, "{}::{}", module, name)?,
             Self::Type => write!(f, "type")?,
         };
@@ -236,11 +240,32 @@ pub enum HIRExpressionKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct HIRReturn {
+    pub values: Vec<HIRExpression>,
+}
+
+impl std::ops::Deref for HIRReturn {
+    type Target = HIRExpression;
+
+    fn deref(&self) -> &Self::Target {
+        &self.values[0]
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum HIRStmt {
     Binding(HIRBinding),
     Assign {
         name: Identifier,
         expr: HIRExpression,
+    },
+    MultiAssign {
+        targets: Vec<HIRExpression>,
+        values: Vec<HIRExpression>,
+    },
+    MultiBinding {
+        bindings: Vec<HIRBinding>,
+        values: Vec<HIRExpression>,
     },
     FieldAssign {
         object: HIRExpression,
@@ -249,7 +274,7 @@ pub enum HIRStmt {
         expr: HIRExpression,
     },
     Expr(HIRExpression),
-    Return(Option<HIRExpression>),
+    Return(Option<HIRReturn>),
     If(HIRIf),
     For {
         init: Option<Box<HIRStmt>>,

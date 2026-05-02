@@ -8,7 +8,7 @@ use crate::ast::{
 };
 use crate::hir::{
     CompilationUnit, HIRBinding, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction,
-    HIRIf, HIRModule, HIRStmt, HIRSymbol, HIRTypeDeclaration, HIRTypeKind, Scope,
+    HIRIf, HIRModule, HIRReturn, HIRStmt, HIRSymbol, HIRTypeDeclaration, HIRTypeKind, Scope,
 };
 use crate::tokens::Operator;
 use crate::tokens::builtin::BuiltinType;
@@ -263,8 +263,34 @@ fn stmt_to_hir(
         StatementNode::ExpressionStatement(e) => {
             Ok(HIRStmt::Expr(expr_to_hir(e, current_scope, generic_cache)?))
         }
+        StatementNode::MultiAssignment { targets, values } => {
+            let mut hir_targets = Vec::new();
+            for target in targets {
+                validate_assignment_target(&target, current_scope)?;
+                hir_targets.push(expr_to_hir(target, current_scope, generic_cache)?);
+            }
+            let mut hir_values = Vec::new();
+            for value in values {
+                hir_values.push(expr_to_hir(value, current_scope, generic_cache)?);
+            }
+            validate_multi_assignment_shape(&hir_targets, &hir_values)?;
+            Ok(HIRStmt::MultiAssign {
+                targets: hir_targets,
+                values: hir_values,
+            })
+        }
+        StatementNode::MultiVariableDeclaration {
+            identifiers,
+            values,
+        } => multi_var_decl_to_hir(identifiers, values, current_scope, generic_cache),
         StatementNode::Return(opt) => Ok(HIRStmt::Return(match opt {
-            Some(e) => Some(expr_to_hir(e, current_scope, generic_cache)?),
+            Some(exprs) => {
+                let mut hir_exprs = Vec::new();
+                for expr in exprs {
+                    hir_exprs.push(expr_to_hir(expr, current_scope, generic_cache)?);
+                }
+                Some(HIRReturn { values: hir_exprs })
+            }
             None => None,
         })),
         StatementNode::If {
@@ -379,11 +405,9 @@ fn stmt_to_hir(
             let variants = match &resolved {
                 HIRTypeKind::Enum { variants } => variants.clone(),
                 other => {
-                    return Err(format!(
-                        "stmt_to_hir: switch subject is not an enum: {:?}",
-                        other
-                    )
-                    .into());
+                    return Err(
+                        format!("stmt_to_hir: switch subject is not an enum: {:?}", other).into(),
+                    );
                 }
             };
             let mut hir_arms = Vec::new();
@@ -468,53 +492,172 @@ fn stmt_to_hir(
     }
 }
 
+fn validate_assignment_target(target: &PExpr, current_scope: &Scope) -> Result<(), AnalysisError> {
+    match target {
+        PExpr::Identifier(id) => {
+            if let Some(HIRSymbol::Binding(binding)) = current_scope.symbols.get(id)
+                && !binding.mutable
+            {
+                return Err(format!("cannot assign to constant '{}'", id).into());
+            }
+            Ok(())
+        }
+        PExpr::FieldAccess { object, .. } => {
+            if let PExpr::Identifier(id) = object.as_ref()
+                && let Some(HIRSymbol::Binding(binding)) = current_scope.symbols.get(id)
+                && !binding.mutable
+            {
+                return Err(format!("cannot assign to field of constant '{}'", id).into());
+            }
+            Ok(())
+        }
+        PExpr::Dereference(_) | PExpr::IndexAccess { .. } => Ok(()),
+        _ => Err("invalid multi-assignment target".to_string().into()),
+    }
+}
+
+fn validate_multi_assignment_shape(
+    targets: &[HIRExpression],
+    values: &[HIRExpression],
+) -> Result<(), AnalysisError> {
+    if values.len() == targets.len() {
+        return Ok(());
+    }
+    if values.len() == 1
+        && let HIRTypeKind::Tuple { elements } = &values[0].inferred_type
+        && elements.len() == targets.len()
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "multi-assignment arity mismatch: {} target(s), {} value expression(s)",
+        targets.len(),
+        values.len()
+    )
+    .into())
+}
+
+fn infer_multi_binding_types(
+    identifiers: &[Identifier],
+    values: &[HIRExpression],
+) -> Result<Vec<HIRTypeKind>, AnalysisError> {
+    if values.len() == identifiers.len() {
+        return Ok(values
+            .iter()
+            .map(|value| value.inferred_type.clone())
+            .collect());
+    }
+    if values.len() == 1
+        && let HIRTypeKind::Tuple { elements } = &values[0].inferred_type
+        && elements.len() == identifiers.len()
+    {
+        return Ok(elements.clone());
+    }
+    Err(format!(
+        "multi-variable declaration arity mismatch: {} identifier(s), {} value expression(s)",
+        identifiers.len(),
+        values.len()
+    )
+    .into())
+}
+
+fn multi_var_decl_to_hir(
+    identifiers: Vec<Identifier>,
+    values: Vec<PExpr>,
+    current_scope: &mut Scope,
+    generic_cache: &mut HashMap<String, HIRFunction>,
+) -> Result<HIRStmt, AnalysisError> {
+    let mut hir_values = Vec::new();
+    for value in values {
+        hir_values.push(expr_to_hir(value, current_scope, generic_cache)?);
+    }
+
+    let binding_types = infer_multi_binding_types(&identifiers, &hir_values)?;
+    let mut bindings = Vec::new();
+    for (identifier, ty) in identifiers.into_iter().zip(binding_types.into_iter()) {
+        let binding = HIRBinding {
+            name: identifier.clone(),
+            ty,
+            init: None,
+            mutable: true,
+        };
+        current_scope
+            .symbols
+            .insert(identifier, HIRSymbol::Binding(binding.clone()));
+        bindings.push(binding);
+    }
+
+    Ok(HIRStmt::MultiBinding {
+        bindings,
+        values: hir_values,
+    })
+}
+
+fn zero_init_expr_for_type(ty: &HIRTypeKind) -> Result<HIRExpression, AnalysisError> {
+    match ty {
+        HIRTypeKind::Builtin(BuiltinType::Boolean) => Ok(HIRExpression {
+            inferred_type: HIRTypeKind::Builtin(BuiltinType::Boolean),
+            expression: HIRExpressionKind::LiteralBool(false),
+        }),
+        HIRTypeKind::Builtin(
+            BuiltinType::Char
+            | BuiltinType::Int1
+            | BuiltinType::Int2
+            | BuiltinType::Int4
+            | BuiltinType::Int8
+            | BuiltinType::Int16
+            | BuiltinType::UInt1
+            | BuiltinType::UInt2
+            | BuiltinType::UInt4
+            | BuiltinType::UInt8
+            | BuiltinType::UInt16,
+        ) => Ok(HIRExpression {
+            inferred_type: ty.clone(),
+            expression: HIRExpressionKind::LiteralInt { value: 0 },
+        }),
+        HIRTypeKind::Pointer(_) => Ok(HIRExpression {
+            inferred_type: ty.clone(),
+            expression: HIRExpressionKind::Null,
+        }),
+        HIRTypeKind::Array { element_type, size } => {
+            let mut elements = Vec::new();
+            for _ in 0..*size {
+                elements.push(zero_init_expr_for_type(element_type)?);
+            }
+            Ok(HIRExpression {
+                inferred_type: ty.clone(),
+                expression: HIRExpressionKind::ArrayLiteral { elements },
+            })
+        }
+        _ => Err("var declaration requires type or initializer"
+            .to_string()
+            .into()),
+    }
+}
+
 fn var_decl_to_hir(
     var_decl: VariableDeclaration,
     current_scope: &mut Scope,
     generic_cache: &mut HashMap<String, HIRFunction>,
 ) -> Result<HIRBinding, AnalysisError> {
-    let ty = match var_decl.constant_type {
+    let declared_ty = match var_decl.constant_type {
         Some(TypeExpression::TypeKeyword) => {
             return Err("mutable type bindings (`var type`) are not yet supported; use `const type` for compile-time type aliases".to_string().into());
         }
-        Some(t) => map_type(t)?,
-        None => HIRTypeKind::Builtin(BuiltinType::Void),
+        Some(t) => Some(map_type(t)?),
+        None => None,
     };
     let mut init = if let Some(expr) = var_decl.expression {
         expr_to_hir(expr, current_scope, generic_cache)?
+    } else if let Some(ty) = &declared_ty {
+        // Zero-initialize based on declared type when no initializer is present.
+        zero_init_expr_for_type(ty)?
     } else {
-        // Zero-initialize based on declared type when no initializer is present
-        match &ty {
-            HIRTypeKind::Builtin(BuiltinType::Boolean) => HIRExpression {
-                inferred_type: HIRTypeKind::Builtin(BuiltinType::Boolean),
-                expression: HIRExpressionKind::LiteralBool(false),
-            },
-            HIRTypeKind::Builtin(
-                BuiltinType::Int1
-                | BuiltinType::Int2
-                | BuiltinType::Int4
-                | BuiltinType::Int8
-                | BuiltinType::Int16
-                | BuiltinType::UInt1
-                | BuiltinType::UInt2
-                | BuiltinType::UInt4
-                | BuiltinType::UInt8
-                | BuiltinType::UInt16,
-            ) => HIRExpression {
-                inferred_type: ty.clone(),
-                expression: HIRExpressionKind::LiteralInt { value: 0 },
-            },
-            HIRTypeKind::Pointer(_) => HIRExpression {
-                inferred_type: ty.clone(),
-                expression: HIRExpressionKind::Null,
-            },
-            _ => {
-                return Err("var declaration requires type or initializer"
-                    .to_string()
-                    .into());
-            }
-        }
+        return Err("inferred variable declaration requires an initializer"
+            .to_string()
+            .into());
     };
+    let ty = declared_ty.unwrap_or_else(|| init.inferred_type.clone());
     // check that type matches; allow struct-by-name to match struct literal type
     // `never` unifies with any type
     if init.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never) {
@@ -601,6 +744,86 @@ inferred type of expression: {:?}"#,
     Ok(hir_var)
 }
 
+fn is_integer_builtin(builtin: &BuiltinType) -> bool {
+    matches!(
+        builtin,
+        BuiltinType::Int1
+            | BuiltinType::Int2
+            | BuiltinType::Int4
+            | BuiltinType::Int8
+            | BuiltinType::Int16
+            | BuiltinType::UInt1
+            | BuiltinType::UInt2
+            | BuiltinType::UInt4
+            | BuiltinType::UInt8
+            | BuiltinType::UInt16
+            | BuiltinType::Char
+    )
+}
+
+fn is_float_builtin(builtin: &BuiltinType) -> bool {
+    matches!(
+        builtin,
+        BuiltinType::Float2 | BuiltinType::Float4 | BuiltinType::Float8 | BuiltinType::Float16
+    )
+}
+
+fn is_numeric_type(ty: &HIRTypeKind) -> bool {
+    matches!(
+        ty,
+        HIRTypeKind::Builtin(builtin) if is_integer_builtin(builtin) || is_float_builtin(builtin)
+    )
+}
+
+fn is_boolean_type(ty: &HIRTypeKind) -> bool {
+    matches!(ty, HIRTypeKind::Builtin(BuiltinType::Boolean))
+}
+
+fn coerce_expr_to_type(
+    mut expr: HIRExpression,
+    target: &HIRTypeKind,
+) -> Result<HIRExpression, AnalysisError> {
+    if &expr.inferred_type == target {
+        return Ok(expr);
+    }
+
+    if expr.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never) {
+        expr.inferred_type = target.clone();
+        return Ok(expr);
+    }
+
+    match (&expr.expression, &expr.inferred_type, target) {
+        (
+            HIRExpressionKind::LiteralInt { .. },
+            HIRTypeKind::Builtin(src),
+            HIRTypeKind::Builtin(dst),
+        ) if is_integer_builtin(src) && is_integer_builtin(dst) => {
+            expr.inferred_type = target.clone();
+            Ok(expr)
+        }
+        (
+            HIRExpressionKind::LiteralFloat { .. },
+            HIRTypeKind::Builtin(src),
+            HIRTypeKind::Builtin(dst),
+        ) if is_float_builtin(src) && is_float_builtin(dst) => {
+            expr.inferred_type = target.clone();
+            Ok(expr)
+        }
+        (_, src, dst) if is_numeric_type(src) && is_numeric_type(dst) => Ok(HIRExpression {
+            inferred_type: target.clone(),
+            expression: HIRExpressionKind::Cast {
+                expr: Box::new(expr),
+                target_type: target.clone(),
+            },
+        }),
+        _ => Err(format!(
+            "cannot coerce expression of type {:?} to {:?}",
+            expr.inferred_type, target
+        )
+        .into()),
+    }
+}
+
 fn expr_to_hir(
     expr: PExpr,
     current_scope: &Scope,
@@ -675,11 +898,7 @@ fn expr_to_hir(
             };
             let resolved = resolve_type_alias(enum_ty.clone(), current_scope);
             let HIRTypeKind::Enum { variants } = &resolved else {
-                return Err(format!(
-                    "expr_to_hir: '{}' is not an enum type",
-                    type_name
-                )
-                .into());
+                return Err(format!("expr_to_hir: '{}' is not an enum type", type_name).into());
             };
             let v = variants
                 .iter()
@@ -737,9 +956,9 @@ fn expr_to_hir(
             right,
         } => {
             let l = expr_to_hir(*left, current_scope, generic_cache)?;
-            let mut r = expr_to_hir(*right, current_scope, generic_cache)?;
-            let inferred_type = match operator {
-                // Arithmetic/bitwise: result type = LHS type
+            let r = expr_to_hir(*right, current_scope, generic_cache)?;
+            let (inferred_type, r) = match operator {
+                // Arithmetic/bitwise: result type = LHS type.
                 Operator::Plus
                 | Operator::Minus
                 | Operator::Star
@@ -750,21 +969,48 @@ fn expr_to_hir(
                 | Operator::Ampersand
                 | Operator::Pipe
                 | Operator::Caret => {
-                    // For pointer arithmetic, keep pointer type; don't coerce RHS
-                    if !matches!(l.inferred_type, HIRTypeKind::Pointer(_)) {
-                        r.inferred_type = l.inferred_type.clone();
+                    // For pointer arithmetic, keep pointer type; don't coerce RHS.
+                    if matches!(l.inferred_type, HIRTypeKind::Pointer(_)) {
+                        (l.inferred_type.clone(), r)
+                    } else if is_numeric_type(&l.inferred_type) {
+                        let r = coerce_expr_to_type(r, &l.inferred_type)?;
+                        (l.inferred_type.clone(), r)
+                    } else {
+                        return Err(format!(
+                            "operator {:?} requires numeric operands, got {:?}",
+                            operator, l.inferred_type
+                        )
+                        .into());
                     }
-                    l.inferred_type.clone()
                 }
-                // Comparison/logical: result type = bool
-                Operator::DoubleEquals
-                | Operator::Different
-                | Operator::GreaterThan
+                Operator::GreaterThan
                 | Operator::GreaterEqual
                 | Operator::LesserThan
-                | Operator::LesserEqual
-                | Operator::LogicalAnd
-                | Operator::LogicalOr => HIRTypeKind::Builtin(BuiltinType::Boolean),
+                | Operator::LesserEqual => {
+                    if !is_numeric_type(&l.inferred_type) {
+                        return Err(format!(
+                            "operator {:?} requires numeric operands, got {:?}",
+                            operator, l.inferred_type
+                        )
+                        .into());
+                    }
+                    let r = coerce_expr_to_type(r, &l.inferred_type)?;
+                    (HIRTypeKind::Builtin(BuiltinType::Boolean), r)
+                }
+                Operator::DoubleEquals | Operator::Different => {
+                    let r = coerce_expr_to_type(r, &l.inferred_type)?;
+                    (HIRTypeKind::Builtin(BuiltinType::Boolean), r)
+                }
+                Operator::LogicalAnd | Operator::LogicalOr => {
+                    if !is_boolean_type(&l.inferred_type) || !is_boolean_type(&r.inferred_type) {
+                        return Err(format!(
+                            "operator {:?} requires bool operands, got {:?} and {:?}",
+                            operator, l.inferred_type, r.inferred_type
+                        )
+                        .into());
+                    }
+                    (HIRTypeKind::Builtin(BuiltinType::Boolean), r)
+                }
                 op => return Err(format!("unsupported binary operator {:?}", op).into()),
             };
             Ok(HIRExpression {
@@ -1212,7 +1458,9 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, AnalysisErro
                     payload,
                 });
             }
-            HIRTypeKind::Enum { variants: hir_variants }
+            HIRTypeKind::Enum {
+                variants: hir_variants,
+            }
         }
         TypeExpression::Function {
             argument_types,
@@ -1225,6 +1473,15 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, AnalysisErro
             HIRTypeKind::Function {
                 argument_types: mapped_arguments,
                 return_type: Box::new(map_type(*return_type)?),
+            }
+        }
+        TypeExpression::Tuple { elements } => {
+            let mut mapped_elements = Vec::new();
+            for element in elements {
+                mapped_elements.push(map_type(element)?);
+            }
+            HIRTypeKind::Tuple {
+                elements: mapped_elements,
             }
         }
         TypeExpression::Pointer {
@@ -1289,6 +1546,20 @@ fn resolve_statement(
             );
             Ok(current_scope)
         }
+        StatementNode::MultiVariableDeclaration { identifiers, .. } => {
+            for identifier in identifiers {
+                current_scope.symbols.insert(
+                    identifier.clone(),
+                    HIRSymbol::Binding(HIRBinding {
+                        name: identifier.clone(),
+                        ty: HIRTypeKind::Builtin(BuiltinType::Void),
+                        init: None,
+                        mutable: true,
+                    }),
+                );
+            }
+            Ok(current_scope)
+        }
         StatementNode::Return(_) => Ok(current_scope),
         StatementNode::Break => Ok(current_scope),
         StatementNode::Continue => Ok(current_scope),
@@ -1337,6 +1608,7 @@ fn resolve_statement(
             // TODO: for now i wont do anything, perhaps do type checking in the future
             Ok(current_scope)
         }
+        StatementNode::MultiAssignment { .. } => Ok(current_scope),
         StatementNode::FieldAssign { .. } => Ok(current_scope),
         StatementNode::DerefAssign { .. } => Ok(current_scope),
         StatementNode::IndexAssign { .. } => Ok(current_scope),
@@ -1377,6 +1649,14 @@ fn mangle_type_expr(te: &TypeExpression) -> String {
         TypeExpression::Struct { .. } => "struct".to_string(),
         TypeExpression::Enum { .. } => "enum".to_string(),
         TypeExpression::Function { .. } => "fn".to_string(),
+        TypeExpression::Tuple { elements } => format!(
+            "tuple_{}",
+            elements
+                .iter()
+                .map(mangle_type_expr)
+                .collect::<Vec<_>>()
+                .join("_")
+        ),
         TypeExpression::QualifiedIdentifier { module, name } => {
             format!("{}__{}", module.identifier, name.identifier)
         }
@@ -1423,6 +1703,9 @@ fn substitute_type(te: &TypeExpression, subs: &HashMap<String, TypeExpression>) 
                 .map(|t| substitute_type(t, subs))
                 .collect(),
             return_type: Box::new(substitute_type(return_type, subs)),
+        },
+        TypeExpression::Tuple { elements } => TypeExpression::Tuple {
+            elements: elements.iter().map(|t| substitute_type(t, subs)).collect(),
         },
         // Builtins, QualifiedIdentifier, TypeKeyword contain no substitutable identifiers
         _ => te.clone(),
@@ -1482,9 +1765,26 @@ fn substitute_in_stmt(stmt: &mut ASTStatementNode, subs: &HashMap<String, TypeEx
                 substitute_in_expr(e, subs);
             }
         }
-        ASTStatementNode::Return(Some(expr)) => substitute_in_expr(expr, subs),
+        ASTStatementNode::Return(Some(exprs)) => {
+            for expr in exprs {
+                substitute_in_expr(expr, subs);
+            }
+        }
         ASTStatementNode::ExpressionStatement(expr) => substitute_in_expr(expr, subs),
         ASTStatementNode::Assignment { expr, .. } => substitute_in_expr(expr, subs),
+        ASTStatementNode::MultiAssignment { targets, values } => {
+            for target in targets {
+                substitute_in_expr(target, subs);
+            }
+            for value in values {
+                substitute_in_expr(value, subs);
+            }
+        }
+        ASTStatementNode::MultiVariableDeclaration { values, .. } => {
+            for value in values {
+                substitute_in_expr(value, subs);
+            }
+        }
         ASTStatementNode::FieldAssign { expr, .. } => substitute_in_expr(expr, subs),
         ASTStatementNode::DerefAssign { pointer, expr } => {
             substitute_in_expr(pointer, subs);
