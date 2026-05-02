@@ -203,22 +203,29 @@ fn compute_lvalue_ptr<'ctx, 'r>(
 ) -> Result<PointerValue<'ctx>, Box<dyn Error>> {
     match &expr.expression {
         HIRExpressionKind::Identifier(name) => {
-            let ptr = *vars.get(name).ok_or_else(|| {
-                format!("compute_lvalue_ptr: no alloca for identifier {}", name)
-            })?;
+            let ptr = *vars
+                .get(name)
+                .ok_or_else(|| format!("compute_lvalue_ptr: no alloca for identifier {}", name))?;
             Ok(ptr)
         }
         HIRExpressionKind::Deref(inner) => {
             let v = codegen_expr(ctx, vars, current_scope, inner)?;
             Ok(v.into_pointer_value())
         }
-        HIRExpressionKind::FieldAccess { object, field: _, field_index } => {
+        HIRExpressionKind::FieldAccess {
+            object,
+            field: _,
+            field_index,
+        } => {
             let base_ptr = compute_lvalue_ptr(ctx, vars, current_scope, object)?;
-            let struct_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
+            let struct_ty =
+                map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
             let BasicTypeEnum::StructType(st) = struct_ty else {
                 return Err("compute_lvalue_ptr: FieldAccess on non-struct type".into());
             };
-            let gep = ctx.builder.build_struct_gep(st, base_ptr, *field_index as u32, "fieldptr")?;
+            let gep =
+                ctx.builder
+                    .build_struct_gep(st, base_ptr, *field_index as u32, "fieldptr")?;
             Ok(gep)
         }
         HIRExpressionKind::IndexAccess { object, index } => {
@@ -226,7 +233,8 @@ fn compute_lvalue_ptr<'ctx, 'r>(
             let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
             match &object.inferred_type {
                 HIRTypeKind::Array { .. } => {
-                    let arr_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
+                    let arr_ty =
+                        map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
                     let base_ptr = compute_lvalue_ptr(ctx, vars, current_scope, object)?;
                     let i32_zero = ctx.ctx.i32_type().const_int(0, false);
                     let gep = unsafe {
@@ -255,6 +263,109 @@ fn compute_lvalue_ptr<'ctx, 'r>(
         }
         _ => Err("compute_lvalue_ptr: not an lvalue expression".into()),
     }
+}
+
+fn coerce_int_to_llvm_type<'ctx, 'r>(
+    ctx: &CodegenCtx<'ctx, 'r>,
+    value: BasicValueEnum<'ctx>,
+    target_type: BasicTypeEnum<'ctx>,
+) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
+    match (value, target_type) {
+        (BasicValueEnum::IntValue(iv), BasicTypeEnum::IntType(it)) => {
+            let src_bits = iv.get_type().get_bit_width();
+            let dst_bits = it.get_bit_width();
+            if src_bits > dst_bits {
+                Ok(ctx
+                    .builder
+                    .build_int_truncate(iv, it, "trunctmp")?
+                    .as_basic_value_enum())
+            } else if src_bits < dst_bits {
+                Ok(ctx
+                    .builder
+                    .build_int_s_extend(iv, it, "sextmp")?
+                    .as_basic_value_enum())
+            } else {
+                Ok(iv.as_basic_value_enum())
+            }
+        }
+        (value, _) => Ok(value),
+    }
+}
+
+fn build_tuple_value<'ctx, 'r>(
+    ctx: &CodegenCtx<'ctx, 'r>,
+    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
+    current_scope: &mut Scope,
+    exprs: &[HIRExpression],
+    tuple_ty: inkwell::types::StructType<'ctx>,
+) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
+    if tuple_ty.count_fields() as usize != exprs.len() {
+        return Err(format!(
+            "return arity mismatch: function expects {} value(s), return has {} expression(s)",
+            tuple_ty.count_fields(),
+            exprs.len()
+        )
+        .into());
+    }
+    let alloca = ctx.builder.build_alloca(tuple_ty, "multirettmp")?;
+    for (idx, expr) in exprs.iter().enumerate() {
+        let raw_val = codegen_expr(ctx, vars, current_scope, expr)?;
+        let field_ty = tuple_ty
+            .get_field_type_at_index(idx as u32)
+            .ok_or_else(|| format!("tuple return has no field at index {}", idx))?;
+        let val = coerce_int_to_llvm_type(ctx, raw_val, field_ty)?;
+        let gep = ctx
+            .builder
+            .build_struct_gep(tuple_ty, alloca, idx as u32, "multiretfield")?;
+        ctx.builder.build_store(gep, val)?;
+    }
+    Ok(ctx.builder.build_load(tuple_ty, alloca, "multiretload")?)
+}
+
+fn store_lvalue<'ctx, 'r>(
+    ctx: &CodegenCtx<'ctx, 'r>,
+    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
+    current_scope: &mut Scope,
+    target: &HIRExpression,
+    value: BasicValueEnum<'ctx>,
+) -> Result<(), Box<dyn Error>> {
+    let ptr = compute_lvalue_ptr(ctx, vars, current_scope, target)?;
+    let target_ty = map_type_to_llvm(&target.inferred_type, ctx.ctx, current_scope.clone())?;
+    let value = coerce_int_to_llvm_type(ctx, value, target_ty)?;
+    ctx.builder.build_store(ptr, value)?;
+    Ok(())
+}
+
+fn unpack_tuple_value<'ctx, 'r>(
+    ctx: &CodegenCtx<'ctx, 'r>,
+    tuple_value: BasicValueEnum<'ctx>,
+    expected_count: usize,
+) -> Result<Vec<BasicValueEnum<'ctx>>, Box<dyn Error>> {
+    let BasicValueEnum::StructValue(struct_value) = tuple_value else {
+        return Err("multi-assignment expected a multiple-return tuple value".into());
+    };
+    let tuple_ty = struct_value.get_type();
+    if tuple_ty.count_fields() as usize != expected_count {
+        return Err(format!(
+            "multi-assignment arity mismatch: tuple has {} value(s), target list has {}",
+            tuple_ty.count_fields(),
+            expected_count
+        )
+        .into());
+    }
+    let alloca = ctx.builder.build_alloca(tuple_ty, "multiassigntmp")?;
+    ctx.builder.build_store(alloca, struct_value)?;
+    let mut values = Vec::new();
+    for idx in 0..expected_count {
+        let field_ty = tuple_ty
+            .get_field_type_at_index(idx as u32)
+            .ok_or_else(|| format!("tuple value has no field at index {}", idx))?;
+        let gep = ctx
+            .builder
+            .build_struct_gep(tuple_ty, alloca, idx as u32, "multiassignfield")?;
+        values.push(ctx.builder.build_load(field_ty, gep, "multiassignload")?);
+    }
+    Ok(values)
 }
 
 fn codegen_expr<'ctx, 'r>(
@@ -826,6 +937,10 @@ fn hir_type_size_bytes(ty: &HIRTypeKind, scope: &Scope) -> usize {
             .iter()
             .map(|(_, ty)| hir_type_size_bytes(ty, scope))
             .sum(),
+        HIRTypeKind::Tuple { elements } => elements
+            .iter()
+            .map(|ty| hir_type_size_bytes(ty, scope))
+            .sum(),
         HIRTypeKind::Enum { variants } => {
             let payload = variants
                 .iter()
@@ -921,6 +1036,13 @@ fn map_type_to_llvm<'ctx>(
             let field_types: Vec<BasicTypeEnum> = fields
                 .iter()
                 .map(|(_, ty)| map_type_to_llvm(ty, ctx, current_scope.clone()))
+                .collect::<Result<_, _>>()?;
+            Ok(ctx.struct_type(&field_types, false).into())
+        }
+        HIRTypeKind::Tuple { elements } => {
+            let field_types: Vec<BasicTypeEnum> = elements
+                .iter()
+                .map(|ty| map_type_to_llvm(ty, ctx, current_scope.clone()))
                 .collect::<Result<_, _>>()?;
             Ok(ctx.struct_type(&field_types, false).into())
         }
@@ -1077,11 +1199,89 @@ fn codegen_stmt<'ctx, 'r>(
         HIRStmt::Assign { name, expr } => {
             let v = codegen_expr(ctx, vars, current_scope, expr)?;
             if let Some(ptr) = vars.get(name) {
+                let target_ty = match current_scope.symbols.get(name) {
+                    Some(HIRSymbol::Binding(binding)) => {
+                        map_type_to_llvm(&binding.ty, ctx.ctx, current_scope.clone())?
+                    }
+                    _ => v.get_type(),
+                };
+                let v = coerce_int_to_llvm_type(ctx, v, target_ty)?;
                 let _ = ctx.builder.build_store(*ptr, v);
                 Ok(None)
             } else {
                 Err(format!("assignment to unknown variable '{}' in lowering", name).into())
             }
+        }
+
+        HIRStmt::MultiAssign { targets, values } => {
+            let evaluated_values = if values.len() == 1
+                && matches!(values[0].inferred_type, HIRTypeKind::Tuple { .. })
+            {
+                let tuple_value = codegen_expr(ctx, vars, current_scope, &values[0])?;
+                unpack_tuple_value(ctx, tuple_value, targets.len())?
+            } else {
+                if targets.len() != values.len() {
+                    return Err(format!(
+                        "multi-assignment arity mismatch: {} target(s), {} value expression(s)",
+                        targets.len(),
+                        values.len()
+                    )
+                    .into());
+                }
+                let mut vals = Vec::new();
+                for value in values {
+                    vals.push(codegen_expr(ctx, vars, current_scope, value)?);
+                }
+                vals
+            };
+
+            for (target, value) in targets.iter().zip(evaluated_values.into_iter()) {
+                store_lvalue(ctx, vars, current_scope, target, value)?;
+            }
+            Ok(None)
+        }
+
+        HIRStmt::MultiBinding { bindings, values } => {
+            let evaluated_values = if values.len() == 1
+                && matches!(values[0].inferred_type, HIRTypeKind::Tuple { .. })
+            {
+                let tuple_value = codegen_expr(ctx, vars, current_scope, &values[0])?;
+                unpack_tuple_value(ctx, tuple_value, bindings.len())?
+            } else {
+                if bindings.len() != values.len() {
+                    return Err(format!(
+                        "multi-variable declaration arity mismatch: {} binding(s), {} value expression(s)",
+                        bindings.len(),
+                        values.len()
+                    )
+                    .into());
+                }
+                let mut vals = Vec::new();
+                for value in values {
+                    vals.push(codegen_expr(ctx, vars, current_scope, value)?);
+                }
+                vals
+            };
+
+            for (binding, value) in bindings.iter().zip(evaluated_values.into_iter()) {
+                let ty = map_type_to_llvm(&binding.ty, ctx.ctx, current_scope.clone())?;
+                let alloca = ctx
+                    .builder
+                    .build_alloca(ty, &format!("{}_addr", binding.name))?;
+                let value = coerce_int_to_llvm_type(ctx, value, ty)?;
+                ctx.builder.build_store(alloca, value)?;
+                vars.insert(binding.name.clone(), alloca);
+                current_scope.symbols.insert(
+                    binding.name.clone(),
+                    HIRSymbol::Binding(crate::hir::HIRBinding {
+                        name: binding.name.clone(),
+                        ty: binding.ty.clone(),
+                        init: None,
+                        mutable: binding.mutable,
+                    }),
+                );
+            }
+            Ok(None)
         }
 
         HIRStmt::FieldAssign {
@@ -1185,33 +1385,27 @@ fn codegen_stmt<'ctx, 'r>(
         HIRStmt::Return(opt) => {
             // Emit deferred statements before returning (in reverse order)
             emit_deferred(ctx, vars, current_scope, deferred)?;
-            if let Some(e) = opt {
-                let v = codegen_expr(ctx, vars, current_scope, e)?;
-                // Cast to the function's declared return type when it differs
-                // (e.g. literal `0` inferred as i32 inside a function returning i8).
+            if let Some(ret) = opt {
                 let func = ctx
                     .builder
                     .get_insert_block()
                     .unwrap()
                     .get_parent()
                     .unwrap();
-                let ret_val = match (v, func.get_type().get_return_type()) {
-                    (BasicValueEnum::IntValue(iv), Some(BasicTypeEnum::IntType(it))) => {
-                        let src_bits = iv.get_type().get_bit_width();
-                        let dst_bits = it.get_bit_width();
-                        if src_bits > dst_bits {
-                            ctx.builder
-                                .build_int_truncate(iv, it, "trunctmp")?
-                                .as_basic_value_enum()
-                        } else if src_bits < dst_bits {
-                            ctx.builder
-                                .build_int_s_extend(iv, it, "sextmp")?
-                                .as_basic_value_enum()
-                        } else {
-                            iv.as_basic_value_enum()
-                        }
+                let ret_ty = func.get_type().get_return_type();
+                let ret_val = if ret.values.len() == 1 {
+                    let v = codegen_expr(ctx, vars, current_scope, &ret.values[0])?;
+                    match ret_ty {
+                        Some(target_ty) => coerce_int_to_llvm_type(ctx, v, target_ty)?,
+                        None => v,
                     }
-                    (v, _) => v,
+                } else {
+                    let Some(BasicTypeEnum::StructType(tuple_ty)) = ret_ty else {
+                        return Err(
+                            "multiple return expressions require a multiple return type".into()
+                        );
+                    };
+                    build_tuple_value(ctx, vars, current_scope, &ret.values, tuple_ty)?
                 };
                 let _ = ctx.builder.build_return(Some(&ret_val));
             } else {
@@ -1468,8 +1662,9 @@ fn codegen_stmt<'ctx, 'r>(
                     let st = sv.get_type();
                     let alloca = ctx.builder.build_alloca(st, "switchsubj")?;
                     ctx.builder.build_store(alloca, sv)?;
-                    let tag_ptr =
-                        ctx.builder.build_struct_gep(st, alloca, 0, "switchtagptr")?;
+                    let tag_ptr = ctx
+                        .builder
+                        .build_struct_gep(st, alloca, 0, "switchtagptr")?;
                     let tag = ctx.builder.build_load(i32_ty, tag_ptr, "switchtag")?;
                     (tag.into_int_value(), Some(alloca), Some(st))
                 }
@@ -1501,25 +1696,19 @@ fn codegen_stmt<'ctx, 'r>(
                     ..
                 } = &arm.pattern
                 {
-                    let payload_llvm = map_type_to_llvm(payload_ty, ctx.ctx, current_scope.clone())?;
-                    let bind_alloca =
-                        ctx.builder.build_alloca(payload_llvm, "patbind")?;
-                    if let (Some(subj_alloca), Some(subj_st)) =
-                        (subject_alloca, subject_struct_ty)
+                    let payload_llvm =
+                        map_type_to_llvm(payload_ty, ctx.ctx, current_scope.clone())?;
+                    let bind_alloca = ctx.builder.build_alloca(payload_llvm, "patbind")?;
+                    if let (Some(subj_alloca), Some(subj_st)) = (subject_alloca, subject_struct_ty)
                     {
-                        let payload_ptr = ctx.builder.build_struct_gep(
-                            subj_st,
-                            subj_alloca,
-                            1,
-                            "subjpayload",
-                        )?;
+                        let payload_ptr =
+                            ctx.builder
+                                .build_struct_gep(subj_st, subj_alloca, 1, "subjpayload")?;
                         // Reinterpret the payload bytes as the variant's struct
                         // by loading and re-storing through the bind alloca.
-                        let loaded = ctx.builder.build_load(
-                            payload_llvm,
-                            payload_ptr,
-                            "loadpayload",
-                        )?;
+                        let loaded =
+                            ctx.builder
+                                .build_load(payload_llvm, payload_ptr, "loadpayload")?;
                         ctx.builder.build_store(bind_alloca, loaded)?;
                     }
                     let prev = vars.insert(b.clone(), bind_alloca);
