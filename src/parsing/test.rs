@@ -2,9 +2,7 @@
 mod tests {
     use std::path::Path;
 
-    use crate::ast::{
-        Ast, ConstantDeclaration, DeclarationNode, Expression, StatementNode, TypeExpression,
-    };
+    use crate::ast::{Ast, DeclarationNode, Expression, StatementNode, TypeExpression};
     use crate::lexing::Lexer;
     use crate::parsing::Parser;
     use crate::tokens::{Literal, Operator, Token};
@@ -154,69 +152,6 @@ mod tests {
             assert!(matches!(op, Operator::Plus));
         } else {
             panic!("AST statement did not match expected Expression");
-        }
-    }
-
-    #[test]
-    fn test_full_const_declaration() {
-        let test_string = "const int4 x = 5;";
-        let ast = get_ast(test_string);
-        let stmts = module_statements(&ast);
-        assert_eq!(stmts.len(), 1);
-        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
-            identifier,
-            constant_type: Some(TypeExpression::Builtin(_)),
-            expression: Expression::Literal(Literal::Integer(5)),
-        }) = stmts[0]
-        {
-            assert_eq!(identifier.identifier, "x");
-        } else {
-            panic!(
-                "AST statement did not match expected ConstantDeclaration, got: {:#?}",
-                stmts
-            );
-        }
-    }
-
-    #[test]
-    fn test_const_declaration_without_type() {
-        let test_string = "const x = 5;";
-        let ast = get_ast(test_string);
-        let stmts = module_statements(&ast);
-        assert_eq!(stmts.len(), 1);
-        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
-            identifier,
-            constant_type: None,
-            expression: Expression::Literal(Literal::Integer(5)),
-        }) = stmts[0]
-        {
-            assert_eq!(identifier.identifier, "x");
-        } else {
-            panic!(
-                "AST statement did not match expected ConstantDeclaration, got: {:#?}",
-                stmts
-            );
-        }
-    }
-
-    #[test]
-    fn test_const_declaration_without_semicolon() {
-        let test_string = "const int4 x = 5";
-        let ast = get_ast(test_string);
-        let stmts = module_statements(&ast);
-        assert_eq!(stmts.len(), 1);
-        if let StatementNode::ConstantDeclaration(ConstantDeclaration {
-            identifier,
-            constant_type: Some(TypeExpression::Builtin(_)),
-            expression: Expression::Literal(Literal::Integer(5)),
-        }) = stmts[0]
-        {
-            assert_eq!(identifier.identifier, "x");
-        } else {
-            panic!(
-                "AST statement did not match expected ConstantDeclaration, got: {:#?}",
-                stmts
-            );
         }
     }
 
@@ -478,9 +413,8 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         // The outer operation must be multiplication with LHS being a grouping
-        if let StatementNode::ExpressionStatement(Expression::Binary {
-            left, operator, ..
-        }) = stmts[0]
+        if let StatementNode::ExpressionStatement(Expression::Binary { left, operator, .. }) =
+            stmts[0]
         {
             assert!(matches!(operator, Operator::Star));
             assert!(matches!(**left, Expression::Grouping(_)));
@@ -621,10 +555,7 @@ mod tests {
         let test_string = "x = 42";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
-        assert!(matches!(
-            stmts[0],
-            StatementNode::Assignment { .. }
-        ));
+        assert!(matches!(stmts[0], StatementNode::Assignment { .. }));
     }
 
     #[test]

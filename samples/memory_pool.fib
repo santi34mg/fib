@@ -1,24 +1,24 @@
 import std::libc
 
-const type Pool = struct {
-    uint64 start,
-    uint64 block_size,
-    uint64 capacity,
-    uint64 used,
+type Pool struct {
+    uint8 start,
+    uint8 block_size,
+    uint8 capacity,
+    uint8 used,
 }
 
-fn pool_create(uint64 block_size, uint64 capacity) Pool {
-    var uint64 total = block_size * capacity
+fn pool_create(uint8 block_size, uint8 capacity) Pool {
+    var uint8 total = block_size * capacity
     var *void buf = libc::malloc(total)
-    return Pool { start: buf as uint64, block_size: block_size, capacity: capacity, used: 0 as uint64 }
+    return Pool { start: buf as uint8, block_size: block_size, capacity: capacity, used: 0 as uint8 }
 }
 
 fn pool_alloc(*Pool pool) *void {
     if pool.*.used >= pool.*.capacity {
-        return 0 as uint64 as *void
+        return 0 as uint8 as *void
     }
-    var uint64 offset = pool.*.used * pool.*.block_size
-    var uint64 addr = pool.*.start + offset
+    var uint8 offset = pool.*.used * pool.*.block_size
+    var uint8 addr = pool.*.start + offset
     var Pool p = pool.*
     p.used = p.used + 1
     pool.* = p
@@ -29,25 +29,25 @@ fn pool_destroy(*Pool pool) void {
     libc::free(pool.*.start as *void)
 }
 
-fn main() sint32 {
-    var Pool pool = pool_create(4 as uint64, 6 as uint64)
+fn main() int {
+    var Pool pool = pool_create(4 as uint8, 6 as uint8)
     defer pool_destroy(pool.&)
 
     libc::printf("Pool: block_size=%d, capacity=%d\n",
-        pool.block_size as sint32,
-        pool.capacity as sint32)
+        pool.block_size as int4,
+        pool.capacity as int4)
 
-    for (var sint32 i = 0; i < 8; i += 1) {
+    for (var int4 i = 0; i < 8; i += 1) {
         var *void block = pool_alloc(pool.&)
-        if block as uint64 == 0 as uint64 {
+        if block as uint8 == 0 as uint8 {
             libc::printf("Alloc %d failed: pool exhausted\n", i)
             break
         }
-        var *sint32 val = block as *sint32
+        var *int4 val = block as *int4
         val.* = (i + 1) * 7
         libc::printf("Block %d: wrote %d\n", i, val.*)
     }
 
-    libc::printf("Used: %d / %d\n", pool.used as sint32, pool.capacity as sint32)
+    libc::printf("Used: %d / %d\n", pool.used as int4, pool.capacity as int4)
     return 0
 }

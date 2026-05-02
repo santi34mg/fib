@@ -125,9 +125,16 @@ impl fmt::Display for HIRTypeKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct HIRTypeDeclaration {
+    pub name: Identifier,
+    pub ty: HIRTypeKind,
+}
+
+#[derive(Debug, Clone)]
 pub enum HIRDeclaration {
     HIRFunction(HIRFunction),
     HIRConst(HIRBinding),
+    HIRType(HIRTypeDeclaration),
 }
 
 #[derive(Debug, Clone)]

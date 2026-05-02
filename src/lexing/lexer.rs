@@ -480,7 +480,6 @@ impl<'input> Lexer<'input> {
         let name = &self.input[start..self.position];
         // for now, "__<identifier>" is reserved for internal identifiers
         match name {
-            "const" => TokenKind::Keyword(Keyword::Const),
             "var" => TokenKind::Keyword(Keyword::Var),
             "fn" => TokenKind::Keyword(Keyword::Function),
             "switch" => TokenKind::Keyword(Keyword::Switch),

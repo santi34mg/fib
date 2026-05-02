@@ -3,12 +3,12 @@ use std::fmt;
 
 use crate::ast::{Ast, StatementNode};
 use crate::ast::{
-    ConstantDeclaration, DeclarationNode, Expression as PExpr, Field, FunctionDeclaration,
+    DeclarationNode, Expression as PExpr, Field, FunctionDeclaration,
     StatementNode as ASTStatementNode, TypeExpression, VariableDeclaration,
 };
 use crate::hir::{
     CompilationUnit, HIRBinding, HIRDeclaration, HIRExpression, HIRExpressionKind, HIRFunction,
-    HIRIf, HIRModule, HIRStmt, HIRSymbol, HIRTypeKind, Scope,
+    HIRIf, HIRModule, HIRStmt, HIRSymbol, HIRTypeDeclaration, HIRTypeKind, Scope,
 };
 use crate::tokens::Operator;
 use crate::tokens::builtin::BuiltinType;
@@ -110,23 +110,15 @@ pub fn analyze(
                     )?))
                 }
             }
-            DeclarationNode::Statement(stmt) => match stmt {
-                StatementNode::ConstantDeclaration(var_declaration) => {
-                    // Type declarations (const type Foo = ...) only populate the scope; no HIR emitted.
-                    if matches!(
-                        var_declaration.constant_type,
-                        Some(TypeExpression::TypeKeyword)
-                    ) {
-                        None
-                    } else {
-                        Some(HIRDeclaration::HIRConst(const_decl_to_hir(
-                            var_declaration,
-                            &mut current_scope,
-                            &mut generic_cache,
-                        )?))
-                    }
+            DeclarationNode::TypeDeclaration(ty_decl) => match ty_decl.expression {
+                TypeExpression::TypeKeyword => None,
+                expr => {
+                    let ty = map_type(expr)?;
+                    Some(HIRDeclaration::HIRType(HIRTypeDeclaration {
+                        name: ty_decl.name,
+                        ty,
+                    }))
                 }
-                _ => None,
             },
         };
         if let Some(hir_declaration) = hir_declaration {
@@ -207,9 +199,6 @@ fn stmt_to_hir(
     generic_cache: &mut HashMap<String, HIRFunction>,
 ) -> Result<HIRStmt, AnalysisError> {
     match stmt {
-        StatementNode::ConstantDeclaration(constant_declaration) => Ok(HIRStmt::Binding(
-            const_decl_to_hir(constant_declaration, current_scope, generic_cache)?,
-        )),
         StatementNode::VariableDeclaration(variable_declaration) => Ok(HIRStmt::Binding(
             var_decl_to_hir(variable_declaration, current_scope, generic_cache)?,
         )),
@@ -384,56 +373,6 @@ fn stmt_to_hir(
             Ok(HIRStmt::Defer(Box::new(hir_inner)))
         }
     }
-}
-
-fn const_decl_to_hir(
-    const_decl: ConstantDeclaration,
-    current_scope: &mut Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<HIRBinding, AnalysisError> {
-    let mut init = expr_to_hir(const_decl.expression, current_scope, generic_cache)?;
-    let ty = match const_decl.constant_type {
-        Some(t) => map_type(t)?,
-        None => HIRTypeKind::Builtin(BuiltinType::Void),
-    };
-    // check that type matches; allow struct-by-name to match struct literal type
-    if init.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never) {
-        init.inferred_type = ty.clone();
-    }
-    if init.inferred_type != ty {
-        let resolved_ty_match = match &ty {
-            HIRTypeKind::Identifier(id) => match current_scope.symbols.get(id) {
-                Some(HIRSymbol::Type(inner)) => *inner == init.inferred_type,
-                _ => false,
-            },
-            _ => false,
-        };
-        if resolved_ty_match {
-            init.inferred_type = ty.clone();
-        } else if let HIRTypeKind::Builtin(_) = &ty {
-            // Coerce integer/numeric literals to the declared builtin type
-            // (mirrors the same coercion already present in var_decl_to_hir).
-            init.inferred_type = ty.clone();
-        } else {
-            return Err(format!(
-                r#"initalization type does not match explicit type for {}
-explicit type: {}
-inferred type of expression: {}"#,
-                const_decl.identifier, ty, init.inferred_type
-            )
-            .into());
-        }
-    }
-    let hir_bind = HIRBinding {
-        name: const_decl.identifier.clone(),
-        ty,
-        init: Some(init),
-        mutable: false,
-    };
-    current_scope
-        .symbols
-        .insert(const_decl.identifier, HIRSymbol::Binding(hir_bind.clone()));
-    Ok(hir_bind)
 }
 
 fn var_decl_to_hir(
@@ -1099,7 +1038,14 @@ fn resolve_declaration(
         DeclarationNode::FunctionDeclaration(function_declaration) => {
             resolve_function_decl(function_declaration, current_scope)
         }
-        DeclarationNode::Statement(statement) => resolve_statement(statement, current_scope),
+        DeclarationNode::TypeDeclaration(type_declaration) => {
+            let ty = map_type(type_declaration.expression.clone())?;
+            let mut new_scope = current_scope;
+            new_scope
+                .symbols
+                .insert(type_declaration.name.clone(), HIRSymbol::Type(ty));
+            Ok(new_scope)
+        }
     }
 }
 
@@ -1108,48 +1054,6 @@ fn resolve_statement(
     mut current_scope: Scope,
 ) -> Result<Scope, AnalysisError> {
     match statement {
-        StatementNode::ConstantDeclaration(constant_declaration) => {
-            // Type declarations (`const type Foo = <type_expr>`) only register a type symbol;
-            // they produce no binding and no HIR declaration.
-            if matches!(
-                constant_declaration.constant_type,
-                Some(TypeExpression::TypeKeyword)
-            ) {
-                let inner_type = match &constant_declaration.expression {
-                    PExpr::TypeValue(te) => map_type(te.clone())?,
-                    _ => {
-                        return Err(
-                            "const type declaration must have a type expression as its value"
-                                .to_string()
-                                .into(),
-                        );
-                    }
-                };
-                current_scope.symbols.insert(
-                    constant_declaration.identifier.clone(),
-                    HIRSymbol::Type(inner_type),
-                );
-                return Ok(current_scope);
-            }
-            // Regular constant: register the binding with its declared type only.
-            // Full init evaluation happens in stmt_to_hir; doing it here would
-            // fail when the init expression references outer-scope variables
-            // that aren't visible in the narrow local scope used for resolve.
-            let ty = match &constant_declaration.constant_type {
-                Some(t) => map_type(t.clone())?,
-                None => HIRTypeKind::Builtin(BuiltinType::Void),
-            };
-            current_scope.symbols.insert(
-                constant_declaration.identifier.clone(),
-                HIRSymbol::Binding(HIRBinding {
-                    name: constant_declaration.identifier.clone(),
-                    ty,
-                    init: None,
-                    mutable: false,
-                }),
-            );
-            Ok(current_scope)
-        }
         StatementNode::VariableDeclaration(variable_declaration) => {
             // Resolve pass: register the binding with its declared type only.
             let ty = match &variable_declaration.constant_type {
@@ -1342,12 +1246,6 @@ fn substitute_in_expr(expr: &mut PExpr, subs: &HashMap<String, TypeExpression>) 
 
 fn substitute_in_stmt(stmt: &mut ASTStatementNode, subs: &HashMap<String, TypeExpression>) {
     match stmt {
-        ASTStatementNode::ConstantDeclaration(decl) => {
-            if let Some(t) = &decl.constant_type {
-                decl.constant_type = Some(substitute_type(t, subs));
-            }
-            substitute_in_expr(&mut decl.expression, subs);
-        }
         ASTStatementNode::VariableDeclaration(decl) => {
             if let Some(t) = &decl.constant_type {
                 decl.constant_type = Some(substitute_type(t, subs));
