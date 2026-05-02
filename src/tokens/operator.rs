@@ -34,7 +34,7 @@ pub enum Operator {
     Caret,     // ^
 
     /// Reserved for future range syntax (e.g. `0..n`); not consumed by the parser yet.
-    DoubleDot,      // ..
+    DoubleDot, // ..
     Ellipsis,       // ...
     ThinRightArrow, // ->
 }
