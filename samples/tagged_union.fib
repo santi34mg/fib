@@ -18,5 +18,5 @@ fn main() int4 {
     describe(Token.Integer { value: 7 })
     describe(Token.Boolean { flag: true })
     describe(Token.EOF)
-    return 0
+    ret 0
 }

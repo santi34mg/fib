@@ -7,7 +7,7 @@ type Color enum {
 }
 
 fn main() int4 {
-    var Color c = Color.Green
+    c: Color = Color.Green
     libc::printf("color discriminant = %d\n", c as uint8)
-    return 0
+    ret 0
 }

@@ -1,8 +1,8 @@
 import std::libc
 
-fn insertion_sort(T type, arr *T, len int32) void {
-    for (var int32 i = 1; i < len; i += 1) {
-        for (var int32 j = i; j > 0; j -= 1) {
+fn insertion_sort(T type, arr *T, len int4) void {
+    for (i: int4 = 1; i < len; i += 1) {
+        for (j: int4 = i; j > 0; j -= 1) {
             if arr.[j] < arr.[j - 1] {
                 const T t = arr.[j]
                 arr.[j] = arr.[j - 1]
@@ -12,20 +12,20 @@ fn insertion_sort(T type, arr *T, len int32) void {
     }
 }
 
-fn print_arr(T type, arr *T, len int32) void {
+fn print_arr(T type, arr *T, len int4) void {
     libc::printf("[")
-    for (var int32 i = 0; i < len; i += 1) {
+    for (i: int4 = 0; i < len; i += 1) {
         libc::printf(" %d ", arr.[i])
     }
     libc::printf("]\n")
 }
 
-fn main() int32 {
-    var int32[8] arr = [3, 8, 5, 10, 2, 1, 6, 7]
+fn main() int4 {
+    arr: int4[8] = [3, 8, 5, 10, 2, 1, 6, 7]
 
-    insertion_sort(int32, arr.& as *int32, 8)
+    insertion_sort(int4, arr.& as *int4, 8)
 
-    print_arr(int32, arr.& as *int32, 8)
+    print_arr(int4, arr.& as *int4, 8)
 
-    return 0
+    ret 0
 }

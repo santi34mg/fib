@@ -1,33 +1,33 @@
 import std::libc
 
-fn pack_ipv4(uint32 a, uint32 b, uint32 c, uint32 d) uint32 {
-    return (a << 24) | (b << 16) | (c << 8) | d
+fn pack_ipv4(uint4 a, uint4 b, uint4 c, uint4 d) uint4 {
+    ret (a << 24) | (b << 16) | (c << 8) | d
 }
 
-fn popcount(uint32 x) uint32 {
-    var uint32 count = 0
-    var uint32 v = x
-    for (;v != 0 as uint32;) {
+fn popcount(uint4 x) uint4 {
+    count: uint4 = 0
+    v: uint4 = x
+    for (;v != 0 as uint4;) {
         count = count + (v & 1)
         v = v >> 1
     }
-    return count
+    ret count
 }
 
-fn main() sint32 {
-    const uint32 ip = pack_ipv4(192, 168, 1, 100)
+fn main() int4 {
+    const uint4 ip = pack_ipv4(192, 168, 1, 100)
     libc::printf("Packed IPv4: 0x%08X\n", ip)
     libc::printf("Octet 0: %u\n", (ip >> 24) & 255)
     libc::printf("Octet 1: %u\n", (ip >> 16) & 255)
     libc::printf("Octet 2: %u\n", (ip >> 8) & 255)
     libc::printf("Octet 3: %u\n", ip & 255)
 
-    const uint32 PERM_READ   = 1
-    const uint32 PERM_WRITE  = 2
-    const uint32 PERM_EXEC   = 4
-    const uint32 PERM_DELETE = 8
+    const uint4 PERM_READ   = 1
+    const uint4 PERM_WRITE  = 2
+    const uint4 PERM_EXEC   = 4
+    const uint4 PERM_DELETE = 8
 
-    var uint32 perms = PERM_READ | PERM_WRITE
+    perms: uint4 = PERM_READ | PERM_WRITE
     libc::printf("\nInitial permissions: 0x%X\n", perms)
 
     perms = perms | PERM_EXEC
@@ -50,5 +50,5 @@ fn main() sint32 {
     }
 
     libc::printf("Bits set in perms: %u\n", popcount(perms))
-    return 0
+    ret 0
 }

@@ -1,33 +1,33 @@
 import std::libc
 
 const type Node = struct {
-    sint32 data,
+    int4 data,
     *Node next,
 }
 
-fn push(*Node head, sint32 val) *Node {
-    var *Node node = libc::malloc(16 as uint64) as *Node
+fn push(*Node head, int4 val) *Node {
+    node: *Node = libc::malloc(16 as uint) as *Node
     node.* = Node { data: val, next: head }
-    return node
+    ret node
 }
 
-fn list_length(*Node head) sint32 {
-    var sint32 count = 0
-    var *Node cur = head
+fn list_length(*Node head) int4 {
+    count: int4 = 0
+    cur: *Node = head
     for (;;) {
-        if cur as uint64 == 0 as uint64 {
+        if cur as uint == 0 as uint {
             break
         }
         count += 1
         cur = cur.*.next
     }
-    return count
+    ret count
 }
 
 fn print_list(*Node head) void {
-    var *Node cur = head
+    cur: *Node = head
     for (;;) {
-        if cur as uint64 == 0 as uint64 {
+        if cur as uint == 0 as uint {
             break
         }
         libc::printf("%d -> ", cur.*.data)
@@ -37,19 +37,19 @@ fn print_list(*Node head) void {
 }
 
 fn free_list(*Node head) void {
-    var *Node cur = head
+    cur: *Node = head
     for (;;) {
-        if cur as uint64 == 0 as uint64 {
+        if cur as uint8 == 0 as uint8 {
             break
         }
-        var *Node next = cur.*.next
+        next: *Node = cur.*.next
         libc::free(cur as *void)
         cur = next
     }
 }
 
-fn main() sint32 {
-    var *Node head
+fn main() int4 {
+    head: *Node
     defer free_list(head)
 
     head = push(head, 30)
@@ -60,5 +60,5 @@ fn main() sint32 {
     print_list(head)
     libc::printf("Length: %d\n", list_length(head))
 
-    return 0
+    ret 0
 }
