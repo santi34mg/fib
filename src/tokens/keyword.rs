@@ -1,6 +1,5 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Keyword {
-    Const,
     Var,
     If,
     Else,

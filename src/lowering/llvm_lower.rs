@@ -150,6 +150,10 @@ pub fn lower(
                     bb_opt = bb.get_next_basic_block();
                 }
             }
+            HIRDeclaration::HIRType(_) => {
+                // Type declarations are registered in the scope during analysis.
+                // No LLVM IR needs to be emitted for them.
+            }
             HIRDeclaration::HIRConst(hir_binding) => {
                 let ty =
                     map_type_to_llvm(&hir_binding.ty, &ctx, compilation_unit.scope_root.clone())?;

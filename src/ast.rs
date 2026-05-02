@@ -37,12 +37,17 @@ impl Default for Ast {
 pub enum DeclarationNode {
     ImportDeclaration(ImportDeclaration),
     FunctionDeclaration(FunctionDeclaration),
-    Statement(StatementNode),
+    TypeDeclaration(TypeDeclaration),
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeDeclaration {
+    pub name: Identifier,
+    pub expression: TypeExpression,
 }
 
 #[derive(Debug, Clone)]
 pub enum StatementNode {
-    ConstantDeclaration(ConstantDeclaration),
     VariableDeclaration(VariableDeclaration),
     ExpressionStatement(Expression),
     Assignment {
@@ -194,27 +199,6 @@ pub enum PointerVariant {
     Shared,
     Weak,
     Raw,
-}
-
-#[derive(Debug, Clone)]
-pub struct ConstantDeclaration {
-    pub identifier: Identifier,
-    pub constant_type: Option<TypeExpression>,
-    pub expression: Expression,
-}
-
-impl ConstantDeclaration {
-    pub fn new(
-        identifier: Identifier,
-        constant_type: Option<TypeExpression>,
-        expression: Expression,
-    ) -> Self {
-        Self {
-            identifier,
-            constant_type,
-            expression,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

@@ -7,10 +7,10 @@ mod tests {
 
     #[test]
     fn test_comment() {
-        let test_string = "// This is a comment\nconst x = 5;";
+        let test_string = "// This is a comment\nvar x = 5;";
         let expected = [
             TokenKind::Comment,
-            TokenKind::Keyword(Keyword::Const),
+            TokenKind::Keyword(Keyword::Var),
             TokenKind::Identifier(Identifier {
                 identifier: "x".to_string(),
             }),
@@ -93,13 +93,6 @@ mod tests {
         lexer.zip(expected).for_each(|(t, e)| {
             assert_eq!(t.kind, TokenKind::Literal(Literal::String(e.to_string())))
         });
-    }
-
-    #[test]
-    fn test_let_keyword() {
-        let test_string = "const";
-        let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Const)))
     }
 
     #[test]
@@ -322,20 +315,14 @@ mod tests {
     fn test_char_escape_backslash() {
         let test_string = r"'\\'";
         let tokens: Vec<_> = Lexer::new(test_string).collect();
-        assert_eq!(
-            tokens[0].kind,
-            TokenKind::Literal(Literal::Character('\\'))
-        );
+        assert_eq!(tokens[0].kind, TokenKind::Literal(Literal::Character('\\')));
     }
 
     #[test]
     fn test_char_escape_null() {
         let test_string = r"'\0'";
         let tokens: Vec<_> = Lexer::new(test_string).collect();
-        assert_eq!(
-            tokens[0].kind,
-            TokenKind::Literal(Literal::Character('\0'))
-        );
+        assert_eq!(tokens[0].kind, TokenKind::Literal(Literal::Character('\0')));
     }
 
     #[test]
@@ -368,11 +355,13 @@ mod tests {
     #[test]
     fn test_multiline_comment_skipped() {
         // Comments appear as Comment tokens, not discarded
-        let test_string = "// comment\nconst";
+        let test_string = "// comment\nvar";
         let tokens: Vec<_> = Lexer::new(test_string).collect();
-        assert!(tokens
-            .iter()
-            .any(|t| t.kind == TokenKind::Keyword(Keyword::Const)));
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.kind == TokenKind::Keyword(Keyword::Var))
+        );
     }
 
     #[test]
