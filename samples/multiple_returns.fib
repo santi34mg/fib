@@ -1,0 +1,11 @@
+import std::libc
+
+fn divmod(int4 a, int4 b) (int4, int4) {
+    ret a / b, a % b
+}
+
+fn main() int4 {
+    q, r := divmod(17, 5)
+    libc::printf("q=%d r=%d\n", q, r)
+    ret 0
+}

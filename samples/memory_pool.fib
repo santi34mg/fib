@@ -8,21 +8,21 @@ type Pool struct {
 }
 
 fn pool_create(uint8 block_size, uint8 capacity) Pool {
-    var uint8 total = block_size * capacity
-    var *void buf = libc::malloc(total)
-    return Pool { start: buf as uint8, block_size: block_size, capacity: capacity, used: 0 as uint8 }
+    total: uint8 = block_size * capacity
+    buf: *void = libc::malloc(total)
+    ret Pool { start: buf as uint8, block_size: block_size, capacity: capacity, used: 0 as uint8 }
 }
 
 fn pool_alloc(*Pool pool) *void {
     if pool.*.used >= pool.*.capacity {
-        return 0 as uint8 as *void
+        ret 0 as uint8 as *void
     }
-    var uint8 offset = pool.*.used * pool.*.block_size
-    var uint8 addr = pool.*.start + offset
-    var Pool p = pool.*
+    offset: uint8 = pool.*.used * pool.*.block_size
+    addr: uint8 = pool.*.start + offset
+    p: Pool = pool.*
     p.used = p.used + 1
     pool.* = p
-    return addr as *void
+    ret addr as *void
 }
 
 fn pool_destroy(*Pool pool) void {
@@ -30,24 +30,24 @@ fn pool_destroy(*Pool pool) void {
 }
 
 fn main() int {
-    var Pool pool = pool_create(4 as uint8, 6 as uint8)
+    pool: Pool = pool_create(4 as uint8, 6 as uint8)
     defer pool_destroy(pool.&)
 
     libc::printf("Pool: block_size=%d, capacity=%d\n",
         pool.block_size as int4,
         pool.capacity as int4)
 
-    for (var int4 i = 0; i < 8; i += 1) {
-        var *void block = pool_alloc(pool.&)
+    for (i: int4 = 0; i < 8; i += 1) {
+        block: *void = pool_alloc(pool.&)
         if block as uint8 == 0 as uint8 {
             libc::printf("Alloc %d failed: pool exhausted\n", i)
             break
         }
-        var *int4 val = block as *int4
+        val: *int4 = block as *int4
         val.* = (i + 1) * 7
         libc::printf("Block %d: wrote %d\n", i, val.*)
     }
 
     libc::printf("Used: %d / %d\n", pool.used as int4, pool.capacity as int4)
-    return 0
+    ret 0
 }

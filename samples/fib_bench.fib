@@ -1,20 +1,20 @@
 import std::libc
 
-fn fib(n int32) int32;
+fn fib(n int4) int4;
 
-fn fib(n int32) int32 {
+fn fib(n int4) int4 {
     if n <= 1 {
-        return n
+        ret n
     }
-    return fib(n - 1) + fib(n - 2)
+    ret fib(n - 1) + fib(n - 2)
 }
 
-fn main() int32 {
+fn main() int4 {
     libc::printf("Fibonacci benchmark (recursive, no memoization)\n")
     libc::printf("-----------------------------------------------\n")
-    for (var int32 i = 0; i <= 50; i += 1) {
-        var int32 result = fib(i)
+    for (i: int4 = 0; i <= 50; i += 1) {
+        result: int4 = fib(i)
         libc::printf("fib(%d) = %d\n", i, result)
     }
-    return 0
+    ret 0
 }
