@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_return_keyword() {
-        let test_string = "return";
+        let test_string = "ret";
         let lexer = Lexer::new(test_string);
         lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Return)))
     }
@@ -153,7 +153,7 @@ mod tests {
             ("for", TokenKind::Keyword(Keyword::For)),
             ("break", TokenKind::Keyword(Keyword::Break)),
             ("continue", TokenKind::Keyword(Keyword::Continue)),
-            ("return", TokenKind::Keyword(Keyword::Return)),
+            ("ret", TokenKind::Keyword(Keyword::Return)),
             ("struct", TokenKind::Keyword(Keyword::Struct)),
             ("extern", TokenKind::Keyword(Keyword::Extern)),
             ("defer", TokenKind::Keyword(Keyword::Defer)),
@@ -335,17 +335,17 @@ mod tests {
 
     #[test]
     fn test_token_position_tracking() {
-        let test_string = "const x";
+        let test_string = "type x";
         let tokens: Vec<_> = Lexer::new(test_string).collect();
         assert_eq!(tokens[0].line, 1);
         assert_eq!(tokens[0].column, 1);
         assert_eq!(tokens[1].line, 1);
-        assert_eq!(tokens[1].column, 7);
+        assert_eq!(tokens[1].column, 6);
     }
 
     #[test]
     fn test_token_position_multiline() {
-        let test_string = "const\nx";
+        let test_string = "type\nx";
         let tokens: Vec<_> = Lexer::new(test_string).collect();
         assert_eq!(tokens[0].line, 1);
         assert_eq!(tokens[1].line, 2);
