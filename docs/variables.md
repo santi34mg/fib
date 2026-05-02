@@ -32,7 +32,7 @@ const name = expr
 
 ```
 const sint32 max_retries = 5
-const name = "fiber"
+const name = "fib is the best!"
 ```
 
 Constants may not be reassigned after declaration.
