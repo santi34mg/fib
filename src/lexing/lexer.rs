@@ -493,7 +493,7 @@ impl<'input> Lexer<'input> {
             "for" => TokenKind::Keyword(Keyword::For),
             "break" => TokenKind::Keyword(Keyword::Break),
             "continue" => TokenKind::Keyword(Keyword::Continue),
-            "return" => TokenKind::Keyword(Keyword::Return),
+            "ret" => TokenKind::Keyword(Keyword::Return),
             "as" => TokenKind::Keyword(Keyword::As),
             "extern" => TokenKind::Keyword(Keyword::Extern),
             "defer" => TokenKind::Keyword(Keyword::Defer),
