@@ -270,17 +270,17 @@ where
                 }
                 TokenKind::Keyword(Keyword::Return) => {
                     self.next(); // consume 'return'
-                    // Optionally parse an expression after return
+                    // Optionally parse one or more comma-separated expressions after return.
                     if let Some(token) = self.peek() {
-                        // If next token is not a semicolon or block close, parse expression
+                        // If next token is not a semicolon or block close, parse expression list.
                         match token.kind {
                             TokenKind::Punctuation(Punctuation::Semicolon)
                             | TokenKind::Punctuation(Punctuation::ClosingCurlyBrace) => {
                                 StatementNode::Return(None)
                             }
                             _ => {
-                                let expr = self.parse_expression()?;
-                                StatementNode::Return(Some(expr))
+                                let exprs = self.parse_expression_list()?;
+                                StatementNode::Return(Some(exprs))
                             }
                         }
                     } else {
@@ -342,15 +342,13 @@ where
                         body,
                     }
                 }
-                TokenKind::Literal(_) => {
-                    let expr = self.parse_expression()?;
-                    StatementNode::ExpressionStatement(expr)
-                }
-                TokenKind::Operator(Operator::LogicalNot) => {
-                    let expr = self.parse_expression()?;
-                    StatementNode::ExpressionStatement(expr)
-                }
-                TokenKind::Punctuation(Punctuation::OpeningParenthesis) => {
+                TokenKind::Literal(_)
+                | TokenKind::Builtin(_)
+                | TokenKind::Operator(Operator::LogicalNot)
+                | TokenKind::Operator(Operator::Minus)
+                | TokenKind::Operator(Operator::Tilde)
+                | TokenKind::Punctuation(Punctuation::OpeningParenthesis)
+                | TokenKind::Punctuation(Punctuation::OpeningSquareBrace) => {
                     let expr = self.parse_expression()?;
                     StatementNode::ExpressionStatement(expr)
                 }
@@ -361,7 +359,6 @@ where
                 TokenKind::Keyword(Keyword::Else)
                 | TokenKind::Operator(_)
                 | TokenKind::Punctuation(_)
-                | TokenKind::Builtin(_)
                 | TokenKind::Error(_)
                 | TokenKind::Keyword(_)
                 | TokenKind::Unknown(_) => {
@@ -379,10 +376,67 @@ where
     }
 
     fn parse_identifier_statement(&mut self) -> ParseResult<StatementNode> {
+        // Variable declaration: `name: type = init`, `name: type`, or `name := init`.
+        if matches!(
+            self.peek_second(),
+            Some(Token {
+                kind: TokenKind::Punctuation(Punctuation::Colon),
+                ..
+            })
+        ) {
+            let declaration = self.parse_colon_variable_declaration()?;
+            return Ok(StatementNode::VariableDeclaration(declaration));
+        }
+
         // Parse the LHS as a full expression. Then look for an assignment
         // operator. If found, dispatch based on the LHS expression shape.
         // Otherwise, treat the parsed expression as an expression statement.
         let lhs = self.parse_expression()?;
+
+        // Go-style multi-assignment: `a, b = f()` or `a, b = 1, 2`.
+        if matches!(
+            self.peek(),
+            Some(Token {
+                kind: TokenKind::Punctuation(Punctuation::Comma),
+                ..
+            })
+        ) {
+            let mut targets = vec![lhs];
+            while self
+                .consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)))
+                .is_some()
+            {
+                targets.push(self.parse_expression()?);
+            }
+            if self
+                .consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Colon)))
+                .is_some()
+            {
+                self.expect_token(
+                    TokenKind::Operator(Operator::Assign),
+                    "expected '=' after ':' in multi-variable declaration",
+                )?;
+                let mut identifiers = Vec::new();
+                for target in targets {
+                    match target {
+                        Expression::Identifier(identifier) => identifiers.push(identifier),
+                        _ => return Err(self.error("invalid declaration target", 0, 0)),
+                    }
+                }
+                let values = self.parse_expression_list()?;
+                return Ok(StatementNode::MultiVariableDeclaration {
+                    identifiers,
+                    values,
+                });
+            }
+
+            self.expect_token(
+                TokenKind::Operator(Operator::Assign),
+                "expected '=' after multi-assignment targets",
+            )?;
+            let values = self.parse_expression_list()?;
+            return Ok(StatementNode::MultiAssignment { targets, values });
+        }
 
         // Check for plain assignment.
         if matches!(
@@ -428,11 +482,7 @@ where
 
     /// Build an assignment statement node from a parsed LHS expression and a
     /// computed RHS expression. Errors if the LHS isn't a valid lvalue.
-    fn lhs_to_assignment(
-        &self,
-        lhs: Expression,
-        rhs: Expression,
-    ) -> ParseResult<StatementNode> {
+    fn lhs_to_assignment(&self, lhs: Expression, rhs: Expression) -> ParseResult<StatementNode> {
         match lhs {
             Expression::Identifier(id) => Ok(StatementNode::Assignment {
                 identifier: id,
@@ -456,9 +506,9 @@ where
         }
     }
 
-    /// Parses a variable declaration statement: var <type> <name> = <init>[;]
+    /// Parses the legacy variable declaration syntax: `var <type> <name> = <init>[;]`.
     fn parse_variable_declaration(&mut self) -> ParseResult<VariableDeclaration> {
-        let const_token = self.expect_token(
+        let var_token = self.expect_token(
             TokenKind::Keyword(Keyword::Var),
             "parse_variable_declaration: expected 'var' keyword",
         )?;
@@ -471,7 +521,7 @@ where
         {
             ident
         } else {
-            return Err(self.error("expected identifier", const_token.line, const_token.column));
+            return Err(self.error("expected identifier", var_token.line, var_token.column));
         };
 
         let expr =
@@ -480,10 +530,52 @@ where
                 None => None,
             };
 
-        // optional semicolon
-        // self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
-
         Ok(VariableDeclaration::new(ident, var_type, expr))
+    }
+
+    /// Parses the colon-based variable declaration syntax:
+    /// - `name: type = init` for an explicit type annotation
+    /// - `name := init` for an inferred type
+    ///
+    /// The initializer is optional for explicit typed declarations so existing
+    /// zero-initialization semantics remain available as `name: type`.
+    fn parse_colon_variable_declaration(&mut self) -> ParseResult<VariableDeclaration> {
+        let ident_token = self.expect_next("expected identifier")?;
+        let ident_line = ident_token.line;
+        let ident_column = ident_token.column;
+        let ident = match ident_token.kind {
+            TokenKind::Identifier(ident) => ident,
+            _ => return Err(self.error("expected identifier", ident_line, ident_column)),
+        };
+
+        self.expect_token(
+            TokenKind::Punctuation(Punctuation::Colon),
+            "expected ':' after variable name",
+        )?;
+
+        if self
+            .consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign)))
+            .is_some()
+        {
+            let expr = self.parse_expression()?;
+            return Ok(VariableDeclaration::new(ident, None, Some(expr)));
+        }
+
+        let var_type = self.parse_type_expression()?.ok_or_else(|| {
+            let (line, column) = self
+                .peek()
+                .map(|token| (token.line, token.column))
+                .unwrap_or((ident_line, ident_column));
+            self.error("expected type after ':'", line, column)
+        })?;
+
+        let expr =
+            match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
+                Some(_) => Some(self.parse_expression()?),
+                None => None,
+            };
+
+        Ok(VariableDeclaration::new(ident, Some(var_type), expr))
     }
 
     /// Parses a type annotation, which can be a user-defined type (type identifier), or complex type (struct, variant or function).
@@ -512,6 +604,10 @@ where
             TokenKind::Operator(Operator::Star) => {
                 self.next();
                 self.parse_pointer_type(PointerVariant::Raw, type_token)?
+            }
+            TokenKind::Punctuation(Punctuation::OpeningParenthesis) => {
+                self.next(); // consume '('
+                self.parse_tuple_type_expression(&type_token)?
             }
             TokenKind::Identifier(module) => {
                 self.next();
@@ -565,6 +661,54 @@ where
             var_type
         };
         Ok(Some(var_type))
+    }
+
+    fn parse_return_type_expression(&mut self) -> ParseResult<Option<TypeExpression>> {
+        self.parse_type_expression()
+    }
+
+    fn parse_tuple_type_expression(&mut self, type_token: &Token) -> ParseResult<TypeExpression> {
+        let mut elements = Vec::new();
+        while let Some(t) = self.peek() {
+            if matches!(
+                t.kind,
+                TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+            ) {
+                self.next(); // consume ')'
+                break;
+            }
+            let element = match self.parse_type_expression()? {
+                Some(type_id) => type_id,
+                None => {
+                    return Err(self.error(
+                        "expected type in multiple return type list",
+                        type_token.line,
+                        type_token.column,
+                    ));
+                }
+            };
+            elements.push(element);
+            if let Some(t) = self.peek()
+                && !matches!(
+                    t.kind,
+                    TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+                )
+            {
+                self.expect_token(TokenKind::Punctuation(Punctuation::Comma), "expected ','")?;
+            }
+        }
+        if elements.is_empty() {
+            return Err(self.error(
+                "expected at least one type in parenthesized type list",
+                type_token.line,
+                type_token.column,
+            ));
+        }
+        if elements.len() == 1 {
+            Ok(elements.remove(0))
+        } else {
+            Ok(TypeExpression::Tuple { elements })
+        }
     }
 
     fn parse_function_type(&mut self, type_token: &Token) -> ParseResult<TypeExpression> {
@@ -680,7 +824,10 @@ where
         let _ = first;
         let mut variants: Vec<EnumVariant> = Vec::new();
         while let Some(t) = self.peek() {
-            if matches!(t.kind, TokenKind::Punctuation(Punctuation::ClosingCurlyBrace)) {
+            if matches!(
+                t.kind,
+                TokenKind::Punctuation(Punctuation::ClosingCurlyBrace)
+            ) {
                 self.next();
                 break;
             }
@@ -811,6 +958,17 @@ where
             self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
         }
         Ok(fields)
+    }
+
+    fn parse_expression_list(&mut self) -> ParseResult<Vec<Expression>> {
+        let mut exprs = vec![self.parse_expression()?];
+        while self
+            .consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)))
+            .is_some()
+        {
+            exprs.push(self.parse_expression()?);
+        }
+        Ok(exprs)
     }
 
     fn parse_expression(&mut self) -> ParseResult<Expression> {
@@ -1286,8 +1444,9 @@ where
                                         ..
                                     }) | None
                                 ) {
-                                    let fname = self
-                                        .expect_identifier("expected field name in variant payload")?;
+                                    let fname = self.expect_identifier(
+                                        "expected field name in variant payload",
+                                    )?;
                                     self.expect_token(
                                         TokenKind::Punctuation(Punctuation::Colon),
                                         "expected ':' after field name in variant payload",
@@ -1295,10 +1454,7 @@ where
                                     let val = self.parse_expression()?;
                                     fields.push((fname, val));
                                     self.consume_if(|t| {
-                                        matches!(
-                                            t.kind,
-                                            TokenKind::Punctuation(Punctuation::Comma)
-                                        )
+                                        matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma))
                                     });
                                 }
                                 self.next(); // consume '}'
@@ -1495,7 +1651,7 @@ where
         }
 
         // Return type
-        let return_type = self.parse_type_expression()?;
+        let return_type = self.parse_return_type_expression()?;
 
         // Function body: extern functions use ';' or have no body; regular functions use '{...}'
         let body = if let Some(token) = self.peek() {

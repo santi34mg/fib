@@ -8,7 +8,16 @@ mod tests {
     use crate::tokens::{Literal, Operator, Token};
 
     fn get_ast(test_string: &str) -> Ast {
-        let src = test_string.to_string();
+        let trimmed = test_string.trim_start();
+        let src = if trimmed.starts_with("fn ")
+            || trimmed.starts_with("extern ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("type ")
+        {
+            test_string.to_string()
+        } else {
+            format!("fn __test() {{ {} }}", test_string)
+        };
         let lexer = Lexer::new(&src);
         let tokens: Vec<Token> = lexer.collect();
         let mut parser = Parser::new(tokens.into_iter(), Path::new("test_instance"), src.clone());
@@ -198,8 +207,66 @@ mod tests {
     }
 
     #[test]
+    fn test_colon_var_declaration_with_type() {
+        use crate::ast::VariableDeclaration;
+        let test_string = "fn f() { count: int4 = 0; }";
+        let ast = get_ast(test_string);
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::VariableDeclaration(VariableDeclaration {
+            identifier,
+            constant_type: Some(TypeExpression::Builtin(_)),
+            expression: Some(Expression::Literal(Literal::Integer(0))),
+        }) = stmts[0]
+        {
+            assert_eq!(identifier.identifier, "count");
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_colon_var_declaration_inferred_type() {
+        use crate::ast::VariableDeclaration;
+        let test_string = "fn f() { count := 0; }";
+        let ast = get_ast(test_string);
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::VariableDeclaration(VariableDeclaration {
+            identifier,
+            constant_type: None,
+            expression: Some(Expression::Literal(Literal::Integer(0))),
+        }) = stmts[0]
+        {
+            assert_eq!(identifier.identifier, "count");
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_multi_var_declaration_inferred_type() {
+        let test_string = "fn f() { q, r := divmod(17, 5); }";
+        let ast = get_ast(test_string);
+        let stmts = module_statements(&ast);
+        assert_eq!(stmts.len(), 1);
+        if let StatementNode::MultiVariableDeclaration {
+            identifiers,
+            values,
+        } = stmts[0]
+        {
+            assert_eq!(identifiers.len(), 2);
+            assert_eq!(identifiers[0].identifier, "q");
+            assert_eq!(identifiers[1].identifier, "r");
+            assert_eq!(values.len(), 1);
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
     fn test_return_statement() {
-        let test_string = "fn foo() int4 { return 42 }";
+        let test_string = "fn foo() int4 { ret 42 }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {
@@ -211,14 +278,16 @@ mod tests {
         let func = func.expect("expected function declaration");
         let body = func.body.as_ref().expect("expected function body");
         assert!(matches!(
-            body.statements[0],
-            StatementNode::Return(Some(Expression::Literal(Literal::Integer(42))))
+            &body.statements[0],
+            StatementNode::Return(Some(exprs))
+                if exprs.len() == 1
+                    && matches!(exprs[0], Expression::Literal(Literal::Integer(42)))
         ));
     }
 
     #[test]
     fn test_return_void() {
-        let test_string = "fn foo() { return }";
+        let test_string = "fn foo() { ret }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {
@@ -234,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_if_statement() {
-        let test_string = "if true { const x = 1 }";
+        let test_string = "if true { x := 1 }";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -257,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_if_else_statement() {
-        let test_string = "if false { const x = 1 } else { const x = 2 }";
+        let test_string = "if false { x := 1 } else { x := 2 }";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -270,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_for_loop() {
-        let test_string = "for var int4 i = 0; i < 10; i += 1 { }";
+        let test_string = "for (i: int4 = 0; i < 10; i += 1) { }";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -279,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_break_continue() {
-        let test_string = "for ;; { break continue }";
+        let test_string = "for (;;) { break continue }";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         if let StatementNode::For { body, .. } = stmts[0] {
@@ -309,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_function_declaration_with_params() {
-        let test_string = "fn add(int4 a, int4 b) int4 { return a }";
+        let test_string = "fn add(int4 a, int4 b) int4 { ret a }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {
@@ -529,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_multiple_statements() {
-        let test_string = "const x = 1\nconst y = 2\nconst z = 3";
+        let test_string = "x := 1\ny := 2\nz := 3";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 3);
