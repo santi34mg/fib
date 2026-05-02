@@ -1,4 +1,4 @@
-# Fiber Language Documentation
+# Fib Language Documentation
 
 Reference documentation for the Fiber programming language.
 
