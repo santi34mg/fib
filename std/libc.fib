@@ -1,5 +1,5 @@
 extern fn printf(string fmt, ...) int4
-extern fn malloc(string size) *void
+extern fn malloc(uint8 size) *void
 extern fn free(*void ptr) void
 extern fn memcpy(*void dest, *void src, uint8 n) *void
 extern fn exit(int4 status) void
