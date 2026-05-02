@@ -39,6 +39,7 @@ cargo run -- samples/hello_world.fib -I=std
 
 - **Types**: `int8/16/32/64`, `uint8/16/32/64`, `float32/64`, `bool`, `char`, `string`, structs, arrays, raw pointers
 - **Functions**: declarations, forward declarations, variadic, extern
+- **Variables**: explicit declarations use `name: type = init`; inferred declarations use `name := init`
 - **Control flow**: `if`/`else`, C-style `for`, `break`, `continue`, `defer`, `return`
 - **Expressions**: arithmetic, bitwise, logical, comparison, compound assignment, type casting (`as`), field/index access, address-of (`.&`), dereference (`.*`), struct construction, array literals
 - **Memory**: manual `malloc`/`free`, pointer arithmetic, defer for cleanup
