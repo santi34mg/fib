@@ -68,7 +68,15 @@ pub enum StatementNode {
         index: Expression,
         expr: Expression,
     },
-    Return(Option<Expression>),
+    Return(Option<Vec<Expression>>),
+    MultiAssignment {
+        targets: Vec<Expression>,
+        values: Vec<Expression>,
+    },
+    MultiVariableDeclaration {
+        identifiers: Vec<Identifier>,
+        values: Vec<Expression>,
+    },
     If {
         condition: Expression,
         then_branch: Vec<StatementNode>,
@@ -141,6 +149,9 @@ pub enum TypeExpression {
         argument_types: Vec<TypeExpression>,
         return_type: Box<TypeExpression>,
     },
+    Tuple {
+        elements: Vec<TypeExpression>,
+    },
     Pointer {
         pointer_variant: PointerVariant,
         pointed_type: Box<TypeExpression>,
@@ -180,6 +191,9 @@ impl fmt::Display for TypeExpression {
             }
             TypeExpression::Struct { fields } => {
                 write!(f, "struct {{ {:?} }}", fields)?;
+            }
+            TypeExpression::Tuple { elements } => {
+                write!(f, "({:?})", elements)?;
             }
             TypeExpression::Enum { variants } => {
                 write!(f, "enum {{ {:?} }}", variants)?;
