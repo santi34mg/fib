@@ -1,0 +1,13 @@
+import std::libc
+
+type Color enum {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main() int4 {
+    var Color c = Color.Green
+    libc::printf("color discriminant = %d\n", c as uint8)
+    return 0
+}

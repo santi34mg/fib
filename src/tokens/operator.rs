@@ -33,6 +33,7 @@ pub enum Operator {
     Tilde,     // ~
     Caret,     // ^
 
+    /// Reserved for future range syntax (e.g. `0..n`); not consumed by the parser yet.
     DoubleDot,      // ..
     Ellipsis,       // ...
     ThinRightArrow, // ->

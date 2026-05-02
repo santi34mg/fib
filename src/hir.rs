@@ -81,11 +81,21 @@ pub struct GenericFunctionTemplate {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct HIREnumVariant {
+    pub name: String,
+    pub discriminant: u32,
+    pub payload: Option<Vec<(String, HIRTypeKind)>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum HIRTypeKind {
     Builtin(BuiltinType),
     Identifier(Identifier),
     Struct {
         fields: Vec<(String, Box<HIRTypeKind>)>,
+    },
+    Enum {
+        variants: Vec<HIREnumVariant>,
     },
     Pointer(Box<HIRTypeKind>),
     Array {
@@ -111,6 +121,7 @@ impl fmt::Display for HIRTypeKind {
             Self::Builtin(builtin) => write!(f, "{}", builtin)?,
             Self::Identifier(id) => write!(f, "{}", id)?,
             Self::Struct { fields } => write!(f, "struct {{ {:?} }}", fields)?,
+            Self::Enum { variants } => write!(f, "enum {{ {:?} }}", variants)?,
             Self::Pointer(inner) => write!(f, "*{}", inner)?,
             Self::Array { element_type, size } => write!(f, "{}[{}]", element_type, size)?,
             Self::Function {
@@ -206,6 +217,22 @@ pub enum HIRExpressionKind {
     },
     /// A compile-time type value. Consumed during analysis; never reaches LLVM lowering.
     ComptimeType(HIRTypeKind),
+    /// An enum variant value: `Color.Red`. The discriminant is the variant index.
+    EnumLiteral {
+        type_name: String,
+        variant: String,
+        discriminant: u32,
+    },
+    /// A tagged-union variant constructor: `Token.Integer { value: 42 }`.
+    /// `enum_type` is the resolved `HIRTypeKind::Enum` (so the lowering can
+    /// compute the full enum struct without a scope lookup).
+    EnumVariantConstruct {
+        type_name: String,
+        variant: String,
+        discriminant: u32,
+        fields: Vec<(String, HIRExpression)>,
+        enum_type: Box<HIRTypeKind>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -216,7 +243,7 @@ pub enum HIRStmt {
         expr: HIRExpression,
     },
     FieldAssign {
-        object: Identifier,
+        object: HIRExpression,
         field: String,
         field_index: usize,
         expr: HIRExpression,
@@ -242,6 +269,30 @@ pub enum HIRStmt {
         index: HIRExpression,
         expr: HIRExpression,
     },
+    Switch {
+        subject: HIRExpression,
+        arms: Vec<HIRSwitchArm>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRSwitchArm {
+    pub pattern: HIRPattern,
+    pub body: Vec<HIRStmt>,
+}
+
+#[derive(Debug, Clone)]
+pub enum HIRPattern {
+    EnumVariant {
+        variant: String,
+        discriminant: u32,
+        /// Local name to bind the payload to inside the arm body.
+        binding: Option<Identifier>,
+        /// Resolved payload struct type (for lowering / scope insertion). `None`
+        /// when the variant carries no payload.
+        payload_ty: Option<HIRTypeKind>,
+    },
+    Wildcard,
 }
 
 #[derive(Debug, Clone)]

@@ -11,5 +11,6 @@ pub enum Punctuation {
     Colon,
     DoubleColon,
     Dot,
+    /// Reserved for future attribute/decorator syntax; not consumed by the parser yet.
     At,
 }

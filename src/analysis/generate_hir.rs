@@ -219,41 +219,42 @@ fn stmt_to_hir(
             field,
             expr,
         } => {
-            // Look up the object's type to find the field index
-            let obj_ty =
-                match current_scope.symbols.get(&object).ok_or_else(|| {
-                    format!("stmt_to_hir: identifier {} not found in scope", object)
-                })? {
-                    HIRSymbol::Binding(b) => {
-                        if !b.mutable {
-                            return Err(
-                                format!("cannot assign to field of constant '{}'", object).into()
-                            );
-                        }
-                        b.ty.clone()
-                    }
-                    _ => return Err(format!("stmt_to_hir: {} is not a variable", object).into()),
-                };
-            let struct_fields = match &obj_ty {
+            // Lower the object expression — its inferred type tells us the struct
+            // shape, which we use to compute the field index.
+            // If the object is a plain identifier referring to an immutable
+            // binding, surface a friendly error.
+            if let PExpr::Identifier(id) = &object
+                && let Some(HIRSymbol::Binding(b)) = current_scope.symbols.get(id)
+                && !b.mutable
+            {
+                return Err(format!("cannot assign to field of constant '{}'", id).into());
+            }
+            let obj_hir = expr_to_hir(object, current_scope, generic_cache)?;
+            let struct_fields = match &obj_hir.inferred_type {
                 HIRTypeKind::Struct { fields } => fields.clone(),
                 HIRTypeKind::Identifier(_) => {
-                    // Resolve through type alias
-                    resolve_struct_fields(&obj_ty, current_scope)?
+                    resolve_struct_fields(&obj_hir.inferred_type, current_scope)?
                 }
-                _ => return Err(format!("stmt_to_hir: {} is not a struct", object).into()),
+                other => {
+                    return Err(format!(
+                        "stmt_to_hir: FieldAssign target is not a struct: {:?}",
+                        other
+                    )
+                    .into());
+                }
             };
             let field_index = struct_fields
                 .iter()
                 .position(|(name, _)| name == &field.identifier)
                 .ok_or_else(|| {
                     format!(
-                        "stmt_to_hir: field {} not found in struct {}",
-                        field.identifier, object
+                        "stmt_to_hir: field {} not found in struct",
+                        field.identifier
                     )
                 })?;
             let e = expr_to_hir(expr, current_scope, generic_cache)?;
             Ok(HIRStmt::FieldAssign {
-                object,
+                object: obj_hir,
                 field: field.identifier,
                 field_index,
                 expr: e,
@@ -371,6 +372,98 @@ fn stmt_to_hir(
         StatementNode::Defer(inner) => {
             let hir_inner = stmt_to_hir(*inner, current_scope, generic_cache)?;
             Ok(HIRStmt::Defer(Box::new(hir_inner)))
+        }
+        StatementNode::Switch { subject, arms } => {
+            let subj_hir = expr_to_hir(subject, current_scope, generic_cache)?;
+            let resolved = resolve_type_alias(subj_hir.inferred_type.clone(), current_scope);
+            let variants = match &resolved {
+                HIRTypeKind::Enum { variants } => variants.clone(),
+                other => {
+                    return Err(format!(
+                        "stmt_to_hir: switch subject is not an enum: {:?}",
+                        other
+                    )
+                    .into());
+                }
+            };
+            let mut hir_arms = Vec::new();
+            for arm in arms {
+                let (hir_pattern, arm_binding) = match arm.pattern {
+                    crate::ast::Pattern::Wildcard => (crate::hir::HIRPattern::Wildcard, None),
+                    crate::ast::Pattern::EnumVariant { variant, binding } => {
+                        let v = variants
+                            .iter()
+                            .find(|v| v.name == variant.identifier)
+                            .ok_or_else(|| {
+                                format!(
+                                    "stmt_to_hir: enum has no variant '{}' in switch arm",
+                                    variant.identifier
+                                )
+                            })?;
+                        let payload_ty = v.payload.as_ref().map(|fields| HIRTypeKind::Struct {
+                            fields: fields
+                                .iter()
+                                .map(|(n, t)| (n.clone(), Box::new(t.clone())))
+                                .collect(),
+                        });
+                        if binding.is_some() && payload_ty.is_none() {
+                            return Err(format!(
+                                "switch arm: variant '{}' has no payload but a binding was supplied",
+                                variant
+                            )
+                            .into());
+                        }
+                        let bind_clone = binding.clone();
+                        (
+                            crate::hir::HIRPattern::EnumVariant {
+                                variant: v.name.clone(),
+                                discriminant: v.discriminant,
+                                binding,
+                                payload_ty: payload_ty.clone(),
+                            },
+                            bind_clone.zip(payload_ty),
+                        )
+                    }
+                };
+                // Inject the binding into the arm's local scope while lowering body.
+                let saved_sym = if let Some((bind_id, payload_ty)) = &arm_binding {
+                    let prev = current_scope.symbols.get(bind_id).cloned();
+                    current_scope.symbols.insert(
+                        bind_id.clone(),
+                        HIRSymbol::Binding(HIRBinding {
+                            name: bind_id.clone(),
+                            ty: payload_ty.clone(),
+                            init: None,
+                            mutable: false,
+                        }),
+                    );
+                    Some((bind_id.clone(), prev))
+                } else {
+                    None
+                };
+                let mut body_h = Vec::new();
+                for s in arm.body {
+                    body_h.push(stmt_to_hir(s, current_scope, generic_cache)?);
+                }
+                if let Some((bind_id, prev)) = saved_sym {
+                    match prev {
+                        Some(p) => {
+                            current_scope.symbols.insert(bind_id, p);
+                        }
+                        None => {
+                            current_scope.symbols.remove(&bind_id);
+                        }
+                    }
+                }
+                hir_arms.push(crate::hir::HIRSwitchArm {
+                    pattern: hir_pattern,
+                    body: body_h,
+                });
+            }
+            Ok(HIRStmt::Switch {
+                subject: subj_hir,
+                arms: hir_arms,
+            })
         }
     }
 }
@@ -566,6 +659,71 @@ fn expr_to_hir(
                 }
             }
         }
+        PExpr::EnumVariantConstruct {
+            type_name,
+            variant,
+            fields,
+        } => {
+            let sym = current_scope.symbols.get(&type_name).ok_or_else(|| {
+                format!(
+                    "expr_to_hir: type '{}' not found for enum variant construction",
+                    type_name
+                )
+            })?;
+            let HIRSymbol::Type(enum_ty) = sym else {
+                return Err(format!("expr_to_hir: '{}' is not a type", type_name).into());
+            };
+            let resolved = resolve_type_alias(enum_ty.clone(), current_scope);
+            let HIRTypeKind::Enum { variants } = &resolved else {
+                return Err(format!(
+                    "expr_to_hir: '{}' is not an enum type",
+                    type_name
+                )
+                .into());
+            };
+            let v = variants
+                .iter()
+                .find(|v| v.name == variant.identifier)
+                .ok_or_else(|| {
+                    format!(
+                        "expr_to_hir: enum '{}' has no variant '{}'",
+                        type_name, variant
+                    )
+                })?
+                .clone();
+            let Some(payload_spec) = v.payload.clone() else {
+                return Err(format!(
+                    "expr_to_hir: variant '{}.{}' carries no payload",
+                    type_name, variant
+                )
+                .into());
+            };
+            let mut hir_fields: Vec<(String, HIRExpression)> = Vec::new();
+            for (fname, fval) in fields {
+                let fval_hir = expr_to_hir(fval, current_scope, generic_cache)?;
+                hir_fields.push((fname.identifier.clone(), fval_hir));
+            }
+            // Verify each declared field is supplied (order-insensitive).
+            for (n, _) in &payload_spec {
+                if !hir_fields.iter().any(|(fname, _)| fname == n) {
+                    return Err(format!(
+                        "expr_to_hir: missing field '{}' in variant '{}.{}' payload",
+                        n, type_name, variant
+                    )
+                    .into());
+                }
+            }
+            Ok(HIRExpression {
+                inferred_type: HIRTypeKind::Identifier(type_name.clone()),
+                expression: HIRExpressionKind::EnumVariantConstruct {
+                    type_name: type_name.identifier.clone(),
+                    variant: v.name.clone(),
+                    discriminant: v.discriminant,
+                    fields: hir_fields,
+                    enum_type: Box::new(resolved),
+                },
+            })
+        }
         PExpr::TypeValue(te) => {
             let hir_type = map_type(te)?;
             Ok(HIRExpression {
@@ -722,6 +880,31 @@ fn expr_to_hir(
             }
         }
         PExpr::FieldAccess { object, field } => {
+            // Special case: `TypeName.VariantName` on an enum produces an EnumLiteral.
+            if let PExpr::Identifier(type_name) = &*object
+                && let Some(HIRSymbol::Type(ty)) = current_scope.symbols.get(type_name)
+            {
+                let resolved = resolve_type_alias(ty.clone(), current_scope);
+                if let HIRTypeKind::Enum { variants } = &resolved {
+                    let v = variants
+                        .iter()
+                        .find(|v| v.name == field.identifier)
+                        .ok_or_else(|| {
+                            format!(
+                                "expr_to_hir: enum {} has no variant {}",
+                                type_name, field.identifier
+                            )
+                        })?;
+                    return Ok(HIRExpression {
+                        inferred_type: HIRTypeKind::Identifier(type_name.clone()),
+                        expression: HIRExpressionKind::EnumLiteral {
+                            type_name: type_name.identifier.clone(),
+                            variant: v.name.clone(),
+                            discriminant: v.discriminant,
+                        },
+                    });
+                }
+            }
             let obj_hir = expr_to_hir(*object, current_scope, generic_cache)?;
             let struct_fields = resolve_struct_fields(&obj_hir.inferred_type, current_scope)?;
             let field_index = struct_fields
@@ -964,6 +1147,20 @@ fn expr_to_hir(
 }
 
 /// Resolve a HIRTypeKind (possibly an Identifier alias) to its struct fields.
+/// Walk through `Identifier` aliases until reaching a concrete type.
+fn resolve_type_alias(ty: HIRTypeKind, scope: &Scope) -> HIRTypeKind {
+    let mut current = ty;
+    loop {
+        match &current {
+            HIRTypeKind::Identifier(id) => match scope.symbols.get(id) {
+                Some(HIRSymbol::Type(inner)) => current = inner.clone(),
+                _ => return current,
+            },
+            _ => return current,
+        }
+    }
+}
+
 fn resolve_struct_fields(
     ty: &HIRTypeKind,
     current_scope: &Scope,
@@ -995,6 +1192,27 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, AnalysisErro
                 hir_fields.push((f.label.identifier.clone(), Box::new(map_type(f.type_id)?)));
             }
             HIRTypeKind::Struct { fields: hir_fields }
+        }
+        TypeExpression::Enum { variants } => {
+            let mut hir_variants = Vec::new();
+            for (idx, v) in variants.into_iter().enumerate() {
+                let payload = match v.payload {
+                    Some(fields) => {
+                        let mut p = Vec::new();
+                        for f in fields {
+                            p.push((f.label.identifier.clone(), map_type(f.type_id)?));
+                        }
+                        Some(p)
+                    }
+                    None => None,
+                };
+                hir_variants.push(crate::hir::HIREnumVariant {
+                    name: v.name.identifier.clone(),
+                    discriminant: idx as u32,
+                    payload,
+                });
+            }
+            HIRTypeKind::Enum { variants: hir_variants }
         }
         TypeExpression::Function {
             argument_types,
@@ -1124,6 +1342,15 @@ fn resolve_statement(
         StatementNode::IndexAssign { .. } => Ok(current_scope),
         StatementNode::ExpressionStatement(_) => Ok(current_scope),
         StatementNode::Defer(_) => Ok(current_scope),
+        StatementNode::Switch { arms, .. } => {
+            let mut scope = current_scope;
+            for arm in arms {
+                for s in &arm.body {
+                    scope = resolve_statement(s, scope)?;
+                }
+            }
+            Ok(scope)
+        }
     }
 }
 
@@ -1148,6 +1375,7 @@ fn mangle_type_expr(te: &TypeExpression) -> String {
             format!("arr{}_{}", size, mangle_type_expr(element_type))
         }
         TypeExpression::Struct { .. } => "struct".to_string(),
+        TypeExpression::Enum { .. } => "enum".to_string(),
         TypeExpression::Function { .. } => "fn".to_string(),
         TypeExpression::QualifiedIdentifier { module, name } => {
             format!("{}__{}", module.identifier, name.identifier)
@@ -1306,6 +1534,14 @@ fn substitute_in_stmt(stmt: &mut ASTStatementNode, subs: &HashMap<String, TypeEx
             }
         }
         ASTStatementNode::Defer(inner) => substitute_in_stmt(inner, subs),
+        ASTStatementNode::Switch { subject, arms } => {
+            substitute_in_expr(subject, subs);
+            for arm in arms {
+                for s in &mut arm.body {
+                    substitute_in_stmt(s, subs);
+                }
+            }
+        }
         ASTStatementNode::Break | ASTStatementNode::Continue | ASTStatementNode::Return(None) => {}
     }
 }

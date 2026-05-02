@@ -1,0 +1,22 @@
+import std::libc
+
+type Color enum {
+    Red,
+    Green,
+    Blue,
+}
+
+fn describe(Color c) void {
+    switch (c) {
+        when .Red { libc::printf("red\n") }
+        when .Green { libc::printf("green\n") }
+        when .Blue { libc::printf("blue\n") }
+    }
+}
+
+fn main() int4 {
+    describe(Color.Red)
+    describe(Color.Green)
+    describe(Color.Blue)
+    return 0
+}
