@@ -21,8 +21,12 @@ mod tests {
     fn module_statements(ast: &Ast) -> Vec<&StatementNode> {
         let mut stmts = Vec::new();
         for decl in &ast.declarations {
-            if let DeclarationNode::Statement(s) = decl {
-                stmts.push(s);
+            if let DeclarationNode::FunctionDeclaration(f) = decl {
+                if let Some(body) = &f.body {
+                    for s in &body.statements {
+                        stmts.push(s);
+                    }
+                }
             }
         }
         stmts

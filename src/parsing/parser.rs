@@ -3,9 +3,9 @@ use std::iter::Peekable;
 use std::path::Path;
 
 use crate::ast::{
-    Ast, DeclarationNode, Expression, Field, FunctionBody, FunctionDeclaration, FunctionParameter,
-    FunctionSignature, ImportDeclaration, PointerVariant, StatementNode, TypeDeclaration,
-    TypeExpression, VariableDeclaration,
+    Ast, DeclarationNode, EnumVariant, Expression, Field, FunctionBody, FunctionDeclaration,
+    FunctionParameter, FunctionSignature, ImportDeclaration, Pattern, PointerVariant,
+    StatementNode, SwitchArm, TypeDeclaration, TypeExpression, VariableDeclaration,
 };
 use crate::tokens::builtin::Builtin;
 use crate::tokens::identifier::Identifier;
@@ -214,8 +214,21 @@ where
                     let else_branch = if let Some(token) = self.peek() {
                         if matches!(token.kind, TokenKind::Keyword(Keyword::Else)) {
                             self.next(); // consume 'else'
-                            let else_stmts = self.parse_body()?;
-                            Some(else_stmts)
+                            // Allow `else if` without requiring extra braces: if the next
+                            // token is `if`, parse it as a single statement and wrap.
+                            if matches!(
+                                self.peek(),
+                                Some(Token {
+                                    kind: TokenKind::Keyword(Keyword::If),
+                                    ..
+                                })
+                            ) {
+                                let inner = self.parse_statement_some()?;
+                                Some(vec![inner])
+                            } else {
+                                let else_stmts = self.parse_body()?;
+                                Some(else_stmts)
+                            }
                         } else {
                             None
                         }
@@ -341,6 +354,10 @@ where
                     let expr = self.parse_expression()?;
                     StatementNode::ExpressionStatement(expr)
                 }
+                TokenKind::Keyword(Keyword::Switch) => {
+                    self.next(); // consume 'switch'
+                    self.parse_switch_statement()?
+                }
                 TokenKind::Keyword(Keyword::While) => {
                     self.next(); // consume "while"
                     self.expect_token(
@@ -381,188 +398,80 @@ where
     }
 
     fn parse_identifier_statement(&mut self) -> ParseResult<StatementNode> {
-        // Use two-token lookahead: if the token after the identifier
-        // is '=', parse as an assignment; otherwise delegate entirely
-        // to parse_expression so that calls, bare identifiers, etc.
-        // are handled by parse_atom without duplicating that logic here.
+        // Parse the LHS as a full expression. Then look for an assignment
+        // operator. If found, dispatch based on the LHS expression shape.
+        // Otherwise, treat the parsed expression as an expression statement.
+        let lhs = self.parse_expression()?;
+
+        // Check for plain assignment.
         if matches!(
-            self.peek_second(),
+            self.peek(),
             Some(Token {
                 kind: TokenKind::Operator(Operator::Assign),
                 ..
             })
         ) {
-            let id = if let TokenKind::Identifier(id) = self.next().unwrap().kind {
-                id
-            } else {
-                unreachable!()
-            };
-            self.expect_token(TokenKind::Operator(Operator::Assign), "expected '='")?;
-            let expr = self.parse_expression()?;
-            Ok(StatementNode::Assignment {
-                identifier: id,
-                expr,
-            })
-        } else if matches!(
-            self.peek_second(),
-            Some(Token {
-                kind: TokenKind::Operator(
-                    Operator::PlusAssign
-                        | Operator::MinusAssign
-                        | Operator::StarAssign
-                        | Operator::SlashAssign
-                        | Operator::PercentAssign
-                ),
-                ..
-            })
-        ) {
-            let id = if let TokenKind::Identifier(id) = self.next().unwrap().kind {
-                id
-            } else {
-                unreachable!()
-            };
-            let compound_op_token = self.next().unwrap();
-            let binary_op = match compound_op_token.kind {
-                TokenKind::Operator(Operator::PlusAssign) => Operator::Plus,
-                TokenKind::Operator(Operator::MinusAssign) => Operator::Minus,
-                TokenKind::Operator(Operator::StarAssign) => Operator::Star,
-                TokenKind::Operator(Operator::SlashAssign) => Operator::Slash,
-                TokenKind::Operator(Operator::PercentAssign) => Operator::Percent,
-                _ => unreachable!(),
-            };
+            self.next(); // consume '='
             let rhs = self.parse_expression()?;
-            // Desugar: x op= rhs  =>  x = x op rhs
-            let expr = Expression::Binary {
-                left: Box::new(Expression::Identifier(id.clone())),
-                operator: binary_op,
+            return self.lhs_to_assignment(lhs, rhs);
+        }
+
+        // Check for compound assignment: desugar `lhs op= rhs` to `lhs = lhs op rhs`.
+        let compound_op = match self.peek() {
+            Some(Token {
+                kind: TokenKind::Operator(op),
+                ..
+            }) => match op {
+                Operator::PlusAssign => Some(Operator::Plus),
+                Operator::MinusAssign => Some(Operator::Minus),
+                Operator::StarAssign => Some(Operator::Star),
+                Operator::SlashAssign => Some(Operator::Slash),
+                Operator::PercentAssign => Some(Operator::Percent),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(binop) = compound_op {
+            self.next(); // consume the compound op
+            let rhs = self.parse_expression()?;
+            let combined = Expression::Binary {
+                left: Box::new(lhs.clone()),
+                operator: binop,
                 right: Box::new(rhs),
             };
-            Ok(StatementNode::Assignment {
+            return self.lhs_to_assignment(lhs, combined);
+        }
+
+        Ok(StatementNode::ExpressionStatement(lhs))
+    }
+
+    /// Build an assignment statement node from a parsed LHS expression and a
+    /// computed RHS expression. Errors if the LHS isn't a valid lvalue.
+    fn lhs_to_assignment(
+        &self,
+        lhs: Expression,
+        rhs: Expression,
+    ) -> ParseResult<StatementNode> {
+        match lhs {
+            Expression::Identifier(id) => Ok(StatementNode::Assignment {
                 identifier: id,
-                expr,
-            })
-        } else if matches!(
-            self.peek_second(),
-            Some(Token {
-                kind: TokenKind::Punctuation(Punctuation::Dot),
-                ..
-            })
-        ) {
-            // Could be a field assignment: `obj.field = expr`
-            // We parse the identifier and dot, check for field name then '='.
-            // If the next token after the field name is '=', it's a field assign.
-            // Otherwise fall back to expression statement.
-            let obj_id = if let TokenKind::Identifier(id) = self.next().unwrap().kind {
-                id
-            } else {
-                unreachable!()
-            };
-            // consume '.'
-            self.next();
-            // Check for `.[` — index assign
-            if matches!(
-                self.peek(),
-                Some(Token {
-                    kind: TokenKind::Punctuation(Punctuation::OpeningSquareBrace),
-                    ..
-                })
-            ) {
-                self.next(); // consume '['
-                let index = self.parse_expression()?;
-                self.expect_token(
-                    TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
-                    "expected ']' after index expression",
-                )?;
-                if matches!(
-                    self.peek(),
-                    Some(Token {
-                        kind: TokenKind::Operator(Operator::Assign),
-                        ..
-                    })
-                ) {
-                    self.next(); // consume '='
-                    let rhs = self.parse_expression()?;
-                    Ok(StatementNode::IndexAssign {
-                        object: Expression::Identifier(obj_id),
-                        index,
-                        expr: rhs,
-                    })
-                } else {
-                    // expression statement
-                    Ok(StatementNode::ExpressionStatement(
-                        Expression::IndexAccess {
-                            object: Box::new(Expression::Identifier(obj_id)),
-                            index: Box::new(index),
-                        },
-                    ))
-                }
-            } else {
-                let after_dot_token =
-                    self.expect_next("expected field name or operator after '.'")?;
-                // Check if it's `.*` (deref assign) or a field name
-                if matches!(after_dot_token.kind, TokenKind::Operator(Operator::Star)) {
-                    // `obj.* = expr` — dereference assignment
-                    if matches!(
-                        self.peek(),
-                        Some(Token {
-                            kind: TokenKind::Operator(Operator::Assign),
-                            ..
-                        })
-                    ) {
-                        self.next(); // consume '='
-                        let expr = self.parse_expression()?;
-                        Ok(StatementNode::DerefAssign {
-                            pointer: Expression::Identifier(obj_id),
-                            expr,
-                        })
-                    } else {
-                        // `obj.*` as expression statement
-                        let base =
-                            Expression::Dereference(Box::new(Expression::Identifier(obj_id)));
-                        Ok(StatementNode::ExpressionStatement(base))
-                    }
-                } else {
-                    let field_id = if let TokenKind::Identifier(f) = after_dot_token.kind {
-                        f
-                    } else {
-                        return Err(self.error(
-                            "expected field name",
-                            after_dot_token.line,
-                            after_dot_token.column,
-                        ));
-                    };
-                    // if next is '=', it's a field assignment
-                    if matches!(
-                        self.peek(),
-                        Some(Token {
-                            kind: TokenKind::Operator(Operator::Assign),
-                            ..
-                        })
-                    ) {
-                        self.next(); // consume '='
-                        let expr = self.parse_expression()?;
-                        Ok(StatementNode::FieldAssign {
-                            object: obj_id,
-                            field: field_id,
-                            expr,
-                        })
-                    } else {
-                        // Rebuild a FieldAccess expression and continue as expression statement
-                        let base = Expression::FieldAccess {
-                            object: Box::new(Expression::Identifier(obj_id)),
-                            field: field_id,
-                        };
-                        // We already consumed the field access; now parse rest of the expression
-                        // by treating `base` as the already-parsed left side.
-                        // Since we can't easily re-enter the expression parser mid-stream,
-                        // just wrap as an expression statement.
-                        Ok(StatementNode::ExpressionStatement(base))
-                    }
-                }
-            } // close else { for non-.[ case
-        } else {
-            let expr = self.parse_expression()?;
-            Ok(StatementNode::ExpressionStatement(expr))
+                expr: rhs,
+            }),
+            Expression::FieldAccess { object, field } => Ok(StatementNode::FieldAssign {
+                object: *object,
+                field,
+                expr: rhs,
+            }),
+            Expression::Dereference(inner) => Ok(StatementNode::DerefAssign {
+                pointer: *inner,
+                expr: rhs,
+            }),
+            Expression::IndexAccess { object, index } => Ok(StatementNode::IndexAssign {
+                object: *object,
+                index: *index,
+                expr: rhs,
+            }),
+            _ => Err(self.error("invalid assignment target", 0, 0)),
         }
     }
 
@@ -613,6 +522,7 @@ where
                 self.next();
                 match keyword {
                     Keyword::Struct => self.parse_struct_literal(&type_token)?,
+                    Keyword::Enum => self.parse_enum_literal(&type_token)?,
                     Keyword::Function => self.parse_function_type(&type_token)?,
                     Keyword::Type => TypeExpression::TypeKeyword,
                     _ => return Err(self.error("not a type", type_token.line, type_token.column)),
@@ -778,6 +688,123 @@ where
                 type_token.column,
             )),
         }
+    }
+
+    fn parse_enum_literal(&mut self, type_token: &Token) -> ParseResult<TypeExpression> {
+        // 'enum' already consumed.
+        let first = self.expect_token(
+            TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
+            "expected '{' after 'enum'",
+        )?;
+        let _ = first;
+        let mut variants: Vec<EnumVariant> = Vec::new();
+        while let Some(t) = self.peek() {
+            if matches!(t.kind, TokenKind::Punctuation(Punctuation::ClosingCurlyBrace)) {
+                self.next();
+                break;
+            }
+            let name = self.expect_identifier("expected variant name")?;
+            // Optional payload: `Variant { field-list }`
+            let payload = if matches!(
+                self.peek(),
+                Some(Token {
+                    kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
+                    ..
+                })
+            ) {
+                self.next(); // consume '{'
+                let fields = self.parse_type_fields()?;
+                Some(fields)
+            } else {
+                None
+            };
+            variants.push(EnumVariant { name, payload });
+            // optional comma
+            self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
+        }
+        let _ = type_token;
+        Ok(TypeExpression::Enum { variants })
+    }
+
+    fn parse_switch_statement(&mut self) -> ParseResult<StatementNode> {
+        // 'switch' already consumed by caller.
+        self.expect_token(
+            TokenKind::Punctuation(Punctuation::OpeningParenthesis),
+            "expected '(' after 'switch'",
+        )?;
+        let subject = self.parse_expression()?;
+        self.expect_token(
+            TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+            "expected ')' after switch subject",
+        )?;
+        self.expect_token(
+            TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
+            "expected '{' to open switch body",
+        )?;
+        let mut arms: Vec<SwitchArm> = Vec::new();
+        while let Some(t) = self.peek() {
+            if matches!(
+                t.kind,
+                TokenKind::Punctuation(Punctuation::ClosingCurlyBrace)
+            ) {
+                self.next();
+                break;
+            }
+            self.expect_token(
+                TokenKind::Keyword(Keyword::When),
+                "expected 'when' inside switch body",
+            )?;
+            // Pattern: either `.VariantName`, `_` (wildcard), or `else`
+            let pattern = match self.peek() {
+                Some(Token {
+                    kind: TokenKind::Punctuation(Punctuation::Dot),
+                    ..
+                }) => {
+                    self.next(); // consume '.'
+                    let name = self.expect_identifier("expected variant name after '.'")?;
+                    // Optional `(binding)` for variants carrying a payload.
+                    let binding = if matches!(
+                        self.peek(),
+                        Some(Token {
+                            kind: TokenKind::Punctuation(Punctuation::OpeningParenthesis),
+                            ..
+                        })
+                    ) {
+                        self.next(); // consume '('
+                        let b = self.expect_identifier("expected binding name in pattern")?;
+                        self.expect_token(
+                            TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+                            "expected ')' after pattern binding",
+                        )?;
+                        Some(b)
+                    } else {
+                        None
+                    };
+                    Pattern::EnumVariant {
+                        variant: name,
+                        binding,
+                    }
+                }
+                Some(Token {
+                    kind: TokenKind::Keyword(Keyword::Else),
+                    ..
+                }) => {
+                    self.next();
+                    Pattern::Wildcard
+                }
+                _ => {
+                    let tok = self.peek().unwrap();
+                    return Err(self.error(
+                        "expected '.' followed by variant name, or 'else'",
+                        tok.line,
+                        tok.column,
+                    ));
+                }
+            };
+            let body = self.parse_body()?;
+            arms.push(SwitchArm { pattern, body });
+        }
+        Ok(StatementNode::Switch { subject, arms })
     }
 
     fn parse_type_fields(&mut self) -> ParseResult<Vec<Field>> {
@@ -1253,10 +1280,59 @@ where
                             expr = Expression::AddressOf(Box::new(expr));
                         }
                         TokenKind::Identifier(f) => {
-                            expr = Expression::FieldAccess {
-                                object: Box::new(expr),
-                                field: f,
-                            };
+                            // If this is `TypeName.Variant { ... }` — an enum
+                            // variant construction with payload — capture it
+                            // here. Otherwise it's a plain field access.
+                            if let Expression::Identifier(type_name) = &expr
+                                && matches!(
+                                    self.peek(),
+                                    Some(Token {
+                                        kind: TokenKind::Punctuation(
+                                            Punctuation::OpeningCurlyBrace
+                                        ),
+                                        ..
+                                    })
+                                )
+                            {
+                                self.next(); // consume '{'
+                                let mut fields = Vec::new();
+                                while !matches!(
+                                    self.peek(),
+                                    Some(Token {
+                                        kind: TokenKind::Punctuation(
+                                            Punctuation::ClosingCurlyBrace
+                                        ),
+                                        ..
+                                    }) | None
+                                ) {
+                                    let fname = self
+                                        .expect_identifier("expected field name in variant payload")?;
+                                    self.expect_token(
+                                        TokenKind::Punctuation(Punctuation::Colon),
+                                        "expected ':' after field name in variant payload",
+                                    )?;
+                                    let val = self.parse_expression()?;
+                                    fields.push((fname, val));
+                                    self.consume_if(|t| {
+                                        matches!(
+                                            t.kind,
+                                            TokenKind::Punctuation(Punctuation::Comma)
+                                        )
+                                    });
+                                }
+                                self.next(); // consume '}'
+                                let tn = type_name.clone();
+                                expr = Expression::EnumVariantConstruct {
+                                    type_name: tn,
+                                    variant: f,
+                                    fields,
+                                };
+                            } else {
+                                expr = Expression::FieldAccess {
+                                    object: Box::new(expr),
+                                    field: f,
+                                };
+                            }
                         }
                         _ => {
                             return Err(self.error(

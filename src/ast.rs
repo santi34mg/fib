@@ -55,7 +55,7 @@ pub enum StatementNode {
         expr: Expression,
     },
     FieldAssign {
-        object: Identifier,
+        object: Expression,
         field: Identifier,
         expr: Expression,
     },
@@ -83,6 +83,28 @@ pub enum StatementNode {
     Break,
     Continue,
     Defer(Box<StatementNode>),
+    Switch {
+        subject: Expression,
+        arms: Vec<SwitchArm>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct SwitchArm {
+    pub pattern: Pattern,
+    pub body: Vec<StatementNode>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    /// `.Variant` or `.Variant(binding)` — matches an enum variant by name.
+    /// When `binding` is `Some`, a payload-carrying variant binds the payload
+    /// fields under that local name (accessible as a struct).
+    EnumVariant {
+        variant: Identifier,
+        binding: Option<Identifier>,
+    },
+    Wildcard,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +148,9 @@ pub enum TypeExpression {
     Struct {
         fields: Vec<Field>,
     },
+    Enum {
+        variants: Vec<EnumVariant>,
+    },
     Array {
         element_type: Box<TypeExpression>,
         size: u64,
@@ -155,6 +180,9 @@ impl fmt::Display for TypeExpression {
             }
             TypeExpression::Struct { fields } => {
                 write!(f, "struct {{ {:?} }}", fields)?;
+            }
+            TypeExpression::Enum { variants } => {
+                write!(f, "enum {{ {:?} }}", variants)?;
             }
             TypeExpression::Array { element_type, size } => {
                 write!(f, "{}[{}]", element_type, size)?;
@@ -191,6 +219,12 @@ impl fmt::Display for TypeExpression {
 pub struct Field {
     pub(crate) label: Identifier,
     pub(crate) type_id: TypeExpression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub name: Identifier,
+    pub payload: Option<Vec<Field>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -268,4 +302,11 @@ pub enum Expression {
     },
     /// A compile-time type value used in expression position (e.g., as a generic argument).
     TypeValue(TypeExpression),
+    /// `Type.Variant { field: val, ... }` — construct an enum variant carrying
+    /// a payload. For payload-less variants, use a plain `FieldAccess` instead.
+    EnumVariantConstruct {
+        type_name: Identifier,
+        variant: Identifier,
+        fields: Vec<(Identifier, Expression)>,
+    },
 }

@@ -1,0 +1,16 @@
+import std::libc
+
+type Inner struct {
+    uint8 value,
+}
+
+type Outer struct {
+    Inner inner,
+}
+
+fn main() int4 {
+    var Outer o = Outer { inner: Inner { value: 0 } }
+    o.inner.value = 42
+    libc::printf("got %d\n", o.inner.value)
+    return 0
+}

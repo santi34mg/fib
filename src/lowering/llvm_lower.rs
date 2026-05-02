@@ -192,6 +192,71 @@ pub fn lower(
     Ok(ir)
 }
 
+/// Compute a pointer to the lvalue represented by `expr`. Supports identifiers,
+/// field access chains, index access, and dereferences. Used by AddressOf and
+/// by assignment lowering.
+fn compute_lvalue_ptr<'ctx, 'r>(
+    ctx: &'r CodegenCtx<'ctx, 'r>,
+    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
+    current_scope: &mut Scope,
+    expr: &HIRExpression,
+) -> Result<PointerValue<'ctx>, Box<dyn Error>> {
+    match &expr.expression {
+        HIRExpressionKind::Identifier(name) => {
+            let ptr = *vars.get(name).ok_or_else(|| {
+                format!("compute_lvalue_ptr: no alloca for identifier {}", name)
+            })?;
+            Ok(ptr)
+        }
+        HIRExpressionKind::Deref(inner) => {
+            let v = codegen_expr(ctx, vars, current_scope, inner)?;
+            Ok(v.into_pointer_value())
+        }
+        HIRExpressionKind::FieldAccess { object, field: _, field_index } => {
+            let base_ptr = compute_lvalue_ptr(ctx, vars, current_scope, object)?;
+            let struct_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
+            let BasicTypeEnum::StructType(st) = struct_ty else {
+                return Err("compute_lvalue_ptr: FieldAccess on non-struct type".into());
+            };
+            let gep = ctx.builder.build_struct_gep(st, base_ptr, *field_index as u32, "fieldptr")?;
+            Ok(gep)
+        }
+        HIRExpressionKind::IndexAccess { object, index } => {
+            let idx_val = codegen_expr(ctx, vars, current_scope, index)?;
+            let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+            match &object.inferred_type {
+                HIRTypeKind::Array { .. } => {
+                    let arr_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
+                    let base_ptr = compute_lvalue_ptr(ctx, vars, current_scope, object)?;
+                    let i32_zero = ctx.ctx.i32_type().const_int(0, false);
+                    let gep = unsafe {
+                        ctx.builder.build_gep(
+                            arr_ty,
+                            base_ptr,
+                            &[i32_zero, idx_val.into_int_value()],
+                            "arr_idx_ptr",
+                        )?
+                    };
+                    Ok(gep)
+                }
+                _ => {
+                    let ptr_val = codegen_expr(ctx, vars, current_scope, object)?;
+                    let gep = unsafe {
+                        ctx.builder.build_gep(
+                            elem_ty,
+                            ptr_val.into_pointer_value(),
+                            &[idx_val.into_int_value()],
+                            "idx_ptr",
+                        )?
+                    };
+                    Ok(gep)
+                }
+            }
+        }
+        _ => Err("compute_lvalue_ptr: not an lvalue expression".into()),
+    }
+}
+
 fn codegen_expr<'ctx, 'r>(
     ctx: &'r CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
@@ -505,16 +570,8 @@ fn codegen_expr<'ctx, 'r>(
             Ok(loaded)
         }
         HIRExpressionKind::AddressOf(inner) => {
-            // The inner expression must be an identifier; return its alloca directly.
-            match &inner.expression {
-                HIRExpressionKind::Identifier(name) => {
-                    let ptr = *vars.get(name).ok_or_else(|| {
-                        format!("codegen_expr: AddressOf: no alloca for identifier {}", name)
-                    })?;
-                    Ok(ptr.as_basic_value_enum())
-                }
-                _ => Err("codegen_expr: AddressOf requires an lvalue (identifier)".into()),
-            }
+            let ptr = compute_lvalue_ptr(ctx, vars, current_scope, inner)?;
+            Ok(ptr.as_basic_value_enum())
         }
         HIRExpressionKind::Deref(inner) => {
             // Codegen the pointer expression, then load through it.
@@ -646,7 +703,174 @@ fn codegen_expr<'ctx, 'r>(
         HIRExpressionKind::ComptimeType(_) => {
             Err("compiler bug: ComptimeType expression reached LLVM lowering — type values must not appear in runtime code".into())
         }
+        HIRExpressionKind::EnumLiteral { discriminant, .. } => {
+            // Determine the LLVM representation from the enum's resolved type.
+            let llvm_ty =
+                map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+            let i32_ty = ctx.ctx.i32_type();
+            let tag = i32_ty.const_int(*discriminant as u64, false);
+            match llvm_ty {
+                BasicTypeEnum::IntType(_) => Ok(tag.as_basic_value_enum()),
+                BasicTypeEnum::StructType(st) => {
+                    // Tagged enum: build `{ tag, undef payload }` constant.
+                    let payload_field_ty = st
+                        .get_field_type_at_index(1)
+                        .ok_or("EnumLiteral: tagged enum struct missing payload field")?;
+                    let payload_undef = match payload_field_ty {
+                        BasicTypeEnum::ArrayType(at) => at.get_undef().as_basic_value_enum(),
+                        other => {
+                            return Err(format!(
+                                "EnumLiteral: unexpected payload type {:?}",
+                                other
+                            )
+                            .into());
+                        }
+                    };
+                    Ok(st
+                        .const_named_struct(&[tag.as_basic_value_enum(), payload_undef])
+                        .as_basic_value_enum())
+                }
+                other => Err(format!("EnumLiteral: unexpected enum LLVM type {:?}", other).into()),
+            }
+        }
+        HIRExpressionKind::EnumVariantConstruct {
+            discriminant,
+            fields,
+            enum_type,
+            ..
+        } => {
+            // Lower the enum struct type, alloca it, write tag, build the
+            // payload struct and store it via a bitcast pointer.
+            let llvm_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+            let BasicTypeEnum::StructType(enum_st) = llvm_ty else {
+                return Err(format!(
+                    "EnumVariantConstruct: enum LLVM type is not a struct: {:?}",
+                    llvm_ty
+                )
+                .into());
+            };
+            let alloca = ctx.builder.build_alloca(enum_st, "enumtmp")?;
+            // Store tag at field 0.
+            let tag_ptr = ctx
+                .builder
+                .build_struct_gep(enum_st, alloca, 0, "enumtag")?;
+            ctx.builder.build_store(
+                tag_ptr,
+                ctx.ctx.i32_type().const_int(*discriminant as u64, false),
+            )?;
+            // Build the payload struct value, then store it at the payload region.
+            let HIRTypeKind::Enum { variants } = enum_type.as_ref() else {
+                return Err("EnumVariantConstruct: enum_type is not an enum".into());
+            };
+            let v = variants
+                .iter()
+                .find(|v| v.discriminant == *discriminant)
+                .ok_or("EnumVariantConstruct: variant not found in enum_type")?;
+            let payload_spec = v
+                .payload
+                .as_ref()
+                .ok_or("EnumVariantConstruct: variant has no payload spec")?;
+            // Build payload struct type matching the declared field order.
+            let payload_field_tys: Vec<BasicTypeEnum> = payload_spec
+                .iter()
+                .map(|(_, t)| map_type_to_llvm(t, ctx.ctx, current_scope.clone()))
+                .collect::<Result<_, _>>()?;
+            let payload_st = ctx.ctx.struct_type(&payload_field_tys, false);
+            // GEP payload region, then bitcast to the variant's payload struct
+            // pointer, then store each field.
+            let payload_ptr = ctx
+                .builder
+                .build_struct_gep(enum_st, alloca, 1, "enumpayload")?;
+            for (idx, (fname, _)) in payload_spec.iter().enumerate() {
+                let val = fields
+                    .iter()
+                    .find(|(n, _)| n == fname)
+                    .map(|(_, e)| e)
+                    .ok_or_else(|| {
+                        format!("EnumVariantConstruct: missing payload field '{}'", fname)
+                    })?;
+                let v_val = codegen_expr(ctx, vars, current_scope, val)?;
+                let field_ptr =
+                    ctx.builder
+                        .build_struct_gep(payload_st, payload_ptr, idx as u32, "varfldptr")?;
+                ctx.builder.build_store(field_ptr, v_val)?;
+            }
+            // Load the whole enum struct as the value.
+            let loaded = ctx.builder.build_load(enum_st, alloca, "enumload")?;
+            Ok(loaded)
+        }
     }
+}
+
+/// Approximate size of a HIR type in bytes. Used to size the payload region of
+/// tagged unions; over-approximation is OK (we store via bitcast).
+fn hir_type_size_bytes(ty: &HIRTypeKind, scope: &Scope) -> usize {
+    match ty {
+        HIRTypeKind::Builtin(b) => match b {
+            BuiltinType::Boolean | BuiltinType::Char => 1,
+            BuiltinType::UInt1 | BuiltinType::Int1 => 1,
+            BuiltinType::UInt2 | BuiltinType::Int2 | BuiltinType::Float2 => 2,
+            BuiltinType::UInt4 | BuiltinType::Int4 | BuiltinType::Float4 => 4,
+            BuiltinType::UInt8 | BuiltinType::Int8 | BuiltinType::Float8 => 8,
+            BuiltinType::UInt16 | BuiltinType::Int16 | BuiltinType::Float16 => 16,
+            BuiltinType::String => 8,
+            BuiltinType::Never => 1,
+            BuiltinType::Void => 0,
+        },
+        HIRTypeKind::Pointer(_) => 8,
+        HIRTypeKind::Function { .. } => 8,
+        HIRTypeKind::Array { element_type, size } => {
+            hir_type_size_bytes(element_type, scope) * (*size as usize)
+        }
+        HIRTypeKind::Struct { fields } => fields
+            .iter()
+            .map(|(_, ty)| hir_type_size_bytes(ty, scope))
+            .sum(),
+        HIRTypeKind::Enum { variants } => {
+            let payload = variants
+                .iter()
+                .filter_map(|v| {
+                    v.payload.as_ref().map(|fs| {
+                        fs.iter()
+                            .map(|(_, t)| hir_type_size_bytes(t, scope))
+                            .sum::<usize>()
+                    })
+                })
+                .max()
+                .unwrap_or(0);
+            4 + payload
+        }
+        HIRTypeKind::Identifier(id) => match scope.symbols.get(id) {
+            Some(HIRSymbol::Type(inner)) => hir_type_size_bytes(inner, scope),
+            _ => 0,
+        },
+        HIRTypeKind::QualifiedIdentifier { module, name } => {
+            if let Some(m) = scope.modules.get(module)
+                && let Some(HIRSymbol::Type(inner)) = m.exports.get(name)
+            {
+                hir_type_size_bytes(inner, scope)
+            } else {
+                0
+            }
+        }
+        HIRTypeKind::Type => 0,
+    }
+}
+
+/// Returns the maximum payload size (in bytes) across the variants of an enum,
+/// or 0 if the enum has no payload-carrying variants.
+fn enum_max_payload_bytes(variants: &[crate::hir::HIREnumVariant], scope: &Scope) -> usize {
+    variants
+        .iter()
+        .filter_map(|v| {
+            v.payload.as_ref().map(|fs| {
+                fs.iter()
+                    .map(|(_, t)| hir_type_size_bytes(t, scope))
+                    .sum::<usize>()
+            })
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 fn map_type_to_llvm<'ctx>(
@@ -699,6 +923,17 @@ fn map_type_to_llvm<'ctx>(
                 .map(|(_, ty)| map_type_to_llvm(ty, ctx, current_scope.clone()))
                 .collect::<Result<_, _>>()?;
             Ok(ctx.struct_type(&field_types, false).into())
+        }
+        HIRTypeKind::Enum { variants } => {
+            let payload_bytes = enum_max_payload_bytes(variants, &current_scope);
+            if payload_bytes == 0 {
+                Ok(ctx.i32_type().into())
+            } else {
+                let tag_ty: BasicTypeEnum = ctx.i32_type().into();
+                let payload_ty: BasicTypeEnum =
+                    ctx.i8_type().array_type(payload_bytes as u32).into();
+                Ok(ctx.struct_type(&[tag_ty, payload_ty], false).into())
+            }
         }
         HIRTypeKind::Pointer(_) => Ok(ctx.ptr_type(AddressSpace::default()).into()),
         HIRTypeKind::Array { element_type, size } => {
@@ -855,21 +1090,18 @@ fn codegen_stmt<'ctx, 'r>(
             field_index,
             expr,
         } => {
-            let struct_ptr = *vars
-                .get(object)
-                .ok_or_else(|| format!("codegen_stmt: no alloca for struct variable {}", object))?;
-            // Get the struct type from the binding in scope
-            let obj_ty = if let Some(HIRSymbol::Binding(b)) = current_scope.symbols.get(object) {
-                map_type_to_llvm(&b.ty, ctx.ctx, current_scope.clone())?
-            } else {
-                return Err(format!("codegen_stmt: {} not found in scope", object).into());
-            };
+            let base_ptr = compute_lvalue_ptr(ctx, vars, current_scope, object)?;
+            let obj_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
             let BasicTypeEnum::StructType(st) = obj_ty else {
-                return Err(format!("codegen_stmt: {} is not a struct", object).into());
+                return Err(format!(
+                    "codegen_stmt: FieldAssign target is not a struct: {:?}",
+                    object.inferred_type
+                )
+                .into());
             };
             let gep = ctx.builder.build_struct_gep(
                 st,
-                struct_ptr,
+                base_ptr,
                 *field_index as u32,
                 "fieldassignptr",
             )?;
@@ -1182,6 +1414,178 @@ fn codegen_stmt<'ctx, 'r>(
                 .unwrap();
             let dead_bb = ctx.ctx.append_basic_block(func, "dead");
             ctx.builder.position_at_end(dead_bb);
+            Ok(None)
+        }
+        HIRStmt::Switch { subject, arms } => {
+            let func = ctx
+                .builder
+                .get_insert_block()
+                .unwrap()
+                .get_parent()
+                .unwrap();
+            let merge_bb = ctx.ctx.append_basic_block(func, "switchcont");
+
+            // Find a wildcard arm for the default block (if any). Otherwise
+            // the merge block itself acts as the default.
+            let mut default_bb = merge_bb;
+            let mut wildcard_arm: Option<&Vec<crate::hir::HIRStmt>> = None;
+            for arm in arms {
+                if let crate::hir::HIRPattern::Wildcard = &arm.pattern {
+                    default_bb = ctx.ctx.append_basic_block(func, "switchdefault");
+                    wildcard_arm = Some(&arm.body);
+                    break;
+                }
+            }
+
+            // Allocate one BB per non-wildcard arm.
+            #[allow(clippy::type_complexity)]
+            let mut variant_blocks: Vec<(
+                u64,
+                inkwell::basic_block::BasicBlock,
+                &crate::hir::HIRSwitchArm,
+            )> = Vec::new();
+            for arm in arms {
+                if let crate::hir::HIRPattern::EnumVariant { discriminant, .. } = &arm.pattern {
+                    let bb = ctx.ctx.append_basic_block(func, "switcharm");
+                    variant_blocks.push((*discriminant as u64, bb, arm));
+                }
+            }
+
+            // Emit subject and extract the tag depending on whether the enum
+            // is tagged (struct) or plain (i32).
+            let subj_val = codegen_expr(ctx, vars, current_scope, subject)?;
+            let i32_ty = ctx.ctx.i32_type();
+
+            // For tagged enums we also need a pointer to the subject's payload
+            // region so the per-arm bindings can read it.
+            let (tag_int, subject_alloca, subject_struct_ty): (
+                inkwell::values::IntValue,
+                Option<PointerValue>,
+                Option<inkwell::types::StructType>,
+            ) = match subj_val {
+                BasicValueEnum::IntValue(iv) => (iv, None, None),
+                BasicValueEnum::StructValue(sv) => {
+                    let st = sv.get_type();
+                    let alloca = ctx.builder.build_alloca(st, "switchsubj")?;
+                    ctx.builder.build_store(alloca, sv)?;
+                    let tag_ptr =
+                        ctx.builder.build_struct_gep(st, alloca, 0, "switchtagptr")?;
+                    let tag = ctx.builder.build_load(i32_ty, tag_ptr, "switchtag")?;
+                    (tag.into_int_value(), Some(alloca), Some(st))
+                }
+                other => {
+                    return Err(format!(
+                        "switch: subject has unsupported LLVM type {:?}",
+                        other.get_type()
+                    )
+                    .into());
+                }
+            };
+
+            let cases: Vec<(inkwell::values::IntValue, inkwell::basic_block::BasicBlock)> =
+                variant_blocks
+                    .iter()
+                    .map(|(d, bb, _)| (i32_ty.const_int(*d, false), *bb))
+                    .collect();
+            ctx.builder.build_switch(tag_int, default_bb, &cases)?;
+
+            // Emit each variant arm body, binding the payload if requested.
+            for (_, bb, arm) in &variant_blocks {
+                ctx.builder.position_at_end(*bb);
+                // If the pattern carries a binding, materialize the payload as
+                // a local struct alloca that the arm body can field-access.
+                let mut bind_restore: Option<(Identifier, Option<PointerValue>)> = None;
+                if let crate::hir::HIRPattern::EnumVariant {
+                    binding: Some(b),
+                    payload_ty: Some(payload_ty),
+                    ..
+                } = &arm.pattern
+                {
+                    let payload_llvm = map_type_to_llvm(payload_ty, ctx.ctx, current_scope.clone())?;
+                    let bind_alloca =
+                        ctx.builder.build_alloca(payload_llvm, "patbind")?;
+                    if let (Some(subj_alloca), Some(subj_st)) =
+                        (subject_alloca, subject_struct_ty)
+                    {
+                        let payload_ptr = ctx.builder.build_struct_gep(
+                            subj_st,
+                            subj_alloca,
+                            1,
+                            "subjpayload",
+                        )?;
+                        // Reinterpret the payload bytes as the variant's struct
+                        // by loading and re-storing through the bind alloca.
+                        let loaded = ctx.builder.build_load(
+                            payload_llvm,
+                            payload_ptr,
+                            "loadpayload",
+                        )?;
+                        ctx.builder.build_store(bind_alloca, loaded)?;
+                    }
+                    let prev = vars.insert(b.clone(), bind_alloca);
+                    bind_restore = Some((b.clone(), prev));
+                    // Inject the binding into the scope so HIR FieldAccess can
+                    // look up the struct fields.
+                    let _ = current_scope.symbols.insert(
+                        b.clone(),
+                        HIRSymbol::Binding(crate::hir::HIRBinding {
+                            name: b.clone(),
+                            ty: payload_ty.clone(),
+                            init: None,
+                            mutable: false,
+                        }),
+                    );
+                }
+
+                let mut arm_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
+                for s in arm.body.iter() {
+                    codegen_stmt(ctx, vars, current_scope, s, loop_ctx, &mut arm_deferred)?;
+                }
+                if ctx
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    emit_deferred(ctx, vars, current_scope, &arm_deferred)?;
+                    ctx.builder.build_unconditional_branch(merge_bb)?;
+                }
+
+                // Restore the previous binding (if any) for the next arm.
+                if let Some((bid, prev)) = bind_restore {
+                    match prev {
+                        Some(p) => {
+                            vars.insert(bid.clone(), p);
+                        }
+                        None => {
+                            vars.remove(&bid);
+                        }
+                    }
+                    current_scope.symbols.remove(&bid);
+                }
+            }
+
+            // Emit the wildcard/default arm body if present.
+            if let Some(body) = wildcard_arm {
+                ctx.builder.position_at_end(default_bb);
+                let mut def_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
+                for s in body.iter() {
+                    codegen_stmt(ctx, vars, current_scope, s, loop_ctx, &mut def_deferred)?;
+                }
+                if ctx
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    emit_deferred(ctx, vars, current_scope, &def_deferred)?;
+                    ctx.builder.build_unconditional_branch(merge_bb)?;
+                }
+            }
+
+            ctx.builder.position_at_end(merge_bb);
             Ok(None)
         }
     }
