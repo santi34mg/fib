@@ -1,0 +1,494 @@
+// ============================================================================
+// Fib Compiler :)
+// ============================================================================
+
+// C externs
+extern fn printf(fmt: string, ...) int4
+extern fn malloc(size: uint8) *void
+extern fn free(ptr: *void) void
+extern fn memcpy(dest: *void, src: *void, n: uint8) *void
+extern fn exit(status: int4) void
+extern fn strlen(s: string) uint8
+extern fn puts(s: string) int4
+extern fn isascii(c: int4) int4                             // will be used to check for ascii chars only
+extern fn isdigit(c: int4) int4
+extern fn isalpha(c: int4) int4
+extern fn isalnum(c: int4) int4
+extern fn isblank(c: int4) int4
+
+type Stream struct {
+    unused: int4,
+}
+
+extern fn fopen(path: string, mode: string) *Stream
+extern fn fclose(stream: *Stream) int4
+extern fn fgetc(stream: *Stream) int4
+
+type Builtin enum { 
+    BuiltinType { builtin_type: BuiltinType },
+}
+
+type BuiltinType enum {
+    Void,
+    UInt1,
+    UInt2,
+    UInt4,
+    UInt8,
+    UInt16,
+    Int1,
+    Int2,
+    Int4,
+    Int8,
+    Int16,
+    Float2,
+    Float4,
+    Float8,
+    Float16,
+    Char,
+    Boolean,
+    String,
+    Never,
+}
+
+type Literal enum { 
+    Integer { value: uint8 },
+    Float { value: float8 },
+    Boolean { value: bool },
+    Character { value: char },
+    String { value: string },
+    Null,
+}
+
+type Keyword enum { 
+    Var,
+    If,
+    Else,
+    For,
+    Break,
+    Continue,
+    Return,
+    Function,
+    Switch,
+    When,
+    Struct,
+    Enum,
+    Union,
+    Type,
+    As,
+    Extern,
+    // TODO: consider dropping defer
+    Defer,
+    Import,
+}
+
+type Operator enum {
+    Plus,               // +
+    Minus,              // -
+    Star,               // *
+    Slash,              // /
+    Percent,            // %
+
+    GreaterThan,        // >
+    LesserThan,         // <
+    GreaterEqual,       // >=
+    LesserEqual,        // <=
+
+    LeftShift,          // <<
+    RightShift,         // >>
+
+    Assign,             // =
+    Equals,             // ==
+    Different,          // !=
+
+    PlusAssign,         // +=
+    MinusAssign,        // -=
+    StarAssign,         // *=
+    SlashAssign,        // /=
+    PercentAssign,      // %=
+
+    LogicalAnd,         // &&
+    LogicalOr,          // ||
+    LogicalNot,         // !
+
+    Ampersand,          // &
+    Pipe,               // |
+    Tilde,              // ~
+    Caret,              // ^
+
+    /// Reserved for future; not consumed by the parser yet.
+    DoubleDot,          // ..
+    ThinRightArrow,     // ->
+}
+
+type Punctuation enum {
+    OpeningParenthesis,
+    ClosingParenthesis,
+    OpeningCurlyBrace,
+    ClosingCurlyBrace,
+    OpeningSquareBrace,
+    ClosingSquareBrace,
+    Semicolon,
+    Comma,
+    Colon,
+    DoubleColon,
+    Dot,
+    /// Reserved for future attribute/decorator syntax; not consumed by the parser yet.
+    At,
+}
+
+type TokenKind enum {
+    Identifier { identifier: string },
+    Builtin { builtin: Builtin },
+    Literal { literal: Literal },
+    Keyword { keyword: Keyword },
+    Operator { operator: Operator },
+    Punctuation { punctuation: Punctuation },
+    Comment
+    Unknown { c: char }
+}
+
+type Token struct {
+    kind: TokenKind,
+    line: uint4,
+    col: uint4,
+}
+
+type TokenDArray struct {
+    tokens: *Token,
+    len: uint4,
+    cap: uint4,
+}
+
+fn tokens_push(darr: *TokenDArray, tok: Token) {
+    darr.*.tokens.[darr.*.len] = tok;
+    // 24 should be the size of a token
+    darr.*.len += 24;
+}
+
+
+fn main() uint {
+
+    // EOF is usually -1
+    // TODO: make robust
+    EOF := -1
+
+    filename: string = "./hello_world.fib";
+
+    char_stream: *Stream = fopen(filename, "r");
+
+    line: uint4 = 1;
+    col: uint4 = 1;
+
+    token_darray: TokenDArray = TokenDArray {
+        tokens: malloc(256) as *Token,
+        len: 0,
+        cap: 256,
+    }
+
+    curr := fgetc(char_stream);
+    if (curr == EOF) {
+        printf("Empty file. Done.\n");
+        return 0;
+    }
+
+    // same as a `while (true)` so i don't need "while" keyword :)
+    for (
+        next := fgetc(char_stream);
+        curr != EOF; 
+        // step is performed at the end of loop
+    ) {
+        if (curr == EOF) {
+            break;
+        }
+
+        kind: TokenKind;
+
+        if (curr == '+') {
+            if (next == '=') {
+                kind = TokenKind.Operator { operator: Operator.PlusAssign };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.Plus};
+            }
+        } else if (curr == '-') {
+            if (next == '=') {
+                kind = TokenKind.Operator { operator: Operator.MinusAssign };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else if (next == '>') {
+                kind = TokenKind.Operator { operator: Operator.ThinRightArrow };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.Minus };
+            }
+        } else if (curr == '*') {
+            if (next == '=') {
+                kind = TokenKind.Operator { operator: Operator.StarAssign };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.Star };
+            }
+        } else if (curr == '/') {
+            if (next == '=') {
+                kind = TokenKind.Operator { operator: Operator.SlashAssign };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else if (next == '/') {
+                kind = TokenKind.Comment;
+
+                // step until the end of the line
+                for (;;) {
+                    curr = next
+                    next = fgetc(char_stream);
+                    col += 1
+                    if (next == '\n') {
+                        // step the '\n'
+                        curr = next
+                        next = fgetc(char_stream);
+                        col = 1;
+                        line += 1; 
+                        break;
+                    }
+                }
+            } else {
+                kind = TokenKind.Operator { operator: Operator.Slash };
+            }
+        } else if (curr == '=') {
+            if (next == '=') {
+                kind = TokenKind.Operator { operator: Operator.Equals };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.Assign };
+            }
+        } else if (curr == '!') {
+            if (next == '=') {
+                kind = TokenKind.Operator { operator: Operator.Different };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.LogicalNot };
+            }
+        } else if (curr == '>') {
+            if (next == '=') {
+                kind = TokenKind.Operator { operator: Operator.GreaterEqual };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else if (next == '>') {
+                kind = TokenKind.Operator { operator: Operator.RightShift };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.GreaterThan };
+            }
+        } else if (curr == '<') {
+            if (next == '=') {
+                kind = TokenKind.Operator { operator: Operator.LesserEqual };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else if (next == '<') {
+                kind = TokenKind.Operator { operator: Operator.LeftShift };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.LesserThan };
+            }
+        } else if (curr == '%') {
+            if (next == '=') {
+                kind = TokenKind.Operator { operator: Operator.PercentAssign };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.Percent };
+            }
+        } else if (curr == '&') {
+            if (next == '=') {
+                printf("TODO: add BitwiseAndAssign\n");
+                return -1;
+            } else if (next == '&') {
+                kind = TokenKind.Operator { operator: Operator.LogicalAnd };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.Ampersand };
+            }
+        } else if (curr == '|') {
+            if (next == '=') {
+                printf("TODO: add BitwiseOrAssign\n");
+                return -1;
+            } else if (next == '&') {
+                kind = TokenKind.Operator { operator: Operator.LogicalOr };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.Pipe };
+            }
+        } else if (curr == '^') {
+            if (next == '=') {
+                printf("TODO: add BitwiseXorAssign\n");
+                return -1;
+            } else {
+                kind = TokenKind.Operator { operator: Operator.Caret };
+            }
+        } else if (curr == '~') {
+            kind = TokenKind.Operator { operator: Operator.Tilde };
+        } else if (curr == '(') {
+            kind = TokenKind.Punctuation {punctuation: Punctuation.OpeningParenthesis };
+        } else if (curr == ')') {
+            kind = TokenKind.Punctuation {punctuation: Punctuation.ClosingParenthesis };
+        } else if (curr == '{') {
+            kind = TokenKind.Punctuation {punctuation: Punctuation.OpeningCurlyBrace };
+        } else if (curr == '}') {
+            kind = TokenKind.Punctuation {punctuation: Punctuation.ClosingCurlyBrace };
+        } else if (curr == '[') {
+            kind = TokenKind.Punctuation {punctuation: Punctuation.OpeningSquareBrace };
+        } else if (curr == ']') {
+            kind = TokenKind.Punctuation {punctuation: Punctuation.ClosingSquareBrace };
+        } else if (curr == ',') {
+            kind = TokenKind.Punctuation {punctuation: Punctuation.Comma };
+        } else if (curr == ';') {
+            kind = TokenKind.Punctuation {punctuation: Punctuation.Semicolon };
+        } else if (curr == '@') {
+            kind = TokenKind.Punctuation {punctuation: Punctuation.At };
+        } else if (curr == '.') {
+            if (next == '.') {
+                kind = TokenKind.Operator{operator: Operator.DoubleDot };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Punctuation {punctuation: Punctuation.Dot };
+            }
+        } else if (curr == ':') {
+            if (next == ':') {
+                kind = TokenKind.Punctuation {punctuation: Punctuation.DoubleColon };
+                curr = next;
+                next = fgetc(char_stream);
+                col += 1;
+            } else {
+                kind = TokenKind.Punctuation {punctuation: Punctuation.Colon };
+            }
+        } else if (curr == '\'') {
+            // ... '<EOF>
+            if (next == EOF) {
+                printf("%s:%d:%d: Expected character literal but found end of file\n", filename, line, col);
+                return 2;
+            }
+
+            curr = next;
+            next = fgetc(char_stream);
+            col += 1;
+
+            // TODO: this is really stupid but i don't want to get into parsing character correctly
+            if (next != '\'') {
+                printf("%s:%d:%d: Expected closing quote\n", filename, line, col);
+                return 2;
+            }
+
+            kind = TokenKind.Literal {literal: Literal.Character { value: curr as char } };
+
+            curr = fgetc(char_stream);
+
+            // 1. ... 'a'<EOF>
+            //         ^^
+            // 2. ... 'a'<EOF>
+            //             ^x
+            // the following checks the case explained in the diagram above
+            if (curr == EOF) {  
+                break;
+            }
+
+            next = fgetc(char_stream);
+            // the result is we jump two places
+            col += 2
+        } else if (curr == '\"') {
+            // string
+        } else if (isdigit(curr) != 0) {
+            // number literals
+        } else if (isalpha(curr) != 0  || curr == '_') {
+            // identifiers and keywords
+        } else {
+            kind = TokenKind.Unknown { c: curr as char };
+        }
+
+        tok: Token = Token { 
+            kind: kind,
+            line: line, 
+            col: col 
+        };
+        tokens_push(token_darray.&, tok);
+
+        // advance
+        curr = next;
+        next = fgetc(char_stream);
+        col += 1;
+    }
+
+    // check by displaying tokens
+    // again, 24 is the size of the tokens
+    n_toks := token_darray.len / 24
+    printf("n_toks: %d\n", n_toks);
+    for (i: uint4 = 0; i < n_toks; i += 1) {
+        printf("Token: ");
+        tok: Token = token_darray.tokens.[i * 24];
+        switch (tok.kind) {
+            when .Operator(op) { 
+                switch (op.operator) {
+                    when .Plus { printf("Plus") }
+                    when .Minus { printf("Minus") }
+                    when .Star { printf("Star") }
+                    when .Slash { printf("Slash") }
+                    when .Percent { printf("Percent") }
+                    when .GreaterThan { printf("GreaterThan") }
+                    when .LesserThan { printf("LesserThan") }
+                    when .GreaterEqual { printf("GreaterEqual") }
+                    when .LesserEqual { printf("LesserEqual") }
+                    when .LeftShift { printf("LeftShift") }
+                    when .RightShift { printf("RightShift") }
+                    when .Assign { printf("Assign") }
+                    when .Equals { printf("Equals") }
+                    when .Different { printf("Different") }
+                    when .PlusAssign { printf("PlusAssign") }
+                    when .MinusAssign { printf("MinusAssign") }
+                    when .StarAssign { printf("StarAssign") }
+                    when .SlashAssign { printf("SlashAssign") }
+                    when .PercentAssign { printf("PercentAssign") }
+                    when .LogicalAnd { printf("LogicalAnd") }
+                    when .LogicalOr { printf("LogicalOr") }
+                    when .LogicalNot { printf("LogicalNot") }
+                    when .Ampersand { printf("Ampersand") }
+                    when .Pipe { printf("Pipe") }
+                    when .Tilde { printf("Tilde") }
+                    when .Caret { printf("Caret") }
+                    when .DoubleDot { printf("DoubleDot") }
+                    when .ThinRightArrow { printf("ThinRightArrow") }
+                }
+            }
+            when .Unknown(c) { printf("%c", c) }
+        }
+        printf("\n");
+    }
+
+    fclose(char_stream);
+
+    return 0;
+}
+
+
