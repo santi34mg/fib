@@ -46,6 +46,14 @@ pub struct TypeDeclaration {
     pub expression: TypeExpression,
 }
 
+/// A statement together with the source line it starts on, used to point
+/// analysis errors at the relevant line of source code.
+#[derive(Debug, Clone)]
+pub struct Stmt {
+    pub kind: StatementNode,
+    pub line: usize,
+}
+
 #[derive(Debug, Clone)]
 pub enum StatementNode {
     VariableDeclaration(VariableDeclaration),
@@ -79,18 +87,18 @@ pub enum StatementNode {
     },
     If {
         condition: Expression,
-        then_branch: Vec<StatementNode>,
-        else_branch: Option<Vec<StatementNode>>,
+        then_branch: Vec<Stmt>,
+        else_branch: Option<Vec<Stmt>>,
     },
     For {
-        initializer: Option<Box<StatementNode>>,
+        initializer: Option<Box<Stmt>>,
         condition: Option<Expression>,
-        post_operation: Option<Box<StatementNode>>,
-        body: Vec<StatementNode>,
+        post_operation: Option<Box<Stmt>>,
+        body: Vec<Stmt>,
     },
     Break,
     Continue,
-    Defer(Box<StatementNode>),
+    Defer(Box<Stmt>),
     Switch {
         subject: Expression,
         arms: Vec<SwitchArm>,
@@ -100,7 +108,7 @@ pub enum StatementNode {
 #[derive(Debug, Clone)]
 pub struct SwitchArm {
     pub pattern: Pattern,
-    pub body: Vec<StatementNode>,
+    pub body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone)]
@@ -138,7 +146,7 @@ pub struct FunctionParameter {
 
 #[derive(Debug, Clone)]
 pub struct FunctionBody {
-    pub statements: Vec<StatementNode>,
+    pub statements: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

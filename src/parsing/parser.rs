@@ -1,10 +1,10 @@
+use std::collections::VecDeque;
 use std::fmt;
-use std::iter::Peekable;
 use std::path::Path;
 
 use crate::ast::{
     Ast, DeclarationNode, EnumVariant, Expression, Field, FunctionBody, FunctionDeclaration,
-    FunctionParameter, FunctionSignature, ImportDeclaration, Pattern, PointerVariant,
+    FunctionParameter, FunctionSignature, ImportDeclaration, Pattern, PointerVariant, Stmt,
     StatementNode, SwitchArm, TypeDeclaration, TypeExpression, VariableDeclaration,
 };
 use crate::tokens::builtin::Builtin;
@@ -38,22 +38,33 @@ pub type ParseResult<T> = Result<T, ParseError>;
 
 pub struct Parser<'a, I>
 where
-    I: Iterator<Item = Token> + Clone,
+    I: Iterator<Item = Token>,
 {
-    tokens: Peekable<I>,
+    tokens: I,
+    /// Lookahead buffer; comments are filtered out as tokens are pulled in.
+    lookahead: VecDeque<Token>,
     filename: &'a Path,
     source_lines: Vec<String>,
+    /// Position of the last consumed token, used for errors at end of input.
+    last_pos: (usize, usize),
+    /// When true, `Identifier {` is not parsed as a struct/variant literal.
+    /// Set while parsing an `if` condition so `if done { ... }` treats the
+    /// brace as the statement body, not a composite literal.
+    no_struct_literal: bool,
 }
 
 impl<'a, I> Parser<'a, I>
 where
-    I: Iterator<Item = Token> + Clone,
+    I: Iterator<Item = Token>,
 {
     pub fn new(tokens: I, filename: &'a Path, source: String) -> Self {
         Self {
-            tokens: tokens.peekable(),
+            tokens,
+            lookahead: VecDeque::new(),
             filename,
             source_lines: source.lines().map(|s| s.to_string()).collect(),
+            last_pos: (0, 0),
+            no_struct_literal: false,
         }
     }
 
@@ -72,29 +83,53 @@ where
         }
     }
 
-    fn peek(&self) -> Option<Token> {
-        // Clone the internal Peekable iterator and peek on the clone so we don't need &mut
-        let mut cloned = self.tokens.clone();
-        cloned.peek().cloned()
+    /// Fill the lookahead buffer with up to `n` tokens, skipping comments.
+    fn fill_lookahead(&mut self, n: usize) {
+        while self.lookahead.len() < n {
+            match self.tokens.next() {
+                Some(t) if matches!(t.kind, TokenKind::Comment) => continue,
+                Some(t) => self.lookahead.push_back(t),
+                None => break,
+            }
+        }
     }
 
-    fn peek_second(&self) -> Option<Token> {
-        let mut cloned = self.tokens.clone();
-        cloned.next(); // skip first token
-        cloned.peek().cloned()
+    fn peek(&mut self) -> Option<Token> {
+        self.fill_lookahead(1);
+        self.lookahead.front().cloned()
+    }
+
+    fn peek_second(&mut self) -> Option<Token> {
+        self.fill_lookahead(2);
+        self.lookahead.get(1).cloned()
     }
 
     fn next(&mut self) -> Option<Token> {
-        self.tokens.next()
+        self.fill_lookahead(1);
+        let token = self.lookahead.pop_front();
+        if let Some(t) = &token {
+            self.last_pos = (t.line, t.column);
+        }
+        token
     }
 
     /// Consume and return the next token, or error if none.
     fn expect_next(&mut self, msg: &str) -> ParseResult<Token> {
-        self.next().ok_or_else(|| {
-            let line = 0;
-            let column = 0;
-            self.error(msg, line, column)
-        })
+        let (line, column) = self.last_pos;
+        self.next().ok_or_else(|| self.error(msg, line, column))
+    }
+
+    /// Run `f` with struct/variant literals re-enabled (used inside
+    /// parenthesized or bracketed subexpressions, where `Identifier {` is
+    /// unambiguous again).
+    fn allow_struct_literals<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> ParseResult<T>,
+    ) -> ParseResult<T> {
+        let saved = std::mem::replace(&mut self.no_struct_literal, false);
+        let result = f(self);
+        self.no_struct_literal = saved;
+        result
     }
 
     /// Consume and check the next token matches the token kind provided, or error.
@@ -184,21 +219,23 @@ where
         Ok(TypeDeclaration { name, expression })
     }
 
-    fn parse_statement_some(&mut self) -> ParseResult<StatementNode> {
+    fn parse_statement_some(&mut self) -> ParseResult<Stmt> {
         loop {
             match self.parse_statement()? {
                 Some(statement) => return Ok(statement),
                 None => {
                     // A comment was consumed; keep trying or error at EOF
                     if self.peek().is_none() {
-                        return Err(self.error("expected a statement", 0, 0));
+                        let (line, column) = self.last_pos;
+                        return Err(self.error("expected a statement", line, column));
                     }
                 }
             }
         }
     }
 
-    fn parse_statement(&mut self) -> ParseResult<Option<StatementNode>> {
+    fn parse_statement(&mut self) -> ParseResult<Option<Stmt>> {
+        let line = self.peek().map(|t| t.line).unwrap_or(0);
         let stmt = if let Some(token) = self.peek() {
             match &token.kind {
                 TokenKind::Comment => {
@@ -207,7 +244,12 @@ where
                 }
                 TokenKind::Keyword(Keyword::If) => {
                     self.next(); // consume 'if'
-                    let condition = self.parse_expression()?;
+                    // Inside the condition a bare `Identifier {` would be
+                    // ambiguous with the then-block; disable struct literals.
+                    let saved = std::mem::replace(&mut self.no_struct_literal, true);
+                    let condition = self.parse_expression();
+                    self.no_struct_literal = saved;
+                    let condition = condition?;
                     // Parse then-branch using shared parse_body
                     let then_branch = self.parse_body()?;
                     // Check for optional else
@@ -324,9 +366,10 @@ where
                     }) {
                         Some(_) => None,
                         None => {
+                            let (line, column) = self.last_pos;
                             let statement = self
                                 .parse_statement()?
-                                .ok_or_else(|| self.error("expected statement", 0, 0))?;
+                                .ok_or_else(|| self.error("expected statement", line, column))?;
                             self.expect_token(
                                 TokenKind::Punctuation(Punctuation::ClosingParenthesis),
                                 "expected ')'",
@@ -363,7 +406,11 @@ where
                 | TokenKind::Keyword(_)
                 | TokenKind::Unknown(_) => {
                     let t = token.clone();
-                    return Err(self.error("unsupported", t.line, t.column));
+                    return Err(self.error(
+                        &format!("cannot start a statement with {:?}", t.kind),
+                        t.line,
+                        t.column,
+                    ));
                 }
             }
         } else {
@@ -372,7 +419,7 @@ where
 
         // Optionally consume a semicolon if present
         self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
-        Ok(Some(stmt))
+        Ok(Some(Stmt { kind: stmt, line }))
     }
 
     fn parse_identifier_statement(&mut self) -> ParseResult<StatementNode> {
@@ -417,10 +464,11 @@ where
                     "expected '=' after ':' in multi-variable declaration",
                 )?;
                 let mut identifiers = Vec::new();
+                let (line, column) = self.last_pos;
                 for target in targets {
                     match target {
                         Expression::Identifier(identifier) => identifiers.push(identifier),
-                        _ => return Err(self.error("invalid declaration target", 0, 0)),
+                        _ => return Err(self.error("invalid declaration target", line, column)),
                     }
                 }
                 let values = self.parse_expression_list()?;
@@ -502,7 +550,10 @@ where
                 index: *index,
                 expr: rhs,
             }),
-            _ => Err(self.error("invalid assignment target", 0, 0)),
+            _ => {
+                let (line, column) = self.last_pos;
+                Err(self.error("invalid assignment target", line, column))
+            }
         }
     }
 
@@ -537,8 +588,8 @@ where
     /// - `name: type = init` for an explicit type annotation
     /// - `name := init` for an inferred type
     ///
-    /// The initializer is optional for explicit typed declarations so existing
-    /// zero-initialization semantics remain available as `name: type`.
+    /// The initializer is optional for explicit typed declarations; `name: type`
+    /// declares an uninitialized binding that must be assigned before use.
     fn parse_colon_variable_declaration(&mut self) -> ParseResult<VariableDeclaration> {
         let ident_token = self.expect_next("expected identifier")?;
         let ident_line = ident_token.line;
@@ -942,6 +993,11 @@ where
                 self.next(); // consume the closing curly brace
                 break;
             }
+            let label = self.expect_identifier("expected field name")?;
+            self.expect_token(
+                TokenKind::Punctuation(Punctuation::Colon),
+                "expected ':' after field name",
+            )?;
             let line = next_token.line;
             let column = next_token.column;
             let field_type = match self.parse_type_expression()? {
@@ -950,7 +1006,6 @@ where
                     return Err(self.error("expected a type identifier", line, column));
                 }
             };
-            let label = self.expect_identifier("expected field name")?;
             fields.push(Field {
                 label,
                 type_id: field_type,
@@ -1263,13 +1318,15 @@ where
                     let member = self.expect_identifier("expected member name after '::'")?;
                     Expression::QualifiedAccess { module: id, member }
                 // Check if next token is '{' — struct construction: TypeName { field: val, ... }
-                } else if matches!(
-                    self.peek(),
-                    Some(Token {
-                        kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
-                        ..
-                    })
-                ) {
+                } else if !self.no_struct_literal
+                    && matches!(
+                        self.peek(),
+                        Some(Token {
+                            kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
+                            ..
+                        })
+                    )
+                {
                     self.next(); // consume '{'
                     let mut fields = Vec::new();
                     while !matches!(
@@ -1294,7 +1351,7 @@ where
                             TokenKind::Punctuation(Punctuation::Colon),
                             "expected ':' after field name in struct construction",
                         )?;
-                        let val = self.parse_expression()?;
+                        let val = self.allow_struct_literals(|p| p.parse_expression())?;
                         fields.push((fname, val));
                         // optional comma
                         self.consume_if(|t| {
@@ -1319,7 +1376,7 @@ where
                         ..
                     }) | None
                 ) {
-                    elements.push(self.parse_expression()?);
+                    elements.push(self.allow_struct_literals(|p| p.parse_expression())?);
                     self.consume_if(|t| {
                         matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma))
                     });
@@ -1331,7 +1388,7 @@ where
                 Expression::ArrayLiteral { elements }
             }
             TokenKind::Punctuation(Punctuation::OpeningParenthesis) => {
-                let inner_expr = self.parse_expression()?;
+                let inner_expr = self.allow_struct_literals(|p| p.parse_expression())?;
                 self.expect_token(
                     TokenKind::Punctuation(Punctuation::ClosingParenthesis),
                     "parse_atom: expected ')'",
@@ -1368,7 +1425,7 @@ where
                     )
                 {
                     loop {
-                        args.push(self.parse_expression()?);
+                        args.push(self.allow_struct_literals(|p| p.parse_expression())?);
                         if let Some(token) = self.peek() {
                             if matches!(token.kind, TokenKind::Punctuation(Punctuation::Comma)) {
                                 self.next(); // consume ','
@@ -1399,7 +1456,7 @@ where
                     })
                 ) {
                     self.next(); // consume '['
-                    let index = self.parse_expression()?;
+                    let index = self.allow_struct_literals(|p| p.parse_expression())?;
                     self.expect_token(
                         TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
                         "parse_atom: expected ']' after index expression",
@@ -1422,7 +1479,8 @@ where
                             // If this is `TypeName.Variant { ... }` — an enum
                             // variant construction with payload — capture it
                             // here. Otherwise it's a plain field access.
-                            if let Expression::Identifier(type_name) = &expr
+                            if !self.no_struct_literal
+                                && let Expression::Identifier(type_name) = &expr
                                 && matches!(
                                     self.peek(),
                                     Some(Token {
@@ -1451,7 +1509,8 @@ where
                                         TokenKind::Punctuation(Punctuation::Colon),
                                         "expected ':' after field name in variant payload",
                                     )?;
-                                    let val = self.parse_expression()?;
+                                    let val =
+                                        self.allow_struct_literals(|p| p.parse_expression())?;
                                     fields.push((fname, val));
                                     self.consume_if(|t| {
                                         matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma))
@@ -1624,6 +1683,14 @@ where
                     break;
                 }
                 _ => {
+                    let argument_name = self
+                        .expect_identifier("parse_function_declaration: expected parameter name")?;
+
+                    self.expect_token(
+                        TokenKind::Punctuation(Punctuation::Colon),
+                        "expected ':' after parameter name",
+                    )?;
+
                     let line = token.line;
                     let column = token.column;
 
@@ -1633,9 +1700,6 @@ where
                             return Err(self.error("expected parameter type", line, column));
                         }
                     };
-
-                    let argument_name = self
-                        .expect_identifier("parse_function_declaration: expected parameter name")?;
 
                     args.push(FunctionParameter {
                         parameter_name: argument_name,
@@ -1683,7 +1747,7 @@ where
     }
 
     /// Parse a block body: expects '{' then parses statements until matching '}'.
-    fn parse_body(&mut self) -> ParseResult<Vec<StatementNode>> {
+    fn parse_body(&mut self) -> ParseResult<Vec<Stmt>> {
         self.expect_token(
             TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
             "parse_body: expected '{'",
@@ -1693,7 +1757,8 @@ where
         loop {
             match self.peek() {
                 None => {
-                    return Err(self.error("unclosed block: expected '}'", 0, 0));
+                    let (line, column) = self.last_pos;
+                    return Err(self.error("unclosed block: expected '}'", line, column));
                 }
                 Some(token)
                     if matches!(
