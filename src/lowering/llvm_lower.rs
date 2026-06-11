@@ -20,6 +20,10 @@ use std::error::Error;
 struct LoopContext<'ctx> {
     break_bb: BasicBlock<'ctx>,
     continue_bb: BasicBlock<'ctx>,
+    /// Depth of the deferred-statement stack at loop entry. `break` and
+    /// `continue` run the deferred frames above this depth (those opened
+    /// inside the loop) before jumping.
+    deferred_depth: usize,
 }
 
 struct CodegenCtx<'ctx, 'r> {
@@ -79,17 +83,23 @@ pub fn lower(
 
                 // Extern functions: emit a declaration with External linkage and no body.
                 if hir_function.is_extern {
-                    module.add_function(
-                        &function_name,
-                        fn_ty,
-                        Some(inkwell::module::Linkage::External),
-                    );
+                    if module.get_function(&function_name).is_none() {
+                        module.add_function(
+                            &function_name,
+                            fn_ty,
+                            Some(inkwell::module::Linkage::External),
+                        );
+                    }
                     continue;
                 }
 
                 // Reuse an existing forward declaration (e.g. auto-declared at a call site)
-                // rather than creating a duplicate with a mangled name.
+                // rather than creating a duplicate with a mangled name. If the
+                // function already has a body, this is a duplicate declaration
+                // (the same module can be reached through several import
+                // paths) — skip it instead of corrupting the existing one.
                 let function = match module.get_function(&function_name) {
+                    Some(f) if f.count_basic_blocks() > 0 => continue,
                     Some(f) => f,
                     None => module.add_function(&function_name, fn_ty, None),
                 };
@@ -116,7 +126,7 @@ pub fn lower(
                         }),
                     );
                 }
-                let mut fn_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
+                let mut fn_deferred: Vec<Vec<crate::hir::HIRStmt>> = vec![Vec::new()];
                 for stmt in hir_function.body.iter() {
                     codegen_stmt(
                         &codegen_ctx,
@@ -135,7 +145,13 @@ pub fn lower(
                     && let Some(cur_bb) = builder.get_insert_block()
                     && cur_bb.get_terminator().is_none()
                 {
-                    emit_deferred(&codegen_ctx, &mut entry_vars, &mut fn_scope, &fn_deferred)?;
+                    emit_frames_from(
+                        &codegen_ctx,
+                        &mut entry_vars,
+                        &mut fn_scope,
+                        &fn_deferred,
+                        0,
+                    )?;
                     let _ = builder.build_return(None);
                 }
                 // Seal any basic blocks that have no terminator (e.g. an
@@ -155,6 +171,15 @@ pub fn lower(
                 // No LLVM IR needs to be emitted for them.
             }
             HIRDeclaration::HIRConst(hir_binding) => {
+                // The builder is only positioned inside a function while one
+                // is being emitted; a module-level const has no such context.
+                if builder.get_insert_block().is_none() {
+                    return Err(format!(
+                        "module-level constant '{}' is not supported in lowering yet",
+                        hir_binding.name
+                    )
+                    .into());
+                }
                 let ty =
                     map_type_to_llvm(&hir_binding.ty, &ctx, compilation_unit.scope_root.clone())?;
                 let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_binding.name)) {
@@ -436,6 +461,43 @@ fn codegen_expr<'ctx, 'r>(
             right,
         } => {
             let l = codegen_expr(ctx, vars, current_scope, left)?;
+            // `&&` / `||` short-circuit: only evaluate the RHS when the LHS
+            // doesn't already decide the result.
+            if matches!(operator, Operator::LogicalAnd | Operator::LogicalOr) {
+                let func = ctx
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_parent()
+                    .unwrap();
+                let lhs_bb = ctx.builder.get_insert_block().unwrap();
+                let rhs_bb = ctx.ctx.append_basic_block(func, "sc_rhs");
+                let merge_bb = ctx.ctx.append_basic_block(func, "sc_merge");
+                let is_and = matches!(operator, Operator::LogicalAnd);
+                if is_and {
+                    ctx.builder
+                        .build_conditional_branch(l.into_int_value(), rhs_bb, merge_bb)?;
+                } else {
+                    ctx.builder
+                        .build_conditional_branch(l.into_int_value(), merge_bb, rhs_bb)?;
+                }
+                ctx.builder.position_at_end(rhs_bb);
+                let r = codegen_expr(ctx, vars, current_scope, right)?;
+                // RHS evaluation may itself have produced new blocks.
+                let rhs_end_bb = ctx.builder.get_insert_block().unwrap();
+                ctx.builder.build_unconditional_branch(merge_bb)?;
+                ctx.builder.position_at_end(merge_bb);
+                let phi = ctx.builder.build_phi(ctx.ctx.bool_type(), "sctmp")?;
+                let short_val = ctx
+                    .ctx
+                    .bool_type()
+                    .const_int(if is_and { 0 } else { 1 }, false);
+                phi.add_incoming(&[
+                    (&short_val, lhs_bb),
+                    (&r.into_int_value(), rhs_end_bb),
+                ]);
+                return Ok(phi.as_basic_value());
+            }
             let r = codegen_expr(ctx, vars, current_scope, right)?;
             let is_float = matches!(
                 left.inferred_type,
@@ -562,6 +624,8 @@ fn codegen_expr<'ctx, 'r>(
                 Operator::DoubleEquals => {
                     if is_float {
                         Ok(ctx.builder.build_float_compare(FloatPredicate::OEQ, l.into_float_value(), r.into_float_value(), "feqtmp")?.as_basic_value_enum())
+                    } else if l.is_pointer_value() {
+                        Ok(ctx.builder.build_int_compare(IntPredicate::EQ, l.into_pointer_value(), r.into_pointer_value(), "peqtmp")?.as_basic_value_enum())
                     } else {
                         Ok(ctx.builder.build_int_compare(IntPredicate::EQ, l.into_int_value(), r.into_int_value(), "eqtmp")?.as_basic_value_enum())
                     }
@@ -569,16 +633,13 @@ fn codegen_expr<'ctx, 'r>(
                 Operator::Different => {
                     if is_float {
                         Ok(ctx.builder.build_float_compare(FloatPredicate::ONE, l.into_float_value(), r.into_float_value(), "fnetmp")?.as_basic_value_enum())
+                    } else if l.is_pointer_value() {
+                        Ok(ctx.builder.build_int_compare(IntPredicate::NE, l.into_pointer_value(), r.into_pointer_value(), "pnetmp")?.as_basic_value_enum())
                     } else {
                         Ok(ctx.builder.build_int_compare(IntPredicate::NE, l.into_int_value(), r.into_int_value(), "netmp")?.as_basic_value_enum())
                     }
                 }
-                Operator::LogicalAnd => Ok(ctx.builder
-                    .build_and(l.into_int_value(), r.into_int_value(), "andtmp")?
-                    .as_basic_value_enum()),
-                Operator::LogicalOr => Ok(ctx.builder
-                    .build_or(l.into_int_value(), r.into_int_value(), "ortmp")?
-                    .as_basic_value_enum()),
+                // LogicalAnd / LogicalOr are short-circuited above.
                 Operator::LeftShift => Ok(ctx.builder
                     .build_left_shift(l.into_int_value(), r.into_int_value(), "shltmp")?
                     .as_basic_value_enum()),
@@ -733,6 +794,46 @@ fn codegen_expr<'ctx, 'r>(
                 // ptr -> ptr (opaque pointers: no-op)
                 (BasicValueEnum::PointerValue(pv), BasicTypeEnum::PointerType(_)) => {
                     Ok(pv.as_basic_value_enum())
+                }
+                // int -> float
+                (BasicValueEnum::IntValue(iv), BasicTypeEnum::FloatType(ft)) => {
+                    let signed = matches!(
+                        inner.inferred_type,
+                        HIRTypeKind::Builtin(
+                            BuiltinType::Int1
+                            | BuiltinType::Int2
+                            | BuiltinType::Int4
+                            | BuiltinType::Int8
+                            | BuiltinType::Int16
+                        )
+                    );
+                    if signed {
+                        Ok(ctx.builder.build_signed_int_to_float(iv, ft, "cast_sitofp")?.as_basic_value_enum())
+                    } else {
+                        Ok(ctx.builder.build_unsigned_int_to_float(iv, ft, "cast_uitofp")?.as_basic_value_enum())
+                    }
+                }
+                // float -> int
+                (BasicValueEnum::FloatValue(fv), BasicTypeEnum::IntType(it)) => {
+                    let signed = matches!(
+                        target_type,
+                        HIRTypeKind::Builtin(
+                            BuiltinType::Int1
+                            | BuiltinType::Int2
+                            | BuiltinType::Int4
+                            | BuiltinType::Int8
+                            | BuiltinType::Int16
+                        )
+                    );
+                    if signed {
+                        Ok(ctx.builder.build_float_to_signed_int(fv, it, "cast_fptosi")?.as_basic_value_enum())
+                    } else {
+                        Ok(ctx.builder.build_float_to_unsigned_int(fv, it, "cast_fptoui")?.as_basic_value_enum())
+                    }
+                }
+                // float -> float (extend or truncate)
+                (BasicValueEnum::FloatValue(fv), BasicTypeEnum::FloatType(ft)) => {
+                    Ok(ctx.builder.build_float_cast(fv, ft, "cast_fp")?.as_basic_value_enum())
                 }
                 (src, dst) => Err(format!(
                     "codegen_expr: unsupported cast from {:?} to {:?}",
@@ -913,76 +1014,90 @@ fn codegen_expr<'ctx, 'r>(
     }
 }
 
-/// Approximate size of a HIR type in bytes. Used to size the payload region of
-/// tagged unions; over-approximation is OK (we store via bitcast).
-fn hir_type_size_bytes(ty: &HIRTypeKind, scope: &Scope) -> usize {
+fn round_up(n: usize, align: usize) -> usize {
+    if align <= 1 { n } else { n.div_ceil(align) * align }
+}
+
+/// Size and alignment of a HIR type in bytes, mirroring LLVM's struct layout
+/// rules (fields aligned to their natural alignment, structs padded to the
+/// largest field alignment). Used to size the payload region of tagged
+/// unions — undersizing it would let payload stores write out of bounds.
+fn hir_type_size_align(ty: &HIRTypeKind, scope: &Scope) -> (usize, usize) {
     match ty {
-        HIRTypeKind::Builtin(b) => match b {
-            BuiltinType::Boolean | BuiltinType::Char => 1,
-            BuiltinType::UInt1 | BuiltinType::Int1 => 1,
-            BuiltinType::UInt2 | BuiltinType::Int2 | BuiltinType::Float2 => 2,
-            BuiltinType::UInt4 | BuiltinType::Int4 | BuiltinType::Float4 => 4,
-            BuiltinType::UInt8 | BuiltinType::Int8 | BuiltinType::Float8 => 8,
-            BuiltinType::UInt16 | BuiltinType::Int16 | BuiltinType::Float16 => 16,
-            BuiltinType::String => 8,
-            BuiltinType::Never => 1,
-            BuiltinType::Void => 0,
-        },
-        HIRTypeKind::Pointer(_) => 8,
-        HIRTypeKind::Function { .. } => 8,
-        HIRTypeKind::Array { element_type, size } => {
-            hir_type_size_bytes(element_type, scope) * (*size as usize)
+        HIRTypeKind::Builtin(b) => {
+            let s = match b {
+                BuiltinType::Boolean | BuiltinType::Char => 1,
+                BuiltinType::UInt1 | BuiltinType::Int1 | BuiltinType::Never => 1,
+                BuiltinType::UInt2 | BuiltinType::Int2 | BuiltinType::Float2 => 2,
+                BuiltinType::UInt4 | BuiltinType::Int4 | BuiltinType::Float4 => 4,
+                BuiltinType::UInt8 | BuiltinType::Int8 | BuiltinType::Float8 => 8,
+                BuiltinType::UInt16 | BuiltinType::Int16 | BuiltinType::Float16 => 16,
+                BuiltinType::String => 8,
+                BuiltinType::Void => 0,
+            };
+            (s, s.max(1))
         }
-        HIRTypeKind::Struct { fields } => fields
-            .iter()
-            .map(|(_, ty)| hir_type_size_bytes(ty, scope))
-            .sum(),
-        HIRTypeKind::Tuple { elements } => elements
-            .iter()
-            .map(|ty| hir_type_size_bytes(ty, scope))
-            .sum(),
+        HIRTypeKind::Pointer(_) | HIRTypeKind::Function { .. } => (8, 8),
+        HIRTypeKind::Array { element_type, size } => {
+            let (s, a) = hir_type_size_align(element_type, scope);
+            (round_up(s, a) * (*size as usize), a)
+        }
+        HIRTypeKind::Struct { fields } => {
+            struct_layout_size_align(fields.iter().map(|(_, t)| t.as_ref()), scope)
+        }
+        HIRTypeKind::Tuple { elements } => struct_layout_size_align(elements.iter(), scope),
         HIRTypeKind::Enum { variants } => {
-            let payload = variants
-                .iter()
-                .filter_map(|v| {
-                    v.payload.as_ref().map(|fs| {
-                        fs.iter()
-                            .map(|(_, t)| hir_type_size_bytes(t, scope))
-                            .sum::<usize>()
-                    })
-                })
-                .max()
-                .unwrap_or(0);
-            4 + payload
+            let payload = enum_max_payload_bytes(variants, scope);
+            if payload == 0 {
+                (4, 4)
+            } else {
+                // Matches the lowered shape `{ i32 tag, [N x i64] payload }`.
+                let words = payload.div_ceil(8);
+                (8 + words * 8, 8)
+            }
         }
         HIRTypeKind::Identifier(id) => match scope.symbols.get(id) {
-            Some(HIRSymbol::Type(inner)) => hir_type_size_bytes(inner, scope),
-            _ => 0,
+            Some(HIRSymbol::Type(inner)) => hir_type_size_align(inner, scope),
+            _ => (0, 1),
         },
         HIRTypeKind::QualifiedIdentifier { module, name } => {
             if let Some(m) = scope.modules.get(module)
                 && let Some(HIRSymbol::Type(inner)) = m.exports.get(name)
             {
-                hir_type_size_bytes(inner, scope)
+                hir_type_size_align(inner, scope)
             } else {
-                0
+                (0, 1)
             }
         }
-        HIRTypeKind::Type => 0,
+        HIRTypeKind::Type => (0, 1),
     }
 }
 
-/// Returns the maximum payload size (in bytes) across the variants of an enum,
-/// or 0 if the enum has no payload-carrying variants.
+/// Lay out a sequence of field types like an LLVM struct and return the
+/// padded total size and alignment.
+fn struct_layout_size_align<'t>(
+    field_types: impl Iterator<Item = &'t HIRTypeKind>,
+    scope: &Scope,
+) -> (usize, usize) {
+    let mut offset = 0usize;
+    let mut align = 1usize;
+    for ty in field_types {
+        let (s, a) = hir_type_size_align(ty, scope);
+        offset = round_up(offset, a) + s;
+        align = align.max(a);
+    }
+    (round_up(offset, align), align)
+}
+
+/// Returns the maximum padded payload size (in bytes) across the variants of
+/// an enum, or 0 if the enum has no payload-carrying variants.
 fn enum_max_payload_bytes(variants: &[crate::hir::HIREnumVariant], scope: &Scope) -> usize {
     variants
         .iter()
         .filter_map(|v| {
-            v.payload.as_ref().map(|fs| {
-                fs.iter()
-                    .map(|(_, t)| hir_type_size_bytes(t, scope))
-                    .sum::<usize>()
-            })
+            v.payload
+                .as_ref()
+                .map(|fs| struct_layout_size_align(fs.iter().map(|(_, t)| t), scope).0)
         })
         .max()
         .unwrap_or(0)
@@ -1009,7 +1124,7 @@ fn map_type_to_llvm<'ctx>(
                 BuiltinType::Int8 => BasicTypeEnum::IntType(ctx.i64_type()),
                 BuiltinType::Int16 => BasicTypeEnum::IntType(ctx.i128_type()),
                 BuiltinType::Float2 => BasicTypeEnum::FloatType(ctx.f16_type()),
-                BuiltinType::Float4 => BasicTypeEnum::FloatType(ctx.f16_type()),
+                BuiltinType::Float4 => BasicTypeEnum::FloatType(ctx.f32_type()),
                 BuiltinType::Float8 => BasicTypeEnum::FloatType(ctx.f64_type()),
                 BuiltinType::Float16 => BasicTypeEnum::FloatType(ctx.f128_type()),
                 BuiltinType::String => {
@@ -1051,9 +1166,12 @@ fn map_type_to_llvm<'ctx>(
             if payload_bytes == 0 {
                 Ok(ctx.i32_type().into())
             } else {
+                // Use an i64-word payload so the region is 8-byte aligned;
+                // variant payload structs are stored into it via struct GEPs.
                 let tag_ty: BasicTypeEnum = ctx.i32_type().into();
+                let payload_words = payload_bytes.div_ceil(8);
                 let payload_ty: BasicTypeEnum =
-                    ctx.i8_type().array_type(payload_bytes as u32).into();
+                    ctx.i64_type().array_type(payload_words as u32).into();
                 Ok(ctx.struct_type(&[tag_ty, payload_ty], false).into())
             }
         }
@@ -1130,15 +1248,31 @@ fn create_entry_allocas<'ctx>(
     Ok(vars)
 }
 
-fn emit_deferred<'ctx, 'r>(
+fn emit_deferred_frame<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
     current_scope: &mut Scope,
-    deferred: &[HIRStmt],
+    frame: &[HIRStmt],
 ) -> Result<(), Box<dyn Error>> {
     // Emit deferred statements in reverse order (LIFO)
-    for stmt in deferred.iter().rev() {
-        codegen_stmt(ctx, vars, current_scope, stmt, None, &mut vec![])?;
+    for stmt in frame.iter().rev() {
+        codegen_stmt(ctx, vars, current_scope, stmt, None, &mut vec![Vec::new()])?;
+    }
+    Ok(())
+}
+
+/// Emit the deferred frames at `stack[from..]`, innermost frame first. Used
+/// on early exits: `return` unwinds everything (`from = 0`), `break` /
+/// `continue` unwind the frames opened inside the loop.
+fn emit_frames_from<'ctx, 'r>(
+    ctx: &CodegenCtx<'ctx, 'r>,
+    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
+    current_scope: &mut Scope,
+    stack: &[Vec<HIRStmt>],
+    from: usize,
+) -> Result<(), Box<dyn Error>> {
+    for frame in stack[from.min(stack.len())..].iter().rev() {
+        emit_deferred_frame(ctx, vars, current_scope, frame)?;
     }
     Ok(())
 }
@@ -1149,7 +1283,7 @@ fn codegen_stmt<'ctx, 'r>(
     current_scope: &mut Scope,
     stmt: &HIRStmt,
     loop_ctx: Option<&LoopContext<'ctx>>,
-    deferred: &mut Vec<HIRStmt>,
+    deferred_stack: &mut Vec<Vec<HIRStmt>>,
 ) -> Result<Option<BasicValueEnum<'ctx>>, Box<dyn Error>> {
     match stmt {
         HIRStmt::Binding(hir_binding) => {
@@ -1167,20 +1301,14 @@ fn codegen_stmt<'ctx, 'r>(
                     .into());
                 }
             };
-            // store the param value into the alloca
-            let _ = ctx.builder.build_store(
-                alloca,
-                codegen_expr(
-                    ctx,
-                    vars,
-                    &mut current_scope.clone(),
-                    &hir_binding
-                        .init
-                        .as_ref()
-                        .ok_or("no init for binding")?
-                        .clone(),
-                )?,
-            )?;
+            // Store the init value into the alloca. An uninitialized binding
+            // is just an alloca; it holds undef until first assignment.
+            if let Some(init) = &hir_binding.init {
+                let _ = ctx.builder.build_store(
+                    alloca,
+                    codegen_expr(ctx, vars, &mut current_scope.clone(), init)?,
+                )?;
+            }
             vars.insert(hir_binding.name.clone(), alloca);
             // Register the binding in the scope so subsequent expressions
             // (e.g. `return x`) can look up its type via codegen_expr.
@@ -1377,14 +1505,19 @@ fn codegen_stmt<'ctx, 'r>(
         }
 
         HIRStmt::Defer(inner) => {
-            // Push onto the deferred stack for later emission
-            deferred.push(*inner.clone());
+            // Push onto the current deferred frame for later emission
+            deferred_stack
+                .last_mut()
+                .expect("deferred stack is never empty")
+                .push(*inner.clone());
             Ok(None)
         }
 
         HIRStmt::Return(opt) => {
-            // Emit deferred statements before returning (in reverse order)
-            emit_deferred(ctx, vars, current_scope, deferred)?;
+            // Returning leaves every enclosing block: run all deferred
+            // frames, innermost first.
+            let frames = deferred_stack.clone();
+            emit_frames_from(ctx, vars, current_scope, &frames, 0)?;
             if let Some(ret) = opt {
                 let func = ctx
                     .builder
@@ -1451,10 +1584,11 @@ fn codegen_stmt<'ctx, 'r>(
 
             // --- then branch ---
             ctx.builder.position_at_end(then_bb);
-            let mut then_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
+            deferred_stack.push(Vec::new());
             for s in hir_if.then_branch.iter() {
-                codegen_stmt(ctx, vars, current_scope, s, loop_ctx, &mut then_deferred)?;
+                codegen_stmt(ctx, vars, current_scope, s, loop_ctx, deferred_stack)?;
             }
+            let then_deferred = deferred_stack.pop().expect("then frame");
             // Only emit the fallthrough branch if the block has no terminator
             // yet (i.e. the branch body did not end with `return`).
             if ctx
@@ -1464,17 +1598,18 @@ fn codegen_stmt<'ctx, 'r>(
                 .get_terminator()
                 .is_none()
             {
-                emit_deferred(ctx, vars, current_scope, &then_deferred)?;
+                emit_deferred_frame(ctx, vars, current_scope, &then_deferred)?;
                 let _ = ctx.builder.build_unconditional_branch(merge_bb);
             }
 
             // --- else branch (only when one exists) ---
             if let Some(eb) = &hir_if.else_branch {
                 ctx.builder.position_at_end(else_bb);
-                let mut else_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
+                deferred_stack.push(Vec::new());
                 for s in eb.iter() {
-                    codegen_stmt(ctx, vars, current_scope, s, loop_ctx, &mut else_deferred)?;
+                    codegen_stmt(ctx, vars, current_scope, s, loop_ctx, deferred_stack)?;
                 }
+                let else_deferred = deferred_stack.pop().expect("else frame");
                 if ctx
                     .builder
                     .get_insert_block()
@@ -1482,7 +1617,7 @@ fn codegen_stmt<'ctx, 'r>(
                     .get_terminator()
                     .is_none()
                 {
-                    emit_deferred(ctx, vars, current_scope, &else_deferred)?;
+                    emit_deferred_frame(ctx, vars, current_scope, &else_deferred)?;
                     let _ = ctx.builder.build_unconditional_branch(merge_bb);
                 }
             }
@@ -1500,7 +1635,7 @@ fn codegen_stmt<'ctx, 'r>(
         } => {
             // init (no loop context yet)
             if let Some(i) = init {
-                codegen_stmt(ctx, vars, current_scope, i, None, deferred)?;
+                codegen_stmt(ctx, vars, current_scope, i, None, deferred_stack)?;
             }
 
             let func = ctx
@@ -1520,6 +1655,7 @@ fn codegen_stmt<'ctx, 'r>(
             let for_loop_ctx = LoopContext {
                 break_bb: after_bb,
                 continue_bb: continue_target,
+                deferred_depth: deferred_stack.len(),
             };
 
             // jump to condition first
@@ -1538,7 +1674,7 @@ fn codegen_stmt<'ctx, 'r>(
 
             // body
             ctx.builder.position_at_end(body_bb);
-            let mut body_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
+            deferred_stack.push(Vec::new());
             for s in body.iter() {
                 codegen_stmt(
                     ctx,
@@ -1546,9 +1682,10 @@ fn codegen_stmt<'ctx, 'r>(
                     current_scope,
                     s,
                     Some(&for_loop_ctx),
-                    &mut body_deferred,
+                    deferred_stack,
                 )?;
             }
+            let body_deferred = deferred_stack.pop().expect("loop body frame");
             // fall through to post if no terminator
             if ctx
                 .builder
@@ -1557,14 +1694,21 @@ fn codegen_stmt<'ctx, 'r>(
                 .get_terminator()
                 .is_none()
             {
-                emit_deferred(ctx, vars, current_scope, &body_deferred)?;
+                emit_deferred_frame(ctx, vars, current_scope, &body_deferred)?;
                 ctx.builder.build_unconditional_branch(post_bb)?;
             }
 
             // post
             ctx.builder.position_at_end(post_bb);
             if let Some(p) = post {
-                codegen_stmt(ctx, vars, current_scope, p, Some(&for_loop_ctx), deferred)?;
+                codegen_stmt(
+                    ctx,
+                    vars,
+                    current_scope,
+                    p,
+                    Some(&for_loop_ctx),
+                    deferred_stack,
+                )?;
             }
             // jump back to condition if block didn't terminate
             if ctx
@@ -1584,7 +1728,8 @@ fn codegen_stmt<'ctx, 'r>(
         }
         HIRStmt::Break => {
             let lc = loop_ctx.ok_or("break outside of loop")?;
-            emit_deferred(ctx, vars, current_scope, deferred)?;
+            let frames = deferred_stack.clone();
+            emit_frames_from(ctx, vars, current_scope, &frames, lc.deferred_depth)?;
             ctx.builder.build_unconditional_branch(lc.break_bb)?;
             let func = ctx
                 .builder
@@ -1598,7 +1743,8 @@ fn codegen_stmt<'ctx, 'r>(
         }
         HIRStmt::Continue => {
             let lc = loop_ctx.ok_or("continue outside of loop")?;
-            emit_deferred(ctx, vars, current_scope, deferred)?;
+            let frames = deferred_stack.clone();
+            emit_frames_from(ctx, vars, current_scope, &frames, lc.deferred_depth)?;
             ctx.builder.build_unconditional_branch(lc.continue_bb)?;
             let func = ctx
                 .builder
@@ -1689,7 +1835,12 @@ fn codegen_stmt<'ctx, 'r>(
                 ctx.builder.position_at_end(*bb);
                 // If the pattern carries a binding, materialize the payload as
                 // a local struct alloca that the arm body can field-access.
-                let mut bind_restore: Option<(Identifier, Option<PointerValue>)> = None;
+                #[allow(clippy::type_complexity)]
+                let mut bind_restore: Option<(
+                    Identifier,
+                    Option<PointerValue>,
+                    Option<HIRSymbol>,
+                )> = None;
                 if let crate::hir::HIRPattern::EnumVariant {
                     binding: Some(b),
                     payload_ty: Some(payload_ty),
@@ -1712,10 +1863,9 @@ fn codegen_stmt<'ctx, 'r>(
                         ctx.builder.build_store(bind_alloca, loaded)?;
                     }
                     let prev = vars.insert(b.clone(), bind_alloca);
-                    bind_restore = Some((b.clone(), prev));
                     // Inject the binding into the scope so HIR FieldAccess can
                     // look up the struct fields.
-                    let _ = current_scope.symbols.insert(
+                    let prev_sym = current_scope.symbols.insert(
                         b.clone(),
                         HIRSymbol::Binding(crate::hir::HIRBinding {
                             name: b.clone(),
@@ -1724,12 +1874,14 @@ fn codegen_stmt<'ctx, 'r>(
                             mutable: false,
                         }),
                     );
+                    bind_restore = Some((b.clone(), prev, prev_sym));
                 }
 
-                let mut arm_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
+                deferred_stack.push(Vec::new());
                 for s in arm.body.iter() {
-                    codegen_stmt(ctx, vars, current_scope, s, loop_ctx, &mut arm_deferred)?;
+                    codegen_stmt(ctx, vars, current_scope, s, loop_ctx, deferred_stack)?;
                 }
+                let arm_deferred = deferred_stack.pop().expect("switch arm frame");
                 if ctx
                     .builder
                     .get_insert_block()
@@ -1737,12 +1889,12 @@ fn codegen_stmt<'ctx, 'r>(
                     .get_terminator()
                     .is_none()
                 {
-                    emit_deferred(ctx, vars, current_scope, &arm_deferred)?;
+                    emit_deferred_frame(ctx, vars, current_scope, &arm_deferred)?;
                     ctx.builder.build_unconditional_branch(merge_bb)?;
                 }
 
-                // Restore the previous binding (if any) for the next arm.
-                if let Some((bid, prev)) = bind_restore {
+                // Restore what the binding shadowed (if anything) for the next arm.
+                if let Some((bid, prev, prev_sym)) = bind_restore {
                     match prev {
                         Some(p) => {
                             vars.insert(bid.clone(), p);
@@ -1751,17 +1903,25 @@ fn codegen_stmt<'ctx, 'r>(
                             vars.remove(&bid);
                         }
                     }
-                    current_scope.symbols.remove(&bid);
+                    match prev_sym {
+                        Some(s) => {
+                            current_scope.symbols.insert(bid, s);
+                        }
+                        None => {
+                            current_scope.symbols.remove(&bid);
+                        }
+                    }
                 }
             }
 
             // Emit the wildcard/default arm body if present.
             if let Some(body) = wildcard_arm {
                 ctx.builder.position_at_end(default_bb);
-                let mut def_deferred: Vec<crate::hir::HIRStmt> = Vec::new();
+                deferred_stack.push(Vec::new());
                 for s in body.iter() {
-                    codegen_stmt(ctx, vars, current_scope, s, loop_ctx, &mut def_deferred)?;
+                    codegen_stmt(ctx, vars, current_scope, s, loop_ctx, deferred_stack)?;
                 }
+                let def_deferred = deferred_stack.pop().expect("switch default frame");
                 if ctx
                     .builder
                     .get_insert_block()
@@ -1769,7 +1929,7 @@ fn codegen_stmt<'ctx, 'r>(
                     .get_terminator()
                     .is_none()
                 {
-                    emit_deferred(ctx, vars, current_scope, &def_deferred)?;
+                    emit_deferred_frame(ctx, vars, current_scope, &def_deferred)?;
                     ctx.builder.build_unconditional_branch(merge_bb)?;
                 }
             }
