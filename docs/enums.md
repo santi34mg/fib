@@ -54,7 +54,7 @@ Token.Boolean { flag: true }
 Pattern-match on the variant with `switch` and `when`. See [Switch](switch.md).
 
 ```fib
-fn describe(Token t) void {
+fn describe(t: Token) void {
     switch (t) {
         when .Integer(i) { libc::printf("int=%d\n", i.value) }
         when .Boolean(b) { libc::printf("bool=%d\n", b.flag as uint4) }

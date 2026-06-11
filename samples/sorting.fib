@@ -27,5 +27,5 @@ fn main() int4 {
 
     print_arr(int4, arr.& as *int4, 8)
 
-    ret 0
+    return 0
 }

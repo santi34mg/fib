@@ -12,6 +12,18 @@ buf: *void
 val: *int4
 ```
 
+## `null`
+
+The `null` literal is the null pointer. It can initialize or be compared against any pointer:
+
+```fib
+p: *int4 = null
+if p == null {
+    libc::printf("empty\n")
+}
+n.* = Node { data: 42, next: null }
+```
+
 ## Address-of and dereference
 
 - `expr.&` — produces a pointer to `expr`
@@ -49,7 +61,6 @@ Use `as` to convert between pointer types or between a pointer and an integer:
 buf as *Node
 addr as *void
 cur as uint8
-0 as uint8 as *void      // a null-equivalent pointer
 ```
 
 ## Manual allocation
@@ -59,7 +70,7 @@ The standard library exposes the C allocator via `std::libc`:
 ```fib
 import std::libc
 
-node: *Node = libc::malloc(16 as uint) as *Node
+node: *Node = libc::malloc(16 as uint8) as *Node
 node.* = Node { data: val, next: head }
 ...
 libc::free(cur as *void)

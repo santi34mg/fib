@@ -6,13 +6,25 @@ Parentheses around the condition are not required. The body is a brace-delimited
 
 ```fib
 if n <= 1 {
-    ret n
+    return n
 }
 
 if (perms & PERM_READ) != 0 {
     libc::printf("  [x] READ\n")
 } else {
     libc::printf("  [ ] READ\n")
+}
+```
+
+`else if` chains are supported without extra braces:
+
+```fib
+if x > 0 {
+    libc::printf("positive\n")
+} else if x < 0 {
+    libc::printf("negative\n")
+} else {
+    libc::printf("zero\n")
 }
 ```
 
@@ -27,7 +39,7 @@ for (i: int4 = 0; i < len; i += 1) {
 
 // infinite loop
 for (;;) {
-    if cur as uint == 0 as uint {
+    if cur == null {
         break
     }
     cur = cur.*.next
@@ -50,14 +62,14 @@ for (;;) {
 }
 ```
 
-## `ret`
+## `return`
 
-Return from a function. The `ret` keyword is used (not `return`).
+Return from a function.
 
 ```fib
-ret 0
-ret a / b, a % b   // multiple return values
-ret                 // bare return (void)
+return 0
+return a / b, a % b   // multiple return values
+return                 // bare return (void)
 ```
 
 ## `defer`
@@ -69,7 +81,7 @@ fn main() int4 {
     head: *Node
     defer free_list(head)
     ...
-    ret 0
+    return 0
 }
 ```
 

@@ -2,5 +2,5 @@ import std::libc
 
 fn main() int4 {
     libc::printf("Hello, World!\n")
-    ret 0
+    return 0
 }

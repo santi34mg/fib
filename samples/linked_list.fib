@@ -1,33 +1,33 @@
 import std::libc
 
-const type Node struct {
-    int4 data,
-    *Node next,
+type Node struct {
+    data: int4,
+    next: *Node,
 }
 
-fn push(*Node head, int4 val) *Node {
-    node: *Node = libc::malloc(16 as uint) as *Node
+fn push(head: *Node, val: int4) *Node {
+    node: *Node = libc::malloc(16 as uint8) as *Node
     node.* = Node { data: val, next: head }
-    ret node
+    return node
 }
 
-fn list_length(*Node head) int4 {
+fn list_length(head: *Node) int4 {
     count: int4 = 0
     cur: *Node = head
     for (;;) {
-        if cur as uint == 0 as uint {
+        if cur == null {
             break
         }
         count += 1
         cur = cur.*.next
     }
-    ret count
+    return count
 }
 
-fn print_list(*Node head) void {
+fn print_list(head: *Node) void {
     cur: *Node = head
     for (;;) {
-        if cur as uint == 0 as uint {
+        if cur == null {
             break
         }
         libc::printf("%d -> ", cur.*.data)
@@ -36,10 +36,10 @@ fn print_list(*Node head) void {
     libc::printf("null\n")
 }
 
-fn free_list(*Node head) void {
+fn free_list(head: *Node) void {
     cur: *Node = head
     for (;;) {
-        if cur as uint8 == 0 as uint8 {
+        if cur == null {
             break
         }
         next: *Node = cur.*.next
@@ -49,7 +49,7 @@ fn free_list(*Node head) void {
 }
 
 fn main() int4 {
-    head: *Node
+    head: *Node = null
     defer free_list(head)
 
     head = push(head, 30)
@@ -60,5 +60,5 @@ fn main() int4 {
     print_list(head)
     libc::printf("Length: %d\n", list_length(head))
 
-    ret 0
+    return 0
 }

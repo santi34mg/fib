@@ -18,7 +18,7 @@ type Pool struct {
 Self-referential structs use a pointer to the type being declared:
 
 ```fib
-type Node = struct {
+type Node struct {
     data: int4,
     next: *Node,
 }
@@ -38,7 +38,7 @@ The result can be assigned, returned, passed as an argument, or written through 
 
 ```fib
 node.* = Node { data: val, next: head }
-ret Pool { start: buf as uint8, ... }
+return Pool { start: buf as uint8, ... }
 ```
 
 ## Field access

@@ -25,6 +25,16 @@ total: uint8 = block_size * capacity
 
 The walrus form also supports multiple identifiers, used for destructuring multi-return functions.
 
+## Legacy `var` declaration
+
+The older `var <type> <name> = expr` form is still accepted:
+
+```fib
+var int4 count = 5
+```
+
+New code should prefer the colon forms above.
+
 ## Assignment
 
 After declaration, assign with `=`:
@@ -45,3 +55,7 @@ When a function returns multiple values, you can assign to several targets at on
 ```fib
 q, r = divmod(17, 5)
 ```
+
+## Statement terminators
+
+Statements end at the end of the expression; a trailing semicolon is optional and consumed if present.

@@ -1,16 +1,16 @@
 import std::libc
 
 type Inner struct {
-    uint8 value,
+    value: uint8,
 }
 
 type Outer struct {
-    Inner inner,
+    inner: Inner,
 }
 
 fn main() int4 {
     o: Outer = Outer { inner: Inner { value: 0 } }
     o.inner.value = 42
     libc::printf("got %d\n", o.inner.value)
-    ret 0
+    return 0
 }
