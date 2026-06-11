@@ -298,7 +298,10 @@ mod tests {
         });
         let func = func.expect("expected function declaration");
         let body = func.body.as_ref().expect("expected function body");
-        assert!(matches!(body.statements[0].kind, StatementNode::Return(None)));
+        assert!(matches!(
+            body.statements[0].kind,
+            StatementNode::Return(None)
+        ));
     }
 
     #[test]
