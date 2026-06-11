@@ -5,9 +5,9 @@ permissions:
 
 on:
   push:
-    branches: [dev]
+    branches: [main]
   pull_request:
-    branches: [dev]
+    branches: [main]
 
 jobs:
   build_and_test:
@@ -53,23 +53,3 @@ jobs:
 
       - name: Test
         run: cargo test
-
-  merge_master:
-    name: Merge to master
-    needs: build_and_test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
-          fetch-depth: 0
-
-      - name: Merge dev to master
-        run: |
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git fetch origin master || true
-          git checkout master || git checkout -b master origin/master || git checkout -b master
-          git merge origin/dev --allow-unrelated-histories -m "Merge stage to prod after successful deployment" || true
-          git push origin master
