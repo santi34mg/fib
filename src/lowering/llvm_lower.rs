@@ -1015,7 +1015,11 @@ fn codegen_expr<'ctx, 'r>(
 }
 
 fn round_up(n: usize, align: usize) -> usize {
-    if align <= 1 { n } else { n.div_ceil(align) * align }
+    if align <= 1 {
+        n
+    } else {
+        n.div_ceil(align) * align
+    }
 }
 
 /// Size and alignment of a HIR type in bytes, mirroring LLVM's struct layout

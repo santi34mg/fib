@@ -244,13 +244,11 @@ fn stmt_to_hir_inner(
                     binding.ty.clone()
                 }
                 Some(_) => {
-                    return Err(
-                        format!("cannot assign to '{}': not a variable", identifier).into()
-                    );
+                    return Err(format!("cannot assign to '{}': not a variable", identifier).into());
                 }
                 None => {
                     return Err(
-                        format!("assignment to undeclared variable '{}'", identifier).into()
+                        format!("assignment to undeclared variable '{}'", identifier).into(),
                     );
                 }
             };
@@ -1001,9 +999,7 @@ fn expr_to_hir(
             };
             let mut hir_fields: Vec<(String, HIRExpression)> = Vec::new();
             for (fname, fval) in fields {
-                let Some((_, spec_ty)) = payload_spec
-                    .iter()
-                    .find(|(n, _)| n == &fname.identifier)
+                let Some((_, spec_ty)) = payload_spec.iter().find(|(n, _)| n == &fname.identifier)
                 else {
                     return Err(format!(
                         "expr_to_hir: variant '{}.{}' has no payload field '{}'",
@@ -1012,13 +1008,12 @@ fn expr_to_hir(
                     .into());
                 };
                 let fval_hir = expr_to_hir(fval, current_scope, generic_cache)?;
-                let fval_hir =
-                    coerce_or_alias(fval_hir, spec_ty, current_scope).map_err(|_| {
-                        format!(
-                            "expr_to_hir: field '{}' of variant '{}.{}' expects type {:?}",
-                            fname.identifier, type_name, variant, spec_ty
-                        )
-                    })?;
+                let fval_hir = coerce_or_alias(fval_hir, spec_ty, current_scope).map_err(|_| {
+                    format!(
+                        "expr_to_hir: field '{}' of variant '{}.{}' expects type {:?}",
+                        fname.identifier, type_name, variant, spec_ty
+                    )
+                })?;
                 hir_fields.push((fname.identifier.clone(), fval_hir));
             }
             // Verify each declared field is supplied (order-insensitive).

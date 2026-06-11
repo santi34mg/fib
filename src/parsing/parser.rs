@@ -4,8 +4,8 @@ use std::path::Path;
 
 use crate::ast::{
     Ast, DeclarationNode, EnumVariant, Expression, Field, FunctionBody, FunctionDeclaration,
-    FunctionParameter, FunctionSignature, ImportDeclaration, Pattern, PointerVariant, Stmt,
-    StatementNode, SwitchArm, TypeDeclaration, TypeExpression, VariableDeclaration,
+    FunctionParameter, FunctionSignature, ImportDeclaration, Pattern, PointerVariant,
+    StatementNode, Stmt, SwitchArm, TypeDeclaration, TypeExpression, VariableDeclaration,
 };
 use crate::tokens::builtin::Builtin;
 use crate::tokens::identifier::Identifier;
