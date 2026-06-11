@@ -4,14 +4,14 @@ Structs are aggregate types with named fields.
 
 ## Declaring a struct type
 
-Fields are written as `type name`, separated by commas. A trailing comma is allowed.
+Fields are written as `name: type`, separated by commas. A trailing comma is allowed.
 
 ```fib
 type Pool struct {
-    uint8 start,
-    uint8 block_size,
-    uint8 capacity,
-    uint8 used,
+    start: uint8,
+    block_size: uint8,
+    capacity: uint8,
+    used: uint8,
 }
 ```
 
@@ -19,8 +19,8 @@ Self-referential structs use a pointer to the type being declared:
 
 ```fib
 type Node = struct {
-    int4 data,
-    *Node next,
+    data: int4,
+    next: *Node,
 }
 ```
 
@@ -71,8 +71,8 @@ pool_alloc(pool.&)
 Structs can hold other struct values directly:
 
 ```fib
-type Inner struct { uint8 value, }
-type Outer struct { Inner inner, }
+type Inner struct { value: uint8, }
+type Outer struct { inner: Inner, }
 
 o: Outer = Outer { inner: Inner { value: 0 } }
 o.inner.value = 42

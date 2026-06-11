@@ -30,8 +30,8 @@ A variant may declare fields in braces, turning it into a tagged union:
 
 ```fib
 type Token enum {
-    Integer { uint4 value },
-    Boolean { bool flag },
+    Integer { value: uint4 },
+    Boolean { flag: bool },
     EOF,
 }
 ```

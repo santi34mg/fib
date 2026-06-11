@@ -31,7 +31,7 @@ Use `type` to give a name to a type expression:
 type Color enum { Red, Green, Blue }
 
 type Pool struct {
-    uint8 start,
-    uint8 capacity,
+    start: uint8,
+    capacity: uint8,
 }
 ```
