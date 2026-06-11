@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ast::{Ast, StatementNode};
+use crate::ast::{Ast, StatementNode, Stmt};
 use crate::ast::{
     DeclarationNode, Expression as PExpr, Field, FunctionDeclaration,
     StatementNode as ASTStatementNode, TypeExpression, VariableDeclaration,
@@ -18,19 +18,28 @@ use crate::tokens::literal::Literal;
 #[derive(Debug)]
 pub struct AnalysisError {
     pub msg: String,
+    /// The source line the error originates from, if known. Filled in as the
+    /// error propagates up through the statement that triggered it.
+    pub line: Option<usize>,
 }
 
 impl std::error::Error for AnalysisError {}
 
 impl fmt::Display for AnalysisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AnalysisError: {}", self.msg)
+        match self.line {
+            Some(line) => write!(f, "AnalysisError at line {}: {}", line, self.msg),
+            None => write!(f, "AnalysisError: {}", self.msg),
+        }
     }
 }
 
 impl From<String> for AnalysisError {
     fn from(value: String) -> Self {
-        Self { msg: value }
+        Self {
+            msg: value,
+            line: None,
+        }
     }
 }
 
@@ -126,8 +135,11 @@ pub fn analyze(
         }
     }
 
-    // Collect generic instantiations produced during analysis
-    for (_, func) in generic_cache {
+    // Collect generic instantiations produced during analysis. Sort by
+    // mangled name so the emitted declaration order is deterministic.
+    let mut generic_fns: Vec<_> = generic_cache.into_iter().collect();
+    generic_fns.sort_by(|a, b| a.0.cmp(&b.0));
+    for (_, func) in generic_fns {
         hir_declarations.push(HIRDeclaration::HIRFunction(func));
     }
 
@@ -139,12 +151,11 @@ pub fn analyze(
     Ok::<CompilationUnit, AnalysisError>(compilation_unit)
 }
 
-fn func_to_hir(
-    function_declaration: FunctionDeclaration,
-    current_scope: &mut Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<HIRFunction, AnalysisError> {
-    // Only include non-comptime parameters in the HIR function signature.
+/// Map an AST function signature to HIR parameter and return types.
+/// Comptime (`type`-typed) parameters are excluded from the parameter list.
+fn signature_to_hir(
+    function_declaration: &FunctionDeclaration,
+) -> Result<(Vec<(Identifier, HIRTypeKind)>, HIRTypeKind), AnalysisError> {
     let mut params = Vec::new();
     for param in &function_declaration.signature.parameters {
         let ty = map_type(param.parameter_type.clone())?;
@@ -156,6 +167,16 @@ fn func_to_hir(
         Some(rt) => map_type(rt)?,
         None => HIRTypeKind::Builtin(BuiltinType::Void),
     };
+    Ok((params, return_type))
+}
+
+fn func_to_hir(
+    function_declaration: FunctionDeclaration,
+    current_scope: &mut Scope,
+    generic_cache: &mut HashMap<String, HIRFunction>,
+) -> Result<HIRFunction, AnalysisError> {
+    // Only include non-comptime parameters in the HIR function signature.
+    let (params, return_type) = signature_to_hir(&function_declaration)?;
 
     // Build a body-level scope that inherits all module-level symbols and also
     // includes the function's own parameters.  This ensures that both other
@@ -194,6 +215,18 @@ fn func_to_hir(
 }
 
 fn stmt_to_hir(
+    stmt: Stmt,
+    current_scope: &mut Scope,
+    generic_cache: &mut HashMap<String, HIRFunction>,
+) -> Result<HIRStmt, AnalysisError> {
+    let line = stmt.line;
+    stmt_to_hir_inner(stmt.kind, current_scope, generic_cache).map_err(|mut e| {
+        e.line.get_or_insert(line);
+        e
+    })
+}
+
+fn stmt_to_hir_inner(
     stmt: StatementNode,
     current_scope: &mut Scope,
     generic_cache: &mut HashMap<String, HIRFunction>,
@@ -203,12 +236,32 @@ fn stmt_to_hir(
             var_decl_to_hir(variable_declaration, current_scope, generic_cache)?,
         )),
         StatementNode::Assignment { identifier, expr } => {
-            if let Some(HIRSymbol::Binding(binding)) = current_scope.symbols.get(&identifier)
-                && !binding.mutable
-            {
-                return Err(format!("cannot assign to constant '{}'", identifier).into());
-            }
+            let target_ty = match current_scope.symbols.get(&identifier) {
+                Some(HIRSymbol::Binding(binding)) => {
+                    if !binding.mutable {
+                        return Err(format!("cannot assign to constant '{}'", identifier).into());
+                    }
+                    binding.ty.clone()
+                }
+                Some(_) => {
+                    return Err(
+                        format!("cannot assign to '{}': not a variable", identifier).into()
+                    );
+                }
+                None => {
+                    return Err(
+                        format!("assignment to undeclared variable '{}'", identifier).into()
+                    );
+                }
+            };
             let e = expr_to_hir(expr, current_scope, generic_cache)?;
+            let found = e.inferred_type.clone();
+            let e = coerce_or_alias(e, &target_ty, current_scope).map_err(|_| {
+                format!(
+                    "cannot assign value of type {:?} to '{}' of type {:?}",
+                    found, identifier, target_ty
+                )
+            })?;
             Ok(HIRStmt::Assign {
                 name: identifier,
                 expr: e,
@@ -299,15 +352,19 @@ fn stmt_to_hir(
             else_branch,
         } => {
             let cond = expr_to_hir(condition, current_scope, generic_cache)?;
+            // Each branch gets its own child scope so bindings declared
+            // inside it don't leak into the enclosing block.
+            let mut then_scope = current_scope.clone();
             let mut then_h = Vec::new();
             for s in then_branch {
-                then_h.push(stmt_to_hir(s, current_scope, generic_cache)?);
+                then_h.push(stmt_to_hir(s, &mut then_scope, generic_cache)?);
             }
             let else_h = match else_branch {
                 Some(v) => {
+                    let mut else_scope = current_scope.clone();
                     let mut ev = Vec::new();
                     for s in v {
-                        ev.push(stmt_to_hir(s, current_scope, generic_cache)?);
+                        ev.push(stmt_to_hir(s, &mut else_scope, generic_cache)?);
                     }
                     Some(ev)
                 }
@@ -325,21 +382,24 @@ fn stmt_to_hir(
             post_operation: increment,
             body,
         } => {
+            // The loop header and body share one child scope (the init
+            // binding is visible to cond/post/body) that doesn't leak out.
+            let mut loop_scope = current_scope.clone();
             let init_h = match initializer {
-                Some(b) => Some(Box::new(stmt_to_hir(*b, current_scope, generic_cache)?)),
+                Some(b) => Some(Box::new(stmt_to_hir(*b, &mut loop_scope, generic_cache)?)),
                 None => None,
             };
             let cond_h = match condition {
-                Some(e) => Some(expr_to_hir(e, current_scope, generic_cache)?),
+                Some(e) => Some(expr_to_hir(e, &loop_scope, generic_cache)?),
                 None => None,
             };
             let post_h = match increment {
-                Some(b) => Some(Box::new(stmt_to_hir(*b, current_scope, generic_cache)?)),
+                Some(b) => Some(Box::new(stmt_to_hir(*b, &mut loop_scope, generic_cache)?)),
                 None => None,
             };
             let mut body_h = Vec::new();
             for s in body {
-                body_h.push(stmt_to_hir(s, current_scope, generic_cache)?);
+                body_h.push(stmt_to_hir(s, &mut loop_scope, generic_cache)?);
             }
             Ok(HIRStmt::For {
                 init: init_h,
@@ -449,10 +509,11 @@ fn stmt_to_hir(
                         )
                     }
                 };
-                // Inject the binding into the arm's local scope while lowering body.
-                let saved_sym = if let Some((bind_id, payload_ty)) = &arm_binding {
-                    let prev = current_scope.symbols.get(bind_id).cloned();
-                    current_scope.symbols.insert(
+                // Each arm body gets its own child scope; the pattern binding
+                // (if any) only exists inside it.
+                let mut arm_scope = current_scope.clone();
+                if let Some((bind_id, payload_ty)) = &arm_binding {
+                    arm_scope.symbols.insert(
                         bind_id.clone(),
                         HIRSymbol::Binding(HIRBinding {
                             name: bind_id.clone(),
@@ -461,23 +522,10 @@ fn stmt_to_hir(
                             mutable: false,
                         }),
                     );
-                    Some((bind_id.clone(), prev))
-                } else {
-                    None
-                };
+                }
                 let mut body_h = Vec::new();
                 for s in arm.body {
-                    body_h.push(stmt_to_hir(s, current_scope, generic_cache)?);
-                }
-                if let Some((bind_id, prev)) = saved_sym {
-                    match prev {
-                        Some(p) => {
-                            current_scope.symbols.insert(bind_id, p);
-                        }
-                        None => {
-                            current_scope.symbols.remove(&bind_id);
-                        }
-                    }
+                    body_h.push(stmt_to_hir(s, &mut arm_scope, generic_cache)?);
                 }
                 hir_arms.push(crate::hir::HIRSwitchArm {
                     pattern: hir_pattern,
@@ -593,48 +641,6 @@ fn multi_var_decl_to_hir(
     })
 }
 
-fn zero_init_expr_for_type(ty: &HIRTypeKind) -> Result<HIRExpression, AnalysisError> {
-    match ty {
-        HIRTypeKind::Builtin(BuiltinType::Boolean) => Ok(HIRExpression {
-            inferred_type: HIRTypeKind::Builtin(BuiltinType::Boolean),
-            expression: HIRExpressionKind::LiteralBool(false),
-        }),
-        HIRTypeKind::Builtin(
-            BuiltinType::Char
-            | BuiltinType::Int1
-            | BuiltinType::Int2
-            | BuiltinType::Int4
-            | BuiltinType::Int8
-            | BuiltinType::Int16
-            | BuiltinType::UInt1
-            | BuiltinType::UInt2
-            | BuiltinType::UInt4
-            | BuiltinType::UInt8
-            | BuiltinType::UInt16,
-        ) => Ok(HIRExpression {
-            inferred_type: ty.clone(),
-            expression: HIRExpressionKind::LiteralInt { value: 0 },
-        }),
-        HIRTypeKind::Pointer(_) => Ok(HIRExpression {
-            inferred_type: ty.clone(),
-            expression: HIRExpressionKind::Null,
-        }),
-        HIRTypeKind::Array { element_type, size } => {
-            let mut elements = Vec::new();
-            for _ in 0..*size {
-                elements.push(zero_init_expr_for_type(element_type)?);
-            }
-            Ok(HIRExpression {
-                inferred_type: ty.clone(),
-                expression: HIRExpressionKind::ArrayLiteral { elements },
-            })
-        }
-        _ => Err("var declaration requires type or initializer"
-            .to_string()
-            .into()),
-    }
-}
-
 fn var_decl_to_hir(
     var_decl: VariableDeclaration,
     current_scope: &mut Scope,
@@ -647,95 +653,99 @@ fn var_decl_to_hir(
         Some(t) => Some(map_type(t)?),
         None => None,
     };
-    let mut init = if let Some(expr) = var_decl.expression {
-        expr_to_hir(expr, current_scope, generic_cache)?
-    } else if let Some(ty) = &declared_ty {
-        // Zero-initialize based on declared type when no initializer is present.
-        zero_init_expr_for_type(ty)?
-    } else {
-        return Err("inferred variable declaration requires an initializer"
-            .to_string()
-            .into());
+    let init = match var_decl.expression {
+        Some(expr) => Some(expr_to_hir(expr, current_scope, generic_cache)?),
+        // A typed declaration without an initializer is legal: the binding
+        // stays uninitialized until first assignment.
+        None if declared_ty.is_some() => None,
+        None => {
+            return Err("inferred variable declaration requires an initializer"
+                .to_string()
+                .into());
+        }
     };
-    let ty = declared_ty.unwrap_or_else(|| init.inferred_type.clone());
+    let ty = match (declared_ty, &init) {
+        (Some(ty), _) => ty,
+        (None, Some(init)) => init.inferred_type.clone(),
+        (None, None) => unreachable!("rejected above"),
+    };
     // check that type matches; allow struct-by-name to match struct literal type
     // `never` unifies with any type
-    if init.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never) {
-        init.inferred_type = ty.clone();
-    }
-    if init.inferred_type != ty {
-        // When the declared type is an identifier (e.g. `Point`) and the init
-        // expression is a StructConstruct, the inferred type is the resolved
-        // HIRTypeKind::Struct directly.  In that case, accept the match by
-        // annotating the init expression with the identifier type so the rest
-        // of the pipeline sees a consistent declared type.
-        let resolved_ty_match = match &ty {
-            HIRTypeKind::Identifier(id) => match current_scope.symbols.get(id) {
-                Some(HIRSymbol::Type(inner)) => *inner == init.inferred_type,
-                _ => false,
-            },
-            _ => false,
-        };
-        if resolved_ty_match {
-            // Replace the init's inferred type with the declared identifier type
-            // so that subsequent lookups (e.g. binding type in codegen) return
-            // the identifier-keyed type.
-            init.inferred_type = ty.clone();
-        } else if let (
-            HIRTypeKind::Array {
-                element_type: decl_elem,
-                size: decl_size,
-            },
-            HIRTypeKind::Array {
-                size: init_size, ..
-            },
-        ) = (&ty, &init.inferred_type)
-        {
-            if *decl_size != *init_size {
-                return Err(format!(
-                    "array size mismatch for {}: declared size {} but initializer has {} elements",
-                    var_decl.identifier, decl_size, init_size
-                )
-                .into());
+    let init = match init {
+        None => None,
+        Some(mut init) => {
+            if init.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never) {
+                init.inferred_type = ty.clone();
             }
-            // Coerce element types in the initializer
-            if let HIRExpressionKind::ArrayLiteral { elements } = &mut init.expression {
-                for elem in elements.iter_mut() {
-                    elem.inferred_type = *decl_elem.clone();
-                }
-            }
-            init.inferred_type = ty.clone();
-        } else if let HIRTypeKind::Builtin(builtin) = &ty {
-            // FIXME: this should also check that the inferred type is kinda safe to cast
-            match builtin {
-                BuiltinType::Int1 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::Int1),
-                BuiltinType::Int2 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::Int2),
-                BuiltinType::Int4 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::Int4),
-                BuiltinType::Int8 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::Int8),
-                BuiltinType::Int16 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::Int16),
-                BuiltinType::UInt1 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt1),
-                BuiltinType::UInt2 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt2),
-                BuiltinType::UInt4 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt4),
-                BuiltinType::UInt8 => init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt8),
-                BuiltinType::UInt16 => {
-                    init.inferred_type = HIRTypeKind::Builtin(BuiltinType::UInt16)
-                }
-                _ => {}
-            }
-        } else {
-            return Err(format!(
-                r#"initalization type does not match explicit type for {}
+            if init.inferred_type != ty {
+                // When the declared type is an identifier (e.g. `Point`) and the init
+                // expression is a StructConstruct, the inferred type is the resolved
+                // HIRTypeKind::Struct directly.  In that case, accept the match by
+                // annotating the init expression with the identifier type so the rest
+                // of the pipeline sees a consistent declared type.
+                let resolved_ty_match = match &ty {
+                    HIRTypeKind::Identifier(id) => match current_scope.symbols.get(id) {
+                        Some(HIRSymbol::Type(inner)) => *inner == init.inferred_type,
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if resolved_ty_match {
+                    // Replace the init's inferred type with the declared identifier type
+                    // so that subsequent lookups (e.g. binding type in codegen) return
+                    // the identifier-keyed type.
+                    init.inferred_type = ty.clone();
+                } else if let (
+                    HIRTypeKind::Array {
+                        element_type: decl_elem,
+                        size: decl_size,
+                    },
+                    HIRTypeKind::Array {
+                        size: init_size, ..
+                    },
+                ) = (&ty, &init.inferred_type)
+                {
+                    if *decl_size != *init_size {
+                        return Err(format!(
+                            "array size mismatch for {}: declared size {} but initializer has {} elements",
+                            var_decl.identifier, decl_size, init_size
+                        )
+                        .into());
+                    }
+                    // Coerce element types in the initializer
+                    if let HIRExpressionKind::ArrayLiteral { elements } = &mut init.expression {
+                        for elem in elements.iter_mut() {
+                            elem.inferred_type = *decl_elem.clone();
+                        }
+                    }
+                    init.inferred_type = ty.clone();
+                } else if let HIRTypeKind::Builtin(_) = &ty {
+                    // Numeric mismatches get a real conversion (literals are just
+                    // re-typed; other expressions get a cast); anything else errors.
+                    let found = init.inferred_type.clone();
+                    init = coerce_expr_to_type(init, &ty).map_err(|_| {
+                        format!(
+                            "initialization type {:?} does not match declared type {:?} for {}",
+                            found, ty, var_decl.identifier
+                        )
+                    })?;
+                } else {
+                    return Err(format!(
+                        r#"initalization type does not match explicit type for {}
 explicit type: {:?}
 inferred type of expression: {:?}"#,
-                var_decl.identifier, ty, init.inferred_type
-            )
-            .into());
+                        var_decl.identifier, ty, init.inferred_type
+                    )
+                    .into());
+                }
+            }
+            Some(init)
         }
-    }
+    };
     let hir_var = HIRBinding {
         name: var_decl.identifier.clone(),
         ty,
-        init: Some(init),
+        init,
         mutable: true,
     };
     current_scope
@@ -824,6 +834,76 @@ fn coerce_expr_to_type(
     }
 }
 
+/// Like `coerce_expr_to_type`, but also accepts the case where the target is
+/// a named type alias of the expression's structural type (or vice versa),
+/// in which case the expression is just re-annotated with the target type.
+fn coerce_or_alias(
+    expr: HIRExpression,
+    target: &HIRTypeKind,
+    scope: &Scope,
+) -> Result<HIRExpression, AnalysisError> {
+    if &expr.inferred_type == target {
+        return Ok(expr);
+    }
+    if resolve_type_alias(target.clone(), scope)
+        == resolve_type_alias(expr.inferred_type.clone(), scope)
+    {
+        let mut e = expr;
+        e.inferred_type = target.clone();
+        return Ok(e);
+    }
+    coerce_expr_to_type(expr, target)
+}
+
+fn check_call_args(
+    func_name: &str,
+    params: &[(Identifier, HIRTypeKind)],
+    is_variadic: bool,
+    args: Vec<PExpr>,
+    current_scope: &Scope,
+    generic_cache: &mut HashMap<String, HIRFunction>,
+) -> Result<Vec<HIRExpression>, AnalysisError> {
+    if is_variadic {
+        if args.len() < params.len() {
+            return Err(format!(
+                "{} expects at least {} argument(s), but {} were given",
+                func_name,
+                params.len(),
+                args.len()
+            )
+            .into());
+        }
+    } else if args.len() != params.len() {
+        return Err(format!(
+            "{} expects {} argument(s), but {} were given",
+            func_name,
+            params.len(),
+            args.len()
+        )
+        .into());
+    }
+
+    let mut hargs = Vec::with_capacity(args.len());
+    for (i, arg) in args.into_iter().enumerate() {
+        let harg = expr_to_hir(arg, current_scope, generic_cache)?;
+        let harg = match params.get(i) {
+            Some((param_name, param_type)) => {
+                let found_type = harg.inferred_type.clone();
+                coerce_expr_to_type(harg, param_type).map_err(|_| {
+                    format!(
+                        "{}: argument '{}' expects type {:?}, but found {:?}",
+                        func_name, param_name.identifier, param_type, found_type
+                    )
+                })?
+            }
+            // Extra arguments to a variadic function (e.g. printf) aren't type-checked.
+            None => harg,
+        };
+        hargs.push(harg);
+    }
+    Ok(hargs)
+}
+
 fn expr_to_hir(
     expr: PExpr,
     current_scope: &Scope,
@@ -856,8 +936,10 @@ fn expr_to_hir(
                 expression: HIRExpressionKind::LiteralString { value },
             })
         }
+        // `null` unifies with any type (like `never`); it is concretized by
+        // the context it is used in (declaration type, comparison operand, ...).
         PExpr::Literal(Literal::Null) => Ok(HIRExpression {
-            inferred_type: HIRTypeKind::Builtin(BuiltinType::Void),
+            inferred_type: HIRTypeKind::Builtin(BuiltinType::Never),
             expression: HIRExpressionKind::Null,
         }),
         PExpr::Identifier(name) => {
@@ -919,7 +1001,24 @@ fn expr_to_hir(
             };
             let mut hir_fields: Vec<(String, HIRExpression)> = Vec::new();
             for (fname, fval) in fields {
+                let Some((_, spec_ty)) = payload_spec
+                    .iter()
+                    .find(|(n, _)| n == &fname.identifier)
+                else {
+                    return Err(format!(
+                        "expr_to_hir: variant '{}.{}' has no payload field '{}'",
+                        type_name, variant, fname.identifier
+                    )
+                    .into());
+                };
                 let fval_hir = expr_to_hir(fval, current_scope, generic_cache)?;
+                let fval_hir =
+                    coerce_or_alias(fval_hir, spec_ty, current_scope).map_err(|_| {
+                        format!(
+                            "expr_to_hir: field '{}' of variant '{}.{}' expects type {:?}",
+                            fname.identifier, type_name, variant, spec_ty
+                        )
+                    })?;
                 hir_fields.push((fname.identifier.clone(), fval_hir));
             }
             // Verify each declared field is supplied (order-insensitive).
@@ -957,7 +1056,7 @@ fn expr_to_hir(
         } => {
             let l = expr_to_hir(*left, current_scope, generic_cache)?;
             let r = expr_to_hir(*right, current_scope, generic_cache)?;
-            let (inferred_type, r) = match operator {
+            let (inferred_type, l, r) = match operator {
                 // Arithmetic/bitwise: result type = LHS type.
                 Operator::Plus
                 | Operator::Minus
@@ -971,10 +1070,10 @@ fn expr_to_hir(
                 | Operator::Caret => {
                     // For pointer arithmetic, keep pointer type; don't coerce RHS.
                     if matches!(l.inferred_type, HIRTypeKind::Pointer(_)) {
-                        (l.inferred_type.clone(), r)
+                        (l.inferred_type.clone(), l, r)
                     } else if is_numeric_type(&l.inferred_type) {
                         let r = coerce_expr_to_type(r, &l.inferred_type)?;
-                        (l.inferred_type.clone(), r)
+                        (l.inferred_type.clone(), l, r)
                     } else {
                         return Err(format!(
                             "operator {:?} requires numeric operands, got {:?}",
@@ -995,11 +1094,21 @@ fn expr_to_hir(
                         .into());
                     }
                     let r = coerce_expr_to_type(r, &l.inferred_type)?;
-                    (HIRTypeKind::Builtin(BuiltinType::Boolean), r)
+                    (HIRTypeKind::Builtin(BuiltinType::Boolean), l, r)
                 }
                 Operator::DoubleEquals | Operator::Different => {
-                    let r = coerce_expr_to_type(r, &l.inferred_type)?;
-                    (HIRTypeKind::Builtin(BuiltinType::Boolean), r)
+                    // Coerce whichever side is more flexible: `null == p`
+                    // needs the LHS adapted to the RHS pointer type.
+                    if l.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never)
+                        && r.inferred_type != HIRTypeKind::Builtin(BuiltinType::Never)
+                    {
+                        let target = r.inferred_type.clone();
+                        let l = coerce_expr_to_type(l, &target)?;
+                        (HIRTypeKind::Builtin(BuiltinType::Boolean), l, r)
+                    } else {
+                        let r = coerce_expr_to_type(r, &l.inferred_type)?;
+                        (HIRTypeKind::Builtin(BuiltinType::Boolean), l, r)
+                    }
                 }
                 Operator::LogicalAnd | Operator::LogicalOr => {
                     if !is_boolean_type(&l.inferred_type) || !is_boolean_type(&r.inferred_type) {
@@ -1009,7 +1118,7 @@ fn expr_to_hir(
                         )
                         .into());
                     }
-                    (HIRTypeKind::Builtin(BuiltinType::Boolean), r)
+                    (HIRTypeKind::Builtin(BuiltinType::Boolean), l, r)
                 }
                 op => return Err(format!("unsupported binary operator {:?}", op).into()),
             };
@@ -1052,10 +1161,14 @@ fn expr_to_hir(
                         }
                         Some(HIRSymbol::Function(func)) => {
                             let inferred_type = func.return_type.clone();
-                            let mut hargs = Vec::new();
-                            for a in args {
-                                hargs.push(expr_to_hir(a, current_scope, generic_cache)?);
-                            }
+                            let hargs = check_call_args(
+                                &name.identifier,
+                                &func.params,
+                                func.is_variadic,
+                                args,
+                                current_scope,
+                                generic_cache,
+                            )?;
                             Ok(HIRExpression {
                                 inferred_type,
                                 expression: HIRExpressionKind::Call {
@@ -1105,10 +1218,14 @@ fn expr_to_hir(
                             identifier: format!("{}__{}", module_alias, member.identifier),
                         }
                     };
-                    let mut hargs = Vec::new();
-                    for a in args {
-                        hargs.push(expr_to_hir(a, current_scope, generic_cache)?);
-                    }
+                    let hargs = check_call_args(
+                        &format!("{}::{}", module_alias, member.identifier),
+                        &func.params,
+                        func.is_variadic,
+                        args,
+                        current_scope,
+                        generic_cache,
+                    )?;
                     Ok(HIRExpression {
                         inferred_type: func.return_type.clone(),
                         expression: HIRExpressionKind::Call {
@@ -1183,20 +1300,50 @@ fn expr_to_hir(
                 _ => return Err(format!("expr_to_hir: {} is not a type", type_name).into()),
             };
             let struct_fields = resolve_struct_fields(&struct_ty, current_scope)?;
-            let mut hir_fields = Vec::new();
+            // Lower the provided fields, verifying each exists in the struct.
+            let mut provided: Vec<(String, HIRExpression)> = Vec::new();
             for (fname, fexpr) in fields {
-                // verify the field exists
-                let _field_idx = struct_fields
+                if !struct_fields
                     .iter()
-                    .position(|(name, _)| name == &fname.identifier)
+                    .any(|(name, _)| name == &fname.identifier)
+                {
+                    return Err(format!(
+                        "expr_to_hir: field {} not found in struct {}",
+                        fname.identifier, type_name
+                    )
+                    .into());
+                }
+                if provided.iter().any(|(n, _)| n == &fname.identifier) {
+                    return Err(format!(
+                        "expr_to_hir: duplicate field {} in construction of {}",
+                        fname.identifier, type_name
+                    )
+                    .into());
+                }
+                let fval = expr_to_hir(fexpr, current_scope, generic_cache)?;
+                provided.push((fname.identifier, fval));
+            }
+            // Re-emit the fields in *declared* order (lowering stores them
+            // positionally) and require every field to be present.
+            let mut hir_fields = Vec::new();
+            for (fname, fty) in &struct_fields {
+                let pos = provided
+                    .iter()
+                    .position(|(n, _)| n == fname)
                     .ok_or_else(|| {
                         format!(
-                            "expr_to_hir: field {} not found in struct {}",
-                            fname.identifier, type_name
+                            "expr_to_hir: missing field {} in construction of struct {}",
+                            fname, type_name
                         )
                     })?;
-                let fval = expr_to_hir(fexpr, current_scope, generic_cache)?;
-                hir_fields.push((fname.identifier, fval));
+                let (n, fval) = provided.remove(pos);
+                let fval = coerce_or_alias(fval, fty.as_ref(), current_scope).map_err(|_| {
+                    format!(
+                        "expr_to_hir: field {} of struct {} expects type {:?}",
+                        fname, type_name, fty
+                    )
+                })?;
+                hir_fields.push((n, fval));
             }
             Ok(HIRExpression {
                 inferred_type: struct_ty,
@@ -1232,15 +1379,8 @@ fn expr_to_hir(
             })
         }
         PExpr::Cast { expr, target_type } => {
-            let mut inner_hir = expr_to_hir(*expr, current_scope, generic_cache)?;
+            let inner_hir = expr_to_hir(*expr, current_scope, generic_cache)?;
             let hir_target = map_type(target_type)?;
-            // If the inner expression is a function call to an unknown external function,
-            // propagate the cast target type so the auto-declaration uses the right return type.
-            if let HIRExpressionKind::Call { .. } = &inner_hir.expression
-                && inner_hir.inferred_type == HIRTypeKind::Builtin(BuiltinType::Int4)
-            {
-                inner_hir.inferred_type = hir_target.clone();
-            }
             Ok(HIRExpression {
                 inferred_type: hir_target.clone(),
                 expression: HIRExpressionKind::Cast {
@@ -1309,8 +1449,8 @@ fn expr_to_hir(
             Operator::Minus => {
                 let inner = expr_to_hir(*expression, current_scope, generic_cache)?;
                 let is_float = matches!(
-                    inner.inferred_type,
-                    HIRTypeKind::Builtin(BuiltinType::Float4 | BuiltinType::Float8)
+                    &inner.inferred_type,
+                    HIRTypeKind::Builtin(b) if is_float_builtin(b)
                 );
                 let zero = HIRExpression {
                     inferred_type: inner.inferred_type.clone(),
@@ -1524,108 +1664,6 @@ fn resolve_declaration(
     }
 }
 
-fn resolve_statement(
-    statement: &StatementNode,
-    mut current_scope: Scope,
-) -> Result<Scope, AnalysisError> {
-    match statement {
-        StatementNode::VariableDeclaration(variable_declaration) => {
-            // Resolve pass: register the binding with its declared type only.
-            let ty = match &variable_declaration.constant_type {
-                Some(t) => map_type(t.clone())?,
-                None => HIRTypeKind::Builtin(BuiltinType::Void),
-            };
-            current_scope.symbols.insert(
-                variable_declaration.identifier.clone(),
-                HIRSymbol::Binding(HIRBinding {
-                    name: variable_declaration.identifier.clone(),
-                    ty,
-                    init: None,
-                    mutable: true,
-                }),
-            );
-            Ok(current_scope)
-        }
-        StatementNode::MultiVariableDeclaration { identifiers, .. } => {
-            for identifier in identifiers {
-                current_scope.symbols.insert(
-                    identifier.clone(),
-                    HIRSymbol::Binding(HIRBinding {
-                        name: identifier.clone(),
-                        ty: HIRTypeKind::Builtin(BuiltinType::Void),
-                        init: None,
-                        mutable: true,
-                    }),
-                );
-            }
-            Ok(current_scope)
-        }
-        StatementNode::Return(_) => Ok(current_scope),
-        StatementNode::Break => Ok(current_scope),
-        StatementNode::Continue => Ok(current_scope),
-        StatementNode::If {
-            condition: _c,
-            then_branch,
-            else_branch,
-        } => {
-            let mut then_scope = Scope::new();
-            for stmt in then_branch {
-                then_scope = resolve_statement(stmt, then_scope)?;
-            }
-            current_scope.children_scope.push(Box::new(then_scope));
-            if let Some(else_branch) = else_branch {
-                let mut else_scope = Scope::new();
-                for stmt in else_branch {
-                    else_scope = resolve_statement(stmt, else_scope)?;
-                }
-                current_scope.children_scope.push(Box::new(else_scope));
-            }
-            Ok(current_scope)
-        }
-        StatementNode::For {
-            initializer,
-            condition: _c,
-            post_operation,
-            body,
-        } => {
-            let mut for_scope = Scope::new();
-            if let Some(init) = initializer {
-                for_scope = resolve_statement(init, for_scope)?;
-            }
-            for stmt in body {
-                for_scope = resolve_statement(stmt, for_scope)?;
-            }
-            if let Some(po) = post_operation {
-                for_scope = resolve_statement(po, for_scope)?;
-            }
-            current_scope.children_scope.push(Box::new(for_scope));
-            Ok(current_scope)
-        }
-        StatementNode::Assignment {
-            identifier: _i,
-            expr: _e,
-        } => {
-            // TODO: for now i wont do anything, perhaps do type checking in the future
-            Ok(current_scope)
-        }
-        StatementNode::MultiAssignment { .. } => Ok(current_scope),
-        StatementNode::FieldAssign { .. } => Ok(current_scope),
-        StatementNode::DerefAssign { .. } => Ok(current_scope),
-        StatementNode::IndexAssign { .. } => Ok(current_scope),
-        StatementNode::ExpressionStatement(_) => Ok(current_scope),
-        StatementNode::Defer(_) => Ok(current_scope),
-        StatementNode::Switch { arms, .. } => {
-            let mut scope = current_scope;
-            for arm in arms {
-                for s in &arm.body {
-                    scope = resolve_statement(s, scope)?;
-                }
-            }
-            Ok(scope)
-        }
-    }
-}
-
 /// Returns true if the function has at least one `type`-typed parameter (making it generic).
 fn is_generic_function(fn_decl: &FunctionDeclaration) -> bool {
     fn_decl
@@ -1806,11 +1844,11 @@ fn substitute_in_stmt(stmt: &mut ASTStatementNode, subs: &HashMap<String, TypeEx
         } => {
             substitute_in_expr(condition, subs);
             for s in then_branch {
-                substitute_in_stmt(s, subs);
+                substitute_in_stmt(&mut s.kind, subs);
             }
             if let Some(eb) = else_branch {
                 for s in eb {
-                    substitute_in_stmt(s, subs);
+                    substitute_in_stmt(&mut s.kind, subs);
                 }
             }
         }
@@ -1821,24 +1859,24 @@ fn substitute_in_stmt(stmt: &mut ASTStatementNode, subs: &HashMap<String, TypeEx
             body,
         } => {
             if let Some(init) = initializer {
-                substitute_in_stmt(init, subs);
+                substitute_in_stmt(&mut init.kind, subs);
             }
             if let Some(cond) = condition {
                 substitute_in_expr(cond, subs);
             }
             if let Some(post) = post_operation {
-                substitute_in_stmt(post, subs);
+                substitute_in_stmt(&mut post.kind, subs);
             }
             for s in body {
-                substitute_in_stmt(s, subs);
+                substitute_in_stmt(&mut s.kind, subs);
             }
         }
-        ASTStatementNode::Defer(inner) => substitute_in_stmt(inner, subs),
+        ASTStatementNode::Defer(inner) => substitute_in_stmt(&mut inner.kind, subs),
         ASTStatementNode::Switch { subject, arms } => {
             substitute_in_expr(subject, subs);
             for arm in arms {
                 for s in &mut arm.body {
-                    substitute_in_stmt(s, subs);
+                    substitute_in_stmt(&mut s.kind, subs);
                 }
             }
         }
@@ -1932,14 +1970,28 @@ fn instantiate_generic(
     // Substitute in body statements
     if let Some(ref mut body) = substituted.body {
         for stmt in &mut body.statements {
-            substitute_in_stmt(stmt, &subs);
+            substitute_in_stmt(&mut stmt.kind, &subs);
         }
     }
 
+    // Pre-insert a signature-only placeholder so a recursive call inside the
+    // body hits the cache instead of re-instantiating forever. It is replaced
+    // with the fully analyzed function below.
+    let (placeholder_params, placeholder_ret) = signature_to_hir(&substituted)?;
+    generic_cache.insert(
+        mangled.clone(),
+        HIRFunction {
+            name: substituted.signature.name.clone(),
+            params: placeholder_params,
+            return_type: placeholder_ret,
+            body: Vec::new(),
+            is_extern: substituted.is_extern,
+            is_variadic: substituted.is_variadic,
+        },
+    );
+
     // Analyze the substituted function
     let mut func_scope = scope.clone();
-    // Insert self-reference for recursion
-    // (will be replaced after analysis with the real function)
     let hir_func = func_to_hir(substituted, &mut func_scope, generic_cache)?;
     let return_type = hir_func.return_type.clone();
 
@@ -2029,54 +2081,20 @@ fn resolve_function_decl(
         return Ok(current_scope);
     }
 
-    // Start the function's child scope with all symbols already visible at
-    // module level so that body expressions can reference previously-declared
-    // functions (e.g. calls to other top-level fns).
-    let mut new_scope = Scope::new();
-
-    // Copy module-level symbols and imported modules so they are available during body resolution.
-    for (name, symbol) in &current_scope.symbols {
-        new_scope.symbols.insert(name.clone(), symbol.clone());
-    }
-    for (name, module) in &current_scope.modules {
-        new_scope.modules.insert(name.clone(), module.clone());
-    }
-
-    // Parameters — inserted after the module-level copy so they shadow any
-    // hypothetical module-level name collision (though that should not occur
-    // in practice given the language semantics).
-    for param in function_declaration.signature.parameters.clone() {
-        let ty = map_type(param.parameter_type)?;
-        if ty != HIRTypeKind::Type {
-            new_scope.symbols.insert(
-                param.parameter_name.clone(),
-                HIRSymbol::Binding(HIRBinding {
-                    name: param.parameter_name,
-                    ty,
-                    init: None,
-                    mutable: true,
-                }),
-            );
-        }
-    }
-
-    // Resolve all statements in the body so local bindings are registered.
-    if let Some(fb) = &function_declaration.body {
-        for stmt in fb.statements.iter() {
-            new_scope = resolve_statement(stmt, new_scope)?;
-        }
-    }
-
-    // Add new scope to current scope
-    let mut temp_cache = HashMap::new();
+    // Register the signature only. The body is analyzed exactly once, in
+    // `analyze()`, *after* this symbol is in scope — which is what makes
+    // recursive calls resolve.
+    let (params, return_type) = signature_to_hir(function_declaration)?;
     current_scope.symbols.insert(
         function_declaration.signature.name.clone(),
-        HIRSymbol::Function(func_to_hir(
-            function_declaration.clone(),
-            &mut new_scope.clone(),
-            &mut temp_cache,
-        )?),
+        HIRSymbol::Function(HIRFunction {
+            name: function_declaration.signature.name.clone(),
+            params,
+            return_type,
+            body: Vec::new(),
+            is_extern: function_declaration.is_extern,
+            is_variadic: function_declaration.is_variadic,
+        }),
     );
-    current_scope.children_scope.push(Box::new(new_scope));
     Ok(current_scope)
 }
