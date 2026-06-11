@@ -166,17 +166,12 @@ mod tests {
     }
 
     #[test]
-    fn test_var_declaration_zero_init_int() {
+    fn test_var_declaration_without_init_is_uninitialized() {
         let cu = get_hir("fn f() { var int4 x }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Binding(b) = &f.body[0] {
             assert_eq!(b.ty, HIRTypeKind::Builtin(BuiltinType::Int4));
-            if let Some(init) = &b.init {
-                assert!(matches!(
-                    init.expression,
-                    HIRExpressionKind::LiteralInt { value: 0 }
-                ));
-            }
+            assert!(b.init.is_none());
         } else {
             panic!("expected Binding");
         }
@@ -224,29 +219,22 @@ mod tests {
     }
 
     #[test]
-    fn test_var_bool_zero_init_is_false() {
+    fn test_var_bool_without_init_is_uninitialized() {
         let cu = get_hir("fn f() { var bool b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Binding(b) = &f.body[0] {
-            if let Some(init) = &b.init {
-                assert!(matches!(
-                    init.expression,
-                    HIRExpressionKind::LiteralBool(false)
-                ));
-            }
+            assert!(b.init.is_none());
         } else {
             panic!("expected Binding");
         }
     }
 
     #[test]
-    fn test_var_pointer_zero_init_is_null() {
+    fn test_var_pointer_without_init_is_uninitialized() {
         let cu = get_hir("fn f() { var *int4 p }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Binding(b) = &f.body[0] {
-            if let Some(init) = &b.init {
-                assert!(matches!(init.expression, HIRExpressionKind::Null));
-            }
+            assert!(b.init.is_none());
         } else {
             panic!("expected Binding");
         }
