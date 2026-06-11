@@ -27,6 +27,10 @@ impl<'input> Lexer<'input> {
         self.input[self.position..].chars().next()
     }
 
+    fn peek_second(&self) -> Option<char> {
+        self.input[self.position..].chars().nth(1)
+    }
+
     fn bump(&mut self) -> Option<char> {
         let c = self.peek()?;
         if c == '\n' {
@@ -217,6 +221,14 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 Some(TokenKind::Punctuation(Punctuation::ClosingCurlyBrace))
             }
+            '[' => {
+                self.bump();
+                Some(TokenKind::Punctuation(Punctuation::OpeningSquareBrace))
+            }
+            ']' => {
+                self.bump();
+                Some(TokenKind::Punctuation(Punctuation::ClosingSquareBrace))
+            }
             ',' => {
                 self.bump();
                 Some(TokenKind::Punctuation(Punctuation::Comma))
@@ -249,14 +261,6 @@ impl<'input> Lexer<'input> {
                 }
             }
             '\'' => self.lex_char_literal(),
-            '[' => {
-                self.bump();
-                Some(TokenKind::Punctuation(Punctuation::OpeningSquareBrace))
-            }
-            ']' => {
-                self.bump();
-                Some(TokenKind::Punctuation(Punctuation::ClosingSquareBrace))
-            }
             '\"' => {
                 self.bump();
                 let mut escaped = String::new();
@@ -327,10 +331,14 @@ impl<'input> Lexer<'input> {
         // consume opening quote
         self.bump();
         // get the character
-        let ch = self.bump()?;
+        let Some(ch) = self.bump() else {
+            return Some(TokenKind::Error("unterminated character literal".into()));
+        };
         // if char is '\\' then it is an escape sequence
         let ch = if ch == '\\' {
-            let esc = self.bump()?;
+            let Some(esc) = self.bump() else {
+                return Some(TokenKind::Error("unterminated character escape".into()));
+            };
             match esc {
                 'n' => '\n',
                 't' => '\t',
@@ -342,7 +350,9 @@ impl<'input> Lexer<'input> {
                     let mut hex = String::new();
                     // get two hex digits
                     for _ in 0..2 {
-                        let c = self.bump()?;
+                        let Some(c) = self.bump() else {
+                            return Some(TokenKind::Error("unterminated hex escape".into()));
+                        };
                         if c.is_ascii_hexdigit() {
                             hex.push(c);
                         } else {
@@ -397,7 +407,7 @@ impl<'input> Lexer<'input> {
                         }
                     } else {
                         return Some(TokenKind::Error(
-                            "Invalid unicode escape sequence: expected '{{'".into(),
+                            "Invalid unicode escape sequence: expected '{'".into(),
                         ));
                     }
                 }
@@ -411,55 +421,73 @@ impl<'input> Lexer<'input> {
         } else {
             ch
         };
-        self.bump(); // consume closing quote
-        Some(TokenKind::Literal(Literal::Character(ch)))
+        match self.bump() {
+            Some('\'') => Some(TokenKind::Literal(Literal::Character(ch))),
+            _ => Some(TokenKind::Error(
+                "character literal missing closing quote".into(),
+            )),
+        }
     }
 
     fn lex_numeric(&mut self, first: char) -> Option<TokenKind> {
         let mut start = self.position;
         // first char is 0 might be 0x... or might be 0123
-        let (base, f): (u32, fn(char) -> bool) = if first == '0' {
+        let base: u32 = if first == '0' {
             self.bump();
-            let second = match self.peek() {
-                Some(c) => c,
+            match self.peek() {
                 None => return Some(TokenKind::Literal(Literal::Integer(0))),
-            };
-            match second {
-                'x' => {
+                Some('x') => {
                     self.bump();
                     start = self.position;
-                    (16, |c: char| c.is_ascii_hexdigit())
+                    16
                 }
-                'd' => {
+                Some('d') => {
                     self.bump();
                     start = self.position;
-                    (10, |c: char| c.is_ascii_digit())
+                    10
                 }
-                'o' => {
+                Some('o') => {
                     self.bump();
                     start = self.position;
-                    (8, |c: char| c.is_digit(8))
+                    8
                 }
-                'b' => {
+                Some('b') => {
                     self.bump();
                     start = self.position;
-                    (2, |c: char| c == '0' || c == '1')
+                    2
                 }
-                c if c.is_ascii_digit() => (10, |c: char| c.is_ascii_digit() || c == '.'),
-                '.' => (10, |c: char| c.is_ascii_digit() || c == '.'),
-                _c => {
-                    // anything else means its just one digit
-                    (10, |c: char| c.is_ascii_digit() || c == '.')
-                }
+                Some(_) => 10,
             }
         } else {
-            (10, |c: char| c.is_ascii_digit() || c == '.')
+            10
         };
-        self.skip_while(f);
+        let digit_pred: fn(char) -> bool = match base {
+            16 => |c: char| c.is_ascii_hexdigit(),
+            8 => |c: char| c.is_digit(8),
+            2 => |c: char| c == '0' || c == '1',
+            _ => |c: char| c.is_ascii_digit(),
+        };
+        self.skip_while(digit_pred);
+        // Fractional part (decimal only). Consume the '.' only when a digit
+        // follows so `1..5` still lexes as `1`, `..`, `5`.
+        let mut is_float = false;
+        if base == 10
+            && self.peek() == Some('.')
+            && self.peek_second().is_some_and(|c| c.is_ascii_digit())
+        {
+            is_float = true;
+            self.bump(); // consume '.'
+            self.skip_while(|c| c.is_ascii_digit());
+        }
         let num_str = &self.input[start..self.position];
-        if num_str.contains('.') {
-            let value = ("0".to_string() + num_str).parse::<f64>().ok()?;
-            Some(TokenKind::Literal(Literal::Float(value)))
+        if is_float {
+            match ("0".to_string() + num_str).parse::<f64>() {
+                Ok(value) => Some(TokenKind::Literal(Literal::Float(value))),
+                Err(e) => Some(TokenKind::Error(format!(
+                    "Invalid float literal '{}': {}",
+                    num_str, e
+                ))),
+            }
         } else {
             let value = match u64::from_str_radix(num_str, base) {
                 Ok(v) => v,
@@ -493,7 +521,7 @@ impl<'input> Lexer<'input> {
             "for" => TokenKind::Keyword(Keyword::For),
             "break" => TokenKind::Keyword(Keyword::Break),
             "continue" => TokenKind::Keyword(Keyword::Continue),
-            "ret" => TokenKind::Keyword(Keyword::Return),
+            "return" => TokenKind::Keyword(Keyword::Return),
             "as" => TokenKind::Keyword(Keyword::As),
             "extern" => TokenKind::Keyword(Keyword::Extern),
             "defer" => TokenKind::Keyword(Keyword::Defer),
