@@ -158,11 +158,19 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
     let out_bin = format!("out/{}", stem);
     fs::write(&out_ll, &c_src)
         .map_err(|e| format!("Failed to write LLVM IR to {}: {}", out_ll, e))?;
-    let output = std::process::Command::new("clang-17")
-        .arg(out_ll)
+    let mut output = std::process::Command::new("clang-17")
+        .arg(&out_ll)
         .arg("-o")
-        .arg(out_bin)
+        .arg(&out_bin)
         .output();
+    // Fall back to an unversioned clang when clang-17 isn't installed.
+    if matches!(&output, Err(e) if e.kind() == io::ErrorKind::NotFound) {
+        output = std::process::Command::new("clang")
+            .arg(&out_ll)
+            .arg("-o")
+            .arg(&out_bin)
+            .output();
+    }
     match output {
         Ok(o) if o.status.success() => {
             println!("Built binary: {}", filename);
@@ -193,16 +201,31 @@ fn resolve_module(
     }
     resolving.push(path.to_vec());
 
-    // Try each search root in order: ["math", "vec3"] -> <root>/math/vec3.fib
+    // Try each search root in order: ["math", "vec3"] -> <root>/math/vec3.fib.
+    // Fall back to dropping the first segment for roots that *are* the top
+    // namespace (e.g. `import std::io` with `-I std` -> <std>/io.fib).
     let (file_path, source) = search_roots
         .iter()
         .find_map(|root| {
-            let mut p = root.to_path_buf();
-            for segment in &path[1..] {
-                p.push(segment);
+            let mut full = root.to_path_buf();
+            for segment in path {
+                full.push(segment);
             }
-            p.set_extension("fib");
-            std::fs::read_to_string(&p).ok().map(|s| (p, s))
+            full.set_extension("fib");
+            if let Ok(s) = std::fs::read_to_string(&full) {
+                return Some((full, s));
+            }
+            if path.len() > 1 {
+                let mut p = root.to_path_buf();
+                for segment in &path[1..] {
+                    p.push(segment);
+                }
+                p.set_extension("fib");
+                if let Ok(s) = std::fs::read_to_string(&p) {
+                    return Some((p, s));
+                }
+            }
+            None
         })
         .ok_or_else(|| {
             format!(
