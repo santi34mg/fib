@@ -1,6 +1,6 @@
 import std::libc
 
-const type Node = struct {
+const type Node struct {
     int4 data,
     *Node next,
 }
