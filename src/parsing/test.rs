@@ -33,7 +33,7 @@ mod tests {
             if let DeclarationNode::FunctionDeclaration(f) = decl {
                 if let Some(body) = &f.body {
                     for s in &body.statements {
-                        stmts.push(s);
+                        stmts.push(&s.kind);
                     }
                 }
             }
@@ -278,7 +278,7 @@ mod tests {
         let func = func.expect("expected function declaration");
         let body = func.body.as_ref().expect("expected function body");
         assert!(matches!(
-            &body.statements[0],
+            &body.statements[0].kind,
             StatementNode::Return(Some(exprs))
                 if exprs.len() == 1
                     && matches!(exprs[0], Expression::Literal(Literal::Integer(42)))
@@ -298,7 +298,7 @@ mod tests {
         });
         let func = func.expect("expected function declaration");
         let body = func.body.as_ref().expect("expected function body");
-        assert!(matches!(body.statements[0], StatementNode::Return(None)));
+        assert!(matches!(body.statements[0].kind, StatementNode::Return(None)));
     }
 
     #[test]
@@ -352,8 +352,8 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         if let StatementNode::For { body, .. } = stmts[0] {
-            assert!(matches!(body[0], StatementNode::Break));
-            assert!(matches!(body[1], StatementNode::Continue));
+            assert!(matches!(body[0].kind, StatementNode::Break));
+            assert!(matches!(body[1].kind, StatementNode::Continue));
         } else {
             panic!("expected For statement");
         }
