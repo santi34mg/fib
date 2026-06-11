@@ -5,9 +5,10 @@ Fib is a systems programming language designed for performance, clarity, and dev
 ## Contents
 
 - [Types](types.md) — built-in primitive types
+- [Literals and Comments](literals.md) — integer bases, floats, chars, strings, escapes, `null`, comments
 - [Variables](variables.md) — declarations, type inference, immutability
 - [Operators](operators.md) — arithmetic, bitwise, logical, comparison, compound assignment
-- [Control Flow](control-flow.md) — `if`/`else`, `for`, `break`, `continue`, `defer`, `ret`
+- [Control Flow](control-flow.md) — `if`/`else`, `for`, `break`, `continue`, `defer`, `return`
 - [Functions](functions.md) — declarations, parameters, return types, multiple returns, forward declarations, variadic, `extern`
 - [Structs](structs.md) — record types, construction, field access
 - [Enums and Tagged Unions](enums.md) — discriminated enums and variants with payloads

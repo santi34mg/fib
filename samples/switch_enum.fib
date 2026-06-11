@@ -6,7 +6,7 @@ type Color enum {
     Blue,
 }
 
-fn describe(Color c) void {
+fn describe(c: Color) void {
     switch (c) {
         when .Red { libc::printf("red\n") }
         when .Green { libc::printf("green\n") }
@@ -18,5 +18,5 @@ fn main() int4 {
     describe(Color.Red)
     describe(Color.Green)
     describe(Color.Blue)
-    ret 0
+    return 0
 }

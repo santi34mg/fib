@@ -1,35 +1,35 @@
 import std::libc
 
 type Pool struct {
-    uint8 start,
-    uint8 block_size,
-    uint8 capacity,
-    uint8 used,
+    start: uint8,
+    block_size: uint8,
+    capacity: uint8,
+    used: uint8,
 }
 
-fn pool_create(uint8 block_size, uint8 capacity) Pool {
+fn pool_create(block_size: uint8, capacity: uint8) Pool {
     total: uint8 = block_size * capacity
     buf: *void = libc::malloc(total)
-    ret Pool { start: buf as uint8, block_size: block_size, capacity: capacity, used: 0 as uint8 }
+    return Pool { start: buf as uint8, block_size: block_size, capacity: capacity, used: 0 as uint8 }
 }
 
-fn pool_alloc(*Pool pool) *void {
+fn pool_alloc(pool: *Pool) *void {
     if pool.*.used >= pool.*.capacity {
-        ret 0 as uint8 as *void
+        return null
     }
     offset: uint8 = pool.*.used * pool.*.block_size
     addr: uint8 = pool.*.start + offset
     p: Pool = pool.*
     p.used = p.used + 1
     pool.* = p
-    ret addr as *void
+    return addr as *void
 }
 
-fn pool_destroy(*Pool pool) void {
+fn pool_destroy(pool: *Pool) void {
     libc::free(pool.*.start as *void)
 }
 
-fn main() int {
+fn main() int4 {
     pool: Pool = pool_create(4 as uint8, 6 as uint8)
     defer pool_destroy(pool.&)
 
@@ -39,7 +39,7 @@ fn main() int {
 
     for (i: int4 = 0; i < 8; i += 1) {
         block: *void = pool_alloc(pool.&)
-        if block as uint8 == 0 as uint8 {
+        if block == null {
             libc::printf("Alloc %d failed: pool exhausted\n", i)
             break
         }
@@ -49,5 +49,5 @@ fn main() int {
     }
 
     libc::printf("Used: %d / %d\n", pool.used as int4, pool.capacity as int4)
-    ret 0
+    return 0
 }

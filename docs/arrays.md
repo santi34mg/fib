@@ -22,7 +22,7 @@ arr.[j] = arr.[j-1]  // write
 The same index syntax works on pointers (treating them as the start of an array):
 
 ```fib
-fn print_arr(T type, arr *T, len int4) void {
+fn print_arr(T: type, arr: *T, len: int4) void {
     for (i: int4 = 0; i < len; i += 1) {
         libc::printf(" %d ", arr.[i])
     }

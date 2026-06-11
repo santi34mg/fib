@@ -17,7 +17,7 @@
 `&` (and), `|` (or), `^` (xor), `~` (not), `<<` (left shift), `>>` (right shift)
 
 ```fib
-ret (a << 24) | (b << 16) | (c << 8) | d
+return (a << 24) | (b << 16) | (c << 8) | d
 perms = perms & ~PERM_WRITE
 ```
 
@@ -57,6 +57,10 @@ buf as *Node
 i as uint8
 ```
 
-## Reserved / non-yet-consumed
+## Other tokens
+
+- `->` appears only in function type expressions: `fn(int4) -> int4`. See [Functions](functions.md).
+
+## Reserved / not-yet-consumed
 
 - `..` (range syntax) and `@` (decorator/attribute) are reserved; the parser does not consume them yet.

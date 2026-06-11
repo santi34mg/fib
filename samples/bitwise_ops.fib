@@ -1,31 +1,31 @@
 import std::libc
 
-fn pack_ipv4(uint4 a, uint4 b, uint4 c, uint4 d) uint4 {
-    ret (a << 24) | (b << 16) | (c << 8) | d
+fn pack_ipv4(a: uint4, b: uint4, c: uint4, d: uint4) uint4 {
+    return (a << 24) | (b << 16) | (c << 8) | d
 }
 
-fn popcount(uint4 x) uint4 {
+fn popcount(x: uint4) uint4 {
     count: uint4 = 0
     v: uint4 = x
     for (;v != 0 as uint4;) {
         count = count + (v & 1)
         v = v >> 1
     }
-    ret count
+    return count
 }
 
 fn main() int4 {
-    const uint4 ip = pack_ipv4(192, 168, 1, 100)
+    ip: uint4 = pack_ipv4(192, 168, 1, 100)
     libc::printf("Packed IPv4: 0x%08X\n", ip)
     libc::printf("Octet 0: %u\n", (ip >> 24) & 255)
     libc::printf("Octet 1: %u\n", (ip >> 16) & 255)
     libc::printf("Octet 2: %u\n", (ip >> 8) & 255)
     libc::printf("Octet 3: %u\n", ip & 255)
 
-    const uint4 PERM_READ   = 1
-    const uint4 PERM_WRITE  = 2
-    const uint4 PERM_EXEC   = 4
-    const uint4 PERM_DELETE = 8
+    PERM_READ: uint4   = 1
+    PERM_WRITE: uint4  = 2
+    PERM_EXEC: uint4   = 4
+    PERM_DELETE: uint4 = 8
 
     perms: uint4 = PERM_READ | PERM_WRITE
     libc::printf("\nInitial permissions: 0x%X\n", perms)
@@ -50,5 +50,5 @@ fn main() int4 {
     }
 
     libc::printf("Bits set in perms: %u\n", popcount(perms))
-    ret 0
+    return 0
 }

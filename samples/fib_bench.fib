@@ -1,12 +1,12 @@
 import std::libc
 
-fn fib(n int4) int4;
+fn fib(n: int4) int4;
 
-fn fib(n int4) int4 {
+fn fib(n: int4) int4 {
     if n <= 1 {
-        ret n
+        return n
     }
-    ret fib(n - 1) + fib(n - 2)
+    return fib(n - 1) + fib(n - 2)
 }
 
 fn main() int4 {
@@ -16,5 +16,5 @@ fn main() int4 {
         result: int4 = fib(i)
         libc::printf("fib(%d) = %d\n", i, result)
     }
-    ret 0
+    return 0
 }

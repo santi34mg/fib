@@ -9,5 +9,5 @@ type Color enum {
 fn main() int4 {
     c: Color = Color.Green
     libc::printf("color discriminant = %d\n", c as uint8)
-    ret 0
+    return 0
 }

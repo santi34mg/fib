@@ -1,12 +1,12 @@
 import std::libc
 
 type Token enum {
-    Integer { uint4 value },
-    Boolean { bool flag },
+    Integer { value: uint4 },
+    Boolean { flag: bool },
     EOF,
 }
 
-fn describe(Token t) void {
+fn describe(t: Token) void {
     switch (t) {
         when .Integer(i) { libc::printf("int=%d\n", i.value) }
         when .Boolean(b) { libc::printf("bool=%d\n", b.flag as uint4) }
@@ -18,5 +18,5 @@ fn main() int4 {
     describe(Token.Integer { value: 7 })
     describe(Token.Boolean { flag: true })
     describe(Token.EOF)
-    ret 0
+    return 0
 }

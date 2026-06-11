@@ -15,7 +15,7 @@ The second is a custom backend made for specialized builds.
 ### Prerequisites
 
 - **Rust toolchain** (stable): install via [rustup](https://rustup.rs)
-- **clang-17**: must be on `$PATH` in case of using the LLVM backend.
+- **clang**: must be on `$PATH` in case of using the LLVM backend (`clang-17` is preferred when installed; otherwise unversioned `clang` is used).
 
 ### Building from source
 
@@ -37,12 +37,13 @@ cargo run -- samples/hello_world.fib -I=std
 
 ## Language Features
 
-- **Types**: `int8/16/32/64`, `uint8/16/32/64`, `float32/64`, `bool`, `char`, `string`, structs, arrays, raw pointers
-- **Functions**: declarations, forward declarations, variadic, extern
+- **Types**: byte-sized integers (`int`, `int2`, `int4`, `int8`, `int16` and unsigned `uint...` counterparts), `float4/8/16`, `bool`, `char`, `string`, structs, enums/tagged unions, arrays, raw pointers
+- **Functions**: declarations with `name: type` parameters, forward declarations, multiple return values, variadic, extern, type parameters (generics)
 - **Variables**: explicit declarations use `name: type = init`; inferred declarations use `name := init`
-- **Control flow**: `if`/`else`, C-style `for`, `break`, `continue`, `defer`, `return`
-- **Expressions**: arithmetic, bitwise, logical, comparison, compound assignment, type casting (`as`), field/index access, address-of (`.&`), dereference (`.*`), struct construction, array literals
+- **Control flow**: `if`/`else`, C-style `for`, `break`, `continue`, `defer`, `return`, `switch`/`when` pattern matching
+- **Expressions**: arithmetic, bitwise, logical, comparison, compound assignment, type casting (`as`), field/index access, address-of (`.&`), dereference (`.*`), struct construction, array literals, `null`
 - **Memory**: manual `malloc`/`free`, pointer arithmetic, defer for cleanup
+- **Modules**: `import a::b`, selective imports `::{X}`, aliasing `as`
 
 See `docs/` for language documentation and `samples/` for working example programs.
 

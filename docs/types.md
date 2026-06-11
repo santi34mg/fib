@@ -22,6 +22,9 @@ Fib's built-in types use a byte-size suffix: `int4` is a 4-byte (32-bit) signed 
 - **Structs**: `struct { ... }` — see [Structs](structs.md)
 - **Enums / tagged unions**: `enum { ... }` — see [Enums](enums.md)
 - **Tuples**: appear in multi-return signatures, e.g. `(int4, int4)` — see [Functions](functions.md)
+- **Function types**: `fn(int4, int4) -> int4` — parsed but reserved; first-class function values are not usable yet ([Functions](functions.md))
+
+A type imported from another module is referenced with a qualified name, e.g. `error::Error` — see [Imports](imports.md).
 
 ## Type aliases
 

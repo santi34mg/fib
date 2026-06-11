@@ -13,7 +13,7 @@ After import, names are referenced via the qualified path:
 
 ```fib
 libc::printf("Hello, World!\n")
-libc::malloc(16 as uint)
+libc::malloc(16 as uint8)
 ```
 
 ## Selective import
@@ -28,7 +28,7 @@ import std::fs::path::{Path}
 The selected names can then be used unqualified:
 
 ```fib
-ret Error { message: "stream is empty", code: 1 }
+return Error { message: "stream is empty", code: 1 }
 ```
 
 ## Aliasing
@@ -48,3 +48,5 @@ When invoking the compiler, pass `-I=<dir>` to add a directory to the module sea
 ```
 cargo run -- samples/hello_world.fib -I=std
 ```
+
+The directory containing the source file is always searched first. For each root, `import a::b::c` resolves to `<root>/a/b/c.fib`; if that fails and the root itself is the top namespace (e.g. `-I=std` for `import std::libc`), the first segment is dropped and `<root>/b/c.fib` is tried.

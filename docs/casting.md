@@ -26,8 +26,9 @@ buf as *Node
 block as *int4
 addr as *void
 cur as uint8                 // pointer-to-integer
-0 as uint8 as *void          // null-equivalent pointer
 ```
+
+For a null pointer, prefer the `null` literal over integer casts — see [Pointers and Memory](pointers-memory.md).
 
 ## Enum discriminant
 

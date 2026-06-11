@@ -5,7 +5,7 @@ Fib supports lightweight generics by accepting a *type* as an ordinary parameter
 ## Declaring a type parameter
 
 ```fib
-fn insertion_sort(T: type, arr: *T, len int4) void {
+fn insertion_sort(T: type, arr: *T, len: int4) void {
     for (i: int4 = 1; i < len; i += 1) {
         for (j: int4 = i; j > 0; j -= 1) {
             if arr.[j] < arr.[j - 1] {
