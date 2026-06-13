@@ -6,8 +6,8 @@ type Color enum {
     Blue,
 }
 
-fn main() int4 {
+fn main() @int4 {
     c: Color = Color.Green
-    libc::printf("color discriminant = %d\n", c as uint8)
+    libc::printf("color discriminant = %d\n", c as @uint8)
     return 0
 }

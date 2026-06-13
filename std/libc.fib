@@ -1,7 +1,7 @@
-extern fn printf(fmt: string, ...) int4
-extern fn malloc(size: uint8) *void
-extern fn free(ptr: *void) void
-extern fn memcpy(dest: *void, src: *void, n: uint8) *void
-extern fn exit(status: int4) void
-extern fn strlen(s: string) uint8
-extern fn puts(s: string) int4
+extern fn printf(fmt: @string, ...) @int4
+extern fn malloc(size: @uint8) *@void
+extern fn free(ptr: *@void) @void
+extern fn memcpy(dest: *@void, src: *@void, n: @uint8) *@void
+extern fn exit(status: @int4) @void
+extern fn strlen(s: @string) @uint8
+extern fn puts(s: @string) @int4

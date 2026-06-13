@@ -1,18 +1,18 @@
 import std::libc
 
 type Node struct {
-    data: int4,
+    data: @int4,
     next: *Node,
 }
 
-fn push(head: *Node, val: int4) *Node {
-    node: *Node = libc::malloc(16 as uint8) as *Node
+fn push(head: *Node, val: @int4) *Node {
+    node: *Node = libc::malloc(16 as @uint8) as *Node
     node.* = Node { data: val, next: head }
     return node
 }
 
-fn list_length(head: *Node) int4 {
-    count: int4 = 0
+fn list_length(head: *Node) @int4 {
+    count: @int4 = 0
     cur: *Node = head
     for (;;) {
         if cur == null {
@@ -24,7 +24,7 @@ fn list_length(head: *Node) int4 {
     return count
 }
 
-fn print_list(head: *Node) void {
+fn print_list(head: *Node) @void {
     cur: *Node = head
     for (;;) {
         if cur == null {
@@ -36,19 +36,19 @@ fn print_list(head: *Node) void {
     libc::printf("null\n")
 }
 
-fn free_list(head: *Node) void {
+fn free_list(head: *Node) @void {
     cur: *Node = head
     for (;;) {
         if cur == null {
             break
         }
         next: *Node = cur.*.next
-        libc::free(cur as *void)
+        libc::free(cur as *@void)
         cur = next
     }
 }
 
-fn main() int4 {
+fn main() @int4 {
     head: *Node = null
     defer free_list(head)
 

@@ -1,0 +1,7 @@
+import std::libc
+
+fn main() @int4 {
+    greeting: @string = @concat("Hello, ", "fib!")
+    libc::printf("%s (len=%d, eq=%d)\n", greeting, @str_len(greeting), @str_eq(greeting, greeting))
+    return 0
+}
