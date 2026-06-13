@@ -1,8 +1,7 @@
 use std::char;
 
 use crate::tokens::{
-    Keyword, Literal, Operator, Punctuation, Token, TokenKind,
-    builtin::{Builtin, BuiltinType},
+    Keyword, Literal, Operator, Punctuation, Token, TokenKind, builtin::Builtin,
     identifier::Identifier,
 };
 
@@ -308,8 +307,22 @@ impl<'input> Lexer<'input> {
                 }
             }
             '@' => {
-                self.bump();
-                Some(TokenKind::Punctuation(Punctuation::At))
+                self.bump(); // consume '@'
+                match self.peek() {
+                    // `@name` is a builtin (type or function). The bare name is
+                    // resolved against the central builtin table.
+                    Some(c) if c.is_alphabetic() || c == '_' => {
+                        let start = self.position;
+                        self.skip_while(|c| c.is_alphanumeric() || c == '_');
+                        let name = &self.input[start..self.position];
+                        match Builtin::from_name(name) {
+                            Some(builtin) => Some(TokenKind::Builtin(builtin)),
+                            None => Some(TokenKind::Error(format!("unknown builtin '@{}'", name))),
+                        }
+                    }
+                    // A bare `@` not followed by an identifier stays punctuation.
+                    _ => Some(TokenKind::Punctuation(Punctuation::At)),
+                }
             }
             c if c.is_ascii_digit() => self.lex_numeric(c),
             c if c.is_alphabetic() || c == '_' => Some(self.lex_identifier_or_keyword()),
@@ -529,24 +542,8 @@ impl<'input> Lexer<'input> {
             "true" => TokenKind::Literal(Literal::Boolean(true)),
             "false" => TokenKind::Literal(Literal::Boolean(false)),
             "null" => TokenKind::Literal(Literal::Null),
-            "void" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Void)),
-            "uint" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt1)),
-            "uint2" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt2)),
-            "uint4" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt4)),
-            "uint8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt8)),
-            "uint16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt16)),
-            "int" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int1)),
-            "int2" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int2)),
-            "int4" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int4)),
-            "int8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int8)),
-            "int16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int16)),
-            "float4" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float4)),
-            "float8" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float8)),
-            "float16" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Float16)),
-            "string" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::String)),
-            "char" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Char)),
-            "bool" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Boolean)),
-            "never" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Never)),
+            // Builtin types are no longer bare keywords — they are spelled `@int`,
+            // `@string`, etc. and handled in the `@` arm of lex_token.
             _ => TokenKind::Identifier(Identifier {
                 identifier: name.to_string(),
             }),
