@@ -2,7 +2,11 @@ use core::fmt;
 use std::collections::HashMap;
 
 use crate::ast::{FunctionDeclaration, ModulePath};
-use crate::tokens::{Operator, builtin::BuiltinType, identifier::Identifier};
+use crate::tokens::{
+    Operator,
+    builtin::{BuiltinFunction, BuiltinType},
+    identifier::Identifier,
+};
 
 /// A resolved module — one `.fib` file's exported symbols.
 #[derive(Debug, Clone)]
@@ -189,6 +193,12 @@ pub enum HIRExpressionKind {
     },
     Call {
         callee: Identifier,
+        args: Vec<HIRExpression>,
+    },
+    /// A call to a builtin function, e.g. `@concat(a, b)`. Lowered directly to
+    /// libc-backed LLVM IR rather than a user-defined function.
+    BuiltinCall {
+        builtin: BuiltinFunction,
         args: Vec<HIRExpression>,
     },
     FieldAccess {
