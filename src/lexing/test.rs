@@ -30,7 +30,7 @@ mod tests {
     #[test]
     fn test_literal_integer() {
         let test_string = "1234 01234 0x12AB 0b1100";
-        let expected = [1234, 01234, 0x12AB, 0b1100];
+        let expected = [1234, 1234, 0x12AB, 0b1100];
         let lexer = Lexer::new(test_string);
         lexer
             .zip(expected)
@@ -48,6 +48,7 @@ mod tests {
     #[test]
     fn test_literal_float() {
         let test_string = "3.14 0.14 12.4 1.0";
+        #[allow(clippy::approx_constant)]
         let expected = [3.14, 0.14, 12.4, 1.0];
         let lexer = Lexer::new(test_string);
         lexer
@@ -427,7 +428,7 @@ mod tests {
     #[test]
     fn test_complex_expression_tokens() {
         let test_string = "x += 42 * 3;";
-        let expected = vec![
+        let expected = [
             TokenKind::Identifier(Identifier {
                 identifier: "x".to_string(),
             }),

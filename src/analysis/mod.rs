@@ -1,5 +1,5 @@
 pub mod generate_hir;
-mod tests;
+mod test;
 
 pub use generate_hir::AnalysisError;
 pub use generate_hir::analyze;
