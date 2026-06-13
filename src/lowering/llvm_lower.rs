@@ -5,7 +5,7 @@ use crate::hir::{
     HIRSymbol, HIRTypeKind, Scope,
 };
 use crate::tokens::Operator;
-use crate::tokens::builtin::BuiltinType;
+use crate::tokens::builtin::{BuiltinFunction, BuiltinType};
 use crate::tokens::identifier::Identifier;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
@@ -393,6 +393,34 @@ fn unpack_tuple_value<'ctx, 'r>(
     Ok(values)
 }
 
+/// Look up a function by name, declaring it with external linkage if it does
+/// not already exist. Used to bind libc functions (`strlen`, `malloc`, ...)
+/// that back the string builtins.
+fn get_or_declare<'ctx>(
+    ctx: &CodegenCtx<'ctx, '_>,
+    name: &str,
+    fn_ty: FunctionType<'ctx>,
+) -> FunctionValue<'ctx> {
+    match ctx.module.get_function(name) {
+        Some(f) => f,
+        None => ctx
+            .module
+            .add_function(name, fn_ty, Some(inkwell::module::Linkage::External)),
+    }
+}
+
+/// Extract the basic return value of a call site, erroring if the call is void.
+fn call_result<'ctx>(
+    cs: inkwell::values::CallSiteValue<'ctx>,
+) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
+    match cs.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => Ok(v),
+        inkwell::values::ValueKind::Instruction(_) => {
+            Err("expected a return value from libc call".into())
+        }
+    }
+}
+
 fn codegen_expr<'ctx, 'r>(
     ctx: &'r CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
@@ -694,6 +722,83 @@ fn codegen_expr<'ctx, 'r>(
                 inkwell::values::ValueKind::Instruction(_) => {
                     // void return — return a dummy i32 zero (the value won't be used)
                     Ok(ctx.ctx.i32_type().const_int(0, false).as_basic_value_enum())
+                }
+            }
+        }
+        HIRExpressionKind::BuiltinCall { builtin, args } => {
+            let ptr_ty = ctx.ctx.ptr_type(AddressSpace::default());
+            let i64_ty = ctx.ctx.i64_type();
+            let mut arg_vals = Vec::with_capacity(args.len());
+            for a in args.iter() {
+                arg_vals.push(codegen_expr(ctx, vars, current_scope, a)?);
+            }
+            match builtin {
+                // strlen(s) -> i64
+                BuiltinFunction::StrLen => {
+                    let strlen =
+                        get_or_declare(ctx, "strlen", i64_ty.fn_type(&[ptr_ty.into()], false));
+                    let cs = ctx
+                        .builder
+                        .build_call(strlen, &[arg_vals[0].into()], "strlen")?;
+                    call_result(cs)
+                }
+                // strcmp(a, b) == 0 -> i1
+                BuiltinFunction::StrEq => {
+                    let i32_ty = ctx.ctx.i32_type();
+                    let strcmp = get_or_declare(
+                        ctx,
+                        "strcmp",
+                        i32_ty.fn_type(&[ptr_ty.into(), ptr_ty.into()], false),
+                    );
+                    let cs = ctx.builder.build_call(
+                        strcmp,
+                        &[arg_vals[0].into(), arg_vals[1].into()],
+                        "strcmp",
+                    )?;
+                    let res = call_result(cs)?.into_int_value();
+                    let eq = ctx.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        res,
+                        i32_ty.const_zero(),
+                        "streq",
+                    )?;
+                    Ok(eq.as_basic_value_enum())
+                }
+                // malloc(len(a)+len(b)+1); copy a, then b incl. its NUL -> ptr
+                BuiltinFunction::Concat => {
+                    let strlen =
+                        get_or_declare(ctx, "strlen", i64_ty.fn_type(&[ptr_ty.into()], false));
+                    let malloc =
+                        get_or_declare(ctx, "malloc", ptr_ty.fn_type(&[i64_ty.into()], false));
+                    let memcpy = get_or_declare(
+                        ctx,
+                        "memcpy",
+                        ptr_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into()], false),
+                    );
+                    let a = arg_vals[0].into_pointer_value();
+                    let b = arg_vals[1].into_pointer_value();
+                    let la = call_result(ctx.builder.build_call(strlen, &[a.into()], "la")?)?
+                        .into_int_value();
+                    let lb = call_result(ctx.builder.build_call(strlen, &[b.into()], "lb")?)?
+                        .into_int_value();
+                    let one = i64_ty.const_int(1, false);
+                    let sum = ctx.builder.build_int_add(la, lb, "lsum")?;
+                    let total = ctx.builder.build_int_add(sum, one, "ltotal")?;
+                    let buf = call_result(ctx.builder.build_call(malloc, &[total.into()], "buf")?)?
+                        .into_pointer_value();
+                    // memcpy(buf, a, la)
+                    ctx.builder
+                        .build_call(memcpy, &[buf.into(), a.into(), la.into()], "cpa")?;
+                    // dst = buf + la
+                    let dst = unsafe {
+                        ctx.builder
+                            .build_gep(ctx.ctx.i8_type(), buf, &[la], "dst")?
+                    };
+                    // memcpy(dst, b, lb + 1) — copies b's trailing NUL terminator too
+                    let lb1 = ctx.builder.build_int_add(lb, one, "lb1")?;
+                    ctx.builder
+                        .build_call(memcpy, &[dst.into(), b.into(), lb1.into()], "cpb")?;
+                    Ok(buf.as_basic_value_enum())
                 }
             }
         }
