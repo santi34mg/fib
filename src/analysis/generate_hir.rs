@@ -11,7 +11,7 @@ use crate::hir::{
     HIRIf, HIRModule, HIRReturn, HIRStmt, HIRSymbol, HIRTypeDeclaration, HIRTypeKind, Scope,
 };
 use crate::tokens::Operator;
-use crate::tokens::builtin::BuiltinType;
+use crate::tokens::builtin::{BuiltinFunction, BuiltinType};
 use crate::tokens::identifier::Identifier;
 use crate::tokens::literal::Literal;
 
@@ -940,6 +940,47 @@ fn expr_to_hir(
             inferred_type: HIRTypeKind::Builtin(BuiltinType::Never),
             expression: HIRExpressionKind::Null,
         }),
+        PExpr::BuiltinCall { builtin, args } => {
+            // Every string builtin takes `@string` arguments; only the arity and
+            // return type differ.
+            let (arity, ret) = match builtin {
+                BuiltinFunction::StrLen => (1usize, HIRTypeKind::Builtin(BuiltinType::UInt8)),
+                BuiltinFunction::Concat => (2, HIRTypeKind::Builtin(BuiltinType::String)),
+                BuiltinFunction::StrEq => (2, HIRTypeKind::Builtin(BuiltinType::Boolean)),
+            };
+            if args.len() != arity {
+                return Err(format!(
+                    "{} expects {} argument(s), but {} were given",
+                    builtin,
+                    arity,
+                    args.len()
+                )
+                .into());
+            }
+            let string_ty = HIRTypeKind::Builtin(BuiltinType::String);
+            let mut hargs = Vec::with_capacity(args.len());
+            for (i, arg) in args.into_iter().enumerate() {
+                let harg = expr_to_hir(arg, current_scope, generic_cache)?;
+                let found = harg.inferred_type.clone();
+                let harg = coerce_expr_to_type(harg, &string_ty).map_err(|_| -> AnalysisError {
+                    format!(
+                        "{}: argument {} expects type @string, but found {:?}",
+                        builtin,
+                        i + 1,
+                        found
+                    )
+                    .into()
+                })?;
+                hargs.push(harg);
+            }
+            Ok(HIRExpression {
+                inferred_type: ret,
+                expression: HIRExpressionKind::BuiltinCall {
+                    builtin,
+                    args: hargs,
+                },
+            })
+        }
         PExpr::Identifier(name) => {
             let sym = current_scope
                 .symbols
