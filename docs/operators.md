@@ -52,15 +52,16 @@ o.inner.value           // chained field access
 `expr as Type` — explicit type conversion. See [Casting](casting.md).
 
 ```fib
-ch as char
+ch as @char
 buf as *Node
-i as uint8
+i as @uint8
 ```
 
 ## Other tokens
 
-- `->` appears only in function type expressions: `fn(int4) -> int4`. See [Functions](functions.md).
+- `->` appears only in function type expressions: `fn(@int4) -> @int4`. See [Functions](functions.md).
+- `@` prefixes builtins: `@int`, `@string`, `@concat`, ... See [Types](types.md) and [Builtins](builtins.md).
 
 ## Reserved / not-yet-consumed
 
-- `..` (range syntax) and `@` (decorator/attribute) are reserved; the parser does not consume them yet.
+- `..` (range syntax) is reserved; the parser does not consume it yet.

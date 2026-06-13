@@ -7,7 +7,7 @@
 Variants are matched with the dotted pattern `.Variant`:
 
 ```fib
-fn describe(c: Color) void {
+fn describe(c: Color) @void {
     switch (c) {
         when .Red   { libc::printf("red\n") }
         when .Green { libc::printf("green\n") }
@@ -21,10 +21,10 @@ fn describe(c: Color) void {
 For a variant carrying a payload, bind it with `(name)`. The bound name behaves like a struct of the variant's fields:
 
 ```fib
-fn describe(t: Token) void {
+fn describe(t: Token) @void {
     switch (t) {
         when .Integer(i) { libc::printf("int=%d\n", i.value) }
-        when .Boolean(b) { libc::printf("bool=%d\n", b.flag as uint4) }
+        when .Boolean(b) { libc::printf("bool=%d\n", b.flag as @uint4) }
         when .EOF        { libc::printf("eof\n") }
     }
 }

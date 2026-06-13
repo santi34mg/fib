@@ -13,7 +13,7 @@ After import, names are referenced via the qualified path:
 
 ```fib
 libc::printf("Hello, World!\n")
-libc::malloc(16 as uint8)
+libc::malloc(16 as @uint8)
 ```
 
 ## Selective import

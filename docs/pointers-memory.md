@@ -4,12 +4,12 @@ Fib provides raw pointers and manual memory management. Allocation is performed 
 
 ## Pointer types
 
-`*T` is a raw pointer to `T`. `*void` is a pointer with no element type, used for untyped buffers.
+`*T` is a raw pointer to `T`. `*@void` is a pointer with no element type, used for untyped buffers.
 
 ```fib
 node: *Node
-buf: *void
-val: *int4
+buf: *@void
+val: *@int4
 ```
 
 ## `null`
@@ -17,7 +17,7 @@ val: *int4
 The `null` literal is the null pointer. It can initialize or be compared against any pointer:
 
 ```fib
-p: *int4 = null
+p: *@int4 = null
 if p == null {
     libc::printf("empty\n")
 }
@@ -59,8 +59,8 @@ Use `as` to convert between pointer types or between a pointer and an integer:
 
 ```fib
 buf as *Node
-addr as *void
-cur as uint8
+addr as *@void
+cur as @uint8
 ```
 
 ## Manual allocation
@@ -70,10 +70,10 @@ The standard library exposes the C allocator via `std::libc`:
 ```fib
 import std::libc
 
-node: *Node = libc::malloc(16 as uint8) as *Node
+node: *Node = libc::malloc(16 as @uint8) as *Node
 node.* = Node { data: val, next: head }
 ...
-libc::free(cur as *void)
+libc::free(cur as *@void)
 ```
 
 ## `defer` for cleanup
@@ -81,7 +81,7 @@ libc::free(cur as *void)
 Pair allocations with `defer` to ensure they are released on every exit path:
 
 ```fib
-pool: Pool = pool_create(4 as uint8, 6 as uint8)
+pool: Pool = pool_create(4 as @uint8, 6 as @uint8)
 defer pool_destroy(pool.&)
 ```
 

@@ -33,7 +33,7 @@ if x > 0 {
 C-style for loop with three semicolon-separated clauses: initializer, condition, post-operation. Any of the three may be omitted.
 
 ```fib
-for (i: int4 = 0; i < len; i += 1) {
+for (i: @int4 = 0; i < len; i += 1) {
     libc::printf("%d\n", i)
 }
 
@@ -46,7 +46,7 @@ for (;;) {
 }
 
 // while-style: only a condition
-for (; v != 0 as uint4 ;) {
+for (; v != 0 as @uint4 ;) {
     v = v >> 1
 }
 ```
@@ -77,7 +77,7 @@ return                 // bare return (void)
 Schedule a statement to run when the enclosing function exits. Useful for cleanup paired with allocation.
 
 ```fib
-fn main() int4 {
+fn main() @int4 {
     head: *Node
     defer free_list(head)
     ...

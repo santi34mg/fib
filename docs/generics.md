@@ -5,9 +5,9 @@ Fib supports lightweight generics by accepting a *type* as an ordinary parameter
 ## Declaring a type parameter
 
 ```fib
-fn insertion_sort(T: type, arr: *T, len: int4) void {
-    for (i: int4 = 1; i < len; i += 1) {
-        for (j: int4 = i; j > 0; j -= 1) {
+fn insertion_sort(T: type, arr: *T, len: @int4) @void {
+    for (i: @int4 = 1; i < len; i += 1) {
+        for (j: @int4 = i; j > 0; j -= 1) {
             if arr.[j] < arr.[j - 1] {
                 t: T = arr.[j]
                 arr.[j] = arr.[j - 1]
@@ -25,13 +25,13 @@ Inside the function body, `T` is used in any type position: parameter types, loc
 Pass the type as the first argument, just like any other value:
 
 ```fib
-arr: int4[8] = [3, 8, 5, 10, 2, 1, 6, 7]
+arr: @int4[8] = [3, 8, 5, 10, 2, 1, 6, 7]
 
-insertion_sort(int4, arr.& as *int4, 8)
-print_arr(int4, arr.& as *int4, 8)
+insertion_sort(@int4, arr.& as *@int4, 8)
+print_arr(@int4, arr.& as *@int4, 8)
 ```
 
 ## Notes
 
 - Type parameters are ordinary positional arguments; they don't use a separate angle-bracket syntax.
-- A type argument can be any built-in type or a user-declared type alias.
+- A type argument can be any built-in type (e.g. `@int4`) or a user-declared type alias.
