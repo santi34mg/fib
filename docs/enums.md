@@ -21,7 +21,7 @@ c: Color = Color.Green
 The discriminant can be read by casting:
 
 ```fib
-libc::printf("color = %d\n", c as uint8)
+libc::printf("color = %d\n", c as @uint8)
 ```
 
 ## Tagged union (enum with payload)
@@ -30,8 +30,8 @@ A variant may declare fields in braces, turning it into a tagged union:
 
 ```fib
 type Token enum {
-    Integer { value: uint4 },
-    Boolean { flag: bool },
+    Integer { value: @uint4 },
+    Boolean { flag: @bool },
     EOF,
 }
 ```
@@ -54,10 +54,10 @@ Token.Boolean { flag: true }
 Pattern-match on the variant with `switch` and `when`. See [Switch](switch.md).
 
 ```fib
-fn describe(t: Token) void {
+fn describe(t: Token) @void {
     switch (t) {
         when .Integer(i) { libc::printf("int=%d\n", i.value) }
-        when .Boolean(b) { libc::printf("bool=%d\n", b.flag as uint4) }
+        when .Boolean(b) { libc::printf("bool=%d\n", b.flag as @uint4) }
         when .EOF { libc::printf("eof\n") }
     }
 }

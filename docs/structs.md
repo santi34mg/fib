@@ -8,10 +8,10 @@ Fields are written as `name: type`, separated by commas. A trailing comma is all
 
 ```fib
 type Pool struct {
-    start: uint8,
-    block_size: uint8,
-    capacity: uint8,
-    used: uint8,
+    start: @uint8,
+    block_size: @uint8,
+    capacity: @uint8,
+    used: @uint8,
 }
 ```
 
@@ -19,7 +19,7 @@ Self-referential structs use a pointer to the type being declared:
 
 ```fib
 type Node struct {
-    data: int4,
+    data: @int4,
     next: *Node,
 }
 ```
@@ -29,7 +29,7 @@ type Node struct {
 Use the type name followed by braces with `field: value` pairs:
 
 ```fib
-Pool { start: buf as uint8, block_size: 4 as uint8, capacity: 6 as uint8, used: 0 as uint8 }
+Pool { start: buf as @uint8, block_size: 4 as @uint8, capacity: 6 as @uint8, used: 0 as @uint8 }
 
 Node { data: val, next: head }
 ```
@@ -38,7 +38,7 @@ The result can be assigned, returned, passed as an argument, or written through 
 
 ```fib
 node.* = Node { data: val, next: head }
-return Pool { start: buf as uint8, ... }
+return Pool { start: buf as @uint8, ... }
 ```
 
 ## Field access
@@ -71,7 +71,7 @@ pool_alloc(pool.&)
 Structs can hold other struct values directly:
 
 ```fib
-type Inner struct { value: uint8, }
+type Inner struct { value: @uint8, }
 type Outer struct { inner: Inner, }
 
 o: Outer = Outer { inner: Inner { value: 0 } }

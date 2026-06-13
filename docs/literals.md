@@ -6,7 +6,7 @@ Line comments start with `//` and run to the end of the line. There are no block
 
 ```fib
 // compute the length of the list
-len: int4 = list_length(head)   // trailing comments work too
+len: @int4 = list_length(head)   // trailing comments work too
 ```
 
 ## Integer literals
@@ -25,7 +25,7 @@ Decimal by default. A `0`-prefix selects another base:
 A decimal point with digits on both sides produces a float:
 
 ```fib
-f: float8 = 3.25
+f: @float8 = 3.25
 ```
 
 Only decimal floats are supported. `1..5` lexes as `1`, `..`, `5` (the `..` token is reserved), so a fractional part requires a digit after the dot.

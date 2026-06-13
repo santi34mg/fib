@@ -4,7 +4,8 @@ Fib is a systems programming language designed for performance, clarity, and dev
 
 ## Contents
 
-- [Types](types.md) — built-in primitive types
+- [Types](types.md) — built-in primitive types (`@`-prefixed)
+- [Builtins](builtins.md) — `@`-prefixed builtin functions (`@concat`, `@str_len`, `@str_eq`)
 - [Literals and Comments](literals.md) — integer bases, floats, chars, strings, escapes, `null`, comments
 - [Variables](variables.md) — declarations, type inference, immutability
 - [Operators](operators.md) — arithmetic, bitwise, logical, comparison, compound assignment

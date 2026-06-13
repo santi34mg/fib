@@ -7,8 +7,8 @@ Fib provides explicit and inferred local variable declarations.
 `name: type = expr` — declares a variable with an explicit type and initializer.
 
 ```fib
-count: int4 = 0
-v: uint4 = x
+count: @int4 = 0
+v: @uint4 = x
 head: *Node
 ```
 
@@ -20,7 +20,7 @@ The initializer is optional; `head: *Node` declares an uninitialized pointer.
 
 ```fib
 q, r := divmod(17, 5)
-total: uint8 = block_size * capacity
+total: @uint8 = block_size * capacity
 ```
 
 The walrus form also supports multiple identifiers, used for destructuring multi-return functions.
@@ -30,7 +30,7 @@ The walrus form also supports multiple identifiers, used for destructuring multi
 The older `var <type> <name> = expr` form is still accepted:
 
 ```fib
-var int4 count = 5
+var @int4 count = 5
 ```
 
 New code should prefer the colon forms above.

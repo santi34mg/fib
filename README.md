@@ -37,7 +37,8 @@ cargo run -- samples/hello_world.fib -I=std
 
 ## Language Features
 
-- **Types**: byte-sized integers (`int`, `int2`, `int4`, `int8`, `int16` and unsigned `uint...` counterparts), `float4/8/16`, `bool`, `char`, `string`, structs, enums/tagged unions, arrays, raw pointers
+- **Types**: built-in types are `@`-prefixed — byte-sized integers (`@int`, `@int2`, `@int4`, `@int8`, `@int16` and unsigned `@uint...` counterparts), `@float4/8/16`, `@bool`, `@char`, `@string`, plus structs, enums/tagged unions, arrays, raw pointers
+- **Builtins**: `@`-prefixed builtin functions for string building — `@concat`, `@str_len`, `@str_eq`
 - **Functions**: declarations with `name: type` parameters, forward declarations, multiple return values, variadic, extern, type parameters (generics)
 - **Variables**: explicit declarations use `name: type = init`; inferred declarations use `name := init`
 - **Control flow**: `if`/`else`, C-style `for`, `break`, `continue`, `defer`, `return`, `switch`/`when` pattern matching
