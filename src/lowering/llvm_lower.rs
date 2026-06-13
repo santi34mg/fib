@@ -1472,7 +1472,7 @@ fn codegen_stmt<'ctx, 'r>(
                 vals
             };
 
-            for (target, value) in targets.iter().zip(evaluated_values.into_iter()) {
+            for (target, value) in targets.iter().zip(evaluated_values) {
                 store_lvalue(ctx, vars, current_scope, target, value)?;
             }
             Ok(None)
@@ -1500,7 +1500,7 @@ fn codegen_stmt<'ctx, 'r>(
                 vals
             };
 
-            for (binding, value) in bindings.iter().zip(evaluated_values.into_iter()) {
+            for (binding, value) in bindings.iter().zip(evaluated_values) {
                 let ty = map_type_to_llvm(&binding.ty, ctx.ctx, current_scope.clone())?;
                 let alloca = ctx
                     .builder

@@ -620,7 +620,7 @@ fn multi_var_decl_to_hir(
 
     let binding_types = infer_multi_binding_types(&identifiers, &hir_values)?;
     let mut bindings = Vec::new();
-    for (identifier, ty) in identifiers.into_iter().zip(binding_types.into_iter()) {
+    for (identifier, ty) in identifiers.into_iter().zip(binding_types) {
         let binding = HIRBinding {
             name: identifier.clone(),
             ty,
