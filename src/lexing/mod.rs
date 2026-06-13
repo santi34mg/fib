@@ -1,4 +1,4 @@
 pub mod lexer;
-mod tests;
+mod test;
 
 pub use lexer::Lexer;

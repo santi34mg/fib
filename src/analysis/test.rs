@@ -36,10 +36,10 @@ mod tests {
         cu.declarations
             .iter()
             .find_map(|d| {
-                if let HIRDeclaration::HIRFunction(f) = d {
-                    if f.name.identifier == name {
-                        return Some(f);
-                    }
+                if let HIRDeclaration::HIRFunction(f) = d
+                    && f.name.identifier == name
+                {
+                    return Some(f);
                 }
                 None
             })
