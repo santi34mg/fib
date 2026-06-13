@@ -1,53 +1,53 @@
 import std::libc
 
 type Pool struct {
-    start: uint8,
-    block_size: uint8,
-    capacity: uint8,
-    used: uint8,
+    start: @uint8,
+    block_size: @uint8,
+    capacity: @uint8,
+    used: @uint8,
 }
 
-fn pool_create(block_size: uint8, capacity: uint8) Pool {
-    total: uint8 = block_size * capacity
-    buf: *void = libc::malloc(total)
-    return Pool { start: buf as uint8, block_size: block_size, capacity: capacity, used: 0 as uint8 }
+fn pool_create(block_size: @uint8, capacity: @uint8) Pool {
+    total: @uint8 = block_size * capacity
+    buf: *@void = libc::malloc(total)
+    return Pool { start: buf as @uint8, block_size: block_size, capacity: capacity, used: 0 as @uint8 }
 }
 
-fn pool_alloc(pool: *Pool) *void {
+fn pool_alloc(pool: *Pool) *@void {
     if pool.*.used >= pool.*.capacity {
         return null
     }
-    offset: uint8 = pool.*.used * pool.*.block_size
-    addr: uint8 = pool.*.start + offset
+    offset: @uint8 = pool.*.used * pool.*.block_size
+    addr: @uint8 = pool.*.start + offset
     p: Pool = pool.*
     p.used = p.used + 1
     pool.* = p
-    return addr as *void
+    return addr as *@void
 }
 
-fn pool_destroy(pool: *Pool) void {
-    libc::free(pool.*.start as *void)
+fn pool_destroy(pool: *Pool) @void {
+    libc::free(pool.*.start as *@void)
 }
 
-fn main() int4 {
-    pool: Pool = pool_create(4 as uint8, 6 as uint8)
+fn main() @int4 {
+    pool: Pool = pool_create(4 as @uint8, 6 as @uint8)
     defer pool_destroy(pool.&)
 
     libc::printf("Pool: block_size=%d, capacity=%d\n",
-        pool.block_size as int4,
-        pool.capacity as int4)
+        pool.block_size as @int4,
+        pool.capacity as @int4)
 
-    for (i: int4 = 0; i < 8; i += 1) {
-        block: *void = pool_alloc(pool.&)
+    for (i: @int4 = 0; i < 8; i += 1) {
+        block: *@void = pool_alloc(pool.&)
         if block == null {
             libc::printf("Alloc %d failed: pool exhausted\n", i)
             break
         }
-        val: *int4 = block as *int4
+        val: *@int4 = block as *@int4
         val.* = (i + 1) * 7
         libc::printf("Block %d: wrote %d\n", i, val.*)
     }
 
-    libc::printf("Used: %d / %d\n", pool.used as int4, pool.capacity as int4)
+    libc::printf("Used: %d / %d\n", pool.used as @int4, pool.capacity as @int4)
     return 0
 }

@@ -1,4 +1,4 @@
 type Error struct {
-    string message,
-    int code,
+    @string message,
+    @int code,
 }

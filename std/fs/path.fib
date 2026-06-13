@@ -1,11 +1,11 @@
 type Path struct {
-    string value,
+    @string value,
 }
 
-fn path_from_string(string value) Path {
+fn path_from_string(@string value) Path {
     ret Path { value: value }
 }
 
-fn path_as_string(Path path) string {
+fn path_as_string(Path path) @string {
     ret path.value
 }
