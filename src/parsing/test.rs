@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_return_statement() {
-        let test_string = "fn foo() @int4 { ret 42 }";
+        let test_string = "fn foo() @int4 { return 42 }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_return_void() {
-        let test_string = "fn foo() { ret }";
+        let test_string = "fn foo() { return }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_function_declaration_with_params() {
-        let test_string = "fn add(@int4 a, @int4 b) @int4 { ret a }";
+        let test_string = "fn add(a: @int4, b: @int4) @int4 { return a }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_extern_function_declaration() {
-        let test_string = "extern fn printf(@string fmt) @int4;";
+        let test_string = "extern fn printf(fmt: @string) @int4;";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {

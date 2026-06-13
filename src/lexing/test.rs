@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_return_keyword() {
-        let test_string = "ret";
+        let test_string = "return";
         let lexer = Lexer::new(test_string);
         lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::Return)))
     }
@@ -154,7 +154,7 @@ mod tests {
             ("for", TokenKind::Keyword(Keyword::For)),
             ("break", TokenKind::Keyword(Keyword::Break)),
             ("continue", TokenKind::Keyword(Keyword::Continue)),
-            ("ret", TokenKind::Keyword(Keyword::Return)),
+            ("return", TokenKind::Keyword(Keyword::Return)),
             ("struct", TokenKind::Keyword(Keyword::Struct)),
             ("extern", TokenKind::Keyword(Keyword::Extern)),
             ("defer", TokenKind::Keyword(Keyword::Defer)),

@@ -50,7 +50,7 @@ mod tests {
 
     #[test]
     fn test_integer_literal_defaults_to_int4() {
-        let cu = get_hir("fn f() @int4 { ret 42 }");
+        let cu = get_hir("fn f() @int4 { return 42 }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[0] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_float_literal_defaults_to_float8() {
-        let cu = get_hir("fn f() @float8 { ret 3.14 }");
+        let cu = get_hir("fn f() @float8 { return 3.14 }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[0] {
             assert_eq!(
@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn test_bool_literal_type() {
-        let cu = get_hir("fn f() @bool { ret true }");
+        let cu = get_hir("fn f() @bool { return true }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[0] {
             assert_eq!(
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_string_literal_type() {
-        let cu = get_hir(r#"fn f() @string { ret "hi" }"#);
+        let cu = get_hir(r#"fn f() @string { return "hi" }"#);
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[0] {
             assert_eq!(
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_null_literal_type_is_void() {
-        let cu = get_hir("fn f() { x: @int4 = 1\n ret }");
+        let cu = get_hir("fn f() { x: @int4 = 1\n return }");
         // Just ensure void return analyzes without error.
         let _ = cu;
     }
@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn test_multi_var_declaration_infers_tuple_types() {
         let cu = get_hir(
-            "fn divmod(@int4 a, @int4 b) (@int4, @int4) { ret a / b, a % b }\nfn f() { q, r := divmod(17, 5) }",
+            "fn divmod(a: @int4, b: @int4) (@int4, @int4) { return a / b, a % b }\nfn f() { q, r := divmod(17, 5) }",
         );
         let f = get_function(&cu, "f");
         if let HIRStmt::MultiBinding { bindings, .. } = &f.body[0] {
@@ -255,14 +255,14 @@ mod tests {
 
     #[test]
     fn test_function_return_type() {
-        let cu = get_hir("fn add(@int4 a, @int4 b) @int4 { ret a }");
+        let cu = get_hir("fn add(a: @int4, b: @int4) @int4 { return a }");
         let f = get_function(&cu, "add");
         assert_eq!(f.return_type, HIRTypeKind::Builtin(BuiltinType::Int4));
     }
 
     #[test]
     fn test_function_params_count_and_types() {
-        let cu = get_hir("fn add(@int4 a, @int4 b) @int4 { ret a }");
+        let cu = get_hir("fn add(a: @int4, b: @int4) @int4 { return a }");
         let f = get_function(&cu, "add");
         assert_eq!(f.params.len(), 2);
         assert_eq!(f.params[0].0.identifier, "a");
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_extern_function_is_marked() {
-        let cu = get_hir("extern fn puts(@string s) @int4;");
+        let cu = get_hir("extern fn puts(s: @string) @int4;");
         let f = get_function(&cu, "puts");
         assert!(f.is_extern);
         assert!(f.body.is_empty());
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_variadic_function_is_marked() {
-        let cu = get_hir("extern fn printf(@string fmt, ...) @int4;");
+        let cu = get_hir("extern fn printf(fmt: @string, ...) @int4;");
         let f = get_function(&cu, "printf");
         assert!(f.is_variadic);
     }
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_binary_add_type_is_lhs() {
-        let cu = get_hir("fn f() @int4 { a: @int4 = 1\n b: @int4 = 2\n ret a + b }");
+        let cu = get_hir("fn f() @int4 { a: @int4 = 1\n b: @int4 = 2\n return a + b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_binary_sub_type_is_lhs() {
-        let cu = get_hir("fn f() @int4 { a: @int4 = 10\n b: @int4 = 3\n ret a - b }");
+        let cu = get_hir("fn f() @int4 { a: @int4 = 10\n b: @int4 = 3\n return a - b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_comparison_result_is_bool() {
-        let cu = get_hir("fn f() @bool { a: @int4 = 1\n b: @int4 = 2\n ret a < b }");
+        let cu = get_hir("fn f() @bool { a: @int4 = 1\n b: @int4 = 2\n return a < b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_equality_result_is_bool() {
-        let cu = get_hir("fn f() @bool { a: @int4 = 1\n b: @int4 = 1\n ret a == b }");
+        let cu = get_hir("fn f() @bool { a: @int4 = 1\n b: @int4 = 1\n return a == b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_comparison_coerces_right_integer_literal_to_left_type() {
-        let cu = get_hir("fn f() @bool { a: @int4 = 1\n ret a as @uint8 != 0 }");
+        let cu = get_hir("fn f() @bool { a: @int4 = 1\n return a as @uint8 != 0 }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[1] {
             assert_eq!(
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_logical_and_result_is_bool() {
-        let cu = get_hir("fn f() @bool { a: @bool = true\n b: @bool = false\n ret a && b }");
+        let cu = get_hir("fn f() @bool { a: @bool = true\n b: @bool = false\n return a && b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_logical_or_result_is_bool() {
-        let cu = get_hir("fn f() @bool { a: @bool = true\n b: @bool = false\n ret a || b }");
+        let cu = get_hir("fn f() @bool { a: @bool = true\n b: @bool = false\n return a || b }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_return_void_in_hir() {
-        let cu = get_hir("fn f() { ret }");
+        let cu = get_hir("fn f() { return }");
         let f = get_function(&cu, "f");
         assert!(matches!(f.body[0], HIRStmt::Return(None)));
     }
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_identifier_resolves_to_binding_type() {
-        let cu = get_hir("fn f() @int4 { x: @int4 = 5\n ret x }");
+        let cu = get_hir("fn f() @int4 { x: @int4 = 5\n return x }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[1] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_undefined_identifier_errors() {
-        let err = get_hir_err("fn f() @int4 { ret undefined_var }");
+        let err = get_hir_err("fn f() @int4 { return undefined_var }");
         assert!(
             err.contains("undefined_var"),
             "error should mention 'undefined_var', got: {}",
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_type_mismatch_struct_vs_int_errors() {
-        let err = get_hir_err("type Point struct { @int4 x, @int4 y }\nfn f() { p: Point = 5 }");
+        let err = get_hir_err("type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = 5 }");
         assert!(!err.is_empty(), "expected type mismatch error");
     }
 
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_cast_changes_inferred_type() {
-        let cu = get_hir("fn f() @int8 { x: @int4 = 5\n ret x as @int8 }");
+        let cu = get_hir("fn f() @int8 { x: @int4 = 5\n return x as @int8 }");
         let f = get_function(&cu, "f");
         if let HIRStmt::Return(Some(expr)) = &f.body[1] {
             assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int8));
@@ -541,7 +541,7 @@ mod tests {
 
     #[test]
     fn test_function_calling_another_function() {
-        let cu = get_hir("fn helper() @int4 { ret 1 }\nfn main() @int4 { ret helper() }");
+        let cu = get_hir("fn helper() @int4 { return 1 }\nfn main() @int4 { return helper() }");
         let main_f = get_function(&cu, "main");
         if let HIRStmt::Return(Some(expr)) = &main_f.body[0] {
             assert!(matches!(expr.expression, HIRExpressionKind::Call { .. }));
