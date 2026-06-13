@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn test_var_declaration_with_type() {
         use crate::ast::VariableDeclaration;
-        let test_string = "var int4 count = 0;";
+        let test_string = "var @int4 count = 0;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn test_var_declaration_no_initializer() {
         use crate::ast::VariableDeclaration;
-        let test_string = "var int4 x;";
+        let test_string = "var @int4 x;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn test_colon_var_declaration_with_type() {
         use crate::ast::VariableDeclaration;
-        let test_string = "fn f() { count: int4 = 0; }";
+        let test_string = "fn f() { count: @int4 = 0; }";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_return_statement() {
-        let test_string = "fn foo() int4 { ret 42 }";
+        let test_string = "fn foo() @int4 { ret 42 }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_for_loop() {
-        let test_string = "for (i: int4 = 0; i < 10; i += 1) { }";
+        let test_string = "for (i: @int4 = 0; i < 10; i += 1) { }";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_function_declaration_with_params() {
-        let test_string = "fn add(int4 a, int4 b) int4 { ret a }";
+        let test_string = "fn add(@int4 a, @int4 b) @int4 { ret a }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_extern_function_declaration() {
-        let test_string = "extern fn printf(string fmt) int4;";
+        let test_string = "extern fn printf(@string fmt) @int4;";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let crate::ast::DeclarationNode::FunctionDeclaration(f) = d {
@@ -512,7 +512,7 @@ mod tests {
 
     #[test]
     fn test_cast_expression() {
-        let test_string = "x as int8";
+        let test_string = "x as @int8";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(

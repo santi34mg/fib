@@ -1400,6 +1400,37 @@ where
             TokenKind::Builtin(Builtin::BuiltinType(bt)) => {
                 Expression::TypeValue(TypeExpression::Builtin(bt))
             }
+            // A builtin function call, e.g. `@concat(a, b)`. The parentheses are
+            // mandatory — a bare `@concat` is an error.
+            TokenKind::Builtin(Builtin::BuiltinFunction(bf)) => {
+                self.expect_token(
+                    TokenKind::Punctuation(Punctuation::OpeningParenthesis),
+                    "parse_atom: expected '(' after builtin function",
+                )?;
+                let mut args = Vec::new();
+                if let Some(token) = self.peek()
+                    && !matches!(
+                        token.kind,
+                        TokenKind::Punctuation(Punctuation::ClosingParenthesis)
+                    )
+                {
+                    loop {
+                        args.push(self.allow_struct_literals(|p| p.parse_expression())?);
+                        if let Some(token) = self.peek()
+                            && matches!(token.kind, TokenKind::Punctuation(Punctuation::Comma))
+                        {
+                            self.next(); // consume ','
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect_token(
+                    TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+                    "parse_atom: expected ')' after builtin function arguments",
+                )?;
+                Expression::BuiltinCall { builtin: bf, args }
+            }
             TokenKind::Literal(Literal::Null) => Expression::Literal(Literal::Null),
             _ => {
                 return Err(self.error(
