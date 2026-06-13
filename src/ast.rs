@@ -1,7 +1,7 @@
 use core::fmt;
 
 use crate::tokens::Operator;
-use crate::tokens::builtin::BuiltinType;
+use crate::tokens::builtin::{BuiltinFunction, BuiltinType};
 use crate::tokens::identifier::Identifier;
 use crate::tokens::literal::Literal;
 
@@ -295,6 +295,11 @@ pub enum Expression {
     Grouping(Box<Expression>),
     Call {
         callee: Box<Expression>,
+        args: Vec<Expression>,
+    },
+    /// A call to a builtin function, e.g. `@concat(a, b)`.
+    BuiltinCall {
+        builtin: BuiltinFunction,
         args: Vec<Expression>,
     },
     FieldAccess {
