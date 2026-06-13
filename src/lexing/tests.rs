@@ -377,6 +377,54 @@ mod tests {
     }
 
     #[test]
+    fn test_builtins_require_at_prefix() {
+        use crate::tokens::builtin::{Builtin, BuiltinFunction, BuiltinType};
+
+        // Bare type names are now plain identifiers.
+        let toks: Vec<_> = Lexer::new("int string bool").collect();
+        assert!(
+            toks.iter()
+                .all(|t| matches!(t.kind, TokenKind::Identifier(_))),
+            "bare type names should lex as identifiers: {:?}",
+            toks
+        );
+
+        // `@name` resolves to a builtin type.
+        let toks: Vec<_> = Lexer::new("@int @string").collect();
+        assert_eq!(
+            toks[0].kind,
+            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int1))
+        );
+        assert_eq!(
+            toks[1].kind,
+            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::String))
+        );
+
+        // `@name` also resolves to a builtin function.
+        let toks: Vec<_> = Lexer::new("@concat @str_len @str_eq").collect();
+        assert_eq!(
+            toks[0].kind,
+            TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::Concat))
+        );
+        assert_eq!(
+            toks[1].kind,
+            TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::StrLen))
+        );
+        assert_eq!(
+            toks[2].kind,
+            TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::StrEq))
+        );
+
+        // An unknown `@name` is an error.
+        let toks: Vec<_> = Lexer::new("@nope").collect();
+        assert!(matches!(toks[0].kind, TokenKind::Error(_)));
+
+        // A bare `@` not followed by an identifier stays punctuation.
+        let toks: Vec<_> = Lexer::new("@ x").collect();
+        assert_eq!(toks[0].kind, TokenKind::Punctuation(Punctuation::At));
+    }
+
+    #[test]
     fn test_complex_expression_tokens() {
         let test_string = "x += 42 * 3;";
         let expected = vec![
