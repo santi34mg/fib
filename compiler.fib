@@ -420,6 +420,10 @@ fn main() uint {
             col += 2
         } else if (curr == '\"') {
             // string
+
+            for (;;) {
+
+            }
         } else if (isdigit(curr) != 0) {
             // number literals
         } else if (isalpha(curr) != 0  || curr == '_') {
