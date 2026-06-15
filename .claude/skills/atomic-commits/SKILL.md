@@ -1,5 +1,5 @@
 ---
-name: grouped-commits
+name: atommic-commits
 description: Split the current working tree changes into multiple small, one-line commits grouped by area (lexer, parser, ast, analysis/hir, lowering, samples/std, docs, compiler.fib, etc). Use when the user asks to commit pending changes as several focused commits.
 ---
 
