@@ -165,6 +165,7 @@ fn tokens_push(darr: *TokenDArray, tok: Token) {
     darr.*.len += 24;
 }
 
+// forward declare the function
 fn token_kind() TokenKind;
 
 fn main() @uint {
