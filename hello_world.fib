@@ -1,4 +1,0 @@
-
-fn main() @uint {
-    return 0
-}
