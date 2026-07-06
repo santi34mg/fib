@@ -1,13 +1,7 @@
-pub mod analysis;
-pub mod ast;
 pub mod cli;
 pub mod driver;
-pub mod hir;
-pub mod lexing;
-#[cfg(feature = "llvm")]
-pub mod lowering;
-pub mod parsing;
-pub mod tokens;
+pub mod frontend;
+pub mod backend;
 
 #[cfg(feature = "llvm")]
 use std::error::Error;
