@@ -7,14 +7,14 @@ use std::{fs, io};
 
 use std::fmt;
 
-use crate::analysis::{AnalysisError, analyze};
-use crate::ast::{Ast, DeclarationNode};
-use crate::hir::{CompilationUnit, HIRModule};
-use crate::lowering;
-use crate::parsing::Parser;
-use crate::parsing::parser::ParseError;
-use crate::tokens::identifier::Identifier as FibIdentifier;
-use crate::{lexing::Lexer, tokens::Token};
+use crate::backend::lowering;
+use crate::frontend::analyze::{AnalysisError, analyze};
+use crate::frontend::ast::{Ast, declaration::DeclarationNode};
+use crate::frontend::identifier::Identifier;
+use crate::frontend::ir::{CompilationUnit, HIRModule};
+use crate::frontend::parser::ParseError;
+use crate::frontend::parser::Parser;
+use crate::frontend::{lexer::Lexer, tokens::Token};
 
 /// Result of running the compiler frontend (lex + parse + analyze) without LLVM lowering.
 /// Always contains as much data as could be produced before the first fatal error.
@@ -121,7 +121,7 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
             let import_paths: Vec<String> = import_decl
                 .path
                 .iter()
-                .map(|id| id.identifier.clone())
+                .map(|id| id.value.clone())
                 .collect();
             if !resolved_modules.contains_key(&import_paths) {
                 resolve_module(
@@ -245,7 +245,7 @@ fn resolve_module(
     for decl in &ast.declarations {
         if let DeclarationNode::ImportDeclaration(import) = decl {
             let import_path: Vec<String> =
-                import.path.iter().map(|id| id.identifier.clone()).collect();
+                import.path.iter().map(|id| id.value.clone()).collect();
             if !resolved.contains_key(&import_path) {
                 resolve_module(&import_path, search_roots, resolved, resolving)?;
             }
@@ -258,9 +258,7 @@ fn resolve_module(
         name: module_name,
         path: path
             .iter()
-            .map(|s| FibIdentifier {
-                identifier: s.clone(),
-            })
+            .map(|s| Identifier { value: s.clone() })
             .collect(),
         exports: cu.scope_root.symbols,
         declarations: [cu.declarations, cu.imported_declarations].concat(),
