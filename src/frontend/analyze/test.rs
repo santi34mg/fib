@@ -4,7 +4,9 @@ mod tests {
     use std::path::Path;
 
     use crate::frontend::analyze::analyze;
-    use crate::frontend::ir::{CompilationUnit, HIRDeclaration, HIRExpressionKind, HIRFunction, HIRStatement, HIRTypeKind};
+    use crate::frontend::ir::{
+        CompilationUnit, HIRDeclaration, HIRExpressionKind, HIRFunction, HIRStatement, HIRTypeKind,
+    };
     use crate::frontend::lexer::Lexer;
     use crate::frontend::parser::Parser;
     use crate::frontend::tokens::{Token, builtin::BuiltinType};
@@ -29,10 +31,7 @@ mod tests {
             .msg
     }
 
-    fn get_function<'a>(
-        cu: &'a CompilationUnit,
-        name: &str,
-    ) -> &'a HIRFunction {
+    fn get_function<'a>(cu: &'a CompilationUnit, name: &str) -> &'a HIRFunction {
         cu.declarations
             .iter()
             .find_map(|d| {

@@ -1,7 +1,7 @@
 use crate::frontend::{
+    ast::type_expression::TypeExpression,
     identifier::Identifier,
     tokens::{Literal, Operator, builtin::BuiltinFunction},
-    ast::type_expression::TypeExpression,
 };
 
 #[derive(Debug, Clone)]

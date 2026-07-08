@@ -1,4 +1,8 @@
-use crate::frontend::{ast::variable_declaration::VariableDeclaration, parser::ParseResult, tokens::{Keyword, Operator, Punctuation, Token, TokenKind}};
+use crate::frontend::{
+    ast::variable_declaration::VariableDeclaration,
+    parser::ParseResult,
+    tokens::{Keyword, Operator, Punctuation, Token, TokenKind},
+};
 
 use super::Parser;
 
@@ -32,7 +36,6 @@ where
 
         Ok(VariableDeclaration::new(ident, var_type, expr))
     }
-
 
     /// Parses the colon-based variable declaration syntax:
     /// - `name: type = init` for an explicit type annotation

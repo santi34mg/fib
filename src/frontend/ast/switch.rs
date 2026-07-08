@@ -7,4 +7,3 @@ pub struct SwitchArm {
     pub pattern: Pattern,
     pub body: Vec<Statement>,
 }
-

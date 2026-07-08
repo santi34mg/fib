@@ -1,5 +1,6 @@
 use crate::frontend::{
-    ast::{expression::Expression, switch::SwitchArm, variable_declaration::VariableDeclaration}, identifier::Identifier,
+    ast::{expression::Expression, switch::SwitchArm, variable_declaration::VariableDeclaration},
+    identifier::Identifier,
 };
 
 /// A statement together with the source line it starts on, used to point

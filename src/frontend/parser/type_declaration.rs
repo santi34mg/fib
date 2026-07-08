@@ -1,4 +1,8 @@
-use crate::frontend::{ast::type_declaration::TypeDeclaration, parser::ParseResult, tokens::{Keyword, Token, TokenKind}};
+use crate::frontend::{
+    ast::type_declaration::TypeDeclaration,
+    parser::ParseResult,
+    tokens::{Keyword, Token, TokenKind},
+};
 
 use super::Parser;
 

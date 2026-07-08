@@ -1,7 +1,7 @@
+pub mod backend;
 pub mod cli;
 pub mod driver;
 pub mod frontend;
-pub mod backend;
 
 #[cfg(feature = "llvm")]
 use std::error::Error;

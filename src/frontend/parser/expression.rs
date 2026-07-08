@@ -1,4 +1,8 @@
-use crate::frontend::{ast::expression::Expression, parser::ParseResult, tokens::{Punctuation, Token, TokenKind}};
+use crate::frontend::{
+    ast::expression::Expression,
+    parser::ParseResult,
+    tokens::{Punctuation, Token, TokenKind},
+};
 
 use super::Parser;
 impl<'a, I> Parser<'a, I>

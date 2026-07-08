@@ -4,7 +4,9 @@ mod tests {
 
     use crate::frontend::ast::statement::StatementKind;
     use crate::frontend::ast::variable_declaration::VariableDeclaration;
-use crate::frontend::ast::{Ast, declaration::DeclarationNode, expression::Expression, type_expression::TypeExpression};
+    use crate::frontend::ast::{
+        Ast, declaration::DeclarationNode, expression::Expression, type_expression::TypeExpression,
+    };
     use crate::frontend::lexer::Lexer;
     use crate::frontend::parser::Parser;
     use crate::frontend::tokens::{Literal, Operator, Token};
@@ -645,4 +647,3 @@ use crate::frontend::ast::{Ast, declaration::DeclarationNode, expression::Expres
         }
     }
 }
-

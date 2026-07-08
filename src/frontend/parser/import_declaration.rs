@@ -1,4 +1,8 @@
-use crate::frontend::{ast::imports::ImportDeclaration, parser::ParseResult, tokens::{Keyword, Punctuation, Token, TokenKind}};
+use crate::frontend::{
+    ast::imports::ImportDeclaration,
+    parser::ParseResult,
+    tokens::{Keyword, Punctuation, Token, TokenKind},
+};
 
 use super::Parser;
 

@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::frontend::identifier::Identifier;
 use crate::frontend::ir::{
-    CompilationUnit, HIRBinding, HIRDeclaration, HIREnumVariant, HIRExpression, HIRExpressionKind, HIRFunction, HIRPattern, HIRStatement, HIRSwitchArm, HIRSymbol, HIRTypeKind, Scope,
+    CompilationUnit, HIRBinding, HIRDeclaration, HIREnumVariant, HIRExpression, HIRExpressionKind,
+    HIRFunction, HIRPattern, HIRStatement, HIRSwitchArm, HIRSymbol, HIRTypeKind, Scope,
 };
 use crate::frontend::tokens::Operator;
 use crate::frontend::tokens::builtin::{BuiltinFunction, BuiltinType};

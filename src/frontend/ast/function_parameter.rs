@@ -1,4 +1,4 @@
-use crate::frontend::{identifier::Identifier, ast::type_expression::TypeExpression};
+use crate::frontend::{ast::type_expression::TypeExpression, identifier::Identifier};
 
 #[derive(Debug, Clone)]
 pub struct FunctionParameter {

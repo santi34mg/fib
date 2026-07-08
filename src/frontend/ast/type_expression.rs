@@ -1,6 +1,10 @@
 use std::fmt;
 
-use crate::frontend::{ast::{enum_variant::EnumVariant, field::Field}, identifier::Identifier, tokens::builtin::BuiltinType};
+use crate::frontend::{
+    ast::{enum_variant::EnumVariant, field::Field},
+    identifier::Identifier,
+    tokens::builtin::BuiltinType,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpression {
@@ -66,12 +70,9 @@ impl fmt::Display for TypeExpression {
             TypeExpression::TypeKeyword => {
                 write!(f, "type")
             }
-            TypeExpression::Pointer {
-                pointed_type,
-            } => {
+            TypeExpression::Pointer { pointed_type } => {
                 write!(f, "*{}", *pointed_type)
-            },
+            }
         }
     }
 }
-

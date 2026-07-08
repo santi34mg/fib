@@ -2,8 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::Path;
 
-use crate::frontend::ast::{
-    Ast, declaration::DeclarationNode};
+use crate::frontend::ast::{Ast, declaration::DeclarationNode};
 use crate::frontend::identifier::Identifier;
 use crate::frontend::tokens::{Keyword, Token, TokenKind};
 

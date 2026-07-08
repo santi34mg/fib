@@ -1,4 +1,8 @@
-use crate::frontend::{ast::{expression::Expression, type_expression::TypeExpression}, parser::ParseResult, tokens::{Literal, Operator, Punctuation, Token, TokenKind, builtin::Builtin}};
+use crate::frontend::{
+    ast::{expression::Expression, type_expression::TypeExpression},
+    parser::ParseResult,
+    tokens::{Literal, Operator, Punctuation, Token, TokenKind, builtin::Builtin},
+};
 
 use super::Parser;
 

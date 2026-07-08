@@ -1,14 +1,15 @@
-use crate::frontend::{ast::type_expression::TypeExpression, parser::ParseResult, tokens::{Operator, Token, TokenKind}};
+use crate::frontend::{
+    ast::type_expression::TypeExpression,
+    parser::ParseResult,
+    tokens::{Operator, Token, TokenKind},
+};
 
 use super::Parser;
 impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_pointer_type(
-        &mut self,
-        next_token: Token,
-    ) -> ParseResult<TypeExpression> {
+    pub fn parse_pointer_type(&mut self, next_token: Token) -> ParseResult<TypeExpression> {
         let pointed_type = match self.parse_type_expression()? {
             Some(type_id) => type_id,
             None => {

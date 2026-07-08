@@ -7,4 +7,3 @@ pub struct FunctionDeclaration {
     pub is_extern: bool,
     pub is_variadic: bool,
 }
-

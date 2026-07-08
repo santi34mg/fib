@@ -118,11 +118,8 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
 
     for decl in &ast.declarations {
         if let DeclarationNode::ImportDeclaration(import_decl) = decl {
-            let import_paths: Vec<String> = import_decl
-                .path
-                .iter()
-                .map(|id| id.value.clone())
-                .collect();
+            let import_paths: Vec<String> =
+                import_decl.path.iter().map(|id| id.value.clone()).collect();
             if !resolved_modules.contains_key(&import_paths) {
                 resolve_module(
                     &import_paths,
@@ -244,8 +241,7 @@ fn resolve_module(
     // Recursively resolve this module's imports first
     for decl in &ast.declarations {
         if let DeclarationNode::ImportDeclaration(import) = decl {
-            let import_path: Vec<String> =
-                import.path.iter().map(|id| id.value.clone()).collect();
+            let import_path: Vec<String> = import.path.iter().map(|id| id.value.clone()).collect();
             if !resolved.contains_key(&import_path) {
                 resolve_module(&import_path, search_roots, resolved, resolving)?;
             }

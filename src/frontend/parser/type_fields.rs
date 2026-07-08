@@ -1,4 +1,8 @@
-use crate::frontend::{ast::field::Field, parser::ParseResult, tokens::{Punctuation, Token, TokenKind}};
+use crate::frontend::{
+    ast::field::Field,
+    parser::ParseResult,
+    tokens::{Punctuation, Token, TokenKind},
+};
 
 use super::Parser;
 impl<'a, I> Parser<'a, I>

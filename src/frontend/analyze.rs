@@ -9,7 +9,9 @@ use crate::frontend::ast::{
 };
 use crate::frontend::identifier::Identifier;
 use crate::frontend::ir::{
-    CompilationUnit, GenericFunctionTemplate, HIRBinding, HIRDeclaration, HIREnumVariant, HIRExpression, HIRExpressionKind, HIRFunction, HIRIf, HIRModule, HIRPattern, HIRReturn, HIRStatement, HIRSwitchArm, HIRSymbol, HIRTypeDeclaration, HIRTypeKind, Scope,
+    CompilationUnit, GenericFunctionTemplate, HIRBinding, HIRDeclaration, HIREnumVariant,
+    HIRExpression, HIRExpressionKind, HIRFunction, HIRIf, HIRModule, HIRPattern, HIRReturn,
+    HIRStatement, HIRSwitchArm, HIRSymbol, HIRTypeDeclaration, HIRTypeKind, Scope,
 };
 use crate::frontend::tokens::Operator;
 use crate::frontend::tokens::builtin::{BuiltinFunction, BuiltinType};
@@ -55,8 +57,7 @@ pub fn analyze(
     // symbols are available when resolving subsequent declarations.
     for declaration in &ast.declarations {
         if let DeclarationNode::ImportDeclaration(import) = declaration {
-            let path_strs: Vec<String> =
-                import.path.iter().map(|id| id.value.clone()).collect();
+            let path_strs: Vec<String> = import.path.iter().map(|id| id.value.clone()).collect();
             let module = resolved_modules
                 .get(&path_strs)
                 .ok_or_else(|| format!("module '{}' not found", path_strs.join("::")))?;
@@ -91,8 +92,7 @@ pub fn analyze(
         if let DeclarationNode::ImportDeclaration(import) = declaration
             && import.selective.is_some()
         {
-            let path_strs: Vec<String> =
-                import.path.iter().map(|id| id.value.clone()).collect();
+            let path_strs: Vec<String> = import.path.iter().map(|id| id.value.clone()).collect();
             if let Some(module) = resolved_modules.get(&path_strs) {
                 imported_declarations.extend(module.declarations.clone());
             }
@@ -297,12 +297,7 @@ fn stmt_to_hir_inner(
             let field_index = struct_fields
                 .iter()
                 .position(|(name, _)| name == &field.value)
-                .ok_or_else(|| {
-                    format!(
-                        "stmt_to_hir: field {} not found in struct",
-                        field.value
-                    )
-                })?;
+                .ok_or_else(|| format!("stmt_to_hir: field {} not found in struct", field.value))?;
             let e = expr_to_hir(expr, current_scope, generic_cache)?;
             Ok(HIRStatement::FieldAssign {
                 object: obj_hir,
@@ -1341,10 +1336,7 @@ fn expr_to_hir(
             // Lower the provided fields, verifying each exists in the struct.
             let mut provided: Vec<(String, HIRExpression)> = Vec::new();
             for (fname, fexpr) in fields {
-                if !struct_fields
-                    .iter()
-                    .any(|(name, _)| name == &fname.value)
-                {
+                if !struct_fields.iter().any(|(name, _)| name == &fname.value) {
                     return Err(format!(
                         "expr_to_hir: field {} not found in struct {}",
                         fname.value, type_name
@@ -1662,9 +1654,7 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, AnalysisErro
                 elements: mapped_elements,
             }
         }
-        TypeExpression::Pointer {
-            pointed_type,
-        } => {
+        TypeExpression::Pointer { pointed_type } => {
             let inner = map_type(*pointed_type)?;
             HIRTypeKind::Pointer(Box::new(inner))
         }
@@ -1749,9 +1739,7 @@ fn substitute_type(te: &TypeExpression, subs: &HashMap<String, TypeExpression>) 
                 te.clone()
             }
         }
-        TypeExpression::Pointer {
-            pointed_type,
-        } => TypeExpression::Pointer {
+        TypeExpression::Pointer { pointed_type } => TypeExpression::Pointer {
             pointed_type: Box::new(substitute_type(pointed_type, subs)),
         },
         TypeExpression::Array { element_type, size } => TypeExpression::Array {
@@ -1966,11 +1954,7 @@ fn instantiate_generic(
     }
 
     // Build mangled name: funcname__type1__type2
-    let mangled = format!(
-        "{}__{}",
-        template.name.value,
-        type_arg_names.join("__")
-    );
+    let mangled = format!("{}__{}", template.name.value, type_arg_names.join("__"));
 
     // Check cache — deduplication
     if let Some(cached) = generic_cache.get(&mangled) {

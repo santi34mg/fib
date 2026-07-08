@@ -1,11 +1,10 @@
-
 #[cfg(test)]
 mod tests {
+    use crate::frontend::identifier::Identifier;
     use crate::frontend::{
         lexer::Lexer,
         tokens::{Keyword, Literal, Operator, Punctuation, TokenKind},
     };
-    use crate::frontend::identifier::Identifier;
 
     #[test]
     fn test_comment() {
