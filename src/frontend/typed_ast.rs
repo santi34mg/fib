@@ -10,68 +10,128 @@ use crate::frontend::tokens::{
 
 /// A resolved module — one `.fib` file's exported symbols.
 #[derive(Debug, Clone)]
-pub struct HIRModule {
+pub struct TypedModule {
     pub name: String,
     pub path: ModulePath,
-    pub exports: HashMap<Identifier, HIRSymbol>,
+    pub exports: HashMap<Identifier, TypedSymbol>,
     /// Declarations from this module that must be lowered into the final binary.
-    pub declarations: Vec<HIRDeclaration>,
+    pub declarations: Vec<TypedDecl>,
 }
 
 #[derive(Debug, Clone)]
-pub struct CompilationUnit {
-    pub scope_root: Scope,
-    pub declarations: Vec<HIRDeclaration>,
+pub struct TypedProgram {
+    pub symbol_table: SymbolTable,
+    pub declarations: Vec<TypedDecl>,
     /// Declarations imported from other modules, also needing lowering.
-    pub imported_declarations: Vec<HIRDeclaration>,
+    pub imported_declarations: Vec<TypedDecl>,
 }
 
-impl CompilationUnit {
+impl TypedProgram {
     pub fn new() -> Self {
         Self {
-            scope_root: Scope::new(),
+            symbol_table: SymbolTable::new(),
             declarations: Vec::new(),
             imported_declarations: Vec::new(),
         }
     }
 }
 
-impl Default for CompilationUnit {
+impl Default for TypedProgram {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Scope {
-    pub symbols: HashMap<Identifier, HIRSymbol>,
-    /// Imported modules, keyed by local alias (last path segment or explicit alias).
-    pub modules: HashMap<String, HIRModule>,
-    pub children_scope: Vec<Box<Scope>>,
+/// Dragon-style symbol table: a stack of lexical scopes plus a module table.
+///
+/// Frame 0 is always the global/module scope. `enter_scope` pushes a new
+/// (function or block) frame, `exit_scope` discards it so locals never leak.
+/// `lookup` walks innermost -> outermost. Modules live once at the table
+/// level (never cloned per block).
+#[derive(Debug, Clone, Default)]
+pub struct SymbolTable {
+    scopes: Vec<HashMap<Identifier, TypedSymbol>>,
+    modules: HashMap<String, TypedModule>,
 }
 
-impl Scope {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeKind {
+    Global,
+    Function,
+    Block,
+}
+
+impl SymbolTable {
     pub fn new() -> Self {
         Self {
-            symbols: HashMap::new(),
+            scopes: vec![HashMap::new()],
             modules: HashMap::new(),
-            children_scope: Vec::new(),
         }
     }
-}
 
-impl Default for Scope {
-    fn default() -> Self {
-        Self::new()
+    pub fn enter_scope(&mut self, _kind: ScopeKind) {
+        self.scopes.push(HashMap::new());
+    }
+
+    pub fn exit_scope(&mut self) {
+        assert!(
+            self.scopes.len() > 1,
+            "SymbolTable::exit_scope called on global scope"
+        );
+        self.scopes.pop();
+    }
+
+    pub fn depth(&self) -> usize {
+        self.scopes.len()
+    }
+
+    /// Insert into the innermost scope. Returns any previous binding in that frame.
+    pub fn insert(&mut self, id: Identifier, sym: TypedSymbol) -> Option<TypedSymbol> {
+        self.scopes
+            .last_mut()
+            .expect("SymbolTable has no scopes")
+            .insert(id, sym)
+    }
+
+    /// Lexical lookup: innermost frame first.
+    pub fn lookup(&self, id: &Identifier) -> Option<&TypedSymbol> {
+        self.scopes.iter().rev().find_map(|frame| frame.get(id))
+    }
+
+    /// Remove from the innermost scope containing `id`. Returns the removed symbol.
+    pub fn remove(&mut self, id: &Identifier) -> Option<TypedSymbol> {
+        for frame in self.scopes.iter_mut().rev() {
+            if let Some(sym) = frame.remove(id) {
+                return Some(sym);
+            }
+        }
+        None
+    }
+
+    /// Symbols declared at global scope (frame 0). Used for module exports.
+    pub fn global_symbols(&self) -> &HashMap<Identifier, TypedSymbol> {
+        &self.scopes[0]
+    }
+
+    pub fn insert_module(&mut self, alias: String, module: TypedModule) {
+        self.modules.insert(alias, module);
+    }
+
+    pub fn lookup_module(&self, alias: &str) -> Option<&TypedModule> {
+        self.modules.get(alias)
+    }
+
+    pub fn modules(&self) -> impl Iterator<Item = &TypedModule> {
+        self.modules.values()
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRSymbol {
-    Type(HIRTypeKind),
-    Function(HIRFunction),
+pub enum TypedSymbol {
+    Type(Ty),
+    Function(TypedFunction),
     GenericFunction(GenericFunctionTemplate),
-    Binding(HIRBinding),
+    Binding(TypedBinding),
 }
 
 /// A generic function template — a function with at least one `type`-typed parameter.
@@ -85,33 +145,33 @@ pub struct GenericFunctionTemplate {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HIREnumVariant {
+pub struct TypedEnumVariant {
     pub name: String,
     pub discriminant: u32,
-    pub payload: Option<Vec<(String, HIRTypeKind)>>,
+    pub payload: Option<Vec<(String, Ty)>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HIRTypeKind {
+pub enum Ty {
     Builtin(BuiltinType),
     Identifier(Identifier),
     Struct {
-        fields: Vec<(String, Box<HIRTypeKind>)>,
+        fields: Vec<(String, Box<Ty>)>,
     },
     Enum {
-        variants: Vec<HIREnumVariant>,
+        variants: Vec<TypedEnumVariant>,
     },
-    Pointer(Box<HIRTypeKind>),
+    Pointer(Box<Ty>),
     Array {
-        element_type: Box<HIRTypeKind>,
+        element_type: Box<Ty>,
         size: u64,
     },
     Function {
-        argument_types: Vec<HIRTypeKind>,
-        return_type: Box<HIRTypeKind>,
+        argument_types: Vec<Ty>,
+        return_type: Box<Ty>,
     },
     Tuple {
-        elements: Vec<HIRTypeKind>,
+        elements: Vec<Ty>,
     },
     /// A type from an imported module: `module::TypeName`
     QualifiedIdentifier {
@@ -122,7 +182,7 @@ pub enum HIRTypeKind {
     Type,
 }
 
-impl fmt::Display for HIRTypeKind {
+impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Builtin(builtin) => write!(f, "{}", builtin)?,
@@ -144,36 +204,36 @@ impl fmt::Display for HIRTypeKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRTypeDeclaration {
+pub struct TypedTypeDecl {
     pub name: Identifier,
-    pub ty: HIRTypeKind,
+    pub ty: Ty,
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRDeclaration {
-    HIRFunction(HIRFunction),
-    HIRConst(HIRBinding),
-    HIRType(HIRTypeDeclaration),
+pub enum TypedDecl {
+    Function(TypedFunction),
+    Const(TypedBinding),
+    Type(TypedTypeDecl),
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRFunction {
+pub struct TypedFunction {
     pub name: Identifier,
-    pub params: Vec<(Identifier, HIRTypeKind)>,
-    pub return_type: HIRTypeKind,
-    pub body: Vec<HIRStatement>,
+    pub params: Vec<(Identifier, Ty)>,
+    pub return_type: Ty,
+    pub body: Vec<TypedStatement>,
     pub is_extern: bool,
     pub is_variadic: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRExpression {
-    pub inferred_type: HIRTypeKind,
-    pub expression: HIRExpressionKind,
+pub struct TypedExpr {
+    pub inferred_type: Ty,
+    pub expression: TypedExprKind,
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRExpressionKind {
+pub enum TypedExprKind {
     LiteralInt {
         value: u64,
     },
@@ -186,43 +246,43 @@ pub enum HIRExpressionKind {
     },
     Identifier(Identifier),
     Binary {
-        left: Box<HIRExpression>,
+        left: Box<TypedExpr>,
         // TODO: turn this into Operation to decouple operations and operators
         operator: Operator,
-        right: Box<HIRExpression>,
+        right: Box<TypedExpr>,
     },
     Call {
         callee: Identifier,
-        args: Vec<HIRExpression>,
+        args: Vec<TypedExpr>,
     },
     /// A call to a builtin function, e.g. `@concat(a, b)`. Lowered directly to
     /// libc-backed LLVM IR rather than a user-defined function.
     BuiltinCall {
         builtin: BuiltinFunction,
-        args: Vec<HIRExpression>,
+        args: Vec<TypedExpr>,
     },
     FieldAccess {
-        object: Box<HIRExpression>,
+        object: Box<TypedExpr>,
         field: String,
         field_index: usize,
     },
     StructConstruct {
         type_name: String,
-        fields: Vec<(String, HIRExpression)>,
+        fields: Vec<(String, TypedExpr)>,
     },
     Null,
-    AddressOf(Box<HIRExpression>),
-    Deref(Box<HIRExpression>),
+    AddressOf(Box<TypedExpr>),
+    Deref(Box<TypedExpr>),
     Cast {
-        expr: Box<HIRExpression>,
-        target_type: HIRTypeKind,
+        expr: Box<TypedExpr>,
+        target_type: Ty,
     },
     IndexAccess {
-        object: Box<HIRExpression>,
-        index: Box<HIRExpression>,
+        object: Box<TypedExpr>,
+        index: Box<TypedExpr>,
     },
     ArrayLiteral {
-        elements: Vec<HIRExpression>,
+        elements: Vec<TypedExpr>,
     },
     /// A qualified reference to a symbol in an imported module: `module::member`
     QualifiedAccess {
@@ -230,7 +290,7 @@ pub enum HIRExpressionKind {
         name: Identifier,
     },
     /// A compile-time type value. Consumed during analysis; never reaches LLVM lowering.
-    ComptimeType(HIRTypeKind),
+    ComptimeType(Ty),
     /// An enum variant value: `Color.Red`. The discriminant is the variant index.
     EnumLiteral {
         type_name: String,
@@ -238,24 +298,24 @@ pub enum HIRExpressionKind {
         discriminant: u32,
     },
     /// A tagged-union variant constructor: `Token.Integer { value: 42 }`.
-    /// `enum_type` is the resolved `HIRTypeKind::Enum` (so the lowering can
+    /// `enum_type` is the resolved `Ty::Enum` (so the lowering can
     /// compute the full enum struct without a scope lookup).
     EnumVariantConstruct {
         type_name: String,
         variant: String,
         discriminant: u32,
-        fields: Vec<(String, HIRExpression)>,
-        enum_type: Box<HIRTypeKind>,
+        fields: Vec<(String, TypedExpr)>,
+        enum_type: Box<Ty>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRReturn {
-    pub values: Vec<HIRExpression>,
+pub struct TypedReturn {
+    pub values: Vec<TypedExpr>,
 }
 
-impl std::ops::Deref for HIRReturn {
-    type Target = HIRExpression;
+impl std::ops::Deref for TypedReturn {
+    type Target = TypedExpr;
 
     fn deref(&self) -> &Self::Target {
         &self.values[0]
@@ -263,61 +323,61 @@ impl std::ops::Deref for HIRReturn {
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRStatement {
-    Binding(HIRBinding),
+pub enum TypedStatement {
+    Binding(TypedBinding),
     Assign {
         name: Identifier,
-        expr: HIRExpression,
+        expr: TypedExpr,
     },
     MultiAssign {
-        targets: Vec<HIRExpression>,
-        values: Vec<HIRExpression>,
+        targets: Vec<TypedExpr>,
+        values: Vec<TypedExpr>,
     },
     MultiBinding {
-        bindings: Vec<HIRBinding>,
-        values: Vec<HIRExpression>,
+        bindings: Vec<TypedBinding>,
+        values: Vec<TypedExpr>,
     },
     FieldAssign {
-        object: HIRExpression,
+        object: TypedExpr,
         field: String,
         field_index: usize,
-        expr: HIRExpression,
+        expr: TypedExpr,
     },
-    Expr(HIRExpression),
-    Return(Option<HIRReturn>),
-    If(HIRIf),
+    Expr(TypedExpr),
+    Return(Option<TypedReturn>),
+    If(TypedIf),
     For {
-        init: Option<Box<HIRStatement>>,
-        cond: Option<HIRExpression>,
-        post: Option<Box<HIRStatement>>,
-        body: Vec<HIRStatement>,
+        init: Option<Box<TypedStatement>>,
+        cond: Option<TypedExpr>,
+        post: Option<Box<TypedStatement>>,
+        body: Vec<TypedStatement>,
     },
     Break,
     Continue,
-    Defer(Box<HIRStatement>),
+    Defer(Box<TypedStatement>),
     DerefAssign {
-        pointer: HIRExpression,
-        expr: HIRExpression,
+        pointer: TypedExpr,
+        expr: TypedExpr,
     },
     IndexAssign {
-        object: HIRExpression,
-        index: HIRExpression,
-        expr: HIRExpression,
+        object: TypedExpr,
+        index: TypedExpr,
+        expr: TypedExpr,
     },
     Switch {
-        subject: HIRExpression,
-        arms: Vec<HIRSwitchArm>,
+        subject: TypedExpr,
+        arms: Vec<TypedSwitchArm>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRSwitchArm {
-    pub pattern: HIRPattern,
-    pub body: Vec<HIRStatement>,
+pub struct TypedSwitchArm {
+    pub pattern: TypedPattern,
+    pub body: Vec<TypedStatement>,
 }
 
 #[derive(Debug, Clone)]
-pub enum HIRPattern {
+pub enum TypedPattern {
     EnumVariant {
         variant: String,
         discriminant: u32,
@@ -325,32 +385,32 @@ pub enum HIRPattern {
         binding: Option<Identifier>,
         /// Resolved payload struct type (for lowering / scope insertion). `None`
         /// when the variant carries no payload.
-        payload_ty: Option<HIRTypeKind>,
+        payload_ty: Option<Ty>,
     },
     Wildcard,
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRBinding {
+pub struct TypedBinding {
     pub name: Identifier,
-    pub ty: HIRTypeKind,
-    pub init: Option<HIRExpression>,
+    pub ty: Ty,
+    pub init: Option<TypedExpr>,
     pub mutable: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct HIRIf {
-    pub cond: HIRExpression,
-    pub then_branch: Vec<HIRStatement>,
-    pub else_branch: Option<Vec<HIRStatement>>,
+pub struct TypedIf {
+    pub cond: TypedExpr,
+    pub then_branch: Vec<TypedStatement>,
+    pub else_branch: Option<Vec<TypedStatement>>,
 }
 
-impl HIRIf {
+impl TypedIf {
     pub fn then_branch_terminates(&self) -> bool {
         for stmt in self.then_branch.iter() {
             if matches!(
                 stmt,
-                HIRStatement::Return(_) | HIRStatement::Break | HIRStatement::Continue
+                TypedStatement::Return(_) | TypedStatement::Break | TypedStatement::Continue
             ) {
                 return true;
             }
@@ -363,7 +423,7 @@ impl HIRIf {
             for stmt in eb.iter() {
                 if matches!(
                     stmt,
-                    HIRStatement::Return(_) | HIRStatement::Break | HIRStatement::Continue
+                    TypedStatement::Return(_) | TypedStatement::Break | TypedStatement::Continue
                 ) {
                     return true;
                 }

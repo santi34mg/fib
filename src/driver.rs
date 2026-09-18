@@ -11,7 +11,7 @@ use crate::backend::lowering;
 use crate::frontend::analyze::{AnalysisError, analyze};
 use crate::frontend::ast::{Ast, declaration::DeclarationNode};
 use crate::frontend::identifier::Identifier;
-use crate::frontend::ir::{CompilationUnit, HIRModule};
+use crate::frontend::typed_ast::{TypedProgram, TypedModule};
 use crate::frontend::parser::ParseError;
 use crate::frontend::parser::Parser;
 use crate::frontend::{lexer::Lexer, tokens::Token};
@@ -23,7 +23,7 @@ pub struct FrontendResponse {
     pub parse_errors: Vec<ParseError>,
     pub analysis_errors: Vec<String>,
     pub ast: Option<Ast>,
-    pub hir: Option<CompilationUnit>,
+    pub typed_ast: Option<TypedProgram>,
 }
 
 #[derive(Debug)]
@@ -132,17 +132,17 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
         }
     }
 
-    let mut hir = analyze(ast, &resolved_modules).map_err(|e| format!("Analysis failed: {}", e))?;
+    let mut typed_program = analyze(ast, &resolved_modules).map_err(|e| format!("Analysis failed: {}", e))?;
 
     // Merge imported declarations into the main compilation unit for lowering
-    let all_decls: Vec<_> = hir
+    let all_decls: Vec<_> = typed_program
         .imported_declarations
         .drain(..)
-        .chain(hir.declarations.drain(..))
+        .chain(typed_program.declarations.drain(..))
         .collect();
-    hir.declarations = all_decls;
+    typed_program.declarations = all_decls;
 
-    let c_src = lowering::lower(hir, &filename).map_err(|e| format!("Lowering failed: {}", e))?;
+    let c_src = lowering::lower(typed_program, &filename).map_err(|e| format!("Lowering failed: {}", e))?;
 
     // Write LLVM IR and compile with clang
     // TODO: don't hard code out path
@@ -187,7 +187,7 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
 fn resolve_module(
     path: &[String],
     search_roots: &[&Path],
-    resolved: &mut HashMap<Vec<String>, HIRModule>,
+    resolved: &mut HashMap<Vec<String>, TypedModule>,
     resolving: &mut Vec<Vec<String>>,
 ) -> Result<(), DriverError> {
     if resolved.contains_key(path) {
@@ -250,13 +250,13 @@ fn resolve_module(
 
     let cu = analyze(ast, resolved)?;
     let module_name = path.last().cloned().unwrap_or_default();
-    let module = HIRModule {
+    let module = TypedModule {
         name: module_name,
         path: path
             .iter()
             .map(|s| Identifier { value: s.clone() })
             .collect(),
-        exports: cu.scope_root.symbols,
+        exports: cu.symbol_table.global_symbols().clone(),
         declarations: [cu.declarations, cu.imported_declarations].concat(),
     };
     resolved.insert(path.to_vec(), module);

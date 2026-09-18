@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use crate::frontend::identifier::Identifier;
-use crate::frontend::ir::{
-    CompilationUnit, HIRBinding, HIRDeclaration, HIREnumVariant, HIRExpression, HIRExpressionKind,
-    HIRFunction, HIRPattern, HIRStatement, HIRSwitchArm, HIRSymbol, HIRTypeKind, Scope,
+use crate::frontend::typed_ast::{
+    TypedProgram, TypedBinding, TypedDecl, TypedEnumVariant, TypedExpr, TypedExprKind,
+    TypedFunction, TypedPattern, TypedStatement, TypedSwitchArm, TypedSymbol, Ty, SymbolTable,
+    ScopeKind,
 };
 use crate::frontend::tokens::Operator;
 use crate::frontend::tokens::builtin::{BuiltinFunction, BuiltinType};
@@ -32,9 +33,9 @@ struct CodegenCtx<'ctx, 'r> {
     builder: &'r Builder<'ctx>,
 }
 
-/// Lower HIR into LLVM IR represented as a string.
+/// Lower Typed into LLVM IR represented as a string.
 pub fn lower(
-    compilation_unit: CompilationUnit,
+    compilation_unit: TypedProgram,
     module_name: &str,
 ) -> Result<String, Box<dyn Error>> {
     let ctx = Context::create();
@@ -51,16 +52,16 @@ pub fn lower(
     // Create function declarations and bodies
     for declaration in compilation_unit.declarations {
         match declaration {
-            HIRDeclaration::HIRFunction(hir_function) => {
-                let function_name = hir_function.name.value.clone();
-                let fn_params: Vec<BasicMetadataTypeEnum> = hir_function
+            TypedDecl::Function(typed_function) => {
+                let function_name = typed_function.name.value.clone();
+                let fn_params: Vec<BasicMetadataTypeEnum> = typed_function
                     .params
                     .iter()
                     .map(|param| {
                         map_type_to_llvm(
                             &param.1.clone(),
                             &ctx,
-                            compilation_unit.scope_root.clone(),
+                            compilation_unit.symbol_table.clone(),
                         )
                         .unwrap()
                         .into()
@@ -68,21 +69,21 @@ pub fn lower(
                     .collect();
 
                 let fn_ty: FunctionType;
-                if let HIRTypeKind::Builtin(BuiltinType::Void) = hir_function.return_type {
+                if let Ty::Builtin(BuiltinType::Void) = typed_function.return_type {
                     fn_ty = ctx
                         .void_type()
-                        .fn_type(&fn_params, hir_function.is_variadic);
+                        .fn_type(&fn_params, typed_function.is_variadic);
                 } else {
                     let ret_ty = map_type_to_llvm(
-                        &hir_function.return_type,
+                        &typed_function.return_type,
                         &ctx,
-                        compilation_unit.scope_root.clone(),
+                        compilation_unit.symbol_table.clone(),
                     )?;
-                    fn_ty = ret_ty.fn_type(&fn_params, hir_function.is_variadic);
+                    fn_ty = ret_ty.fn_type(&fn_params, typed_function.is_variadic);
                 }
 
                 // Extern functions: emit a declaration with External linkage and no body.
-                if hir_function.is_extern {
+                if typed_function.is_extern {
                     if module.get_function(&function_name).is_none() {
                         module.add_function(
                             &function_name,
@@ -108,17 +109,17 @@ pub fn lower(
                 let mut entry_vars = create_entry_allocas(
                     &ctx,
                     function,
-                    hir_function.clone(),
-                    compilation_unit.scope_root.clone(),
+                    typed_function.clone(),
+                    compilation_unit.symbol_table.clone(),
                 )?;
-                // Build a function-level scope that includes module symbols
-                // plus the function's own parameters, so identifier lookups
-                // (e.g. `val` in `val >= 0`) resolve correctly during codegen.
-                let mut fn_scope = compilation_unit.scope_root.clone();
-                for (param_name, param_ty) in hir_function.params.iter() {
-                    fn_scope.symbols.insert(
+                // Function scope for params; exited after the body so params
+                // never leak into the next function's lowering.
+                let mut fn_scope = compilation_unit.symbol_table.clone();
+                fn_scope.enter_scope(ScopeKind::Function);
+                for (param_name, param_ty) in typed_function.params.iter() {
+                    fn_scope.insert(
                         param_name.clone(),
-                        HIRSymbol::Binding(HIRBinding {
+                        TypedSymbol::Binding(TypedBinding {
                             name: param_name.clone(),
                             ty: param_ty.clone(),
                             init: None,
@@ -126,8 +127,8 @@ pub fn lower(
                         }),
                     );
                 }
-                let mut fn_deferred: Vec<Vec<HIRStatement>> = vec![Vec::new()];
-                for stmt in hir_function.body.iter() {
+                let mut fn_deferred: Vec<Vec<TypedStatement>> = vec![Vec::new()];
+                for stmt in typed_function.body.iter() {
                     codegen_stmt(
                         &codegen_ctx,
                         &mut entry_vars,
@@ -141,7 +142,7 @@ pub fn lower(
                 // codegen has no terminator (i.e. the function falls off the
                 // end without an explicit `return`), emit `ret void` so the
                 // function returns cleanly.
-                if let HIRTypeKind::Builtin(BuiltinType::Void) = hir_function.return_type
+                if let Ty::Builtin(BuiltinType::Void) = typed_function.return_type
                     && let Some(cur_bb) = builder.get_insert_block()
                     && cur_bb.get_terminator().is_none()
                 {
@@ -154,6 +155,7 @@ pub fn lower(
                     )?;
                     let _ = builder.build_return(None);
                 }
+                fn_scope.exit_scope();
                 // Seal any basic blocks that have no terminator (e.g. an
                 // unreachable merge block after an if where both branches
                 // return).  LLVM requires every block to have a terminator.
@@ -166,28 +168,28 @@ pub fn lower(
                     bb_opt = bb.get_next_basic_block();
                 }
             }
-            HIRDeclaration::HIRType(_) => {
+            TypedDecl::Type(_) => {
                 // Type declarations are registered in the scope during analysis.
                 // No LLVM IR needs to be emitted for them.
             }
-            HIRDeclaration::HIRConst(hir_binding) => {
+            TypedDecl::Const(typed_binding) => {
                 // The builder is only positioned inside a function while one
                 // is being emitted; a module-level const has no such context.
                 if builder.get_insert_block().is_none() {
                     return Err(format!(
                         "module-level constant '{}' is not supported in lowering yet",
-                        hir_binding.name
+                        typed_binding.name
                     )
                     .into());
                 }
                 let ty =
-                    map_type_to_llvm(&hir_binding.ty, &ctx, compilation_unit.scope_root.clone())?;
-                let alloca = match builder.build_alloca(ty, &format!("{}_addr", hir_binding.name)) {
+                    map_type_to_llvm(&typed_binding.ty, &ctx, compilation_unit.symbol_table.clone())?;
+                let alloca = match builder.build_alloca(ty, &format!("{}_addr", typed_binding.name)) {
                     Ok(a) => a,
                     Err(e) => {
                         eprintln!(
                             "Failed to create alloca for parameter '{}': {}",
-                            hir_binding.name, e
+                            typed_binding.name, e
                         );
                         continue;
                     }
@@ -198,13 +200,13 @@ pub fn lower(
                     codegen_expr(
                         &codegen_ctx,
                         &mut vars,
-                        &mut compilation_unit.scope_root.clone(),
-                        &hir_binding
+                        &mut compilation_unit.symbol_table.clone(),
+                        &typed_binding
                             .init
                             .ok_or_else(|| "no init for binding".to_string())?,
                     )?,
                 );
-                vars.insert(hir_binding.name, alloca);
+                vars.insert(typed_binding.name, alloca);
             }
         }
     }
@@ -223,21 +225,21 @@ pub fn lower(
 fn compute_lvalue_ptr<'ctx, 'r>(
     ctx: &'r CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut Scope,
-    expr: &HIRExpression,
+    current_scope: &mut SymbolTable,
+    expr: &TypedExpr,
 ) -> Result<PointerValue<'ctx>, Box<dyn Error>> {
     match &expr.expression {
-        HIRExpressionKind::Identifier(name) => {
+        TypedExprKind::Identifier(name) => {
             let ptr = *vars
                 .get(name)
                 .ok_or_else(|| format!("compute_lvalue_ptr: no alloca for identifier {}", name))?;
             Ok(ptr)
         }
-        HIRExpressionKind::Deref(inner) => {
+        TypedExprKind::Deref(inner) => {
             let v = codegen_expr(ctx, vars, current_scope, inner)?;
             Ok(v.into_pointer_value())
         }
-        HIRExpressionKind::FieldAccess {
+        TypedExprKind::FieldAccess {
             object,
             field: _,
             field_index,
@@ -253,11 +255,11 @@ fn compute_lvalue_ptr<'ctx, 'r>(
                     .build_struct_gep(st, base_ptr, *field_index as u32, "fieldptr")?;
             Ok(gep)
         }
-        HIRExpressionKind::IndexAccess { object, index } => {
+        TypedExprKind::IndexAccess { object, index } => {
             let idx_val = codegen_expr(ctx, vars, current_scope, index)?;
             let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
             match &object.inferred_type {
-                HIRTypeKind::Array { .. } => {
+                Ty::Array { .. } => {
                     let arr_ty =
                         map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
                     let base_ptr = compute_lvalue_ptr(ctx, vars, current_scope, object)?;
@@ -320,8 +322,8 @@ fn coerce_int_to_llvm_type<'ctx, 'r>(
 fn build_tuple_value<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut Scope,
-    exprs: &[HIRExpression],
+    current_scope: &mut SymbolTable,
+    exprs: &[TypedExpr],
     tuple_ty: inkwell::types::StructType<'ctx>,
 ) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
     if tuple_ty.count_fields() as usize != exprs.len() {
@@ -350,8 +352,8 @@ fn build_tuple_value<'ctx, 'r>(
 fn store_lvalue<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut Scope,
-    target: &HIRExpression,
+    current_scope: &mut SymbolTable,
+    target: &TypedExpr,
     value: BasicValueEnum<'ctx>,
 ) -> Result<(), Box<dyn Error>> {
     let ptr = compute_lvalue_ptr(ctx, vars, current_scope, target)?;
@@ -424,17 +426,17 @@ fn call_result<'ctx>(
 fn codegen_expr<'ctx, 'r>(
     ctx: &'r CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut Scope,
-    expr: &HIRExpression,
+    current_scope: &mut SymbolTable,
+    expr: &TypedExpr,
 ) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
     match &expr.expression {
-        HIRExpressionKind::LiteralInt { value } => {
+        TypedExprKind::LiteralInt { value } => {
             if let BasicTypeEnum::IntType(ty) =
-                map_type_to_llvm(&expr.inferred_type, ctx.ctx, Scope::new())?
+                map_type_to_llvm(&expr.inferred_type, ctx.ctx, SymbolTable::new())?
             {
                 let sign_extend = !matches!(
                     expr.inferred_type,
-                    HIRTypeKind::Builtin(
+                    Ty::Builtin(
                         BuiltinType::UInt1
                         | BuiltinType::UInt2
                         | BuiltinType::UInt4
@@ -447,27 +449,26 @@ fn codegen_expr<'ctx, 'r>(
                 unreachable!()
             }
         }
-        HIRExpressionKind::LiteralFloat { value } => {
+        TypedExprKind::LiteralFloat { value } => {
             if let BasicTypeEnum::FloatType(ty) =
-                map_type_to_llvm(&expr.inferred_type, ctx.ctx, Scope::new())?
+                map_type_to_llvm(&expr.inferred_type, ctx.ctx, SymbolTable::new())?
             {
                 Ok(ty.const_float(*value).as_basic_value_enum())
             } else {
                 unreachable!()
             }
         }
-        HIRExpressionKind::LiteralBool(b) => Ok(ctx.ctx
+        TypedExprKind::LiteralBool(b) => Ok(ctx.ctx
             .bool_type()
             .const_int(*b as u64, false)
             .as_basic_value_enum()),
-        HIRExpressionKind::LiteralString { value } => {
+        TypedExprKind::LiteralString { value } => {
             let ptr = ctx.builder.build_global_string_ptr(value, "str")?;
             Ok(ptr.as_pointer_value().as_basic_value_enum())
         }
-        HIRExpressionKind::Identifier(name) => {
-            let ty = if let HIRSymbol::Binding(var) = current_scope
-                .symbols
-                .get(name)
+        TypedExprKind::Identifier(name) => {
+            let ty = if let TypedSymbol::Binding(var) = current_scope
+                .lookup(name)
                 .ok_or_else(|| format!("didnt find type for name {}", name))?
             {
                 map_type_to_llvm(&var.ty, ctx.ctx, current_scope.clone())?
@@ -480,10 +481,10 @@ fn codegen_expr<'ctx, 'r>(
             let load = ctx.builder.build_load(ty, *ptr, &format!("load_{}", name))?;
             Ok(load)
         }
-        HIRExpressionKind::Null => {
+        TypedExprKind::Null => {
             Ok(ctx.ctx.ptr_type(AddressSpace::default()).const_null().as_basic_value_enum())
         }
-        HIRExpressionKind::Binary {
+        TypedExprKind::Binary {
             left,
             operator,
             right,
@@ -529,7 +530,7 @@ fn codegen_expr<'ctx, 'r>(
             let r = codegen_expr(ctx, vars, current_scope, right)?;
             let is_float = matches!(
                 left.inferred_type,
-                HIRTypeKind::Builtin(
+                Ty::Builtin(
                     BuiltinType::Float2
                     | BuiltinType::Float4
                     | BuiltinType::Float8
@@ -538,7 +539,7 @@ fn codegen_expr<'ctx, 'r>(
             );
             let is_unsigned = matches!(
                 left.inferred_type,
-                HIRTypeKind::Builtin(
+                Ty::Builtin(
                     BuiltinType::UInt1
                     | BuiltinType::UInt2
                     | BuiltinType::UInt4
@@ -550,7 +551,7 @@ fn codegen_expr<'ctx, 'r>(
                 Operator::Plus => {
                     if is_float {
                         Ok(ctx.builder.build_float_add(l.into_float_value(), r.into_float_value(), "faddtmp")?.as_basic_value_enum())
-                    } else if let HIRTypeKind::Pointer(inner_ty) = &left.inferred_type {
+                    } else if let Ty::Pointer(inner_ty) = &left.inferred_type {
                         let elem_ty = map_type_to_llvm(inner_ty, ctx.ctx, current_scope.clone())?;
                         let gep = unsafe {
                             ctx.builder.build_gep(
@@ -570,7 +571,7 @@ fn codegen_expr<'ctx, 'r>(
                 Operator::Minus => {
                     if is_float {
                         Ok(ctx.builder.build_float_sub(l.into_float_value(), r.into_float_value(), "fsubtmp")?.as_basic_value_enum())
-                    } else if let HIRTypeKind::Pointer(inner_ty) = &left.inferred_type {
+                    } else if let Ty::Pointer(inner_ty) = &left.inferred_type {
                         let elem_ty = map_type_to_llvm(inner_ty, ctx.ctx, current_scope.clone())?;
                         let neg_idx = ctx.builder.build_int_neg(r.into_int_value(), "neg_idx")?;
                         let gep = unsafe {
@@ -686,7 +687,7 @@ fn codegen_expr<'ctx, 'r>(
                 op => Err(format!("unsupported binary operator in codegen: {:?}", op).into()),
             }
         }
-        HIRExpressionKind::Call { callee, args } => {
+        TypedExprKind::Call { callee, args } => {
             let mut arg_values = Vec::new();
             for a in args.iter() {
                 let av = codegen_expr(ctx, vars, current_scope, a)?;
@@ -699,7 +700,7 @@ fn codegen_expr<'ctx, 'r>(
                 None => {
                     let param_types: Vec<BasicMetadataTypeEnum> =
                         arg_values.iter().map(|v| v.get_type().into()).collect();
-                    let fn_ty = if let HIRTypeKind::Builtin(BuiltinType::Void) = &expr.inferred_type {
+                    let fn_ty = if let Ty::Builtin(BuiltinType::Void) = &expr.inferred_type {
                         ctx.ctx.void_type().fn_type(&param_types, false)
                     } else {
                         let ret_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
@@ -725,7 +726,7 @@ fn codegen_expr<'ctx, 'r>(
                 }
             }
         }
-        HIRExpressionKind::BuiltinCall { builtin, args } => {
+        TypedExprKind::BuiltinCall { builtin, args } => {
             let ptr_ty = ctx.ctx.ptr_type(AddressSpace::default());
             let i64_ty = ctx.ctx.i64_type();
             let mut arg_vals = Vec::with_capacity(args.len());
@@ -802,11 +803,11 @@ fn codegen_expr<'ctx, 'r>(
                 }
             }
         }
-        HIRExpressionKind::FieldAccess { object, field: _, field_index } => {
+        TypedExprKind::FieldAccess { object, field: _, field_index } => {
             // We need the pointer to the struct object, then GEP into it.
             // The object expression should be an Identifier whose alloca we can find.
             let struct_ptr = match &object.expression {
-                HIRExpressionKind::Identifier(name) => {
+                TypedExprKind::Identifier(name) => {
                     *vars.get(name).ok_or_else(|| {
                         format!("codegen_expr: no alloca for struct identifier {}", name)
                     })?
@@ -831,7 +832,7 @@ fn codegen_expr<'ctx, 'r>(
             let loaded = ctx.builder.build_load(field_ty, gep, "fieldload")?;
             Ok(loaded)
         }
-        HIRExpressionKind::StructConstruct { type_name: _, fields } => {
+        TypedExprKind::StructConstruct { type_name: _, fields } => {
             // Allocate a struct, fill each field, then load the whole value.
             let struct_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
             let BasicTypeEnum::StructType(st) = struct_ty else {
@@ -846,18 +847,18 @@ fn codegen_expr<'ctx, 'r>(
             let loaded = ctx.builder.build_load(st, alloca, "structload")?;
             Ok(loaded)
         }
-        HIRExpressionKind::AddressOf(inner) => {
+        TypedExprKind::AddressOf(inner) => {
             let ptr = compute_lvalue_ptr(ctx, vars, current_scope, inner)?;
             Ok(ptr.as_basic_value_enum())
         }
-        HIRExpressionKind::Deref(inner) => {
+        TypedExprKind::Deref(inner) => {
             // Codegen the pointer expression, then load through it.
             let ptr_val = codegen_expr(ctx, vars, current_scope, inner)?;
             let pointee_llvm_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
             let loaded = ctx.builder.build_load(pointee_llvm_ty, ptr_val.into_pointer_value(), "deref")?;
             Ok(loaded)
         }
-        HIRExpressionKind::Cast { expr: inner, target_type } => {
+        TypedExprKind::Cast { expr: inner, target_type } => {
             let src = codegen_expr(ctx, vars, current_scope, inner)?;
             let dst_ty = map_type_to_llvm(target_type, ctx.ctx, current_scope.clone())?;
             match (src, dst_ty) {
@@ -871,7 +872,7 @@ fn codegen_expr<'ctx, 'r>(
                         // Use signed extend for signed types, zero-extend otherwise
                         let signed = matches!(
                             inner.inferred_type,
-                            HIRTypeKind::Builtin(
+                            Ty::Builtin(
                                 BuiltinType::Int1
                                 | BuiltinType::Int2
                                 | BuiltinType::Int4
@@ -904,7 +905,7 @@ fn codegen_expr<'ctx, 'r>(
                 (BasicValueEnum::IntValue(iv), BasicTypeEnum::FloatType(ft)) => {
                     let signed = matches!(
                         inner.inferred_type,
-                        HIRTypeKind::Builtin(
+                        Ty::Builtin(
                             BuiltinType::Int1
                             | BuiltinType::Int2
                             | BuiltinType::Int4
@@ -922,7 +923,7 @@ fn codegen_expr<'ctx, 'r>(
                 (BasicValueEnum::FloatValue(fv), BasicTypeEnum::IntType(it)) => {
                     let signed = matches!(
                         target_type,
-                        HIRTypeKind::Builtin(
+                        Ty::Builtin(
                             BuiltinType::Int1
                             | BuiltinType::Int2
                             | BuiltinType::Int4
@@ -948,7 +949,7 @@ fn codegen_expr<'ctx, 'r>(
                 .into()),
             }
         }
-        HIRExpressionKind::ArrayLiteral { elements } => {
+        TypedExprKind::ArrayLiteral { elements } => {
             let arr_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
             let alloca = ctx.builder.build_alloca(arr_ty, "arrtmp")?;
             let i32_zero = ctx.ctx.i32_type().const_int(0, false);
@@ -968,11 +969,11 @@ fn codegen_expr<'ctx, 'r>(
             let loaded = ctx.builder.build_load(arr_ty, alloca, "arrload")?;
             Ok(loaded)
         }
-        HIRExpressionKind::IndexAccess { object, index } => {
+        TypedExprKind::IndexAccess { object, index } => {
             let idx_val = codegen_expr(ctx, vars, current_scope, index)?;
             let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
             match &object.inferred_type {
-                HIRTypeKind::Array { .. } => {
+                Ty::Array { .. } => {
                     let arr_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
                     // Need a pointer to the array for GEP — store to temp alloca
                     let arr_val = codegen_expr(ctx, vars, current_scope, object)?;
@@ -1005,7 +1006,7 @@ fn codegen_expr<'ctx, 'r>(
                 }
             }
         }
-        HIRExpressionKind::QualifiedAccess { module: module_name, name } => {
+        TypedExprKind::QualifiedAccess { module: module_name, name } => {
             // Qualified access: look up the mangled name in the LLVM module.
             let mangled = format!("{}__{}", module_name, name.value);
             if let Some(ptr) = vars.get(name) {
@@ -1017,10 +1018,10 @@ fn codegen_expr<'ctx, 'r>(
                 Err(format!("QualifiedAccess: '{}::{}' not found in lowering", module_name, name).into())
             }
         }
-        HIRExpressionKind::ComptimeType(_) => {
+        TypedExprKind::ComptimeType(_) => {
             Err("compiler bug: ComptimeType expression reached LLVM lowering — type values must not appear in runtime code".into())
         }
-        HIRExpressionKind::EnumLiteral { discriminant, .. } => {
+        TypedExprKind::EnumLiteral { discriminant, .. } => {
             // Determine the LLVM representation from the enum's resolved type.
             let llvm_ty =
                 map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
@@ -1050,7 +1051,7 @@ fn codegen_expr<'ctx, 'r>(
                 other => Err(format!("EnumLiteral: unexpected enum LLVM type {:?}", other).into()),
             }
         }
-        HIRExpressionKind::EnumVariantConstruct {
+        TypedExprKind::EnumVariantConstruct {
             discriminant,
             fields,
             enum_type,
@@ -1076,7 +1077,7 @@ fn codegen_expr<'ctx, 'r>(
                 ctx.ctx.i32_type().const_int(*discriminant as u64, false),
             )?;
             // Build the payload struct value, then store it at the payload region.
-            let HIRTypeKind::Enum { variants } = enum_type.as_ref() else {
+            let Ty::Enum { variants } = enum_type.as_ref() else {
                 return Err("EnumVariantConstruct: enum_type is not an enum".into());
             };
             let v = variants
@@ -1127,13 +1128,13 @@ fn round_up(n: usize, align: usize) -> usize {
     }
 }
 
-/// Size and alignment of a HIR type in bytes, mirroring LLVM's struct layout
+/// Size and alignment of a Typed type in bytes, mirroring LLVM's struct layout
 /// rules (fields aligned to their natural alignment, structs padded to the
 /// largest field alignment). Used to size the payload region of tagged
 /// unions — undersizing it would let payload stores write out of bounds.
-fn hir_type_size_align(ty: &HIRTypeKind, scope: &Scope) -> (usize, usize) {
+fn typed_type_size_align(ty: &Ty, scope: &SymbolTable) -> (usize, usize) {
     match ty {
-        HIRTypeKind::Builtin(b) => {
+        Ty::Builtin(b) => {
             let s = match b {
                 BuiltinType::Boolean | BuiltinType::Char => 1,
                 BuiltinType::UInt1 | BuiltinType::Int1 | BuiltinType::Never => 1,
@@ -1146,16 +1147,16 @@ fn hir_type_size_align(ty: &HIRTypeKind, scope: &Scope) -> (usize, usize) {
             };
             (s, s.max(1))
         }
-        HIRTypeKind::Pointer(_) | HIRTypeKind::Function { .. } => (8, 8),
-        HIRTypeKind::Array { element_type, size } => {
-            let (s, a) = hir_type_size_align(element_type, scope);
+        Ty::Pointer(_) | Ty::Function { .. } => (8, 8),
+        Ty::Array { element_type, size } => {
+            let (s, a) = typed_type_size_align(element_type, scope);
             (round_up(s, a) * (*size as usize), a)
         }
-        HIRTypeKind::Struct { fields } => {
+        Ty::Struct { fields } => {
             struct_layout_size_align(fields.iter().map(|(_, t)| t.as_ref()), scope)
         }
-        HIRTypeKind::Tuple { elements } => struct_layout_size_align(elements.iter(), scope),
-        HIRTypeKind::Enum { variants } => {
+        Ty::Tuple { elements } => struct_layout_size_align(elements.iter(), scope),
+        Ty::Enum { variants } => {
             let payload = enum_max_payload_bytes(variants, scope);
             if payload == 0 {
                 (4, 4)
@@ -1165,33 +1166,33 @@ fn hir_type_size_align(ty: &HIRTypeKind, scope: &Scope) -> (usize, usize) {
                 (8 + words * 8, 8)
             }
         }
-        HIRTypeKind::Identifier(id) => match scope.symbols.get(id) {
-            Some(HIRSymbol::Type(inner)) => hir_type_size_align(inner, scope),
+        Ty::Identifier(id) => match scope.lookup(id) {
+            Some(TypedSymbol::Type(inner)) => typed_type_size_align(inner, scope),
             _ => (0, 1),
         },
-        HIRTypeKind::QualifiedIdentifier { module, name } => {
-            if let Some(m) = scope.modules.get(module)
-                && let Some(HIRSymbol::Type(inner)) = m.exports.get(name)
+        Ty::QualifiedIdentifier { module, name } => {
+            if let Some(m) = scope.lookup_module(module)
+                && let Some(TypedSymbol::Type(inner)) = m.exports.get(name)
             {
-                hir_type_size_align(inner, scope)
+                typed_type_size_align(inner, scope)
             } else {
                 (0, 1)
             }
         }
-        HIRTypeKind::Type => (0, 1),
+        Ty::Type => (0, 1),
     }
 }
 
 /// Lay out a sequence of field types like an LLVM struct and return the
 /// padded total size and alignment.
 fn struct_layout_size_align<'t>(
-    field_types: impl Iterator<Item = &'t HIRTypeKind>,
-    scope: &Scope,
+    field_types: impl Iterator<Item = &'t Ty>,
+    scope: &SymbolTable,
 ) -> (usize, usize) {
     let mut offset = 0usize;
     let mut align = 1usize;
     for ty in field_types {
-        let (s, a) = hir_type_size_align(ty, scope);
+        let (s, a) = typed_type_size_align(ty, scope);
         offset = round_up(offset, a) + s;
         align = align.max(a);
     }
@@ -1200,7 +1201,7 @@ fn struct_layout_size_align<'t>(
 
 /// Returns the maximum padded payload size (in bytes) across the variants of
 /// an enum, or 0 if the enum has no payload-carrying variants.
-fn enum_max_payload_bytes(variants: &[HIREnumVariant], scope: &Scope) -> usize {
+fn enum_max_payload_bytes(variants: &[TypedEnumVariant], scope: &SymbolTable) -> usize {
     variants
         .iter()
         .filter_map(|v| {
@@ -1213,12 +1214,12 @@ fn enum_max_payload_bytes(variants: &[HIREnumVariant], scope: &Scope) -> usize {
 }
 
 fn map_type_to_llvm<'ctx>(
-    ty: &HIRTypeKind,
+    ty: &Ty,
     ctx: &'ctx Context,
-    current_scope: Scope,
+    current_scope: SymbolTable,
 ) -> Result<BasicTypeEnum<'ctx>, Box<dyn Error>> {
     match ty {
-        HIRTypeKind::Builtin(builtin) => {
+        Ty::Builtin(builtin) => {
             let any_ty = match builtin {
                 BuiltinType::Boolean => BasicTypeEnum::IntType(ctx.bool_type()),
                 // TODO: make unsigned truly unsigned
@@ -1245,32 +1246,31 @@ fn map_type_to_llvm<'ctx>(
             };
             Ok(any_ty)
         }
-        HIRTypeKind::Identifier(identifier) => {
+        Ty::Identifier(identifier) => {
             let symbol = current_scope
-                .symbols
-                .get(identifier)
+                .lookup(identifier)
                 .ok_or_else(|| format!("identifier {} not found in current scope", identifier))?;
-            if let HIRSymbol::Type(ty) = symbol {
+            if let TypedSymbol::Type(ty) = symbol {
                 map_type_to_llvm(ty, ctx, current_scope.clone())
             } else {
                 Err(format!("symbol {:?} is not a type", symbol).into())
             }
         }
-        HIRTypeKind::Struct { fields } => {
+        Ty::Struct { fields } => {
             let field_types: Vec<BasicTypeEnum> = fields
                 .iter()
                 .map(|(_, ty)| map_type_to_llvm(ty, ctx, current_scope.clone()))
                 .collect::<Result<_, _>>()?;
             Ok(ctx.struct_type(&field_types, false).into())
         }
-        HIRTypeKind::Tuple { elements } => {
+        Ty::Tuple { elements } => {
             let field_types: Vec<BasicTypeEnum> = elements
                 .iter()
                 .map(|ty| map_type_to_llvm(ty, ctx, current_scope.clone()))
                 .collect::<Result<_, _>>()?;
             Ok(ctx.struct_type(&field_types, false).into())
         }
-        HIRTypeKind::Enum { variants } => {
+        Ty::Enum { variants } => {
             let payload_bytes = enum_max_payload_bytes(variants, &current_scope);
             if payload_bytes == 0 {
                 Ok(ctx.i32_type().into())
@@ -1284,21 +1284,21 @@ fn map_type_to_llvm<'ctx>(
                 Ok(ctx.struct_type(&[tag_ty, payload_ty], false).into())
             }
         }
-        HIRTypeKind::Pointer(_) => Ok(ctx.ptr_type(AddressSpace::default()).into()),
-        HIRTypeKind::Array { element_type, size } => {
+        Ty::Pointer(_) => Ok(ctx.ptr_type(AddressSpace::default()).into()),
+        Ty::Array { element_type, size } => {
             let elem_ty = map_type_to_llvm(element_type, ctx, current_scope)?;
             Ok(elem_ty.array_type(*size as u32).into())
         }
-        HIRTypeKind::Function { .. } => {
+        Ty::Function { .. } => {
             // Function pointers are opaque `ptr` in LLVM 16.
             Ok(ctx.ptr_type(AddressSpace::default()).into())
         }
-        HIRTypeKind::Type => {
-            Err("compiler bug: HIRTypeKind::Type reached LLVM lowering — comptime type values must not appear in runtime code".into())
+        Ty::Type => {
+            Err("compiler bug: Ty::Type reached LLVM lowering — comptime type values must not appear in runtime code".into())
         }
-        HIRTypeKind::QualifiedIdentifier { module, name } => {
+        Ty::QualifiedIdentifier { module, name } => {
             // Resolve through the scope's imported modules
-            let module_data = current_scope.modules.get(module).ok_or_else(|| {
+            let module_data = current_scope.lookup_module(module).ok_or_else(|| {
                 format!("map_type_to_llvm: module '{}' not found in scope", module)
             })?;
             let sym = module_data.exports.get(name).ok_or_else(|| {
@@ -1307,7 +1307,7 @@ fn map_type_to_llvm<'ctx>(
                     name, module
                 )
             })?;
-            if let HIRSymbol::Type(inner_ty) = sym {
+            if let TypedSymbol::Type(inner_ty) = sym {
                 let inner_ty = inner_ty.clone();
                 map_type_to_llvm(&inner_ty, ctx, current_scope)
             } else {
@@ -1321,8 +1321,8 @@ fn map_type_to_llvm<'ctx>(
 fn create_entry_allocas<'ctx>(
     ctx: &'ctx Context,
     function: FunctionValue<'ctx>,
-    hir_fn: HIRFunction,
-    current_scope: Scope,
+    typed_fn: TypedFunction,
+    current_scope: SymbolTable,
 ) -> Result<HashMap<Identifier, PointerValue<'ctx>>, Box<dyn Error>> {
     let mut vars = HashMap::new();
 
@@ -1334,7 +1334,7 @@ fn create_entry_allocas<'ctx>(
         builder_at_entry.position_at_end(entry);
     }
 
-    for (idx, (param_name, ty)) in hir_fn.params.into_iter().enumerate() {
+    for (idx, (param_name, ty)) in typed_fn.params.into_iter().enumerate() {
         let param = function.get_nth_param(idx as u32).unwrap();
         // param.get_type() is a BasicTypeEnum already; build_alloca expects BasicTypeEnum
         let alloca = match builder_at_entry.build_alloca(
@@ -1360,8 +1360,8 @@ fn create_entry_allocas<'ctx>(
 fn emit_deferred_frame<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut Scope,
-    frame: &[HIRStatement],
+    current_scope: &mut SymbolTable,
+    frame: &[TypedStatement],
 ) -> Result<(), Box<dyn Error>> {
     // Emit deferred statements in reverse order (LIFO)
     for stmt in frame.iter().rev() {
@@ -1376,8 +1376,8 @@ fn emit_deferred_frame<'ctx, 'r>(
 fn emit_frames_from<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut Scope,
-    stack: &[Vec<HIRStatement>],
+    current_scope: &mut SymbolTable,
+    stack: &[Vec<TypedStatement>],
     from: usize,
 ) -> Result<(), Box<dyn Error>> {
     for frame in stack[from.min(stack.len())..].iter().rev() {
@@ -1389,55 +1389,55 @@ fn emit_frames_from<'ctx, 'r>(
 fn codegen_stmt<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut Scope,
-    stmt: &HIRStatement,
+    current_scope: &mut SymbolTable,
+    stmt: &TypedStatement,
     loop_ctx: Option<&LoopContext<'ctx>>,
-    deferred_stack: &mut Vec<Vec<HIRStatement>>,
+    deferred_stack: &mut Vec<Vec<TypedStatement>>,
 ) -> Result<Option<BasicValueEnum<'ctx>>, Box<dyn Error>> {
     match stmt {
-        HIRStatement::Binding(hir_binding) => {
-            let ty = map_type_to_llvm(&hir_binding.ty, ctx.ctx, current_scope.clone())?;
+        TypedStatement::Binding(typed_binding) => {
+            let ty = map_type_to_llvm(&typed_binding.ty, ctx.ctx, current_scope.clone())?;
             let alloca = match ctx
                 .builder
-                .build_alloca(ty, &format!("{}_addr", hir_binding.name))
+                .build_alloca(ty, &format!("{}_addr", typed_binding.name))
             {
                 Ok(a) => a,
                 Err(e) => {
                     return Err(format!(
                         "Failed to create alloca for parameter '{}': {}",
-                        hir_binding.name, e
+                        typed_binding.name, e
                     )
                     .into());
                 }
             };
             // Store the init value into the alloca. An uninitialized binding
             // is just an alloca; it holds undef until first assignment.
-            if let Some(init) = &hir_binding.init {
+            if let Some(init) = &typed_binding.init {
                 let _ = ctx.builder.build_store(
                     alloca,
                     codegen_expr(ctx, vars, &mut current_scope.clone(), init)?,
                 )?;
             }
-            vars.insert(hir_binding.name.clone(), alloca);
+            vars.insert(typed_binding.name.clone(), alloca);
             // Register the binding in the scope so subsequent expressions
             // (e.g. `return x`) can look up its type via codegen_expr.
-            current_scope.symbols.insert(
-                hir_binding.name.clone(),
-                HIRSymbol::Binding(HIRBinding {
-                    name: hir_binding.name.clone(),
-                    ty: hir_binding.ty.clone(),
+            current_scope.insert(
+                typed_binding.name.clone(),
+                TypedSymbol::Binding(TypedBinding {
+                    name: typed_binding.name.clone(),
+                    ty: typed_binding.ty.clone(),
                     init: None,
-                    mutable: hir_binding.mutable,
+                    mutable: typed_binding.mutable,
                 }),
             );
             Ok(None)
         }
 
-        HIRStatement::Assign { name, expr } => {
+        TypedStatement::Assign { name, expr } => {
             let v = codegen_expr(ctx, vars, current_scope, expr)?;
             if let Some(ptr) = vars.get(name) {
-                let target_ty = match current_scope.symbols.get(name) {
-                    Some(HIRSymbol::Binding(binding)) => {
+                let target_ty = match current_scope.lookup(name) {
+                    Some(TypedSymbol::Binding(binding)) => {
                         map_type_to_llvm(&binding.ty, ctx.ctx, current_scope.clone())?
                     }
                     _ => v.get_type(),
@@ -1450,9 +1450,9 @@ fn codegen_stmt<'ctx, 'r>(
             }
         }
 
-        HIRStatement::MultiAssign { targets, values } => {
+        TypedStatement::MultiAssign { targets, values } => {
             let evaluated_values = if values.len() == 1
-                && matches!(values[0].inferred_type, HIRTypeKind::Tuple { .. })
+                && matches!(values[0].inferred_type, Ty::Tuple { .. })
             {
                 let tuple_value = codegen_expr(ctx, vars, current_scope, &values[0])?;
                 unpack_tuple_value(ctx, tuple_value, targets.len())?
@@ -1478,9 +1478,9 @@ fn codegen_stmt<'ctx, 'r>(
             Ok(None)
         }
 
-        HIRStatement::MultiBinding { bindings, values } => {
+        TypedStatement::MultiBinding { bindings, values } => {
             let evaluated_values = if values.len() == 1
-                && matches!(values[0].inferred_type, HIRTypeKind::Tuple { .. })
+                && matches!(values[0].inferred_type, Ty::Tuple { .. })
             {
                 let tuple_value = codegen_expr(ctx, vars, current_scope, &values[0])?;
                 unpack_tuple_value(ctx, tuple_value, bindings.len())?
@@ -1508,9 +1508,9 @@ fn codegen_stmt<'ctx, 'r>(
                 let value = coerce_int_to_llvm_type(ctx, value, ty)?;
                 ctx.builder.build_store(alloca, value)?;
                 vars.insert(binding.name.clone(), alloca);
-                current_scope.symbols.insert(
+                current_scope.insert(
                     binding.name.clone(),
-                    HIRSymbol::Binding(HIRBinding {
+                    TypedSymbol::Binding(TypedBinding {
                         name: binding.name.clone(),
                         ty: binding.ty.clone(),
                         init: None,
@@ -1521,7 +1521,7 @@ fn codegen_stmt<'ctx, 'r>(
             Ok(None)
         }
 
-        HIRStatement::FieldAssign {
+        TypedStatement::FieldAssign {
             object,
             field: _,
             field_index,
@@ -1547,14 +1547,14 @@ fn codegen_stmt<'ctx, 'r>(
             Ok(None)
         }
 
-        HIRStatement::DerefAssign { pointer, expr } => {
+        TypedStatement::DerefAssign { pointer, expr } => {
             let ptr_val = codegen_expr(ctx, vars, current_scope, pointer)?;
             let val = codegen_expr(ctx, vars, current_scope, expr)?;
             ctx.builder.build_store(ptr_val.into_pointer_value(), val)?;
             Ok(None)
         }
 
-        HIRStatement::IndexAssign {
+        TypedStatement::IndexAssign {
             object,
             index,
             expr,
@@ -1562,11 +1562,11 @@ fn codegen_stmt<'ctx, 'r>(
             let idx_val = codegen_expr(ctx, vars, current_scope, index)?;
             let val = codegen_expr(ctx, vars, current_scope, expr)?;
             match &object.inferred_type {
-                HIRTypeKind::Array { .. } => {
+                Ty::Array { .. } => {
                     let arr_ty =
                         map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
                     // Get the alloca for the array identifier directly
-                    let arr_ptr = if let HIRExpressionKind::Identifier(name) = &object.expression {
+                    let arr_ptr = if let TypedExprKind::Identifier(name) = &object.expression {
                         *vars
                             .get(name)
                             .ok_or_else(|| format!("IndexAssign: array {} not found", name))?
@@ -1588,7 +1588,7 @@ fn codegen_stmt<'ctx, 'r>(
                     ctx.builder.build_store(gep, val)?;
                     Ok(None)
                 }
-                HIRTypeKind::Pointer(inner) => {
+                Ty::Pointer(inner) => {
                     let ptr_val = codegen_expr(ctx, vars, current_scope, object)?;
                     let elem_ty = map_type_to_llvm(inner, ctx.ctx, current_scope.clone())?;
                     let gep = unsafe {
@@ -1608,12 +1608,12 @@ fn codegen_stmt<'ctx, 'r>(
             }
         }
 
-        HIRStatement::Expr(e) => {
+        TypedStatement::Expr(e) => {
             let _ = codegen_expr(ctx, vars, current_scope, e)?;
             Ok(None)
         }
 
-        HIRStatement::Defer(inner) => {
+        TypedStatement::Defer(inner) => {
             // Push onto the current deferred frame for later emission
             deferred_stack
                 .last_mut()
@@ -1622,7 +1622,7 @@ fn codegen_stmt<'ctx, 'r>(
             Ok(None)
         }
 
-        HIRStatement::Return(opt) => {
+        TypedStatement::Return(opt) => {
             // Returning leaves every enclosing block: run all deferred
             // frames, innermost first.
             let frames = deferred_stack.clone();
@@ -1656,7 +1656,7 @@ fn codegen_stmt<'ctx, 'r>(
             Ok(None)
         }
 
-        HIRStatement::If(hir_if) => {
+        TypedStatement::If(typed_if) => {
             // Retrieve the current function so we can append basic blocks to it.
             let func = ctx
                 .builder
@@ -1675,7 +1675,7 @@ fn codegen_stmt<'ctx, 'r>(
 
             // For an if-without-else, the false branch jumps straight to the
             // merge block, avoiding a superfluous empty `else` block.
-            let else_bb = if hir_if.else_branch.is_some() {
+            let else_bb = if typed_if.else_branch.is_some() {
                 ctx.ctx.append_basic_block(func, "else")
             } else {
                 merge_bb
@@ -1686,7 +1686,7 @@ fn codegen_stmt<'ctx, 'r>(
             // Emit the condition in the current (predecessor) block, then
             // branch to the appropriate successors.  This terminates the
             // predecessor block.
-            let cond_v = codegen_expr(ctx, vars, current_scope, &hir_if.cond)?;
+            let cond_v = codegen_expr(ctx, vars, current_scope, &typed_if.cond)?;
             let _ = ctx
                 .builder
                 .build_conditional_branch(cond_v.into_int_value(), then_bb, else_bb);
@@ -1694,7 +1694,7 @@ fn codegen_stmt<'ctx, 'r>(
             // --- then branch ---
             ctx.builder.position_at_end(then_bb);
             deferred_stack.push(Vec::new());
-            for s in hir_if.then_branch.iter() {
+            for s in typed_if.then_branch.iter() {
                 codegen_stmt(ctx, vars, current_scope, s, loop_ctx, deferred_stack)?;
             }
             let then_deferred = deferred_stack.pop().expect("then frame");
@@ -1712,7 +1712,7 @@ fn codegen_stmt<'ctx, 'r>(
             }
 
             // --- else branch (only when one exists) ---
-            if let Some(eb) = &hir_if.else_branch {
+            if let Some(eb) = &typed_if.else_branch {
                 ctx.builder.position_at_end(else_bb);
                 deferred_stack.push(Vec::new());
                 for s in eb.iter() {
@@ -1736,7 +1736,7 @@ fn codegen_stmt<'ctx, 'r>(
             ctx.builder.position_at_end(merge_bb);
             Ok(None)
         }
-        HIRStatement::For {
+        TypedStatement::For {
             init,
             cond,
             post,
@@ -1835,7 +1835,7 @@ fn codegen_stmt<'ctx, 'r>(
 
             Ok(None)
         }
-        HIRStatement::Break => {
+        TypedStatement::Break => {
             let lc = loop_ctx.ok_or("break outside of loop")?;
             let frames = deferred_stack.clone();
             emit_frames_from(ctx, vars, current_scope, &frames, lc.deferred_depth)?;
@@ -1850,7 +1850,7 @@ fn codegen_stmt<'ctx, 'r>(
             ctx.builder.position_at_end(dead_bb);
             Ok(None)
         }
-        HIRStatement::Continue => {
+        TypedStatement::Continue => {
             let lc = loop_ctx.ok_or("continue outside of loop")?;
             let frames = deferred_stack.clone();
             emit_frames_from(ctx, vars, current_scope, &frames, lc.deferred_depth)?;
@@ -1865,7 +1865,7 @@ fn codegen_stmt<'ctx, 'r>(
             ctx.builder.position_at_end(dead_bb);
             Ok(None)
         }
-        HIRStatement::Switch { subject, arms } => {
+        TypedStatement::Switch { subject, arms } => {
             let func = ctx
                 .builder
                 .get_insert_block()
@@ -1877,9 +1877,9 @@ fn codegen_stmt<'ctx, 'r>(
             // Find a wildcard arm for the default block (if any). Otherwise
             // the merge block itself acts as the default.
             let mut default_bb = merge_bb;
-            let mut wildcard_arm: Option<&Vec<HIRStatement>> = None;
+            let mut wildcard_arm: Option<&Vec<TypedStatement>> = None;
             for arm in arms {
-                if let HIRPattern::Wildcard = &arm.pattern {
+                if let TypedPattern::Wildcard = &arm.pattern {
                     default_bb = ctx.ctx.append_basic_block(func, "switchdefault");
                     wildcard_arm = Some(&arm.body);
                     break;
@@ -1891,10 +1891,10 @@ fn codegen_stmt<'ctx, 'r>(
             let mut variant_blocks: Vec<(
                 u64,
                 inkwell::basic_block::BasicBlock,
-                &HIRSwitchArm,
+                &TypedSwitchArm,
             )> = Vec::new();
             for arm in arms {
-                if let HIRPattern::EnumVariant { discriminant, .. } = &arm.pattern {
+                if let TypedPattern::EnumVariant { discriminant, .. } = &arm.pattern {
                     let bb = ctx.ctx.append_basic_block(func, "switcharm");
                     variant_blocks.push((*discriminant as u64, bb, arm));
                 }
@@ -1948,9 +1948,9 @@ fn codegen_stmt<'ctx, 'r>(
                 let mut bind_restore: Option<(
                     Identifier,
                     Option<PointerValue>,
-                    Option<HIRSymbol>,
+                    Option<TypedSymbol>,
                 )> = None;
-                if let HIRPattern::EnumVariant {
+                if let TypedPattern::EnumVariant {
                     binding: Some(b),
                     payload_ty: Some(payload_ty),
                     ..
@@ -1972,11 +1972,11 @@ fn codegen_stmt<'ctx, 'r>(
                         ctx.builder.build_store(bind_alloca, loaded)?;
                     }
                     let prev = vars.insert(b.clone(), bind_alloca);
-                    // Inject the binding into the scope so HIR FieldAccess can
+                    // Inject the binding into the scope so Typed FieldAccess can
                     // look up the struct fields.
-                    let prev_sym = current_scope.symbols.insert(
+                    let prev_sym = current_scope.insert(
                         b.clone(),
-                        HIRSymbol::Binding(HIRBinding {
+                        TypedSymbol::Binding(TypedBinding {
                             name: b.clone(),
                             ty: payload_ty.clone(),
                             init: None,
@@ -2014,10 +2014,10 @@ fn codegen_stmt<'ctx, 'r>(
                     }
                     match prev_sym {
                         Some(s) => {
-                            current_scope.symbols.insert(bid, s);
+                            current_scope.insert(bid, s);
                         }
                         None => {
-                            current_scope.symbols.remove(&bid);
+                            current_scope.remove(&bid);
                         }
                     }
                 }

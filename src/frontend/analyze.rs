@@ -8,10 +8,10 @@ use crate::frontend::ast::{
     type_expression::TypeExpression, variable_declaration::VariableDeclaration,
 };
 use crate::frontend::identifier::Identifier;
-use crate::frontend::ir::{
-    CompilationUnit, GenericFunctionTemplate, HIRBinding, HIRDeclaration, HIREnumVariant,
-    HIRExpression, HIRExpressionKind, HIRFunction, HIRIf, HIRModule, HIRPattern, HIRReturn,
-    HIRStatement, HIRSwitchArm, HIRSymbol, HIRTypeDeclaration, HIRTypeKind, Scope,
+use crate::frontend::typed_ast::{
+    TypedProgram, GenericFunctionTemplate, TypedBinding, TypedDecl, TypedEnumVariant,
+    TypedExpr, TypedExprKind, TypedFunction, TypedIf, TypedModule, TypedPattern, TypedReturn,
+    TypedStatement, TypedSwitchArm, TypedSymbol, TypedTypeDecl, Ty, SymbolTable, ScopeKind,
 };
 use crate::frontend::tokens::Operator;
 use crate::frontend::tokens::builtin::{BuiltinFunction, BuiltinType};
@@ -45,13 +45,13 @@ impl From<String> for AnalysisError {
     }
 }
 
-/// Perform semantic analysis on the parser AST and produce a vector of HIR functions.
+/// Perform semantic analysis on the parser AST and produce a vector of Typed functions.
 pub fn analyze(
     ast: Ast,
-    resolved_modules: &std::collections::HashMap<Vec<String>, HIRModule>,
-) -> Result<CompilationUnit, AnalysisError> {
+    resolved_modules: &std::collections::HashMap<Vec<String>, TypedModule>,
+) -> Result<TypedProgram, AnalysisError> {
     // name resolution
-    let mut current_scope = Scope::new();
+    let mut current_scope = SymbolTable::new();
 
     // Import resolution: process all import declarations first so that module
     // symbols are available when resolving subsequent declarations.
@@ -68,7 +68,7 @@ pub fn analyze(
                     let sym = module.exports.get(name).ok_or_else(|| {
                         format!("'{}' not found in module '{}'", name, path_strs.join("::"))
                     })?;
-                    current_scope.symbols.insert(name.clone(), sym.clone());
+                    current_scope.insert(name.clone(), sym.clone());
                 }
             } else {
                 // Register as a named module in scope
@@ -77,14 +77,14 @@ pub fn analyze(
                     .as_ref()
                     .map(|a| a.value.clone())
                     .unwrap_or_else(|| import.path.last().unwrap().value.clone());
-                current_scope.modules.insert(local_name, module.clone());
+                current_scope.insert_module(local_name, module.clone());
             }
         }
     }
 
     // Collect imported declarations for lowering
-    let mut imported_declarations: Vec<HIRDeclaration> = Vec::new();
-    for module in current_scope.modules.values() {
+    let mut imported_declarations: Vec<TypedDecl> = Vec::new();
+    for module in current_scope.modules() {
         imported_declarations.extend(module.declarations.clone());
     }
     // Also collect selectively imported declarations
@@ -99,20 +99,20 @@ pub fn analyze(
         }
     }
 
-    let mut hir_declarations: Vec<HIRDeclaration> = Vec::new();
+    let mut typed_declarations: Vec<TypedDecl> = Vec::new();
     // Cache of instantiated generic functions keyed by mangled name.
-    let mut generic_cache: HashMap<String, HIRFunction> = HashMap::new();
+    let mut generic_cache: HashMap<String, TypedFunction> = HashMap::new();
 
     for declaration in ast.declarations {
-        current_scope = resolve_declaration(&declaration, current_scope)?;
-        let hir_declaration: Option<HIRDeclaration> = match declaration {
+        resolve_declaration(&declaration, &mut current_scope)?;
+        let typed_declaration: Option<TypedDecl> = match declaration {
             DeclarationNode::ImportDeclaration(_) => None,
             DeclarationNode::FunctionDeclaration(function_declaration) => {
-                // Generic functions are stored as templates; they produce no direct HIR declaration.
+                // Generic functions are stored as templates; they produce no direct Typed declaration.
                 if is_generic_function(&function_declaration) {
                     None
                 } else {
-                    Some(HIRDeclaration::HIRFunction(func_to_hir(
+                    Some(TypedDecl::Function(func_to_typed(
                         function_declaration,
                         &mut current_scope,
                         &mut generic_cache,
@@ -123,15 +123,15 @@ pub fn analyze(
                 TypeExpression::TypeKeyword => None,
                 expr => {
                     let ty = map_type(expr)?;
-                    Some(HIRDeclaration::HIRType(HIRTypeDeclaration {
+                    Some(TypedDecl::Type(TypedTypeDecl {
                         name: ty_decl.name,
                         ty,
                     }))
                 }
             },
         };
-        if let Some(hir_declaration) = hir_declaration {
-            hir_declarations.push(hir_declaration);
+        if let Some(typed_declaration) = typed_declaration {
+            typed_declarations.push(typed_declaration);
         }
     }
 
@@ -140,55 +140,53 @@ pub fn analyze(
     let mut generic_fns: Vec<_> = generic_cache.into_iter().collect();
     generic_fns.sort_by(|a, b| a.0.cmp(&b.0));
     for (_, func) in generic_fns {
-        hir_declarations.push(HIRDeclaration::HIRFunction(func));
+        typed_declarations.push(TypedDecl::Function(func));
     }
 
-    let compilation_unit = CompilationUnit {
-        scope_root: current_scope,
-        declarations: hir_declarations,
+    let compilation_unit = TypedProgram {
+        symbol_table: current_scope,
+        declarations: typed_declarations,
         imported_declarations,
     };
-    Ok::<CompilationUnit, AnalysisError>(compilation_unit)
+    Ok::<TypedProgram, AnalysisError>(compilation_unit)
 }
 
-/// Map an AST function signature to HIR parameter and return types.
+/// Map an AST function signature to Typed parameter and return types.
 /// Comptime (`type`-typed) parameters are excluded from the parameter list.
-fn signature_to_hir(
+fn signature_to_typed(
     function_declaration: &FunctionDeclaration,
-) -> Result<(Vec<(Identifier, HIRTypeKind)>, HIRTypeKind), AnalysisError> {
+) -> Result<(Vec<(Identifier, Ty)>, Ty), AnalysisError> {
     let mut params = Vec::new();
     for param in &function_declaration.signature.parameters {
         let ty = map_type(param.parameter_type.clone())?;
-        if ty != HIRTypeKind::Type {
+        if ty != Ty::Type {
             params.push((param.parameter_name.clone(), ty));
         }
     }
     let return_type = match function_declaration.signature.return_type.clone() {
         Some(rt) => map_type(rt)?,
-        None => HIRTypeKind::Builtin(BuiltinType::Void),
+        None => Ty::Builtin(BuiltinType::Void),
     };
     Ok((params, return_type))
 }
 
-fn func_to_hir(
+fn func_to_typed(
     function_declaration: FunctionDeclaration,
-    current_scope: &mut Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<HIRFunction, AnalysisError> {
-    // Only include non-comptime parameters in the HIR function signature.
-    let (params, return_type) = signature_to_hir(&function_declaration)?;
+    current_scope: &mut SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+) -> Result<TypedFunction, AnalysisError> {
+    // Only include non-comptime parameters in the Typed function signature.
+    let (params, return_type) = signature_to_typed(&function_declaration)?;
 
-    // Build a body-level scope that inherits all module-level symbols and also
-    // includes the function's own parameters.  This ensures that both other
-    // functions (for call resolution) and the parameter bindings are visible
-    // when we lower each statement in the body.
-    let mut body_scope = current_scope.clone();
+    // Enter a function scope holding the runtime parameters. Exited before
+    // returning so params never leak into the enclosing (global) table.
+    current_scope.enter_scope(ScopeKind::Function);
     for param in &function_declaration.signature.parameters {
         let ty = map_type(param.parameter_type.clone())?;
-        if ty != HIRTypeKind::Type {
-            body_scope.symbols.insert(
+        if ty != Ty::Type {
+            current_scope.insert(
                 param.parameter_name.clone(),
-                HIRSymbol::Binding(HIRBinding {
+                TypedSymbol::Binding(TypedBinding {
                     name: param.parameter_name.clone(),
                     ty,
                     init: None,
@@ -201,10 +199,11 @@ fn func_to_hir(
     let mut body = Vec::new();
     if let Some(fb) = function_declaration.body {
         for stmt in fb.statements {
-            body.push(stmt_to_hir(stmt, &mut body_scope, generic_cache)?);
+            body.push(stmt_to_typed(stmt, current_scope, generic_cache)?);
         }
     }
-    Ok(HIRFunction {
+    current_scope.exit_scope();
+    Ok(TypedFunction {
         name: function_declaration.signature.name,
         params,
         return_type,
@@ -214,30 +213,30 @@ fn func_to_hir(
     })
 }
 
-fn stmt_to_hir(
+fn stmt_to_typed(
     stmt: Statement,
-    current_scope: &mut Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<HIRStatement, AnalysisError> {
+    current_scope: &mut SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+) -> Result<TypedStatement, AnalysisError> {
     let line = stmt.line;
-    stmt_to_hir_inner(stmt.kind, current_scope, generic_cache).map_err(|mut e| {
+    stmt_to_typed_inner(stmt.kind, current_scope, generic_cache).map_err(|mut e| {
         e.line.get_or_insert(line);
         e
     })
 }
 
-fn stmt_to_hir_inner(
+fn stmt_to_typed_inner(
     stmt: StatementKind,
-    current_scope: &mut Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<HIRStatement, AnalysisError> {
+    current_scope: &mut SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+) -> Result<TypedStatement, AnalysisError> {
     match stmt {
-        StatementKind::VariableDeclaration(variable_declaration) => Ok(HIRStatement::Binding(
-            var_decl_to_hir(variable_declaration, current_scope, generic_cache)?,
+        StatementKind::VariableDeclaration(variable_declaration) => Ok(TypedStatement::Binding(
+            var_decl_to_typed(variable_declaration, current_scope, generic_cache)?,
         )),
         StatementKind::Assignment { identifier, expr } => {
-            let target_ty = match current_scope.symbols.get(&identifier) {
-                Some(HIRSymbol::Binding(binding)) => {
+            let target_ty = match current_scope.lookup(&identifier) {
+                Some(TypedSymbol::Binding(binding)) => {
                     if !binding.mutable {
                         return Err(format!("cannot assign to constant '{}'", identifier).into());
                     }
@@ -252,7 +251,7 @@ fn stmt_to_hir_inner(
                     );
                 }
             };
-            let e = expr_to_hir(expr, current_scope, generic_cache)?;
+            let e = expr_to_typed(expr, current_scope, generic_cache)?;
             let found = e.inferred_type.clone();
             let e = coerce_or_alias(e, &target_ty, current_scope).map_err(|_| {
                 format!(
@@ -260,7 +259,7 @@ fn stmt_to_hir_inner(
                     found, identifier, target_ty
                 )
             })?;
-            Ok(HIRStatement::Assign {
+            Ok(TypedStatement::Assign {
                 name: identifier,
                 expr: e,
             })
@@ -275,20 +274,20 @@ fn stmt_to_hir_inner(
             // If the object is a plain identifier referring to an immutable
             // binding, surface a friendly error.
             if let PExpr::Identifier(id) = &object
-                && let Some(HIRSymbol::Binding(b)) = current_scope.symbols.get(id)
+                && let Some(TypedSymbol::Binding(b)) = current_scope.lookup(id)
                 && !b.mutable
             {
                 return Err(format!("cannot assign to field of constant '{}'", id).into());
             }
-            let obj_hir = expr_to_hir(object, current_scope, generic_cache)?;
-            let struct_fields = match &obj_hir.inferred_type {
-                HIRTypeKind::Struct { fields } => fields.clone(),
-                HIRTypeKind::Identifier(_) => {
-                    resolve_struct_fields(&obj_hir.inferred_type, current_scope)?
+            let obj_typed = expr_to_typed(object, current_scope, generic_cache)?;
+            let struct_fields = match &obj_typed.inferred_type {
+                Ty::Struct { fields } => fields.clone(),
+                Ty::Identifier(_) => {
+                    resolve_struct_fields(&obj_typed.inferred_type, current_scope)?
                 }
                 other => {
                     return Err(format!(
-                        "stmt_to_hir: FieldAssign target is not a struct: {:?}",
+                        "stmt_to_typed: FieldAssign target is not a struct: {:?}",
                         other
                     )
                     .into());
@@ -297,47 +296,47 @@ fn stmt_to_hir_inner(
             let field_index = struct_fields
                 .iter()
                 .position(|(name, _)| name == &field.value)
-                .ok_or_else(|| format!("stmt_to_hir: field {} not found in struct", field.value))?;
-            let e = expr_to_hir(expr, current_scope, generic_cache)?;
-            Ok(HIRStatement::FieldAssign {
-                object: obj_hir,
+                .ok_or_else(|| format!("stmt_to_typed: field {} not found in struct", field.value))?;
+            let e = expr_to_typed(expr, current_scope, generic_cache)?;
+            Ok(TypedStatement::FieldAssign {
+                object: obj_typed,
                 field: field.value,
                 field_index,
                 expr: e,
             })
         }
-        StatementKind::ExpressionStatement(e) => Ok(HIRStatement::Expr(expr_to_hir(
+        StatementKind::ExpressionStatement(e) => Ok(TypedStatement::Expr(expr_to_typed(
             e,
             current_scope,
             generic_cache,
         )?)),
         StatementKind::MultiAssignment { targets, values } => {
-            let mut hir_targets = Vec::new();
+            let mut typed_targets = Vec::new();
             for target in targets {
                 validate_assignment_target(&target, current_scope)?;
-                hir_targets.push(expr_to_hir(target, current_scope, generic_cache)?);
+                typed_targets.push(expr_to_typed(target, current_scope, generic_cache)?);
             }
-            let mut hir_values = Vec::new();
+            let mut typed_values = Vec::new();
             for value in values {
-                hir_values.push(expr_to_hir(value, current_scope, generic_cache)?);
+                typed_values.push(expr_to_typed(value, current_scope, generic_cache)?);
             }
-            validate_multi_assignment_shape(&hir_targets, &hir_values)?;
-            Ok(HIRStatement::MultiAssign {
-                targets: hir_targets,
-                values: hir_values,
+            validate_multi_assignment_shape(&typed_targets, &typed_values)?;
+            Ok(TypedStatement::MultiAssign {
+                targets: typed_targets,
+                values: typed_values,
             })
         }
         StatementKind::MultiVariableDeclaration {
             identifiers,
             values,
-        } => multi_var_decl_to_hir(identifiers, values, current_scope, generic_cache),
-        StatementKind::Return(opt) => Ok(HIRStatement::Return(match opt {
+        } => multi_var_decl_to_typed(identifiers, values, current_scope, generic_cache),
+        StatementKind::Return(opt) => Ok(TypedStatement::Return(match opt {
             Some(exprs) => {
-                let mut hir_exprs = Vec::new();
+                let mut typed_exprs = Vec::new();
                 for expr in exprs {
-                    hir_exprs.push(expr_to_hir(expr, current_scope, generic_cache)?);
+                    typed_exprs.push(expr_to_typed(expr, current_scope, generic_cache)?);
                 }
-                Some(HIRReturn { values: hir_exprs })
+                Some(TypedReturn { values: typed_exprs })
             }
             None => None,
         })),
@@ -346,26 +345,28 @@ fn stmt_to_hir_inner(
             then_branch,
             else_branch,
         } => {
-            let cond = expr_to_hir(condition, current_scope, generic_cache)?;
-            // Each branch gets its own child scope so bindings declared
+            let cond = expr_to_typed(condition, current_scope, generic_cache)?;
+            // Each branch gets its own block scope so bindings declared
             // inside it don't leak into the enclosing block.
-            let mut then_scope = current_scope.clone();
+            current_scope.enter_scope(ScopeKind::Block);
             let mut then_h = Vec::new();
             for s in then_branch {
-                then_h.push(stmt_to_hir(s, &mut then_scope, generic_cache)?);
+                then_h.push(stmt_to_typed(s, current_scope, generic_cache)?);
             }
+            current_scope.exit_scope();
             let else_h = match else_branch {
                 Some(v) => {
-                    let mut else_scope = current_scope.clone();
+                    current_scope.enter_scope(ScopeKind::Block);
                     let mut ev = Vec::new();
                     for s in v {
-                        ev.push(stmt_to_hir(s, &mut else_scope, generic_cache)?);
+                        ev.push(stmt_to_typed(s, current_scope, generic_cache)?);
                     }
+                    current_scope.exit_scope();
                     Some(ev)
                 }
                 None => None,
             };
-            Ok(HIRStatement::If(HIRIf {
+            Ok(TypedStatement::If(TypedIf {
                 cond,
                 then_branch: then_h,
                 else_branch: else_h,
@@ -377,26 +378,27 @@ fn stmt_to_hir_inner(
             post_operation: increment,
             body,
         } => {
-            // The loop header and body share one child scope (the init
+            // The loop header and body share one block scope (the init
             // binding is visible to cond/post/body) that doesn't leak out.
-            let mut loop_scope = current_scope.clone();
+            current_scope.enter_scope(ScopeKind::Block);
             let init_h = match initializer {
-                Some(b) => Some(Box::new(stmt_to_hir(*b, &mut loop_scope, generic_cache)?)),
+                Some(b) => Some(Box::new(stmt_to_typed(*b, current_scope, generic_cache)?)),
                 None => None,
             };
             let cond_h = match condition {
-                Some(e) => Some(expr_to_hir(e, &loop_scope, generic_cache)?),
+                Some(e) => Some(expr_to_typed(e, current_scope, generic_cache)?),
                 None => None,
             };
             let post_h = match increment {
-                Some(b) => Some(Box::new(stmt_to_hir(*b, &mut loop_scope, generic_cache)?)),
+                Some(b) => Some(Box::new(stmt_to_typed(*b, current_scope, generic_cache)?)),
                 None => None,
             };
             let mut body_h = Vec::new();
             for s in body {
-                body_h.push(stmt_to_hir(s, &mut loop_scope, generic_cache)?);
+                body_h.push(stmt_to_typed(s, current_scope, generic_cache)?);
             }
-            Ok(HIRStatement::For {
+            current_scope.exit_scope();
+            Ok(TypedStatement::For {
                 init: init_h,
                 cond: cond_h,
                 post: post_h,
@@ -404,24 +406,24 @@ fn stmt_to_hir_inner(
             })
         }
         StatementKind::DerefAssign { pointer, expr } => {
-            let ptr_hir = expr_to_hir(pointer, current_scope, generic_cache)?;
-            let pointee_ty = match &ptr_hir.inferred_type {
-                HIRTypeKind::Pointer(pointee) => *pointee.clone(),
+            let ptr_typed = expr_to_typed(pointer, current_scope, generic_cache)?;
+            let pointee_ty = match &ptr_typed.inferred_type {
+                Ty::Pointer(pointee) => *pointee.clone(),
                 other => {
                     return Err(format!(
-                        "stmt_to_hir: DerefAssign pointer expression has non-pointer type {:?}",
+                        "stmt_to_typed: DerefAssign pointer expression has non-pointer type {:?}",
                         other
                     )
                     .into());
                 }
             };
-            let val_hir = expr_to_hir(expr, current_scope, generic_cache)?;
+            let val_typed = expr_to_typed(expr, current_scope, generic_cache)?;
             // Allow coercion of integer literals (which default to Int32) to the pointee type
-            let _val_ty = &val_hir.inferred_type;
+            let _val_ty = &val_typed.inferred_type;
             let _ = pointee_ty; // type already verified above
-            Ok(HIRStatement::DerefAssign {
-                pointer: ptr_hir,
-                expr: val_hir,
+            Ok(TypedStatement::DerefAssign {
+                pointer: ptr_typed,
+                expr: val_typed,
             })
         }
         StatementKind::IndexAssign {
@@ -429,57 +431,57 @@ fn stmt_to_hir_inner(
             index,
             expr,
         } => {
-            let obj_hir = expr_to_hir(object, current_scope, generic_cache)?;
-            match &obj_hir.inferred_type {
-                HIRTypeKind::Pointer(_) | HIRTypeKind::Array { .. } => {}
+            let obj_typed = expr_to_typed(object, current_scope, generic_cache)?;
+            match &obj_typed.inferred_type {
+                Ty::Pointer(_) | Ty::Array { .. } => {}
                 other => {
                     return Err(format!(
-                        "stmt_to_hir: IndexAssign on non-pointer type {:?}",
+                        "stmt_to_typed: IndexAssign on non-pointer type {:?}",
                         other
                     )
                     .into());
                 }
             }
-            let idx_hir = expr_to_hir(index, current_scope, generic_cache)?;
-            let val_hir = expr_to_hir(expr, current_scope, generic_cache)?;
-            Ok(HIRStatement::IndexAssign {
-                object: obj_hir,
-                index: idx_hir,
-                expr: val_hir,
+            let idx_typed = expr_to_typed(index, current_scope, generic_cache)?;
+            let val_typed = expr_to_typed(expr, current_scope, generic_cache)?;
+            Ok(TypedStatement::IndexAssign {
+                object: obj_typed,
+                index: idx_typed,
+                expr: val_typed,
             })
         }
-        StatementKind::Break => Ok(HIRStatement::Break),
-        StatementKind::Continue => Ok(HIRStatement::Continue),
+        StatementKind::Break => Ok(TypedStatement::Break),
+        StatementKind::Continue => Ok(TypedStatement::Continue),
         StatementKind::Defer(inner) => {
-            let hir_inner = stmt_to_hir(*inner, current_scope, generic_cache)?;
-            Ok(HIRStatement::Defer(Box::new(hir_inner)))
+            let typed_inner = stmt_to_typed(*inner, current_scope, generic_cache)?;
+            Ok(TypedStatement::Defer(Box::new(typed_inner)))
         }
         StatementKind::Switch { subject, arms } => {
-            let subj_hir = expr_to_hir(subject, current_scope, generic_cache)?;
-            let resolved = resolve_type_alias(subj_hir.inferred_type.clone(), current_scope);
+            let subj_typed = expr_to_typed(subject, current_scope, generic_cache)?;
+            let resolved = resolve_type_alias(subj_typed.inferred_type.clone(), current_scope);
             let variants = match &resolved {
-                HIRTypeKind::Enum { variants } => variants.clone(),
+                Ty::Enum { variants } => variants.clone(),
                 other => {
                     return Err(
-                        format!("stmt_to_hir: switch subject is not an enum: {:?}", other).into(),
+                        format!("stmt_to_typed: switch subject is not an enum: {:?}", other).into(),
                     );
                 }
             };
-            let mut hir_arms = Vec::new();
+            let mut typed_arms = Vec::new();
             for arm in arms {
-                let (hir_pattern, arm_binding) = match arm.pattern {
-                    Pattern::Wildcard => (HIRPattern::Wildcard, None),
+                let (typed_pattern, arm_binding) = match arm.pattern {
+                    Pattern::Wildcard => (TypedPattern::Wildcard, None),
                     Pattern::EnumVariant { variant, binding } => {
                         let v = variants
                             .iter()
                             .find(|v| v.name == variant.value)
                             .ok_or_else(|| {
                                 format!(
-                                    "stmt_to_hir: enum has no variant '{}' in switch arm",
+                                    "stmt_to_typed: enum has no variant '{}' in switch arm",
                                     variant.value
                                 )
                             })?;
-                        let payload_ty = v.payload.as_ref().map(|fields| HIRTypeKind::Struct {
+                        let payload_ty = v.payload.as_ref().map(|fields| Ty::Struct {
                             fields: fields
                                 .iter()
                                 .map(|(n, t)| (n.clone(), Box::new(t.clone())))
@@ -494,7 +496,7 @@ fn stmt_to_hir_inner(
                         }
                         let bind_clone = binding.clone();
                         (
-                            HIRPattern::EnumVariant {
+                            TypedPattern::EnumVariant {
                                 variant: v.name.clone(),
                                 discriminant: v.discriminant,
                                 binding,
@@ -504,13 +506,13 @@ fn stmt_to_hir_inner(
                         )
                     }
                 };
-                // Each arm body gets its own child scope; the pattern binding
+                // Each arm body gets its own block scope; the pattern binding
                 // (if any) only exists inside it.
-                let mut arm_scope = current_scope.clone();
+                current_scope.enter_scope(ScopeKind::Block);
                 if let Some((bind_id, payload_ty)) = &arm_binding {
-                    arm_scope.symbols.insert(
+                    current_scope.insert(
                         bind_id.clone(),
-                        HIRSymbol::Binding(HIRBinding {
+                        TypedSymbol::Binding(TypedBinding {
                             name: bind_id.clone(),
                             ty: payload_ty.clone(),
                             init: None,
@@ -520,25 +522,26 @@ fn stmt_to_hir_inner(
                 }
                 let mut body_h = Vec::new();
                 for s in arm.body {
-                    body_h.push(stmt_to_hir(s, &mut arm_scope, generic_cache)?);
+                    body_h.push(stmt_to_typed(s, current_scope, generic_cache)?);
                 }
-                hir_arms.push(HIRSwitchArm {
-                    pattern: hir_pattern,
+                current_scope.exit_scope();
+                typed_arms.push(TypedSwitchArm {
+                    pattern: typed_pattern,
                     body: body_h,
                 });
             }
-            Ok(HIRStatement::Switch {
-                subject: subj_hir,
-                arms: hir_arms,
+            Ok(TypedStatement::Switch {
+                subject: subj_typed,
+                arms: typed_arms,
             })
         }
     }
 }
 
-fn validate_assignment_target(target: &PExpr, current_scope: &Scope) -> Result<(), AnalysisError> {
+fn validate_assignment_target(target: &PExpr, current_scope: &SymbolTable) -> Result<(), AnalysisError> {
     match target {
         PExpr::Identifier(id) => {
-            if let Some(HIRSymbol::Binding(binding)) = current_scope.symbols.get(id)
+            if let Some(TypedSymbol::Binding(binding)) = current_scope.lookup(id)
                 && !binding.mutable
             {
                 return Err(format!("cannot assign to constant '{}'", id).into());
@@ -547,7 +550,7 @@ fn validate_assignment_target(target: &PExpr, current_scope: &Scope) -> Result<(
         }
         PExpr::FieldAccess { object, .. } => {
             if let PExpr::Identifier(id) = object.as_ref()
-                && let Some(HIRSymbol::Binding(binding)) = current_scope.symbols.get(id)
+                && let Some(TypedSymbol::Binding(binding)) = current_scope.lookup(id)
                 && !binding.mutable
             {
                 return Err(format!("cannot assign to field of constant '{}'", id).into());
@@ -560,14 +563,14 @@ fn validate_assignment_target(target: &PExpr, current_scope: &Scope) -> Result<(
 }
 
 fn validate_multi_assignment_shape(
-    targets: &[HIRExpression],
-    values: &[HIRExpression],
+    targets: &[TypedExpr],
+    values: &[TypedExpr],
 ) -> Result<(), AnalysisError> {
     if values.len() == targets.len() {
         return Ok(());
     }
     if values.len() == 1
-        && let HIRTypeKind::Tuple { elements } = &values[0].inferred_type
+        && let Ty::Tuple { elements } = &values[0].inferred_type
         && elements.len() == targets.len()
     {
         return Ok(());
@@ -582,8 +585,8 @@ fn validate_multi_assignment_shape(
 
 fn infer_multi_binding_types(
     identifiers: &[Identifier],
-    values: &[HIRExpression],
-) -> Result<Vec<HIRTypeKind>, AnalysisError> {
+    values: &[TypedExpr],
+) -> Result<Vec<Ty>, AnalysisError> {
     if values.len() == identifiers.len() {
         return Ok(values
             .iter()
@@ -591,7 +594,7 @@ fn infer_multi_binding_types(
             .collect());
     }
     if values.len() == 1
-        && let HIRTypeKind::Tuple { elements } = &values[0].inferred_type
+        && let Ty::Tuple { elements } = &values[0].inferred_type
         && elements.len() == identifiers.len()
     {
         return Ok(elements.clone());
@@ -604,43 +607,42 @@ fn infer_multi_binding_types(
     .into())
 }
 
-fn multi_var_decl_to_hir(
+fn multi_var_decl_to_typed(
     identifiers: Vec<Identifier>,
     values: Vec<PExpr>,
-    current_scope: &mut Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<HIRStatement, AnalysisError> {
-    let mut hir_values = Vec::new();
+    current_scope: &mut SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+) -> Result<TypedStatement, AnalysisError> {
+    let mut typed_values = Vec::new();
     for value in values {
-        hir_values.push(expr_to_hir(value, current_scope, generic_cache)?);
+        typed_values.push(expr_to_typed(value, current_scope, generic_cache)?);
     }
 
-    let binding_types = infer_multi_binding_types(&identifiers, &hir_values)?;
+    let binding_types = infer_multi_binding_types(&identifiers, &typed_values)?;
     let mut bindings = Vec::new();
     for (identifier, ty) in identifiers.into_iter().zip(binding_types) {
-        let binding = HIRBinding {
+        let binding = TypedBinding {
             name: identifier.clone(),
             ty,
             init: None,
             mutable: true,
         };
         current_scope
-            .symbols
-            .insert(identifier, HIRSymbol::Binding(binding.clone()));
+            .insert(identifier, TypedSymbol::Binding(binding.clone()));
         bindings.push(binding);
     }
 
-    Ok(HIRStatement::MultiBinding {
+    Ok(TypedStatement::MultiBinding {
         bindings,
-        values: hir_values,
+        values: typed_values,
     })
 }
 
-fn var_decl_to_hir(
+fn var_decl_to_typed(
     var_decl: VariableDeclaration,
-    current_scope: &mut Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<HIRBinding, AnalysisError> {
+    current_scope: &mut SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+) -> Result<TypedBinding, AnalysisError> {
     let declared_ty = match var_decl.constant_type {
         Some(TypeExpression::TypeKeyword) => {
             return Err("mutable type bindings (`var type`) are not yet supported; use `const type` for compile-time type aliases".to_string().into());
@@ -649,7 +651,7 @@ fn var_decl_to_hir(
         None => None,
     };
     let init = match var_decl.expression {
-        Some(expr) => Some(expr_to_hir(expr, current_scope, generic_cache)?),
+        Some(expr) => Some(expr_to_typed(expr, current_scope, generic_cache)?),
         // A typed declaration without an initializer is legal: the binding
         // stays uninitialized until first assignment.
         None if declared_ty.is_some() => None,
@@ -669,18 +671,18 @@ fn var_decl_to_hir(
     let init = match init {
         None => None,
         Some(mut init) => {
-            if init.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never) {
+            if init.inferred_type == Ty::Builtin(BuiltinType::Never) {
                 init.inferred_type = ty.clone();
             }
             if init.inferred_type != ty {
                 // When the declared type is an identifier (e.g. `Point`) and the init
                 // expression is a StructConstruct, the inferred type is the resolved
-                // HIRTypeKind::Struct directly.  In that case, accept the match by
+                // Ty::Struct directly.  In that case, accept the match by
                 // annotating the init expression with the identifier type so the rest
                 // of the pipeline sees a consistent declared type.
                 let resolved_ty_match = match &ty {
-                    HIRTypeKind::Identifier(id) => match current_scope.symbols.get(id) {
-                        Some(HIRSymbol::Type(inner)) => *inner == init.inferred_type,
+                    Ty::Identifier(id) => match current_scope.lookup(id) {
+                        Some(TypedSymbol::Type(inner)) => *inner == init.inferred_type,
                         _ => false,
                     },
                     _ => false,
@@ -691,11 +693,11 @@ fn var_decl_to_hir(
                     // the identifier-keyed type.
                     init.inferred_type = ty.clone();
                 } else if let (
-                    HIRTypeKind::Array {
+                    Ty::Array {
                         element_type: decl_elem,
                         size: decl_size,
                     },
-                    HIRTypeKind::Array {
+                    Ty::Array {
                         size: init_size, ..
                     },
                 ) = (&ty, &init.inferred_type)
@@ -708,13 +710,13 @@ fn var_decl_to_hir(
                         .into());
                     }
                     // Coerce element types in the initializer
-                    if let HIRExpressionKind::ArrayLiteral { elements } = &mut init.expression {
+                    if let TypedExprKind::ArrayLiteral { elements } = &mut init.expression {
                         for elem in elements.iter_mut() {
                             elem.inferred_type = *decl_elem.clone();
                         }
                     }
                     init.inferred_type = ty.clone();
-                } else if let HIRTypeKind::Builtin(_) = &ty {
+                } else if let Ty::Builtin(_) = &ty {
                     // Numeric mismatches get a real conversion (literals are just
                     // re-typed; other expressions get a cast); anything else errors.
                     let found = init.inferred_type.clone();
@@ -737,16 +739,15 @@ inferred type of expression: {:?}"#,
             Some(init)
         }
     };
-    let hir_var = HIRBinding {
+    let typed_var = TypedBinding {
         name: var_decl.identifier.clone(),
         ty,
         init,
         mutable: true,
     };
     current_scope
-        .symbols
-        .insert(var_decl.identifier, HIRSymbol::Binding(hir_var.clone()));
-    Ok(hir_var)
+        .insert(var_decl.identifier, TypedSymbol::Binding(typed_var.clone()));
+    Ok(typed_var)
 }
 
 fn is_integer_builtin(builtin: &BuiltinType) -> bool {
@@ -773,50 +774,50 @@ fn is_float_builtin(builtin: &BuiltinType) -> bool {
     )
 }
 
-fn is_numeric_type(ty: &HIRTypeKind) -> bool {
+fn is_numeric_type(ty: &Ty) -> bool {
     matches!(
         ty,
-        HIRTypeKind::Builtin(builtin) if is_integer_builtin(builtin) || is_float_builtin(builtin)
+        Ty::Builtin(builtin) if is_integer_builtin(builtin) || is_float_builtin(builtin)
     )
 }
 
-fn is_boolean_type(ty: &HIRTypeKind) -> bool {
-    matches!(ty, HIRTypeKind::Builtin(BuiltinType::Boolean))
+fn is_boolean_type(ty: &Ty) -> bool {
+    matches!(ty, Ty::Builtin(BuiltinType::Boolean))
 }
 
 fn coerce_expr_to_type(
-    mut expr: HIRExpression,
-    target: &HIRTypeKind,
-) -> Result<HIRExpression, AnalysisError> {
+    mut expr: TypedExpr,
+    target: &Ty,
+) -> Result<TypedExpr, AnalysisError> {
     if &expr.inferred_type == target {
         return Ok(expr);
     }
 
-    if expr.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never) {
+    if expr.inferred_type == Ty::Builtin(BuiltinType::Never) {
         expr.inferred_type = target.clone();
         return Ok(expr);
     }
 
     match (&expr.expression, &expr.inferred_type, target) {
         (
-            HIRExpressionKind::LiteralInt { .. },
-            HIRTypeKind::Builtin(src),
-            HIRTypeKind::Builtin(dst),
+            TypedExprKind::LiteralInt { .. },
+            Ty::Builtin(src),
+            Ty::Builtin(dst),
         ) if is_integer_builtin(src) && is_integer_builtin(dst) => {
             expr.inferred_type = target.clone();
             Ok(expr)
         }
         (
-            HIRExpressionKind::LiteralFloat { .. },
-            HIRTypeKind::Builtin(src),
-            HIRTypeKind::Builtin(dst),
+            TypedExprKind::LiteralFloat { .. },
+            Ty::Builtin(src),
+            Ty::Builtin(dst),
         ) if is_float_builtin(src) && is_float_builtin(dst) => {
             expr.inferred_type = target.clone();
             Ok(expr)
         }
-        (_, src, dst) if is_numeric_type(src) && is_numeric_type(dst) => Ok(HIRExpression {
+        (_, src, dst) if is_numeric_type(src) && is_numeric_type(dst) => Ok(TypedExpr {
             inferred_type: target.clone(),
-            expression: HIRExpressionKind::Cast {
+            expression: TypedExprKind::Cast {
                 expr: Box::new(expr),
                 target_type: target.clone(),
             },
@@ -833,10 +834,10 @@ fn coerce_expr_to_type(
 /// a named type alias of the expression's structural type (or vice versa),
 /// in which case the expression is just re-annotated with the target type.
 fn coerce_or_alias(
-    expr: HIRExpression,
-    target: &HIRTypeKind,
-    scope: &Scope,
-) -> Result<HIRExpression, AnalysisError> {
+    expr: TypedExpr,
+    target: &Ty,
+    scope: &SymbolTable,
+) -> Result<TypedExpr, AnalysisError> {
     if &expr.inferred_type == target {
         return Ok(expr);
     }
@@ -852,12 +853,12 @@ fn coerce_or_alias(
 
 fn check_call_args(
     func_name: &str,
-    params: &[(Identifier, HIRTypeKind)],
+    params: &[(Identifier, Ty)],
     is_variadic: bool,
     args: Vec<PExpr>,
-    current_scope: &Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<Vec<HIRExpression>, AnalysisError> {
+    current_scope: &SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+) -> Result<Vec<TypedExpr>, AnalysisError> {
     if is_variadic {
         if args.len() < params.len() {
             return Err(format!(
@@ -880,7 +881,7 @@ fn check_call_args(
 
     let mut hargs = Vec::with_capacity(args.len());
     for (i, arg) in args.into_iter().enumerate() {
-        let harg = expr_to_hir(arg, current_scope, generic_cache)?;
+        let harg = expr_to_typed(arg, current_scope, generic_cache)?;
         let harg = match params.get(i) {
             Some((param_name, param_type)) => {
                 let found_type = harg.inferred_type.clone();
@@ -899,51 +900,51 @@ fn check_call_args(
     Ok(hargs)
 }
 
-fn expr_to_hir(
+fn expr_to_typed(
     expr: PExpr,
-    current_scope: &Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<HIRExpression, AnalysisError> {
+    current_scope: &SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+) -> Result<TypedExpr, AnalysisError> {
     match expr {
         PExpr::Literal(Literal::Integer(value)) => {
             // Default to Int32 (i32); explicit type annotations coerce as needed.
-            Ok(HIRExpression {
-                inferred_type: HIRTypeKind::Builtin(BuiltinType::Int4),
-                expression: HIRExpressionKind::LiteralInt { value },
+            Ok(TypedExpr {
+                inferred_type: Ty::Builtin(BuiltinType::Int4),
+                expression: TypedExprKind::LiteralInt { value },
             })
         }
-        PExpr::Literal(Literal::Boolean(b)) => Ok(HIRExpression {
-            inferred_type: HIRTypeKind::Builtin(BuiltinType::Boolean),
-            expression: HIRExpressionKind::LiteralBool(b),
+        PExpr::Literal(Literal::Boolean(b)) => Ok(TypedExpr {
+            inferred_type: Ty::Builtin(BuiltinType::Boolean),
+            expression: TypedExprKind::LiteralBool(b),
         }),
-        PExpr::Literal(Literal::Float(f)) => Ok(HIRExpression {
-            inferred_type: HIRTypeKind::Builtin(BuiltinType::Float8),
-            expression: HIRExpressionKind::LiteralFloat { value: f },
+        PExpr::Literal(Literal::Float(f)) => Ok(TypedExpr {
+            inferred_type: Ty::Builtin(BuiltinType::Float8),
+            expression: TypedExprKind::LiteralFloat { value: f },
         }),
-        PExpr::Literal(Literal::Character(c)) => Ok(HIRExpression {
-            inferred_type: HIRTypeKind::Builtin(BuiltinType::Char),
-            expression: HIRExpressionKind::LiteralInt { value: c as u64 },
+        PExpr::Literal(Literal::Character(c)) => Ok(TypedExpr {
+            inferred_type: Ty::Builtin(BuiltinType::Char),
+            expression: TypedExprKind::LiteralInt { value: c as u64 },
         }),
         PExpr::Literal(Literal::String(raw)) => {
             let value = process_escape_sequences(&raw)?;
-            Ok(HIRExpression {
-                inferred_type: HIRTypeKind::Builtin(BuiltinType::String),
-                expression: HIRExpressionKind::LiteralString { value },
+            Ok(TypedExpr {
+                inferred_type: Ty::Builtin(BuiltinType::String),
+                expression: TypedExprKind::LiteralString { value },
             })
         }
         // `null` unifies with any type (like `never`); it is concretized by
         // the context it is used in (declaration type, comparison operand, ...).
-        PExpr::Literal(Literal::Null) => Ok(HIRExpression {
-            inferred_type: HIRTypeKind::Builtin(BuiltinType::Never),
-            expression: HIRExpressionKind::Null,
+        PExpr::Literal(Literal::Null) => Ok(TypedExpr {
+            inferred_type: Ty::Builtin(BuiltinType::Never),
+            expression: TypedExprKind::Null,
         }),
         PExpr::BuiltinCall { builtin, args } => {
             // Every string builtin takes `@string` arguments; only the arity and
             // return type differ.
             let (arity, ret) = match builtin {
-                BuiltinFunction::StrLen => (1usize, HIRTypeKind::Builtin(BuiltinType::UInt8)),
-                BuiltinFunction::Concat => (2, HIRTypeKind::Builtin(BuiltinType::String)),
-                BuiltinFunction::StrEq => (2, HIRTypeKind::Builtin(BuiltinType::Boolean)),
+                BuiltinFunction::StrLen => (1usize, Ty::Builtin(BuiltinType::UInt8)),
+                BuiltinFunction::Concat => (2, Ty::Builtin(BuiltinType::String)),
+                BuiltinFunction::StrEq => (2, Ty::Builtin(BuiltinType::Boolean)),
             };
             if args.len() != arity {
                 return Err(format!(
@@ -954,10 +955,10 @@ fn expr_to_hir(
                 )
                 .into());
             }
-            let string_ty = HIRTypeKind::Builtin(BuiltinType::String);
+            let string_ty = Ty::Builtin(BuiltinType::String);
             let mut hargs = Vec::with_capacity(args.len());
             for (i, arg) in args.into_iter().enumerate() {
-                let harg = expr_to_hir(arg, current_scope, generic_cache)?;
+                let harg = expr_to_typed(arg, current_scope, generic_cache)?;
                 let found = harg.inferred_type.clone();
                 let harg = coerce_expr_to_type(harg, &string_ty).map_err(|_| -> AnalysisError {
                     format!(
@@ -970,9 +971,9 @@ fn expr_to_hir(
                 })?;
                 hargs.push(harg);
             }
-            Ok(HIRExpression {
+            Ok(TypedExpr {
                 inferred_type: ret,
-                expression: HIRExpressionKind::BuiltinCall {
+                expression: TypedExprKind::BuiltinCall {
                     builtin,
                     args: hargs,
                 },
@@ -980,23 +981,22 @@ fn expr_to_hir(
         }
         PExpr::Identifier(name) => {
             let sym = current_scope
-                .symbols
-                .get(&name)
-                .ok_or_else(|| format!("expr_to_hir: identifier {} not found in scope", name))?;
+                .lookup(&name)
+                .ok_or_else(|| format!("expr_to_typed: identifier {} not found in scope", name))?;
             match sym {
-                HIRSymbol::Binding(var) => Ok(HIRExpression {
+                TypedSymbol::Binding(var) => Ok(TypedExpr {
                     inferred_type: var.ty.clone(),
-                    expression: HIRExpressionKind::Identifier(name),
+                    expression: TypedExprKind::Identifier(name),
                 }),
-                HIRSymbol::Type(ty) => {
+                TypedSymbol::Type(ty) => {
                     // A type name used in expression position is a comptime type value.
-                    Ok(HIRExpression {
-                        inferred_type: HIRTypeKind::Type,
-                        expression: HIRExpressionKind::ComptimeType(ty.clone()),
+                    Ok(TypedExpr {
+                        inferred_type: Ty::Type,
+                        expression: TypedExprKind::ComptimeType(ty.clone()),
                     })
                 }
-                HIRSymbol::GenericFunction(_) | HIRSymbol::Function(_) => {
-                    Err(format!("expr_to_hir: identifier {} is not a variable", name).into())
+                TypedSymbol::GenericFunction(_) | TypedSymbol::Function(_) => {
+                    Err(format!("expr_to_typed: identifier {} is not a variable", name).into())
                 }
             }
         }
@@ -1005,81 +1005,81 @@ fn expr_to_hir(
             variant,
             fields,
         } => {
-            let sym = current_scope.symbols.get(&type_name).ok_or_else(|| {
+            let sym = current_scope.lookup(&type_name).ok_or_else(|| {
                 format!(
-                    "expr_to_hir: type '{}' not found for enum variant construction",
+                    "expr_to_typed: type '{}' not found for enum variant construction",
                     type_name
                 )
             })?;
-            let HIRSymbol::Type(enum_ty) = sym else {
-                return Err(format!("expr_to_hir: '{}' is not a type", type_name).into());
+            let TypedSymbol::Type(enum_ty) = sym else {
+                return Err(format!("expr_to_typed: '{}' is not a type", type_name).into());
             };
             let resolved = resolve_type_alias(enum_ty.clone(), current_scope);
-            let HIRTypeKind::Enum { variants } = &resolved else {
-                return Err(format!("expr_to_hir: '{}' is not an enum type", type_name).into());
+            let Ty::Enum { variants } = &resolved else {
+                return Err(format!("expr_to_typed: '{}' is not an enum type", type_name).into());
             };
             let v = variants
                 .iter()
                 .find(|v| v.name == variant.value)
                 .ok_or_else(|| {
                     format!(
-                        "expr_to_hir: enum '{}' has no variant '{}'",
+                        "expr_to_typed: enum '{}' has no variant '{}'",
                         type_name, variant
                     )
                 })?
                 .clone();
             let Some(payload_spec) = v.payload.clone() else {
                 return Err(format!(
-                    "expr_to_hir: variant '{}.{}' carries no payload",
+                    "expr_to_typed: variant '{}.{}' carries no payload",
                     type_name, variant
                 )
                 .into());
             };
-            let mut hir_fields: Vec<(String, HIRExpression)> = Vec::new();
+            let mut typed_fields: Vec<(String, TypedExpr)> = Vec::new();
             for (fname, fval) in fields {
                 let Some((_, spec_ty)) = payload_spec.iter().find(|(n, _)| n == &fname.value)
                 else {
                     return Err(format!(
-                        "expr_to_hir: variant '{}.{}' has no payload field '{}'",
+                        "expr_to_typed: variant '{}.{}' has no payload field '{}'",
                         type_name, variant, fname.value
                     )
                     .into());
                 };
-                let fval_hir = expr_to_hir(fval, current_scope, generic_cache)?;
-                let fval_hir = coerce_or_alias(fval_hir, spec_ty, current_scope).map_err(|_| {
+                let fval_typed = expr_to_typed(fval, current_scope, generic_cache)?;
+                let fval_typed = coerce_or_alias(fval_typed, spec_ty, current_scope).map_err(|_| {
                     format!(
-                        "expr_to_hir: field '{}' of variant '{}.{}' expects type {:?}",
+                        "expr_to_typed: field '{}' of variant '{}.{}' expects type {:?}",
                         fname.value, type_name, variant, spec_ty
                     )
                 })?;
-                hir_fields.push((fname.value.clone(), fval_hir));
+                typed_fields.push((fname.value.clone(), fval_typed));
             }
             // Verify each declared field is supplied (order-insensitive).
             for (n, _) in &payload_spec {
-                if !hir_fields.iter().any(|(fname, _)| fname == n) {
+                if !typed_fields.iter().any(|(fname, _)| fname == n) {
                     return Err(format!(
-                        "expr_to_hir: missing field '{}' in variant '{}.{}' payload",
+                        "expr_to_typed: missing field '{}' in variant '{}.{}' payload",
                         n, type_name, variant
                     )
                     .into());
                 }
             }
-            Ok(HIRExpression {
-                inferred_type: HIRTypeKind::Identifier(type_name.clone()),
-                expression: HIRExpressionKind::EnumVariantConstruct {
+            Ok(TypedExpr {
+                inferred_type: Ty::Identifier(type_name.clone()),
+                expression: TypedExprKind::EnumVariantConstruct {
                     type_name: type_name.value.clone(),
                     variant: v.name.clone(),
                     discriminant: v.discriminant,
-                    fields: hir_fields,
+                    fields: typed_fields,
                     enum_type: Box::new(resolved),
                 },
             })
         }
         PExpr::TypeValue(te) => {
-            let hir_type = map_type(te)?;
-            Ok(HIRExpression {
-                inferred_type: HIRTypeKind::Type,
-                expression: HIRExpressionKind::ComptimeType(hir_type),
+            let typed_type = map_type(te)?;
+            Ok(TypedExpr {
+                inferred_type: Ty::Type,
+                expression: TypedExprKind::ComptimeType(typed_type),
             })
         }
         PExpr::Binary {
@@ -1087,8 +1087,8 @@ fn expr_to_hir(
             operator,
             right,
         } => {
-            let l = expr_to_hir(*left, current_scope, generic_cache)?;
-            let r = expr_to_hir(*right, current_scope, generic_cache)?;
+            let l = expr_to_typed(*left, current_scope, generic_cache)?;
+            let r = expr_to_typed(*right, current_scope, generic_cache)?;
             let (inferred_type, l, r) = match operator {
                 // Arithmetic/bitwise: result type = LHS type.
                 Operator::Plus
@@ -1102,7 +1102,7 @@ fn expr_to_hir(
                 | Operator::Pipe
                 | Operator::Caret => {
                     // For pointer arithmetic, keep pointer type; don't coerce RHS.
-                    if matches!(l.inferred_type, HIRTypeKind::Pointer(_)) {
+                    if matches!(l.inferred_type, Ty::Pointer(_)) {
                         (l.inferred_type.clone(), l, r)
                     } else if is_numeric_type(&l.inferred_type) {
                         let r = coerce_expr_to_type(r, &l.inferred_type)?;
@@ -1127,20 +1127,20 @@ fn expr_to_hir(
                         .into());
                     }
                     let r = coerce_expr_to_type(r, &l.inferred_type)?;
-                    (HIRTypeKind::Builtin(BuiltinType::Boolean), l, r)
+                    (Ty::Builtin(BuiltinType::Boolean), l, r)
                 }
                 Operator::DoubleEquals | Operator::Different => {
                     // Coerce whichever side is more flexible: `null == p`
                     // needs the LHS adapted to the RHS pointer type.
-                    if l.inferred_type == HIRTypeKind::Builtin(BuiltinType::Never)
-                        && r.inferred_type != HIRTypeKind::Builtin(BuiltinType::Never)
+                    if l.inferred_type == Ty::Builtin(BuiltinType::Never)
+                        && r.inferred_type != Ty::Builtin(BuiltinType::Never)
                     {
                         let target = r.inferred_type.clone();
                         let l = coerce_expr_to_type(l, &target)?;
-                        (HIRTypeKind::Builtin(BuiltinType::Boolean), l, r)
+                        (Ty::Builtin(BuiltinType::Boolean), l, r)
                     } else {
                         let r = coerce_expr_to_type(r, &l.inferred_type)?;
-                        (HIRTypeKind::Builtin(BuiltinType::Boolean), l, r)
+                        (Ty::Builtin(BuiltinType::Boolean), l, r)
                     }
                 }
                 Operator::LogicalAnd | Operator::LogicalOr => {
@@ -1151,25 +1151,25 @@ fn expr_to_hir(
                         )
                         .into());
                     }
-                    (HIRTypeKind::Builtin(BuiltinType::Boolean), l, r)
+                    (Ty::Builtin(BuiltinType::Boolean), l, r)
                 }
                 op => return Err(format!("unsupported binary operator {:?}", op).into()),
             };
-            Ok(HIRExpression {
+            Ok(TypedExpr {
                 inferred_type,
-                expression: HIRExpressionKind::Binary {
+                expression: TypedExprKind::Binary {
                     left: Box::new(l),
                     operator,
                     right: Box::new(r),
                 },
             })
         }
-        PExpr::Grouping(inner) => expr_to_hir(*inner, current_scope, generic_cache),
+        PExpr::Grouping(inner) => expr_to_typed(*inner, current_scope, generic_cache),
         PExpr::Call { callee, args } => {
             match *callee {
                 PExpr::Identifier(name) => {
-                    match current_scope.symbols.get(&name).cloned() {
-                        Some(HIRSymbol::GenericFunction(template)) => {
+                    match current_scope.lookup(&name).cloned() {
+                        Some(TypedSymbol::GenericFunction(template)) => {
                             // Generic call: extract comptime type args and instantiate.
                             let (mangled_name, return_type) = instantiate_generic(
                                 &template,
@@ -1177,22 +1177,22 @@ fn expr_to_hir(
                                 current_scope,
                                 generic_cache,
                             )?;
-                            // Build HIR args for runtime (non-comptime) parameters only.
+                            // Build Typed args for runtime (non-comptime) parameters only.
                             let mut hargs = Vec::new();
                             for (i, arg) in args.into_iter().enumerate() {
                                 if !template.comptime_params.contains(&i) {
-                                    hargs.push(expr_to_hir(arg, current_scope, generic_cache)?);
+                                    hargs.push(expr_to_typed(arg, current_scope, generic_cache)?);
                                 }
                             }
-                            Ok(HIRExpression {
+                            Ok(TypedExpr {
                                 inferred_type: return_type,
-                                expression: HIRExpressionKind::Call {
+                                expression: TypedExprKind::Call {
                                     callee: Identifier { value: mangled_name },
                                     args: hargs,
                                 },
                             })
                         }
-                        Some(HIRSymbol::Function(func)) => {
+                        Some(TypedSymbol::Function(func)) => {
                             let inferred_type = func.return_type.clone();
                             let hargs = check_call_args(
                                 &name.value,
@@ -1202,32 +1202,31 @@ fn expr_to_hir(
                                 current_scope,
                                 generic_cache,
                             )?;
-                            Ok(HIRExpression {
+                            Ok(TypedExpr {
                                 inferred_type,
-                                expression: HIRExpressionKind::Call {
+                                expression: TypedExprKind::Call {
                                     callee: name.clone(),
                                     args: hargs,
                                 },
                             })
                         }
                         Some(_) => Err(format!(
-                            "expr_to_hir: symbol {} is not a function",
+                            "expr_to_typed: symbol {} is not a function",
                             name
                         ).into()),
                         None => Err(format!(
-                            "expr_to_hir: unknown function '{}' — did you forget an extern declaration?",
+                            "expr_to_typed: unknown function '{}' — did you forget an extern declaration?",
                             name
                         ).into()),
                     }
                 }
                 PExpr::QualifiedAccess { module, member } => {
                     let module_alias = module.value.clone();
-                    let hir_module = current_scope
-                        .modules
-                        .get(&module_alias)
+                    let typed_module = current_scope
+                        .lookup_module(&module_alias)
                         .ok_or_else(|| format!("unknown module '{}'", module_alias))?;
-                    let func = match hir_module.exports.get(&member) {
-                        Some(HIRSymbol::Function(f)) => f.clone(),
+                    let func = match typed_module.exports.get(&member) {
+                        Some(TypedSymbol::Function(f)) => f.clone(),
                         Some(_) => {
                             return Err(format!(
                                 "'{}' in module '{}' is not a function",
@@ -1259,9 +1258,9 @@ fn expr_to_hir(
                         current_scope,
                         generic_cache,
                     )?;
-                    Ok(HIRExpression {
+                    Ok(TypedExpr {
                         inferred_type: func.return_type.clone(),
-                        expression: HIRExpressionKind::Call {
+                        expression: TypedExprKind::Call {
                             callee: callee_name,
                             args: hargs,
                         },
@@ -1269,7 +1268,7 @@ fn expr_to_hir(
                 }
                 // Only accept identifier/qualified callees
                 _ => Err(
-                    "expr_to_hir: call target must be an identifier or qualified access"
+                    "expr_to_typed: call target must be an identifier or qualified access"
                         .to_string()
                         .into(),
                 ),
@@ -1278,22 +1277,22 @@ fn expr_to_hir(
         PExpr::FieldAccess { object, field } => {
             // Special case: `TypeName.VariantName` on an enum produces an EnumLiteral.
             if let PExpr::Identifier(type_name) = &*object
-                && let Some(HIRSymbol::Type(ty)) = current_scope.symbols.get(type_name)
+                && let Some(TypedSymbol::Type(ty)) = current_scope.lookup(type_name)
             {
                 let resolved = resolve_type_alias(ty.clone(), current_scope);
-                if let HIRTypeKind::Enum { variants } = &resolved {
+                if let Ty::Enum { variants } = &resolved {
                     let v = variants
                         .iter()
                         .find(|v| v.name == field.value)
                         .ok_or_else(|| {
                             format!(
-                                "expr_to_hir: enum {} has no variant {}",
+                                "expr_to_typed: enum {} has no variant {}",
                                 type_name, field.value
                             )
                         })?;
-                    return Ok(HIRExpression {
-                        inferred_type: HIRTypeKind::Identifier(type_name.clone()),
-                        expression: HIRExpressionKind::EnumLiteral {
+                    return Ok(TypedExpr {
+                        inferred_type: Ty::Identifier(type_name.clone()),
+                        expression: TypedExprKind::EnumLiteral {
                             type_name: type_name.value.clone(),
                             variant: v.name.clone(),
                             discriminant: v.discriminant,
@@ -1301,22 +1300,22 @@ fn expr_to_hir(
                     });
                 }
             }
-            let obj_hir = expr_to_hir(*object, current_scope, generic_cache)?;
-            let struct_fields = resolve_struct_fields(&obj_hir.inferred_type, current_scope)?;
+            let obj_typed = expr_to_typed(*object, current_scope, generic_cache)?;
+            let struct_fields = resolve_struct_fields(&obj_typed.inferred_type, current_scope)?;
             let field_index = struct_fields
                 .iter()
                 .position(|(name, _)| name == &field.value)
                 .ok_or_else(|| {
                     format!(
-                        "expr_to_hir: field {} not found in struct type {:?}",
-                        field.value, obj_hir.inferred_type
+                        "expr_to_typed: field {} not found in struct type {:?}",
+                        field.value, obj_typed.inferred_type
                     )
                 })?;
             let field_ty = *struct_fields[field_index].1.clone();
-            Ok(HIRExpression {
+            Ok(TypedExpr {
                 inferred_type: field_ty,
-                expression: HIRExpressionKind::FieldAccess {
-                    object: Box::new(obj_hir),
+                expression: TypedExprKind::FieldAccess {
+                    object: Box::new(obj_typed),
                     field: field.value,
                     field_index,
                 },
@@ -1325,134 +1324,133 @@ fn expr_to_hir(
         PExpr::StructConstruct { type_name, fields } => {
             // Look up the struct type in scope
             let struct_ty = match current_scope
-                .symbols
-                .get(&type_name)
-                .ok_or_else(|| format!("expr_to_hir: type {} not found in scope", type_name))?
+                .lookup(&type_name)
+                .ok_or_else(|| format!("expr_to_typed: type {} not found in scope", type_name))?
             {
-                HIRSymbol::Type(ty) => ty.clone(),
-                _ => return Err(format!("expr_to_hir: {} is not a type", type_name).into()),
+                TypedSymbol::Type(ty) => ty.clone(),
+                _ => return Err(format!("expr_to_typed: {} is not a type", type_name).into()),
             };
             let struct_fields = resolve_struct_fields(&struct_ty, current_scope)?;
             // Lower the provided fields, verifying each exists in the struct.
-            let mut provided: Vec<(String, HIRExpression)> = Vec::new();
+            let mut provided: Vec<(String, TypedExpr)> = Vec::new();
             for (fname, fexpr) in fields {
                 if !struct_fields.iter().any(|(name, _)| name == &fname.value) {
                     return Err(format!(
-                        "expr_to_hir: field {} not found in struct {}",
+                        "expr_to_typed: field {} not found in struct {}",
                         fname.value, type_name
                     )
                     .into());
                 }
                 if provided.iter().any(|(n, _)| n == &fname.value) {
                     return Err(format!(
-                        "expr_to_hir: duplicate field {} in construction of {}",
+                        "expr_to_typed: duplicate field {} in construction of {}",
                         fname.value, type_name
                     )
                     .into());
                 }
-                let fval = expr_to_hir(fexpr, current_scope, generic_cache)?;
+                let fval = expr_to_typed(fexpr, current_scope, generic_cache)?;
                 provided.push((fname.value, fval));
             }
             // Re-emit the fields in *declared* order (lowering stores them
             // positionally) and require every field to be present.
-            let mut hir_fields = Vec::new();
+            let mut typed_fields = Vec::new();
             for (fname, fty) in &struct_fields {
                 let pos = provided
                     .iter()
                     .position(|(n, _)| n == fname)
                     .ok_or_else(|| {
                         format!(
-                            "expr_to_hir: missing field {} in construction of struct {}",
+                            "expr_to_typed: missing field {} in construction of struct {}",
                             fname, type_name
                         )
                     })?;
                 let (n, fval) = provided.remove(pos);
                 let fval = coerce_or_alias(fval, fty.as_ref(), current_scope).map_err(|_| {
                     format!(
-                        "expr_to_hir: field {} of struct {} expects type {:?}",
+                        "expr_to_typed: field {} of struct {} expects type {:?}",
                         fname, type_name, fty
                     )
                 })?;
-                hir_fields.push((n, fval));
+                typed_fields.push((n, fval));
             }
-            Ok(HIRExpression {
+            Ok(TypedExpr {
                 inferred_type: struct_ty,
-                expression: HIRExpressionKind::StructConstruct {
+                expression: TypedExprKind::StructConstruct {
                     type_name: type_name.value,
-                    fields: hir_fields,
+                    fields: typed_fields,
                 },
             })
         }
         PExpr::AddressOf(inner) => {
-            let inner_hir = expr_to_hir(*inner, current_scope, generic_cache)?;
-            let ptr_ty = HIRTypeKind::Pointer(Box::new(inner_hir.inferred_type.clone()));
-            Ok(HIRExpression {
+            let inner_typed = expr_to_typed(*inner, current_scope, generic_cache)?;
+            let ptr_ty = Ty::Pointer(Box::new(inner_typed.inferred_type.clone()));
+            Ok(TypedExpr {
                 inferred_type: ptr_ty,
-                expression: HIRExpressionKind::AddressOf(Box::new(inner_hir)),
+                expression: TypedExprKind::AddressOf(Box::new(inner_typed)),
             })
         }
         PExpr::Dereference(inner) => {
-            let inner_hir = expr_to_hir(*inner, current_scope, generic_cache)?;
-            let pointee_ty = match &inner_hir.inferred_type {
-                HIRTypeKind::Pointer(pointee) => *pointee.clone(),
+            let inner_typed = expr_to_typed(*inner, current_scope, generic_cache)?;
+            let pointee_ty = match &inner_typed.inferred_type {
+                Ty::Pointer(pointee) => *pointee.clone(),
                 other => {
                     return Err(format!(
-                        "expr_to_hir: dereference of non-pointer type {:?}",
+                        "expr_to_typed: dereference of non-pointer type {:?}",
                         other
                     )
                     .into());
                 }
             };
-            Ok(HIRExpression {
+            Ok(TypedExpr {
                 inferred_type: pointee_ty,
-                expression: HIRExpressionKind::Deref(Box::new(inner_hir)),
+                expression: TypedExprKind::Deref(Box::new(inner_typed)),
             })
         }
         PExpr::Cast { expr, target_type } => {
-            let inner_hir = expr_to_hir(*expr, current_scope, generic_cache)?;
-            let hir_target = map_type(target_type)?;
-            Ok(HIRExpression {
-                inferred_type: hir_target.clone(),
-                expression: HIRExpressionKind::Cast {
-                    expr: Box::new(inner_hir),
-                    target_type: hir_target,
+            let inner_typed = expr_to_typed(*expr, current_scope, generic_cache)?;
+            let typed_target = map_type(target_type)?;
+            Ok(TypedExpr {
+                inferred_type: typed_target.clone(),
+                expression: TypedExprKind::Cast {
+                    expr: Box::new(inner_typed),
+                    target_type: typed_target,
                 },
             })
         }
         PExpr::IndexAccess { object, index } => {
-            let obj_hir = expr_to_hir(*object, current_scope, generic_cache)?;
-            let idx_hir = expr_to_hir(*index, current_scope, generic_cache)?;
-            let pointee_ty = match &obj_hir.inferred_type {
-                HIRTypeKind::Pointer(inner) => *inner.clone(),
-                HIRTypeKind::Array { element_type, .. } => *element_type.clone(),
+            let obj_typed = expr_to_typed(*object, current_scope, generic_cache)?;
+            let idx_typed = expr_to_typed(*index, current_scope, generic_cache)?;
+            let pointee_ty = match &obj_typed.inferred_type {
+                Ty::Pointer(inner) => *inner.clone(),
+                Ty::Array { element_type, .. } => *element_type.clone(),
                 other => {
                     return Err(format!(
-                        "expr_to_hir: index access on non-pointer type {:?}",
+                        "expr_to_typed: index access on non-pointer type {:?}",
                         other
                     )
                     .into());
                 }
             };
-            Ok(HIRExpression {
+            Ok(TypedExpr {
                 inferred_type: pointee_ty,
-                expression: HIRExpressionKind::IndexAccess {
-                    object: Box::new(obj_hir),
-                    index: Box::new(idx_hir),
+                expression: TypedExprKind::IndexAccess {
+                    object: Box::new(obj_typed),
+                    index: Box::new(idx_typed),
                 },
             })
         }
         PExpr::ArrayLiteral { elements } => {
-            let hir_elements: Vec<HIRExpression> = elements
+            let typed_elements: Vec<TypedExpr> = elements
                 .into_iter()
-                .map(|e| expr_to_hir(e, current_scope, generic_cache))
+                .map(|e| expr_to_typed(e, current_scope, generic_cache))
                 .collect::<Result<_, _>>()?;
-            if hir_elements.is_empty() {
+            if typed_elements.is_empty() {
                 return Err("array literal must have at least one element"
                     .to_string()
                     .into());
             }
-            let elem_ty = hir_elements[0].inferred_type.clone();
-            for (i, e) in hir_elements.iter().enumerate() {
+            let elem_ty = typed_elements[0].inferred_type.clone();
+            for (i, e) in typed_elements.iter().enumerate() {
                 if e.inferred_type != elem_ty {
                     return Err(format!(
                         "array literal: element {} has type {:?}, expected {:?}",
@@ -1461,14 +1459,14 @@ fn expr_to_hir(
                     .into());
                 }
             }
-            let size = hir_elements.len() as u64;
-            Ok(HIRExpression {
-                inferred_type: HIRTypeKind::Array {
+            let size = typed_elements.len() as u64;
+            Ok(TypedExpr {
+                inferred_type: Ty::Array {
                     element_type: Box::new(elem_ty),
                     size,
                 },
-                expression: HIRExpressionKind::ArrayLiteral {
-                    elements: hir_elements,
+                expression: TypedExprKind::ArrayLiteral {
+                    elements: typed_elements,
                 },
             })
         }
@@ -1477,29 +1475,29 @@ fn expr_to_hir(
             expression,
         } => match operator {
             Operator::Minus => {
-                let inner = expr_to_hir(*expression, current_scope, generic_cache)?;
+                let inner = expr_to_typed(*expression, current_scope, generic_cache)?;
                 let is_float = matches!(
                     &inner.inferred_type,
-                    HIRTypeKind::Builtin(b) if is_float_builtin(b)
+                    Ty::Builtin(b) if is_float_builtin(b)
                 );
-                let zero = HIRExpression {
+                let zero = TypedExpr {
                     inferred_type: inner.inferred_type.clone(),
                     expression: if is_float {
-                        HIRExpressionKind::LiteralFloat { value: 0.0 }
+                        TypedExprKind::LiteralFloat { value: 0.0 }
                     } else {
-                        HIRExpressionKind::LiteralInt { value: 0 }
+                        TypedExprKind::LiteralInt { value: 0 }
                     },
                 };
-                Ok(HIRExpression {
+                Ok(TypedExpr {
                     inferred_type: inner.inferred_type.clone(),
-                    expression: HIRExpressionKind::Binary {
+                    expression: TypedExprKind::Binary {
                         left: Box::new(zero),
                         operator: Operator::Minus,
                         right: Box::new(inner),
                     },
                 })
             }
-            Operator::LogicalNot => expr_to_hir(
+            Operator::LogicalNot => expr_to_typed(
                 PExpr::Binary {
                     left: expression,
                     operator: Operator::DoubleEquals,
@@ -1510,14 +1508,14 @@ fn expr_to_hir(
             ),
             Operator::Tilde => {
                 // Desugar ~x to x ^ (-1) which in two's complement flips all bits
-                let inner = expr_to_hir(*expression, current_scope, generic_cache)?;
-                let minus_one = HIRExpression {
+                let inner = expr_to_typed(*expression, current_scope, generic_cache)?;
+                let minus_one = TypedExpr {
                     inferred_type: inner.inferred_type.clone(),
-                    expression: HIRExpressionKind::LiteralInt { value: u64::MAX },
+                    expression: TypedExprKind::LiteralInt { value: u64::MAX },
                 };
-                Ok(HIRExpression {
+                Ok(TypedExpr {
                     inferred_type: inner.inferred_type.clone(),
-                    expression: HIRExpressionKind::Binary {
+                    expression: TypedExprKind::Binary {
                         left: Box::new(inner),
                         operator: Operator::Caret,
                         right: Box::new(minus_one),
@@ -1528,22 +1526,21 @@ fn expr_to_hir(
         },
         PExpr::QualifiedAccess { module, member } => {
             let module_alias = module.value.clone();
-            let hir_module = current_scope
-                .modules
-                .get(&module_alias)
+            let typed_module = current_scope
+                .lookup_module(&module_alias)
                 .ok_or_else(|| format!("unknown module '{}'", module_alias))?;
-            let sym = hir_module
+            let sym = typed_module
                 .exports
                 .get(&member)
                 .ok_or_else(|| format!("'{}' not found in module '{}'", member, module_alias))?;
             let inferred_type = match sym {
-                HIRSymbol::Binding(b) => b.ty.clone(),
-                HIRSymbol::Function(f) => HIRTypeKind::Function {
+                TypedSymbol::Binding(b) => b.ty.clone(),
+                TypedSymbol::Function(f) => Ty::Function {
                     argument_types: f.params.iter().map(|(_, t)| t.clone()).collect(),
                     return_type: Box::new(f.return_type.clone()),
                 },
-                HIRSymbol::Type(t) => t.clone(),
-                HIRSymbol::GenericFunction(_) => {
+                TypedSymbol::Type(t) => t.clone(),
+                TypedSymbol::GenericFunction(_) => {
                     return Err(format!(
                         "'{}::{}' is a generic function and cannot be used as a value",
                         module_alias, member
@@ -1551,9 +1548,9 @@ fn expr_to_hir(
                     .into());
                 }
             };
-            Ok(HIRExpression {
+            Ok(TypedExpr {
                 inferred_type,
-                expression: HIRExpressionKind::QualifiedAccess {
+                expression: TypedExprKind::QualifiedAccess {
                     module: module_alias,
                     name: member,
                 },
@@ -1562,14 +1559,14 @@ fn expr_to_hir(
     }
 }
 
-/// Resolve a HIRTypeKind (possibly an Identifier alias) to its struct fields.
+/// Resolve a Ty (possibly an Identifier alias) to its struct fields.
 /// Walk through `Identifier` aliases until reaching a concrete type.
-fn resolve_type_alias(ty: HIRTypeKind, scope: &Scope) -> HIRTypeKind {
+fn resolve_type_alias(ty: Ty, scope: &SymbolTable) -> Ty {
     let mut current = ty;
     loop {
         match &current {
-            HIRTypeKind::Identifier(id) => match scope.symbols.get(id) {
-                Some(HIRSymbol::Type(inner)) => current = inner.clone(),
+            Ty::Identifier(id) => match scope.lookup(id) {
+                Some(TypedSymbol::Type(inner)) => current = inner.clone(),
                 _ => return current,
             },
             _ => return current,
@@ -1578,18 +1575,17 @@ fn resolve_type_alias(ty: HIRTypeKind, scope: &Scope) -> HIRTypeKind {
 }
 
 fn resolve_struct_fields(
-    ty: &HIRTypeKind,
-    current_scope: &Scope,
-) -> Result<Vec<(String, Box<HIRTypeKind>)>, AnalysisError> {
+    ty: &Ty,
+    current_scope: &SymbolTable,
+) -> Result<Vec<(String, Box<Ty>)>, AnalysisError> {
     match ty {
-        HIRTypeKind::Struct { fields } => Ok(fields.clone()),
-        HIRTypeKind::Identifier(id) => {
+        Ty::Struct { fields } => Ok(fields.clone()),
+        Ty::Identifier(id) => {
             let symbol = current_scope
-                .symbols
-                .get(id)
+                .lookup(id)
                 .ok_or_else(|| format!("resolve_struct_fields: type {} not found in scope", id))?;
             match symbol {
-                HIRSymbol::Type(inner_ty) => resolve_struct_fields(&inner_ty, current_scope),
+                TypedSymbol::Type(inner_ty) => resolve_struct_fields(&inner_ty, current_scope),
                 _ => Err(format!("resolve_struct_fields: {} is not a type", id).into()),
             }
         }
@@ -1597,20 +1593,20 @@ fn resolve_struct_fields(
     }
 }
 
-fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, AnalysisError> {
-    let hir_typekind = match type_expression {
-        TypeExpression::TypeKeyword => HIRTypeKind::Type,
-        TypeExpression::Builtin(builtin) => HIRTypeKind::Builtin(builtin),
-        TypeExpression::Identifier(identifier) => HIRTypeKind::Identifier(identifier),
+fn map_type(type_expression: TypeExpression) -> Result<Ty, AnalysisError> {
+    let typed_typekind = match type_expression {
+        TypeExpression::TypeKeyword => Ty::Type,
+        TypeExpression::Builtin(builtin) => Ty::Builtin(builtin),
+        TypeExpression::Identifier(identifier) => Ty::Identifier(identifier),
         TypeExpression::Struct { fields } => {
-            let mut hir_fields = Vec::new();
+            let mut typed_fields = Vec::new();
             for f in fields {
-                hir_fields.push((f.label.value.clone(), Box::new(map_type(f.type_id)?)));
+                typed_fields.push((f.label.value.clone(), Box::new(map_type(f.type_id)?)));
             }
-            HIRTypeKind::Struct { fields: hir_fields }
+            Ty::Struct { fields: typed_fields }
         }
         TypeExpression::Enum { variants } => {
-            let mut hir_variants = Vec::new();
+            let mut typed_variants = Vec::new();
             for (idx, v) in variants.into_iter().enumerate() {
                 let payload = match v.payload {
                     Some(fields) => {
@@ -1622,14 +1618,14 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, AnalysisErro
                     }
                     None => None,
                 };
-                hir_variants.push(HIREnumVariant {
+                typed_variants.push(TypedEnumVariant {
                     name: v.name.value.clone(),
                     discriminant: idx as u32,
                     payload,
                 });
             }
-            HIRTypeKind::Enum {
-                variants: hir_variants,
+            Ty::Enum {
+                variants: typed_variants,
             }
         }
         TypeExpression::Function {
@@ -1640,7 +1636,7 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, AnalysisErro
             for argument in argument_types {
                 mapped_arguments.push(map_type(argument)?);
             }
-            HIRTypeKind::Function {
+            Ty::Function {
                 argument_types: mapped_arguments,
                 return_type: Box::new(map_type(*return_type)?),
             }
@@ -1650,43 +1646,41 @@ fn map_type(type_expression: TypeExpression) -> Result<HIRTypeKind, AnalysisErro
             for element in elements {
                 mapped_elements.push(map_type(element)?);
             }
-            HIRTypeKind::Tuple {
+            Ty::Tuple {
                 elements: mapped_elements,
             }
         }
         TypeExpression::Pointer { pointed_type } => {
             let inner = map_type(*pointed_type)?;
-            HIRTypeKind::Pointer(Box::new(inner))
+            Ty::Pointer(Box::new(inner))
         }
-        TypeExpression::Array { element_type, size } => HIRTypeKind::Array {
+        TypeExpression::Array { element_type, size } => Ty::Array {
             element_type: Box::new(map_type(*element_type)?),
             size,
         },
-        TypeExpression::QualifiedIdentifier { module, name } => HIRTypeKind::QualifiedIdentifier {
+        TypeExpression::QualifiedIdentifier { module, name } => Ty::QualifiedIdentifier {
             module: module.value.clone(),
             name,
         },
     };
 
-    Ok(hir_typekind)
+    Ok(typed_typekind)
 }
 
 fn resolve_declaration(
     declaration: &DeclarationNode,
-    current_scope: Scope,
-) -> Result<Scope, AnalysisError> {
+    current_scope: &mut SymbolTable,
+) -> Result<(), AnalysisError> {
     match declaration {
-        DeclarationNode::ImportDeclaration(_) => Ok(current_scope), // handled in analyze()
+        DeclarationNode::ImportDeclaration(_) => Ok(()), // handled in analyze()
         DeclarationNode::FunctionDeclaration(function_declaration) => {
             resolve_function_decl(function_declaration, current_scope)
         }
         DeclarationNode::TypeDeclaration(type_declaration) => {
             let ty = map_type(type_declaration.expression.clone())?;
-            let mut new_scope = current_scope;
-            new_scope
-                .symbols
-                .insert(type_declaration.name.clone(), HIRSymbol::Type(ty));
-            Ok(new_scope)
+            current_scope
+                .insert(type_declaration.name.clone(), TypedSymbol::Type(ty));
+            Ok(())
         }
     }
 }
@@ -1909,13 +1903,13 @@ fn substitute_in_stmt(stmt: &mut StatementKind, subs: &HashMap<String, TypeExpre
 
 /// Monomorphize a generic function with the given type arguments.
 /// Returns the mangled name and the instantiated return type.
-/// The instantiated HIRFunction is stored in `generic_cache`.
+/// The instantiated TypedFunction is stored in `generic_cache`.
 fn instantiate_generic(
     template: &GenericFunctionTemplate,
     call_args: &[PExpr],
-    scope: &Scope,
-    generic_cache: &mut HashMap<String, HIRFunction>,
-) -> Result<(String, HIRTypeKind), AnalysisError> {
+    scope: &SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+) -> Result<(String, Ty), AnalysisError> {
     // Build type substitution map: param_name -> TypeExpression
     let mut subs: HashMap<String, TypeExpression> = HashMap::new();
     let mut type_arg_names: Vec<String> = Vec::new();
@@ -1935,8 +1929,8 @@ fn instantiate_generic(
             PExpr::TypeValue(te) => te.clone(),
             PExpr::Identifier(id) => {
                 // A user-defined type name passed as argument
-                match scope.symbols.get(id) {
-                    Some(HIRSymbol::Type(_)) => TypeExpression::Identifier(id.clone()),
+                match scope.lookup(id) {
+                    Some(TypedSymbol::Type(_)) => TypeExpression::Identifier(id.clone()),
                     _ => return Err(format!(
                         "generic call to '{}': argument for comptime param '{}' must be a type, got identifier '{}'",
                         template.name, param_name, id
@@ -1996,10 +1990,10 @@ fn instantiate_generic(
     // Pre-insert a signature-only placeholder so a recursive call inside the
     // body hits the cache instead of re-instantiating forever. It is replaced
     // with the fully analyzed function below.
-    let (placeholder_params, placeholder_ret) = signature_to_hir(&substituted)?;
+    let (placeholder_params, placeholder_ret) = signature_to_typed(&substituted)?;
     generic_cache.insert(
         mangled.clone(),
-        HIRFunction {
+        TypedFunction {
             name: substituted.signature.name.clone(),
             params: placeholder_params,
             return_type: placeholder_ret,
@@ -2011,11 +2005,11 @@ fn instantiate_generic(
 
     // Analyze the substituted function
     let mut func_scope = scope.clone();
-    let hir_func = func_to_hir(substituted, &mut func_scope, generic_cache)?;
-    let return_type = hir_func.return_type.clone();
+    let typed_func = func_to_typed(substituted, &mut func_scope, generic_cache)?;
+    let return_type = typed_func.return_type.clone();
 
     // Cache the instantiation
-    generic_cache.insert(mangled.clone(), hir_func);
+    generic_cache.insert(mangled.clone(), typed_func);
 
     Ok((mangled, return_type))
 }
@@ -2076,8 +2070,8 @@ fn process_escape_sequences(raw: &str) -> Result<String, AnalysisError> {
 
 fn resolve_function_decl(
     function_declaration: &FunctionDeclaration,
-    mut current_scope: Scope,
-) -> Result<Scope, AnalysisError> {
+    current_scope: &mut SymbolTable,
+) -> Result<(), AnalysisError> {
     // Generic functions (those with `type`-typed parameters) are stored as templates.
     // They are instantiated lazily when called with concrete type arguments.
     if is_generic_function(function_declaration) {
@@ -2089,24 +2083,24 @@ fn resolve_function_decl(
             .filter(|(_, p)| matches!(p.parameter_type, TypeExpression::TypeKeyword))
             .map(|(i, _)| i)
             .collect();
-        current_scope.symbols.insert(
+        current_scope.insert(
             function_declaration.signature.name.clone(),
-            HIRSymbol::GenericFunction(GenericFunctionTemplate {
+            TypedSymbol::GenericFunction(GenericFunctionTemplate {
                 name: function_declaration.signature.name.clone(),
                 ast_decl: function_declaration.clone(),
                 comptime_params,
             }),
         );
-        return Ok(current_scope);
+        return Ok(());
     }
 
     // Register the signature only. The body is analyzed exactly once, in
     // `analyze()`, *after* this symbol is in scope — which is what makes
     // recursive calls resolve.
-    let (params, return_type) = signature_to_hir(function_declaration)?;
-    current_scope.symbols.insert(
+    let (params, return_type) = signature_to_typed(function_declaration)?;
+    current_scope.insert(
         function_declaration.signature.name.clone(),
-        HIRSymbol::Function(HIRFunction {
+        TypedSymbol::Function(TypedFunction {
             name: function_declaration.signature.name.clone(),
             params,
             return_type,
@@ -2115,7 +2109,7 @@ fn resolve_function_decl(
             is_variadic: function_declaration.is_variadic,
         }),
     );
-    Ok(current_scope)
+    Ok(())
 }
 
 mod test;

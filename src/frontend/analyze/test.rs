@@ -4,14 +4,14 @@ mod tests {
     use std::path::Path;
 
     use crate::frontend::analyze::analyze;
-    use crate::frontend::ir::{
-        CompilationUnit, HIRDeclaration, HIRExpressionKind, HIRFunction, HIRStatement, HIRTypeKind,
+    use crate::frontend::typed_ast::{
+        TypedProgram, TypedDecl, TypedExprKind, TypedFunction, TypedStatement, Ty,
     };
     use crate::frontend::lexer::Lexer;
     use crate::frontend::parser::Parser;
     use crate::frontend::tokens::{Token, builtin::BuiltinType};
 
-    fn get_hir(source: &str) -> CompilationUnit {
+    fn get_typed(source: &str) -> TypedProgram {
         let src = source.to_string();
         let lexer = Lexer::new(&src);
         let tokens: Vec<Token> = lexer.collect();
@@ -20,7 +20,7 @@ mod tests {
         analyze(ast, &HashMap::new()).expect("analysis failed")
     }
 
-    fn get_hir_err(source: &str) -> String {
+    fn get_typed_err(source: &str) -> String {
         let src = source.to_string();
         let lexer = Lexer::new(&src);
         let tokens: Vec<Token> = lexer.collect();
@@ -31,31 +31,31 @@ mod tests {
             .msg
     }
 
-    fn get_function<'a>(cu: &'a CompilationUnit, name: &str) -> &'a HIRFunction {
+    fn get_function<'a>(cu: &'a TypedProgram, name: &str) -> &'a TypedFunction {
         cu.declarations
             .iter()
             .find_map(|d| {
-                if let HIRDeclaration::HIRFunction(f) = d
+                if let TypedDecl::Function(f) = d
                     && f.name.value == name
                 {
                     return Some(f);
                 }
                 None
             })
-            .unwrap_or_else(|| panic!("function '{}' not found in HIR", name))
+            .unwrap_or_else(|| panic!("function '{}' not found in Typed", name))
     }
 
     // ── Literals & type inference ─────────────────────────────────────────────
 
     #[test]
     fn test_integer_literal_defaults_to_int4() {
-        let cu = get_hir("fn f() @int4 { return 42 }");
+        let cu = get_typed("fn f() @int4 { return 42 }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[0] {
-            assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
+        if let TypedStatement::Return(Some(expr)) = &f.body[0] {
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
             assert!(matches!(
                 expr.expression,
-                HIRExpressionKind::LiteralInt { value: 42 }
+                TypedExprKind::LiteralInt { value: 42 }
             ));
         } else {
             panic!("expected Return statement");
@@ -64,12 +64,12 @@ mod tests {
 
     #[test]
     fn test_float_literal_defaults_to_float8() {
-        let cu = get_hir("fn f() @float8 { return 3.14 }");
+        let cu = get_typed("fn f() @float8 { return 3.14 }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[0] {
+        if let TypedStatement::Return(Some(expr)) = &f.body[0] {
             assert_eq!(
                 expr.inferred_type,
-                HIRTypeKind::Builtin(BuiltinType::Float8)
+                Ty::Builtin(BuiltinType::Float8)
             );
         } else {
             panic!("expected Return");
@@ -78,16 +78,16 @@ mod tests {
 
     #[test]
     fn test_bool_literal_type() {
-        let cu = get_hir("fn f() @bool { return true }");
+        let cu = get_typed("fn f() @bool { return true }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[0] {
+        if let TypedStatement::Return(Some(expr)) = &f.body[0] {
             assert_eq!(
                 expr.inferred_type,
-                HIRTypeKind::Builtin(BuiltinType::Boolean)
+                Ty::Builtin(BuiltinType::Boolean)
             );
             assert!(matches!(
                 expr.expression,
-                HIRExpressionKind::LiteralBool(true)
+                TypedExprKind::LiteralBool(true)
             ));
         } else {
             panic!("expected Return");
@@ -96,12 +96,12 @@ mod tests {
 
     #[test]
     fn test_string_literal_type() {
-        let cu = get_hir(r#"fn f() @string { return "hi" }"#);
+        let cu = get_typed(r#"fn f() @string { return "hi" }"#);
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[0] {
+        if let TypedStatement::Return(Some(expr)) = &f.body[0] {
             assert_eq!(
                 expr.inferred_type,
-                HIRTypeKind::Builtin(BuiltinType::String)
+                Ty::Builtin(BuiltinType::String)
             );
         } else {
             panic!("expected Return");
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_null_literal_type_is_void() {
-        let cu = get_hir("fn f() { x: @int4 = 1\n return }");
+        let cu = get_typed("fn f() { x: @int4 = 1\n return }");
         // Just ensure void return analyzes without error.
         let _ = cu;
     }
@@ -119,46 +119,46 @@ mod tests {
 
     #[test]
     fn test_type_declaration_typed() {
-        let cu = get_hir("type Num @int4");
+        let cu = get_typed("type Num @int4");
         let binding = cu
             .declarations
             .iter()
             .find_map(|d| {
-                if let HIRDeclaration::HIRType(t) = d {
+                if let TypedDecl::Type(t) = d {
                     Some(t)
                 } else {
                     None
                 }
             })
-            .expect("expected HIRType");
+            .expect("expected TypedType");
         assert_eq!(binding.name.value, "Num");
-        assert_eq!(binding.ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+        assert_eq!(binding.ty, Ty::Builtin(BuiltinType::Int4));
     }
 
     #[test]
     fn test_type_declaration_float_typed() {
-        let cu = get_hir("type Float @float8");
+        let cu = get_typed("type Float @float8");
         let binding = cu
             .declarations
             .iter()
             .find_map(|d| {
-                if let HIRDeclaration::HIRType(t) = d {
+                if let TypedDecl::Type(t) = d {
                     Some(t)
                 } else {
                     None
                 }
             })
-            .expect("expected HIRType");
-        assert_eq!(binding.ty, HIRTypeKind::Builtin(BuiltinType::Float8));
+            .expect("expected TypedType");
+        assert_eq!(binding.ty, Ty::Builtin(BuiltinType::Float8));
     }
 
     #[test]
     fn test_var_declaration_is_mutable() {
-        let cu = get_hir("fn f() { var @int4 x = 0 }");
+        let cu = get_typed("fn f() { var @int4 x = 0 }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Binding(b) = &f.body[0] {
+        if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
-            assert_eq!(b.ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int4));
         } else {
             panic!("expected Binding statement");
         }
@@ -166,10 +166,10 @@ mod tests {
 
     #[test]
     fn test_var_declaration_without_init_is_uninitialized() {
-        let cu = get_hir("fn f() { var @int4 x }");
+        let cu = get_typed("fn f() { var @int4 x }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Binding(b) = &f.body[0] {
-            assert_eq!(b.ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+        if let TypedStatement::Binding(b) = &f.body[0] {
+            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int4));
             assert!(b.init.is_none());
         } else {
             panic!("expected Binding");
@@ -178,11 +178,11 @@ mod tests {
 
     #[test]
     fn test_colon_var_declaration_with_type() {
-        let cu = get_hir("fn f() { x: @int4 = 0 } ");
+        let cu = get_typed("fn f() { x: @int4 = 0 } ");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Binding(b) = &f.body[0] {
+        if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
-            assert_eq!(b.ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int4));
         } else {
             panic!("expected Binding statement");
         }
@@ -190,11 +190,11 @@ mod tests {
 
     #[test]
     fn test_colon_var_declaration_infers_type() {
-        let cu = get_hir("fn f() { x := 0 } ");
+        let cu = get_typed("fn f() { x := 0 } ");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Binding(b) = &f.body[0] {
+        if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
-            assert_eq!(b.ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int4));
         } else {
             panic!("expected Binding statement");
         }
@@ -202,16 +202,16 @@ mod tests {
 
     #[test]
     fn test_multi_var_declaration_infers_tuple_types() {
-        let cu = get_hir(
+        let cu = get_typed(
             "fn divmod(a: @int4, b: @int4) (@int4, @int4) { return a / b, a % b }\nfn f() { q, r := divmod(17, 5) }",
         );
         let f = get_function(&cu, "f");
-        if let HIRStatement::MultiBinding { bindings, .. } = &f.body[0] {
+        if let TypedStatement::MultiBinding { bindings, .. } = &f.body[0] {
             assert_eq!(bindings.len(), 2);
             assert_eq!(bindings[0].name.value, "q");
-            assert_eq!(bindings[0].ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+            assert_eq!(bindings[0].ty, Ty::Builtin(BuiltinType::Int4));
             assert_eq!(bindings[1].name.value, "r");
-            assert_eq!(bindings[1].ty, HIRTypeKind::Builtin(BuiltinType::Int4));
+            assert_eq!(bindings[1].ty, Ty::Builtin(BuiltinType::Int4));
         } else {
             panic!("expected MultiBinding statement");
         }
@@ -219,9 +219,9 @@ mod tests {
 
     #[test]
     fn test_var_bool_without_init_is_uninitialized() {
-        let cu = get_hir("fn f() { var @bool b }");
+        let cu = get_typed("fn f() { var @bool b }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Binding(b) = &f.body[0] {
+        if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.init.is_none());
         } else {
             panic!("expected Binding");
@@ -230,9 +230,9 @@ mod tests {
 
     #[test]
     fn test_var_pointer_without_init_is_uninitialized() {
-        let cu = get_hir("fn f() { var *@int4 p }");
+        let cu = get_typed("fn f() { var *@int4 p }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Binding(b) = &f.body[0] {
+        if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.init.is_none());
         } else {
             panic!("expected Binding");
@@ -241,9 +241,9 @@ mod tests {
 
     #[test]
     fn test_colon_var_declaration_is_mutable() {
-        let cu = get_hir("fn f() { x: @int4 = 5 }");
+        let cu = get_typed("fn f() { x: @int4 = 5 }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Binding(b) = &f.body[0] {
+        if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
         } else {
             panic!("expected Binding");
@@ -254,38 +254,38 @@ mod tests {
 
     #[test]
     fn test_function_return_type() {
-        let cu = get_hir("fn add(a: @int4, b: @int4) @int4 { return a }");
+        let cu = get_typed("fn add(a: @int4, b: @int4) @int4 { return a }");
         let f = get_function(&cu, "add");
-        assert_eq!(f.return_type, HIRTypeKind::Builtin(BuiltinType::Int4));
+        assert_eq!(f.return_type, Ty::Builtin(BuiltinType::Int4));
     }
 
     #[test]
     fn test_function_params_count_and_types() {
-        let cu = get_hir("fn add(a: @int4, b: @int4) @int4 { return a }");
+        let cu = get_typed("fn add(a: @int4, b: @int4) @int4 { return a }");
         let f = get_function(&cu, "add");
         assert_eq!(f.params.len(), 2);
         assert_eq!(f.params[0].0.value, "a");
-        assert_eq!(f.params[0].1, HIRTypeKind::Builtin(BuiltinType::Int4));
+        assert_eq!(f.params[0].1, Ty::Builtin(BuiltinType::Int4));
         assert_eq!(f.params[1].0.value, "b");
     }
 
     #[test]
     fn test_function_no_params() {
-        let cu = get_hir("fn noop() { }");
+        let cu = get_typed("fn noop() { }");
         let f = get_function(&cu, "noop");
         assert_eq!(f.params.len(), 0);
     }
 
     #[test]
     fn test_void_return_type() {
-        let cu = get_hir("fn noop() { }");
+        let cu = get_typed("fn noop() { }");
         let f = get_function(&cu, "noop");
-        assert_eq!(f.return_type, HIRTypeKind::Builtin(BuiltinType::Void));
+        assert_eq!(f.return_type, Ty::Builtin(BuiltinType::Void));
     }
 
     #[test]
     fn test_extern_function_is_marked() {
-        let cu = get_hir("extern fn puts(s: @string) @int4;");
+        let cu = get_typed("extern fn puts(s: @string) @int4;");
         let f = get_function(&cu, "puts");
         assert!(f.is_extern);
         assert!(f.body.is_empty());
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_variadic_function_is_marked() {
-        let cu = get_hir("extern fn printf(fmt: @string, ...) @int4;");
+        let cu = get_typed("extern fn printf(fmt: @string, ...) @int4;");
         let f = get_function(&cu, "printf");
         assert!(f.is_variadic);
     }
@@ -302,10 +302,10 @@ mod tests {
 
     #[test]
     fn test_binary_add_type_is_lhs() {
-        let cu = get_hir("fn f() @int4 { a: @int4 = 1\n b: @int4 = 2\n return a + b }");
+        let cu = get_typed("fn f() @int4 { a: @int4 = 1\n b: @int4 = 2\n return a + b }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[2] {
-            assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
+        if let TypedStatement::Return(Some(expr)) = &f.body[2] {
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
         } else {
             panic!("expected Return");
         }
@@ -313,10 +313,10 @@ mod tests {
 
     #[test]
     fn test_binary_sub_type_is_lhs() {
-        let cu = get_hir("fn f() @int4 { a: @int4 = 10\n b: @int4 = 3\n return a - b }");
+        let cu = get_typed("fn f() @int4 { a: @int4 = 10\n b: @int4 = 3\n return a - b }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[2] {
-            assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
+        if let TypedStatement::Return(Some(expr)) = &f.body[2] {
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
         } else {
             panic!("expected Return");
         }
@@ -324,12 +324,12 @@ mod tests {
 
     #[test]
     fn test_comparison_result_is_bool() {
-        let cu = get_hir("fn f() @bool { a: @int4 = 1\n b: @int4 = 2\n return a < b }");
+        let cu = get_typed("fn f() @bool { a: @int4 = 1\n b: @int4 = 2\n return a < b }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[2] {
+        if let TypedStatement::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
                 expr.inferred_type,
-                HIRTypeKind::Builtin(BuiltinType::Boolean)
+                Ty::Builtin(BuiltinType::Boolean)
             );
         } else {
             panic!("expected Return");
@@ -338,12 +338,12 @@ mod tests {
 
     #[test]
     fn test_equality_result_is_bool() {
-        let cu = get_hir("fn f() @bool { a: @int4 = 1\n b: @int4 = 1\n return a == b }");
+        let cu = get_typed("fn f() @bool { a: @int4 = 1\n b: @int4 = 1\n return a == b }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[2] {
+        if let TypedStatement::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
                 expr.inferred_type,
-                HIRTypeKind::Builtin(BuiltinType::Boolean)
+                Ty::Builtin(BuiltinType::Boolean)
             );
         } else {
             panic!("expected Return");
@@ -352,17 +352,17 @@ mod tests {
 
     #[test]
     fn test_comparison_coerces_right_integer_literal_to_left_type() {
-        let cu = get_hir("fn f() @bool { a: @int4 = 1\n return a as @uint8 != 0 }");
+        let cu = get_typed("fn f() @bool { a: @int4 = 1\n return a as @uint8 != 0 }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[1] {
+        if let TypedStatement::Return(Some(expr)) = &f.body[1] {
             assert_eq!(
                 expr.inferred_type,
-                HIRTypeKind::Builtin(BuiltinType::Boolean)
+                Ty::Builtin(BuiltinType::Boolean)
             );
-            if let HIRExpressionKind::Binary { right, .. } = &expr.expression {
+            if let TypedExprKind::Binary { right, .. } = &expr.expression {
                 assert_eq!(
                     right.inferred_type,
-                    HIRTypeKind::Builtin(BuiltinType::UInt8)
+                    Ty::Builtin(BuiltinType::UInt8)
                 );
             } else {
                 panic!("expected Binary expression");
@@ -374,12 +374,12 @@ mod tests {
 
     #[test]
     fn test_logical_and_result_is_bool() {
-        let cu = get_hir("fn f() @bool { a: @bool = true\n b: @bool = false\n return a && b }");
+        let cu = get_typed("fn f() @bool { a: @bool = true\n b: @bool = false\n return a && b }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[2] {
+        if let TypedStatement::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
                 expr.inferred_type,
-                HIRTypeKind::Builtin(BuiltinType::Boolean)
+                Ty::Builtin(BuiltinType::Boolean)
             );
         } else {
             panic!("expected Return");
@@ -388,12 +388,12 @@ mod tests {
 
     #[test]
     fn test_logical_or_result_is_bool() {
-        let cu = get_hir("fn f() @bool { a: @bool = true\n b: @bool = false\n return a || b }");
+        let cu = get_typed("fn f() @bool { a: @bool = true\n b: @bool = false\n return a || b }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[2] {
+        if let TypedStatement::Return(Some(expr)) = &f.body[2] {
             assert_eq!(
                 expr.inferred_type,
-                HIRTypeKind::Builtin(BuiltinType::Boolean)
+                Ty::Builtin(BuiltinType::Boolean)
             );
         } else {
             panic!("expected Return");
@@ -404,17 +404,17 @@ mod tests {
 
     #[test]
     fn test_if_stmt_in_hir() {
-        let cu = get_hir("fn f() { if true { } }");
+        let cu = get_typed("fn f() { if true { } }");
         let f = get_function(&cu, "f");
-        assert!(matches!(f.body[0], HIRStatement::If(_)));
+        assert!(matches!(f.body[0], TypedStatement::If(_)));
     }
 
     #[test]
     fn test_if_else_in_hir() {
-        let cu = get_hir("fn f() { if true { } else { } }");
+        let cu = get_typed("fn f() { if true { } else { } }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::If(hir_if) = &f.body[0] {
-            assert!(hir_if.else_branch.is_some());
+        if let TypedStatement::If(typed_if) = &f.body[0] {
+            assert!(typed_if.else_branch.is_some());
         } else {
             panic!("expected If");
         }
@@ -422,12 +422,12 @@ mod tests {
 
     #[test]
     fn test_if_condition_type_is_bool() {
-        let cu = get_hir("fn f() { if true { } }");
+        let cu = get_typed("fn f() { if true { } }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::If(hir_if) = &f.body[0] {
+        if let TypedStatement::If(typed_if) = &f.body[0] {
             assert_eq!(
-                hir_if.cond.inferred_type,
-                HIRTypeKind::Builtin(BuiltinType::Boolean)
+                typed_if.cond.inferred_type,
+                Ty::Builtin(BuiltinType::Boolean)
             );
         } else {
             panic!("expected If");
@@ -436,18 +436,18 @@ mod tests {
 
     #[test]
     fn test_for_loop_in_hir() {
-        let cu = get_hir("fn f() { for (;;) { break } }");
+        let cu = get_typed("fn f() { for (;;) { break } }");
         let f = get_function(&cu, "f");
-        assert!(matches!(f.body[0], HIRStatement::For { .. }));
+        assert!(matches!(f.body[0], TypedStatement::For { .. }));
     }
 
     #[test]
     fn test_break_continue_in_hir() {
-        let cu = get_hir("fn f() { for (;;) { break continue } }");
+        let cu = get_typed("fn f() { for (;;) { break continue } }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::For { body, .. } = &f.body[0] {
-            assert!(matches!(body[0], HIRStatement::Break));
-            assert!(matches!(body[1], HIRStatement::Continue));
+        if let TypedStatement::For { body, .. } = &f.body[0] {
+            assert!(matches!(body[0], TypedStatement::Break));
+            assert!(matches!(body[1], TypedStatement::Continue));
         } else {
             panic!("expected For");
         }
@@ -455,27 +455,27 @@ mod tests {
 
     #[test]
     fn test_defer_in_hir() {
-        let cu = get_hir("extern fn cleanup() @void;\nfn f() { defer cleanup() }");
+        let cu = get_typed("extern fn cleanup() @void;\nfn f() { defer cleanup() }");
         let f = get_function(&cu, "f");
-        assert!(matches!(f.body[0], HIRStatement::Defer(_)));
+        assert!(matches!(f.body[0], TypedStatement::Defer(_)));
     }
 
     #[test]
     fn test_return_void_in_hir() {
-        let cu = get_hir("fn f() { return }");
+        let cu = get_typed("fn f() { return }");
         let f = get_function(&cu, "f");
-        assert!(matches!(f.body[0], HIRStatement::Return(None)));
+        assert!(matches!(f.body[0], TypedStatement::Return(None)));
     }
 
-    // ── Scope & identifier resolution ─────────────────────────────────────────
+    // ── SymbolTable & identifier resolution ─────────────────────────────────────────
 
     #[test]
     fn test_identifier_resolves_to_binding_type() {
-        let cu = get_hir("fn f() @int4 { x: @int4 = 5\n return x }");
+        let cu = get_typed("fn f() @int4 { x: @int4 = 5\n return x }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[1] {
-            assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int4));
-            assert!(matches!(expr.expression, HIRExpressionKind::Identifier(_)));
+        if let TypedStatement::Return(Some(expr)) = &f.body[1] {
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
+            assert!(matches!(expr.expression, TypedExprKind::Identifier(_)));
         } else {
             panic!("expected Return");
         }
@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_undefined_identifier_errors() {
-        let err = get_hir_err("fn f() @int4 { return undefined_var }");
+        let err = get_typed_err("fn f() @int4 { return undefined_var }");
         assert!(
             err.contains("undefined_var"),
             "error should mention 'undefined_var', got: {}",
@@ -493,20 +493,20 @@ mod tests {
 
     #[test]
     fn test_type_mismatch_struct_vs_int_errors() {
-        let err = get_hir_err("type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = 5 }");
+        let err = get_typed_err("type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = 5 }");
         assert!(!err.is_empty(), "expected type mismatch error");
     }
 
     // ── Type declarations ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_type_declaration_produces_no_hir_decl() {
-        // Type aliases should be in scope but not emit HIRDeclarations
-        let cu = get_hir("type Num @int4\nfn f() { }");
+    fn test_type_declaration_produces_no_typed_decl() {
+        // Type aliases should be in scope but not emit TypedDecls
+        let cu = get_typed("type Num @int4\nfn f() { }");
         let const_decls: Vec<_> = cu
             .declarations
             .iter()
-            .filter(|d| matches!(d, HIRDeclaration::HIRConst(_)))
+            .filter(|d| matches!(d, TypedDecl::Const(_)))
             .collect();
         assert_eq!(const_decls.len(), 0);
     }
@@ -515,11 +515,11 @@ mod tests {
 
     #[test]
     fn test_cast_changes_inferred_type() {
-        let cu = get_hir("fn f() @int8 { x: @int4 = 5\n return x as @int8 }");
+        let cu = get_typed("fn f() @int8 { x: @int4 = 5\n return x as @int8 }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Return(Some(expr)) = &f.body[1] {
-            assert_eq!(expr.inferred_type, HIRTypeKind::Builtin(BuiltinType::Int8));
-            assert!(matches!(expr.expression, HIRExpressionKind::Cast { .. }));
+        if let TypedStatement::Return(Some(expr)) = &f.body[1] {
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int8));
+            assert!(matches!(expr.expression, TypedExprKind::Cast { .. }));
         } else {
             panic!("expected Return with cast");
         }
@@ -529,21 +529,21 @@ mod tests {
 
     #[test]
     fn test_multiple_functions_in_compilation_unit() {
-        let cu = get_hir("fn foo() { }\nfn bar() { }\nfn baz() { }");
+        let cu = get_typed("fn foo() { }\nfn bar() { }\nfn baz() { }");
         let count = cu
             .declarations
             .iter()
-            .filter(|d| matches!(d, HIRDeclaration::HIRFunction(_)))
+            .filter(|d| matches!(d, TypedDecl::Function(_)))
             .count();
         assert_eq!(count, 3);
     }
 
     #[test]
     fn test_function_calling_another_function() {
-        let cu = get_hir("fn helper() @int4 { return 1 }\nfn main() @int4 { return helper() }");
+        let cu = get_typed("fn helper() @int4 { return 1 }\nfn main() @int4 { return helper() }");
         let main_f = get_function(&cu, "main");
-        if let HIRStatement::Return(Some(expr)) = &main_f.body[0] {
-            assert!(matches!(expr.expression, HIRExpressionKind::Call { .. }));
+        if let TypedStatement::Return(Some(expr)) = &main_f.body[0] {
+            assert!(matches!(expr.expression, TypedExprKind::Call { .. }));
         } else {
             panic!("expected Return with Call");
         }
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn test_calling_undefined_function_errors() {
-        let err = get_hir_err("fn f() { ghost() }");
+        let err = get_typed_err("fn f() { ghost() }");
         assert!(
             err.contains("ghost"),
             "error should mention 'ghost', got: {}",
@@ -563,10 +563,10 @@ mod tests {
 
     #[test]
     fn test_address_of_produces_pointer_type() {
-        let cu = get_hir("fn f() { x: @int4 = 5\n p: *@int4 = x.& }");
+        let cu = get_typed("fn f() { x: @int4 = 5\n p: *@int4 = x.& }");
         let f = get_function(&cu, "f");
-        if let HIRStatement::Binding(b) = &f.body[1] {
-            assert!(matches!(b.ty, HIRTypeKind::Pointer(_)));
+        if let TypedStatement::Binding(b) = &f.body[1] {
+            assert!(matches!(b.ty, Ty::Pointer(_)));
         } else {
             panic!("expected Binding");
         }
@@ -576,9 +576,9 @@ mod tests {
 
     #[test]
     fn test_assign_stmt_in_hir() {
-        let cu = get_hir("fn f() { var @int4 x = 0\n x = 1 }");
+        let cu = get_typed("fn f() { var @int4 x = 0\n x = 1 }");
         let f = get_function(&cu, "f");
-        assert!(matches!(f.body[1], HIRStatement::Assign { .. }));
+        assert!(matches!(f.body[1], TypedStatement::Assign { .. }));
     }
 
     // ── Builtin string functions ──────────────────────────────────────────────
@@ -591,14 +591,14 @@ mod tests {
             (r#"fn f() { x := @concat("a", "b") }"#, BuiltinType::String),
         ];
         for (src, expected) in cases {
-            let cu = get_hir(src);
+            let cu = get_typed(src);
             let f = get_function(&cu, "f");
-            if let HIRStatement::Binding(b) = &f.body[0] {
+            if let TypedStatement::Binding(b) = &f.body[0] {
                 let init = b.init.as_ref().expect("binding initializer");
-                assert_eq!(init.inferred_type, HIRTypeKind::Builtin(expected));
+                assert_eq!(init.inferred_type, Ty::Builtin(expected));
                 assert!(matches!(
                     init.expression,
-                    HIRExpressionKind::BuiltinCall { .. }
+                    TypedExprKind::BuiltinCall { .. }
                 ));
             } else {
                 panic!("expected Binding statement for source {:?}", src);
@@ -608,13 +608,13 @@ mod tests {
 
     #[test]
     fn test_builtin_string_call_rejects_non_string_arg() {
-        let err = get_hir_err("fn f() { x := @str_len(5) }");
+        let err = get_typed_err("fn f() { x := @str_len(5) }");
         assert!(err.contains("@str_len"), "unexpected error: {}", err);
     }
 
     #[test]
     fn test_builtin_string_call_checks_arity() {
-        let err = get_hir_err(r#"fn f() { x := @concat("a") }"#);
+        let err = get_typed_err(r#"fn f() { x := @concat("a") }"#);
         assert!(err.contains("@concat"), "unexpected error: {}", err);
     }
 }
