@@ -6,6 +6,38 @@ use crate::frontend::ast::{Ast, declaration::DeclarationNode};
 use crate::frontend::identifier::Identifier;
 use crate::frontend::tokens::{Keyword, Token, TokenKind};
 
+mod additive;
+mod assignment;
+mod atom;
+mod bitwise_and;
+mod bitwise_or;
+mod bitwise_xor;
+mod body;
+mod cast;
+mod comparison;
+mod enum_literal;
+mod equality;
+mod expression;
+mod function_declaration;
+mod function_type;
+mod identifier_statement;
+mod import_declaration;
+mod logical_and;
+mod logical_or;
+mod pointer;
+mod shift;
+mod statement;
+mod struct_literal;
+mod switch;
+mod term;
+mod test;
+mod tuple;
+mod type_declaration;
+mod type_expression;
+mod type_fields;
+mod unary;
+mod variable_declaration;
+
 #[derive(Debug, Clone)]
 pub struct ParseError {
     pub filename: Box<Path>,
@@ -200,35 +232,3 @@ where
         Ok(ast)
     }
 }
-
-mod additive;
-mod assignment;
-mod atom;
-mod bitwise_and;
-mod bitwise_or;
-mod bitwise_xor;
-mod body;
-mod cast;
-mod comparison;
-mod enum_literal;
-mod equality;
-mod expression;
-mod function_declaration;
-mod function_type;
-mod identifier_statement;
-mod import_declaration;
-mod logical_and;
-mod logical_or;
-mod pointer;
-mod shift;
-mod statement;
-mod struct_literal;
-mod switch;
-mod term;
-mod test;
-mod tuple;
-mod type_declaration;
-mod type_expression;
-mod type_fields;
-mod unary;
-mod variable_declaration;
