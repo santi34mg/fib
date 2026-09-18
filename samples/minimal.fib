@@ -1,3 +1,5 @@
+// Smallest valid program: no imports, no output, exit 0.
+// Expected output: (none)
 fn main() @int {
     return 0;
 }

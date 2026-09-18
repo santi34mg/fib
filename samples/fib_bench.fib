@@ -1,3 +1,5 @@
+// Naive recursive fib(50) benchmark.
+// Compile-only in e2e: takes hours to run, so no expected output is pinned.
 import std::libc
 
 fn fib(n: @int4) @int4;

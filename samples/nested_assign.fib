@@ -1,3 +1,6 @@
+// Nested struct field assignment.
+// Expected output:
+//   got 42
 import std::libc
 
 type Inner struct {

@@ -1,3 +1,6 @@
+// Multi-value return: divmod(17, 5).
+// Expected output:
+//   q=3 r=2
 import std::libc
 
 fn divmod(a: @int4, b: @int4) (@int4, @int4) {

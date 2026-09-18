@@ -1,3 +1,6 @@
+// Hello-world smoke test.
+// Expected output:
+//   Hello, World!
 import std::libc
 
 fn main() @int4 {

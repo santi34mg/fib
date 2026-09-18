@@ -1,3 +1,8 @@
+// Enum variants with payloads.
+// Expected output:
+//   int=7
+//   bool=1
+//   eof
 import std::libc
 
 type Token enum {

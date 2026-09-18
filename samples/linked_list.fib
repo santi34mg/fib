@@ -1,3 +1,7 @@
+// Heap linked list via malloc/free with defer cleanup.
+// Expected output:
+//   List:   10 -> 20 -> 30 -> null
+//   Length: 3
 import std::libc
 
 type Node struct {

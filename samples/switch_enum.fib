@@ -1,3 +1,8 @@
+// switch/when dispatch over a plain enum.
+// Expected output:
+//   red
+//   green
+//   blue
 import std::libc
 
 type Color enum {

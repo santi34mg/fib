@@ -1,3 +1,14 @@
+// Fixed-block bump allocator with exhaustion handling.
+// Expected output:
+//   Pool: block_size=4, capacity=6
+//   Block 0: wrote 7
+//   Block 1: wrote 14
+//   Block 2: wrote 21
+//   Block 3: wrote 28
+//   Block 4: wrote 35
+//   Block 5: wrote 42
+//   Alloc 6 failed: pool exhausted
+//   Used: 6 / 6
 import std::libc
 
 type Pool struct {

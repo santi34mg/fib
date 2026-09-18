@@ -1,3 +1,17 @@
+// Shifts/masks over @uint4: IPv4 packing, permission flags, popcount.
+// Expected output:
+//   Packed IPv4: 0xC0A80164
+//   Octet 0: 192
+//   Octet 1: 168
+//   Octet 2: 1
+//   Octet 3: 100
+//
+//   Initial permissions: 0x3
+//   After grant EXEC:    0x7
+//   After revoke WRITE:  0x5
+//     [x] READ
+//     [x] EXEC
+//   Bits set in perms: 2
 import std::libc
 
 fn pack_ipv4(a: @uint4, b: @uint4, c: @uint4, d: @uint4) @uint4 {

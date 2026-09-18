@@ -1,3 +1,6 @@
+// Generic insertion sort over @int4[8].
+// Expected output:
+//   [ 1  2  3  5  6  7  8  10 ]
 import std::libc
 
 fn insertion_sort(T: type, arr: *T, len: @int4) @void {
