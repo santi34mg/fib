@@ -1,40 +1,41 @@
 # Architecture, IR, and Backend
 
-## Current state (verified)
+> Note (2026-09-18): addressed items removed. This file now lists only
+> partially addressed or unaddressed points. Removed: empty
+> `src/backend/interpreter/` decision (deleted).
 
-- `src/ir/mod.rs:1-114` is a Dragon-style 3-address IR skeleton (`Label`, `Temp`, `Operand`, `BinOp`, `Instruction`, `BasicBlock`, `IrFunction`, `IrProgram`). Header at `:8-9` explicitly says `lower_typed_program is not implemented yet; backend::lowering still consumes typed AST directly`.
-- `src/backend/lowering/llvm_lower.rs:1-2050` lowers `TypedProgram` straight to LLVM IR strings via `inkwell`. Entry `lower:37`, `codegen_expr:426`, `map_type_to_llvm:1216`, `create_entry_allocas:1321`, `codegen_stmt:1389`.
-- `src/backend/mod.rs:1` only re-exports `lowering`. `src/backend/interpreter/` exists on disk but contains 0 files and is unreferenced.
-- `src/backend/lowering/mod.rs:1-5` exports nothing when `llvm` feature is off.
+## Current state (verified 2026-09-18)
 
-This is a classic frontend-direct-to-backend shape: fast to evolve the language, but all control-flow lowering (`&&/||`, `if`, `for`, `switch`, `defer` + `break/continue`) lives inside LLVM builder calls.
+- `src/ir/` is now split (`mod.rs`, `builder.rs`, `expressions.rs`, `statements.rs`, `display.rs`, `test.rs`). `lower_typed_program(TypedProgram) -> Result<IrProgram, LowerError>` exists (`src/ir/mod.rs:274-295`) but covers a core subset only — header at `:8-15` still says the backend consumes typed AST directly; `MultiAssign/MultiBinding/FieldAssign/DerefAssign/IndexAssign/Switch/Const` return `LowerError::Unsupported` (`src/ir/statements.rs:265-283`, `src/ir/mod.rs:283-287`).
+- Production path is unchanged: `src/backend/lowering/llvm_lower.rs:19` `lower(TypedProgram, …)` called from `src/driver.rs:631-632`. The `IrProgram` consumer is parallel dead code: `src/backend/lowering/ir_lower.rs:28` `lower_ir` (`#[allow(dead_code)]`), exported but never called from the driver.
+- `src/ir/test.rs:23-136` has 8 tests (straight-line, `if+for` → `if/goto`, `&&`, `defer`, `break/continue`, `SymbolId` shadowing, extern, `switch/struct` → `Err`).
+- `src/backend/lowering/` is split (`llvm_lower.rs:202` lines + `context.rs`, `expressions.rs:901`, `statements.rs:658`, `types.rs`, `ir_lower.rs:865`, `mod.rs`). No `defer.rs`; defer helpers live in `context.rs:182-209`.
+- `FunctionLowering` (`src/backend/lowering/context.rs:38-49`) is a `#[allow(dead_code)]` stub — defined but never constructed; lowering still threads `(ctx, vars, scope, loop_ctx, deferred_stack)` tuples (e.g. `statements.rs:21-28`).
+- Unsigned codegen is correct in both paths via `ty_is_unsigned` (`src/ir/mod.rs:246-258`): direct path uses `build_int_unsigned_div/rem`, `UGT/UGE/ULT/ULE`, `build_right_shift(..., !is_unsigned)` (`src/backend/lowering/expressions.rs:322-331,381-430,457`); IR path mirrors it (`src/backend/lowering/ir_lower.rs:525-567,637-757`).
 
-## Points of interest
+## Remaining points
 
-### 1. Finish the IR middle-end vs. keep direct lowering
-**Opportunity:** implement `ir::lower_typed_program(TypedProgram) -> IrProgram`, then make `llvm_lower` consume `IrProgram`.
+### 1. Finish the IR middle-end [PARTIALLY ADDRESSED]
+Remaining: extend `lower_typed_program` beyond the core subset (assignment forms, `switch`, consts), then cut `driver` over to `lower_ir` and delete/flag-gate the direct path.
 
 What it unlocks:
 - A testable, backend-independent place for desugaring, constant folding, dead-code elimination, borrow/move checks later.
 - LLVM lowering becomes mostly mechanical `BasicBlock -> append_basic_block`.
-- Future custom backend (`README.md:11-12` mentions one) reuses the same IR.
+- Future custom backend reuses the same IR.
 
 Trade-offs:
-- **Cost now vs. payoff later.** IR is only worth it if you plan >1 backend or IR-level opts. If LLVM is the only backend for the next 6-12 months, direct lowering is faster to iterate.
-- **Double lowering bugs.** During migration you maintain two paths (typed AST -> LLVM and typed AST -> IR -> LLVM). Needs a flag or parallel e2e tests to avoid drift.
-- **Design lock-in.** `Operand::Place(String)` (`src/ir/mod.rs:27`) names bindings by string; you will want `SymbolId`s eventually. If you ship string-based IR now, later passes bake in fragile lookups.
+- **Double lowering bugs.** During migration you maintain two paths. Needs a flag or parallel e2e tests to avoid drift.
+- **Design lock-in.** `Operand::Place(String)` names bindings by string; you will want `SymbolId`s eventually (IR tests already use shadowing `SymbolId`s — propagate that into the real type).
 
-Suggested first step (low-risk): keep direct lowering, but add `ir::tests` that lower one function with `if` + `for` to IR and pretty-print it. Decide on `Temp`/`Label` allocation API before rewriting the backend.
-
-### 2. Split the 2050-line `llvm_lower.rs`
-**Opportunity:** extract `types.rs` (`map_type_to_llvm`, `coerce_int_to_llvm_type`), `expr.rs` (`codegen_expr`, `compute_lvalue_ptr`), `stmt.rs` (`codegen_stmt`, loop/switch helpers), `defer.rs` (deferred stack).
+### 2. Finish the `FunctionLowering` refactor [PARTIALLY ADDRESSED]
+File split is done; the struct migration is not. Remaining: make `FunctionLowering` own `ctx + vars + scope + loop_ctx + deferred_stack`, move `insert_block()` (`context.rs:74-81`) onto it, and convert `expressions.rs` / `statements.rs` / `ir_lower.rs` call sites off the tuples.
 
 Trade-offs:
-- **Pro:** reviewability, parallel work, faster `cargo check` incrementally, easier to forbid `unwrap` per module.
-- **Con:** inkwell lifetimes (`CodegenCtx<'ctx,'r>`, `LoopContext<'ctx>`) make splits fiddly; you will pass `&CodegenCtx` + `&mut vars` + `deferred_stack` everywhere. Do the split after introducing a `FunctionLowering` struct that owns those, not before.
+- **Pro:** reviewability, parallel work, easier to forbid `unwrap` per module.
+- **Con:** inkwell lifetimes make the conversion fiddly; do it in one focused refactor with `cargo test` green, not interleaved with IR migration.
 
-### 3. Deduplicate control-flow scaffolding
-`llvm_lower.rs:496-519,1700-1874,1993-2037` repeats `get_insert_block/append_basic_block/position_at_end/phi`.
+### 3. Deduplicate control-flow scaffolding [NOT ADDRESSED]
+`statements.rs:326,331,336,392-395,497,512` repeats `append_basic_block`; `:347,362,376,407,420,443,463` repeats `position_at_end`; short-circuit `rhs_bb/merge_bb + phi` is inline in `expressions.rs:279-295`. Only `insert_block/parent_function` (`context.rs:74-91`) and defer-frame emitters exist — no `emit_if / emit_short_circuit / emit_loop`.
 
 **Opportunity:** helpers like `emit_if(cond, then_fn, else_fn)`, `emit_short_circuit(op,lhs,rhs)`, `emit_loop(...)`.
 
@@ -42,14 +43,7 @@ Trade-offs:
 - **Pro:** fixes `defer + break/continue` consistently in one place.
 - **Con:** over-abstraction hides LLVM block ordering bugs. Keep helpers small and return `Result`, never panic on missing insert block.
 
-### 4. Decide the fate of `src/backend/interpreter/`
-Empty directory with no module reference is confusing to newcomers.
+### 4. Unsigned integers: execution tests [PARTIALLY ADDRESSED]
+Codegen is fixed; tests are not per the audit bar (`values > iN::MAX` executed). Current coverage is only `src/backend/lowering/test.rs:111-129` (`uint8 = 200`, asserts IR string contains `udiv/ugt`) plus `zext/sext` (`:34-73`). No `URem/ULT/ULE/UGE/LShr` execution, no e2e uint case.
 
-Options:
-- A) Delete it until needed (recommended if no interpreter roadmap).
-- B) Keep as `tree-walking interpreter over TypedProgram` for fast `fib run` without clang/LLVM. Useful for tests, but doubles semantic drift risk.
-
-### 5. Unsigned integers
-`llvm_lower.rs:1225` — `TODO: make unsigned truly unsigned`. Today `UInt*` lowers to signed `iN`, so `div/rem/cmp/shr` are wrong for large values.
-
-Fix is localized (`UDiv vs SDiv`, `ICmpULT vs SLT`, `LShr`), but needs e2e tests with values `> iN::MAX`. Trade-off: small churn, high correctness value — do early before stdlib depends on wraparound behavior.
+Remaining: add execution tests (via e2e sample or backend `Context::create` JIT/run) with values `> iN::MAX` for `div/rem/cmp/shr`. Trade-off: small churn, high correctness value — do early before stdlib depends on wraparound behavior.
