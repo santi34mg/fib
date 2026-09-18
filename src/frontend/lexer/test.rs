@@ -445,4 +445,91 @@ mod tests {
             assert_eq!(&tok.kind, exp);
         }
     }
+
+    // ── 04 maintainability: lexer dispatcher delegates per character class ──
+
+    #[test]
+    fn test_operator_slash_dot_dispatch() {
+        // One token per dispatcher helper: operators, `/`, `.`, plus the
+        // two-character forms. Identifiers separate the symbols.
+        let test_string = "a == b != c << d >> e && f || g += h -> i / j /= k ... .. .";
+        let expected = [
+            TokenKind::Operator(Operator::DoubleEquals),
+            TokenKind::Operator(Operator::Different),
+            TokenKind::Operator(Operator::LeftShift),
+            TokenKind::Operator(Operator::RightShift),
+            TokenKind::Operator(Operator::LogicalAnd),
+            TokenKind::Operator(Operator::LogicalOr),
+            TokenKind::Operator(Operator::PlusAssign),
+            TokenKind::Operator(Operator::ThinRightArrow),
+            TokenKind::Operator(Operator::Slash),
+            TokenKind::Operator(Operator::SlashAssign),
+            TokenKind::Operator(Operator::Ellipsis),
+            TokenKind::Operator(Operator::DoubleDot),
+            TokenKind::Punctuation(Punctuation::Dot),
+        ];
+        let tokens: Vec<_> = Lexer::new(test_string).collect();
+        let symbols: Vec<_> = tokens
+            .iter()
+            .filter(|t| !matches!(t.kind, TokenKind::Identifier(_)))
+            .collect();
+        assert_eq!(symbols.len(), expected.len());
+        for (tok, exp) in symbols.iter().zip(expected.iter()) {
+            assert_eq!(&tok.kind, exp);
+        }
+    }
+
+    #[test]
+    fn test_punctuation_at_and_string_dispatch() {
+        let toks: Vec<_> = Lexer::new("f(a, b) { x; y } [z] : :: @").collect();
+        let expected = [
+            TokenKind::Identifier(Identifier {
+                value: "f".to_string(),
+            }),
+            TokenKind::Punctuation(Punctuation::OpeningParenthesis),
+            TokenKind::Identifier(Identifier {
+                value: "a".to_string(),
+            }),
+            TokenKind::Punctuation(Punctuation::Comma),
+            TokenKind::Identifier(Identifier {
+                value: "b".to_string(),
+            }),
+            TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+            TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
+            TokenKind::Identifier(Identifier {
+                value: "x".to_string(),
+            }),
+            TokenKind::Punctuation(Punctuation::Semicolon),
+            TokenKind::Identifier(Identifier {
+                value: "y".to_string(),
+            }),
+            TokenKind::Punctuation(Punctuation::ClosingCurlyBrace),
+            TokenKind::Punctuation(Punctuation::OpeningSquareBrace),
+            TokenKind::Identifier(Identifier {
+                value: "z".to_string(),
+            }),
+            TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
+            TokenKind::Punctuation(Punctuation::Colon),
+            TokenKind::Punctuation(Punctuation::DoubleColon),
+            TokenKind::Punctuation(Punctuation::At),
+        ];
+        assert_eq!(toks.len(), expected.len());
+        for (tok, exp) in toks.iter().zip(expected.iter()) {
+            assert_eq!(&tok.kind, exp);
+        }
+
+        // String escapes still lex through the string helper, and bad
+        // escapes/builtins still surface as Error tokens.
+        let toks: Vec<_> = Lexer::new(r#""hi\n""#).collect();
+        assert_eq!(
+            toks[0].kind,
+            TokenKind::Literal(Literal::String("hi\n".to_string()))
+        );
+        let toks: Vec<_> = Lexer::new(r#""unterminated"#).collect();
+        assert_eq!(toks.len(), 1);
+        assert!(matches!(toks[0].kind, TokenKind::Error(_)));
+        let toks: Vec<_> = Lexer::new("@nope").collect();
+        assert_eq!(toks.len(), 1);
+        assert!(matches!(toks[0].kind, TokenKind::Error(_)));
+    }
 }

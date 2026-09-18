@@ -238,6 +238,77 @@ pub struct TypedExpr {
     pub expression: TypedExprKind,
 }
 
+/// Semantic binary operation — the analyzed form of syntax [`Operator`].
+/// Unlike `Operator` (which also spells assignment, unary-only and reserved
+/// forms), every variant here is valid in [`TypedExprKind::Binary`] and maps
+/// 1:1 onto `ir::BinOp`. Signedness / float-ness is carried by the operand
+/// types, not the op, so backends pick `SDiv` vs `UDiv`, `SLT` vs `ULT`, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Shl,
+    Shr,
+    And,
+    Or,
+    Xor,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl BinOp {
+    /// Map a syntax operator once, at the analyze boundary. Returns `None`
+    /// for operators that can never appear in a binary position (assignment,
+    /// unary-only, reserved); `&&`/`||` map to [`LogicalOp`] instead.
+    pub fn from_syntax(op: Operator) -> Option<Self> {
+        match op {
+            Operator::Plus => Some(BinOp::Add),
+            Operator::Minus => Some(BinOp::Sub),
+            Operator::Star => Some(BinOp::Mul),
+            Operator::Slash => Some(BinOp::Div),
+            Operator::Percent => Some(BinOp::Rem),
+            Operator::LeftShift => Some(BinOp::Shl),
+            Operator::RightShift => Some(BinOp::Shr),
+            Operator::Ampersand => Some(BinOp::And),
+            Operator::Pipe => Some(BinOp::Or),
+            Operator::Caret => Some(BinOp::Xor),
+            Operator::DoubleEquals => Some(BinOp::Eq),
+            Operator::Different => Some(BinOp::Ne),
+            Operator::LesserThan => Some(BinOp::Lt),
+            Operator::LesserEqual => Some(BinOp::Le),
+            Operator::GreaterThan => Some(BinOp::Gt),
+            Operator::GreaterEqual => Some(BinOp::Ge),
+            _ => None,
+        }
+    }
+}
+
+/// Short-circuit logical operator for [`TypedExprKind::ShortCircuit`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicalOp {
+    And,
+    Or,
+}
+
+impl LogicalOp {
+    /// Map `&&` / `||` once, at the analyze boundary. Returns `None` for
+    /// anything else.
+    pub fn from_syntax(op: Operator) -> Option<Self> {
+        match op {
+            Operator::LogicalAnd => Some(LogicalOp::And),
+            Operator::LogicalOr => Some(LogicalOp::Or),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum TypedExprKind {
     LiteralInt {
@@ -253,8 +324,15 @@ pub enum TypedExprKind {
     Identifier(Identifier),
     Binary {
         left: Box<TypedExpr>,
-        // TODO: turn this into Operation to decouple operations and operators
-        operator: Operator,
+        operator: BinOp,
+        right: Box<TypedExpr>,
+    },
+    /// Short-circuit `&&` / `||`: only the RHS is conditional. Kept distinct
+    /// from [`TypedExprKind::Binary`] because it lowers to control flow
+    /// (branches + join temp), not a single instruction.
+    ShortCircuit {
+        left: Box<TypedExpr>,
+        operator: LogicalOp,
         right: Box<TypedExpr>,
     },
     Call {
@@ -412,31 +490,23 @@ pub struct TypedIf {
 }
 
 impl TypedIf {
-    pub fn then_branch_terminates(&self) -> bool {
-        for stmt in self.then_branch.iter() {
-            if matches!(
+    /// True if any statement in `stmts` is a terminator (`return`/`break`/`continue`).
+    pub fn block_terminates(stmts: &[TypedStatement]) -> bool {
+        stmts.iter().any(|stmt| {
+            matches!(
                 stmt,
                 TypedStatement::Return(_) | TypedStatement::Break | TypedStatement::Continue
-            ) {
-                return true;
-            }
-        }
-        false
+            )
+        })
+    }
+
+    pub fn then_branch_terminates(&self) -> bool {
+        Self::block_terminates(&self.then_branch)
     }
 
     pub fn else_branch_terminates(&self) -> bool {
-        if let Some(eb) = &self.else_branch {
-            for stmt in eb.iter() {
-                if matches!(
-                    stmt,
-                    TypedStatement::Return(_) | TypedStatement::Break | TypedStatement::Continue
-                ) {
-                    return true;
-                }
-            }
-            false
-        } else {
-            false
-        }
+        self.else_branch
+            .as_deref()
+            .is_some_and(Self::block_terminates)
     }
 }

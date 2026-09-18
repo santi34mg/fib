@@ -716,4 +716,96 @@ mod tests {
         let err = get_ast_err("import std::io::");
         assert!(err.contains("after '::'"), "unexpected error: {}", err);
     }
+
+    // ── 04 maintainability: generic binary parser keeps precedence/assoc ──
+
+    #[test]
+    fn test_binary_levels_are_left_associative() {
+        // 8 - 4 - 2 parses as (8 - 4) - 2
+        let ast = get_ast("8 - 4 - 2");
+        let stmts = module_statements(&ast);
+        if let StatementKind::ExpressionStatement(Expression::Binary {
+            left,
+            operator,
+            right,
+        }) = stmts[0]
+        {
+            assert!(matches!(operator, Operator::Minus));
+            assert!(matches!(**right, Expression::Literal(Literal::Integer(2))));
+            assert!(matches!(**left, Expression::Binary { .. }));
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_binary_shift_binds_looser_than_additive() {
+        // 1 << 2 + 3 parses as 1 << (2 + 3)
+        let ast = get_ast("1 << 2 + 3");
+        let stmts = module_statements(&ast);
+        if let StatementKind::ExpressionStatement(Expression::Binary {
+            left,
+            operator,
+            right,
+        }) = stmts[0]
+        {
+            assert!(matches!(operator, Operator::LeftShift));
+            assert!(matches!(**left, Expression::Literal(Literal::Integer(1))));
+            if let Expression::Binary {
+                operator: inner_op, ..
+            } = &**right
+            {
+                assert!(matches!(inner_op, Operator::Plus));
+            } else {
+                panic!("unexpected RHS: {:#?}", right);
+            }
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_binary_logical_or_loosest() {
+        // a && b || c parses as (a && b) || c
+        let ast = get_ast("a && b || c");
+        let stmts = module_statements(&ast);
+        if let StatementKind::ExpressionStatement(Expression::Binary {
+            left,
+            operator,
+            right,
+        }) = stmts[0]
+        {
+            assert!(matches!(operator, Operator::LogicalOr));
+            assert!(matches!(**right, Expression::Identifier(_)));
+            if let Expression::Binary {
+                operator: inner_op, ..
+            } = &**left
+            {
+                assert!(matches!(inner_op, Operator::LogicalAnd));
+            } else {
+                panic!("unexpected LHS: {:#?}", left);
+            }
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_binary_equality_spans_comparison() {
+        // 1 + 2 == 3 parses as (1 + 2) == 3
+        let ast = get_ast("1 + 2 == 3");
+        let stmts = module_statements(&ast);
+        if let StatementKind::ExpressionStatement(Expression::Binary {
+            left,
+            operator,
+            right,
+        }) = stmts[0]
+        {
+            assert!(matches!(operator, Operator::DoubleEquals));
+            assert!(matches!(**right, Expression::Literal(Literal::Integer(3))));
+            assert!(matches!(**left, Expression::Binary { .. }));
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
 }

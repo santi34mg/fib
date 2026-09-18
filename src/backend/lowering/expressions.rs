@@ -10,9 +10,10 @@ use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use super::context::{CodegenCtx, coerce_int_to_llvm_type, insert_block, parent_function};
 use super::types::map_type_to_llvm;
 use crate::frontend::identifier::Identifier;
-use crate::frontend::tokens::Operator;
 use crate::frontend::tokens::builtin::{BuiltinFunction, BuiltinType};
-use crate::frontend::typed_ast::{SymbolTable, Ty, TypedExpr, TypedExprKind, TypedSymbol};
+use crate::frontend::typed_ast::{
+    BinOp, LogicalOp, SymbolTable, Ty, TypedExpr, TypedExprKind, TypedSymbol,
+};
 
 /// Compute a pointer to the lvalue represented by `expr`. Supports identifiers,
 /// field access chains, index access, and dereferences. Used by AddressOf and
@@ -265,7 +266,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
         TypedExprKind::Null => {
             Ok(ctx.ctx.ptr_type(AddressSpace::default()).const_null().as_basic_value_enum())
         }
-        TypedExprKind::Binary {
+        TypedExprKind::ShortCircuit {
             left,
             operator,
             right,
@@ -273,12 +274,11 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             let l = codegen_expr(ctx, vars, current_scope, left)?;
             // `&&` / `||` short-circuit: only evaluate the RHS when the LHS
             // doesn't already decide the result.
-            if matches!(operator, Operator::LogicalAnd | Operator::LogicalOr) {
-                let func = parent_function(ctx, "short-circuit")?;
-                let lhs_bb = insert_block(ctx, "short-circuit lhs")?;
-                let rhs_bb = ctx.ctx.append_basic_block(func, "sc_rhs");
-                let merge_bb = ctx.ctx.append_basic_block(func, "sc_merge");
-                let is_and = matches!(operator, Operator::LogicalAnd);
+            let func = parent_function(ctx, "short-circuit")?;
+            let lhs_bb = insert_block(ctx, "short-circuit lhs")?;
+            let rhs_bb = ctx.ctx.append_basic_block(func, "sc_rhs");
+            let merge_bb = ctx.ctx.append_basic_block(func, "sc_merge");
+            let is_and = matches!(operator, LogicalOp::And);
                 if is_and {
                     ctx.builder
                         .build_conditional_branch(l.into_int_value(), rhs_bb, merge_bb)?;
@@ -301,8 +301,14 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                     (&short_val, lhs_bb),
                     (&r.into_int_value(), rhs_end_bb),
                 ]);
-                return Ok(phi.as_basic_value());
+                Ok(phi.as_basic_value())
             }
+        TypedExprKind::Binary {
+            left,
+            operator,
+            right,
+        } => {
+            let l = codegen_expr(ctx, vars, current_scope, left)?;
             let r = codegen_expr(ctx, vars, current_scope, right)?;
             let is_float = matches!(
                 left.inferred_type,
@@ -324,7 +330,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                 )
             );
             match operator {
-                Operator::Plus => {
+                BinOp::Add => {
                     if is_float {
                         Ok(ctx.builder.build_float_add(l.into_float_value(), r.into_float_value(), "faddtmp")?.as_basic_value_enum())
                     } else if let Ty::Pointer(inner_ty) = &left.inferred_type {
@@ -344,7 +350,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                             .as_basic_value_enum())
                     }
                 }
-                Operator::Minus => {
+                BinOp::Sub => {
                     if is_float {
                         Ok(ctx.builder.build_float_sub(l.into_float_value(), r.into_float_value(), "fsubtmp")?.as_basic_value_enum())
                     } else if let Ty::Pointer(inner_ty) = &left.inferred_type {
@@ -365,14 +371,14 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                             .as_basic_value_enum())
                     }
                 }
-                Operator::Star => {
+                BinOp::Mul => {
                     if is_float {
                         Ok(ctx.builder.build_float_mul(l.into_float_value(), r.into_float_value(), "fmultmp")?.as_basic_value_enum())
                     } else {
                         Ok(ctx.builder.build_int_mul(l.into_int_value(), r.into_int_value(), "multmp")?.as_basic_value_enum())
                     }
                 }
-                Operator::Slash => {
+                BinOp::Div => {
                     if is_float {
                         Ok(ctx.builder.build_float_div(l.into_float_value(), r.into_float_value(), "fdivtmp")?.as_basic_value_enum())
                     } else if is_unsigned {
@@ -381,7 +387,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                         Ok(ctx.builder.build_int_signed_div(l.into_int_value(), r.into_int_value(), "divtmp")?.as_basic_value_enum())
                     }
                 }
-                Operator::Percent => {
+                BinOp::Rem => {
                     if is_float {
                         Ok(ctx.builder.build_float_rem(l.into_float_value(), r.into_float_value(), "fremtmp")?.as_basic_value_enum())
                     } else if is_unsigned {
@@ -390,7 +396,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                         Ok(ctx.builder.build_int_signed_rem(l.into_int_value(), r.into_int_value(), "remtmp")?.as_basic_value_enum())
                     }
                 }
-                Operator::GreaterThan => {
+                BinOp::Gt => {
                     if is_float {
                         Ok(ctx.builder.build_float_compare(FloatPredicate::OGT, l.into_float_value(), r.into_float_value(), "fgttmp")?.as_basic_value_enum())
                     } else if is_unsigned {
@@ -399,7 +405,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                         Ok(ctx.builder.build_int_compare(IntPredicate::SGT, l.into_int_value(), r.into_int_value(), "gttmp")?.as_basic_value_enum())
                     }
                 }
-                Operator::GreaterEqual => {
+                BinOp::Ge => {
                     if is_float {
                         Ok(ctx.builder.build_float_compare(FloatPredicate::OGE, l.into_float_value(), r.into_float_value(), "fgetmp")?.as_basic_value_enum())
                     } else if is_unsigned {
@@ -408,7 +414,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                         Ok(ctx.builder.build_int_compare(IntPredicate::SGE, l.into_int_value(), r.into_int_value(), "getmp")?.as_basic_value_enum())
                     }
                 }
-                Operator::LesserThan => {
+                BinOp::Lt => {
                     if is_float {
                         Ok(ctx.builder.build_float_compare(FloatPredicate::OLT, l.into_float_value(), r.into_float_value(), "flttmp")?.as_basic_value_enum())
                     } else if is_unsigned {
@@ -417,7 +423,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                         Ok(ctx.builder.build_int_compare(IntPredicate::SLT, l.into_int_value(), r.into_int_value(), "lttmp")?.as_basic_value_enum())
                     }
                 }
-                Operator::LesserEqual => {
+                BinOp::Le => {
                     if is_float {
                         Ok(ctx.builder.build_float_compare(FloatPredicate::OLE, l.into_float_value(), r.into_float_value(), "fletmp")?.as_basic_value_enum())
                     } else if is_unsigned {
@@ -426,7 +432,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                         Ok(ctx.builder.build_int_compare(IntPredicate::SLE, l.into_int_value(), r.into_int_value(), "letmp")?.as_basic_value_enum())
                     }
                 }
-                Operator::DoubleEquals => {
+                BinOp::Eq => {
                     if is_float {
                         Ok(ctx.builder.build_float_compare(FloatPredicate::OEQ, l.into_float_value(), r.into_float_value(), "feqtmp")?.as_basic_value_enum())
                     } else if l.is_pointer_value() {
@@ -435,7 +441,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                         Ok(ctx.builder.build_int_compare(IntPredicate::EQ, l.into_int_value(), r.into_int_value(), "eqtmp")?.as_basic_value_enum())
                     }
                 }
-                Operator::Different => {
+                BinOp::Ne => {
                     if is_float {
                         Ok(ctx.builder.build_float_compare(FloatPredicate::ONE, l.into_float_value(), r.into_float_value(), "fnetmp")?.as_basic_value_enum())
                     } else if l.is_pointer_value() {
@@ -444,23 +450,21 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                         Ok(ctx.builder.build_int_compare(IntPredicate::NE, l.into_int_value(), r.into_int_value(), "netmp")?.as_basic_value_enum())
                     }
                 }
-                // LogicalAnd / LogicalOr are short-circuited above.
-                Operator::LeftShift => Ok(ctx.builder
+                BinOp::Shl => Ok(ctx.builder
                     .build_left_shift(l.into_int_value(), r.into_int_value(), "shltmp")?
                     .as_basic_value_enum()),
-                Operator::RightShift => Ok(ctx.builder
+                BinOp::Shr => Ok(ctx.builder
                     .build_right_shift(l.into_int_value(), r.into_int_value(), !is_unsigned, "shrtmp")?
                     .as_basic_value_enum()),
-                Operator::Ampersand => Ok(ctx.builder
+                BinOp::And => Ok(ctx.builder
                     .build_and(l.into_int_value(), r.into_int_value(), "bandtmp")?
                     .as_basic_value_enum()),
-                Operator::Pipe => Ok(ctx.builder
+                BinOp::Or => Ok(ctx.builder
                     .build_or(l.into_int_value(), r.into_int_value(), "bortmp")?
                     .as_basic_value_enum()),
-                Operator::Caret => Ok(ctx.builder
+                BinOp::Xor => Ok(ctx.builder
                     .build_xor(l.into_int_value(), r.into_int_value(), "xortmp")?
                     .as_basic_value_enum()),
-                op => Err(format!("unsupported binary operator in codegen: {:?}", op).into()),
             }
         }
         TypedExprKind::Call { callee, args } => {

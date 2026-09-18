@@ -8,7 +8,7 @@ mod tests {
     use crate::frontend::parser::Parser;
     use crate::frontend::tokens::{Token, builtin::BuiltinType};
     use crate::frontend::typed_ast::{
-        Ty, TypedDecl, TypedExprKind, TypedFunction, TypedProgram, TypedStatement,
+        Ty, TypedDecl, TypedExpr, TypedExprKind, TypedFunction, TypedProgram, TypedStatement,
     };
 
     fn get_typed(source: &str) -> TypedProgram {
@@ -762,5 +762,114 @@ mod tests {
         let ret = TypedReturn { values: vec![] };
         assert!(ret.first().is_none());
         get_typed("fn f() @void { return }");
+    }
+
+    // ── 04 maintainability: BinOp / ShortCircuit mapping ────────────────────
+
+    use crate::frontend::typed_ast::{BinOp, LogicalOp};
+
+    fn return_expr(cu: &TypedProgram, name: &str) -> TypedExpr {
+        let f = get_function(cu, name);
+        if let TypedStatement::Return(Some(ret)) = &f.body[0] {
+            ret.first().expect("test expects a return value").clone()
+        } else {
+            panic!("expected return statement, got {:#?}", f.body[0]);
+        }
+    }
+
+    #[test]
+    fn test_logical_produces_short_circuit() {
+        let cu = get_typed("fn f(a: @bool, b: @bool) @bool { return a && b }");
+        let expr = return_expr(&cu, "f");
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
+        assert!(matches!(
+            expr.expression,
+            TypedExprKind::ShortCircuit {
+                operator: LogicalOp::And,
+                ..
+            }
+        ));
+
+        let cu = get_typed("fn f(a: @bool, b: @bool) @bool { return a || b }");
+        let expr = return_expr(&cu, "f");
+        assert!(matches!(
+            expr.expression,
+            TypedExprKind::ShortCircuit {
+                operator: LogicalOp::Or,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_arithmetic_and_comparison_produce_binop() {
+        let cu = get_typed("fn f(a: @int4, b: @int4) @int4 { return a + b * a }");
+        let expr = return_expr(&cu, "f");
+        if let TypedExprKind::Binary {
+            operator,
+            left,
+            right,
+        } = expr.expression
+        {
+            assert_eq!(operator, BinOp::Add);
+            assert!(matches!(left.expression, TypedExprKind::Identifier(_)));
+            assert!(matches!(
+                right.expression,
+                TypedExprKind::Binary {
+                    operator: BinOp::Mul,
+                    ..
+                }
+            ));
+        } else {
+            panic!("expected Binary, got {:#?}", expr.expression);
+        }
+
+        let cu = get_typed("fn f(a: @int4, b: @int4) @bool { return a == b }");
+        let expr = return_expr(&cu, "f");
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
+        assert!(matches!(
+            expr.expression,
+            TypedExprKind::Binary {
+                operator: BinOp::Eq,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_unary_desugar_uses_binop() {
+        // -x desugars to 0 - x
+        let cu = get_typed("fn f(x: @int4) @int4 { return -x }");
+        let expr = return_expr(&cu, "f");
+        assert!(matches!(
+            expr.expression,
+            TypedExprKind::Binary {
+                operator: BinOp::Sub,
+                ..
+            }
+        ));
+
+        // ~x desugars to x ^ -1
+        let cu = get_typed("fn f(x: @int4) @int4 { return ~x }");
+        let expr = return_expr(&cu, "f");
+        assert!(matches!(
+            expr.expression,
+            TypedExprKind::Binary {
+                operator: BinOp::Xor,
+                ..
+            }
+        ));
+
+        // !x desugars through == and still type-checks to bool
+        let cu = get_typed("fn f(x: @bool) @bool { return !x }");
+        let expr = return_expr(&cu, "f");
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
+        assert!(matches!(
+            expr.expression,
+            TypedExprKind::Binary {
+                operator: BinOp::Eq,
+                ..
+            }
+        ));
     }
 }

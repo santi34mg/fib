@@ -66,6 +66,35 @@ impl<'input> Lexer<'input> {
 
         let c = self.peek()?;
         let kind: Option<TokenKind> = match c {
+            '=' | '!' | '>' | '<' | '+' | '-' | '*' | '%' | '&' | '|' | '^' | '~' => {
+                self.lex_operator(c)
+            }
+            '/' => self.lex_slash(),
+            '.' => self.lex_dot(),
+            '(' | ')' | '{' | '}' | '[' | ']' | ',' | ';' | ':' => self.lex_punctuation(c),
+            '"' => self.lex_string_literal(),
+            '@' => self.lex_at_sign(),
+            '\'' => self.lex_char_literal(),
+            c if c.is_ascii_digit() => self.lex_numeric(c),
+            c if c.is_alphabetic() || c == '_' => Some(self.lex_identifier_or_keyword()),
+            c => {
+                self.bump();
+                Some(TokenKind::Unknown(c))
+            }
+        };
+        Some(Token::with_end(
+            kind?,
+            start_line,
+            start_col,
+            self.line,
+            self.column.saturating_sub(1),
+        ))
+    }
+
+    /// Lex symbolic operators (`==`, `!=`, `<<`, `>>`, `&&`, `||`, `+=`,
+    /// `->`, ...). Only called for characters in the operator class.
+    fn lex_operator(&mut self, c: char) -> Option<TokenKind> {
+        match c {
             '=' => {
                 self.bump();
                 if self.peek() == Some('=') {
@@ -151,22 +180,6 @@ impl<'input> Lexer<'input> {
                     _ => Some(TokenKind::Operator(Operator::Star)),
                 }
             }
-            '/' => {
-                self.bump();
-                let c = self.peek();
-                match c {
-                    Some('/') => {
-                        self.bump();
-                        self.skip_while(|c| c != '\n');
-                        Some(TokenKind::Comment)
-                    }
-                    Some('=') => {
-                        self.bump();
-                        Some(TokenKind::Operator(Operator::SlashAssign))
-                    }
-                    _ => Some(TokenKind::Operator(Operator::Slash)),
-                }
-            }
             '%' => {
                 self.bump();
                 let c = self.peek();
@@ -204,6 +217,47 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 Some(TokenKind::Operator(Operator::Tilde))
             }
+            _ => None,
+        }
+    }
+
+    /// Lex `/`: line comments (`//...`), `/=`, or `/`.
+    fn lex_slash(&mut self) -> Option<TokenKind> {
+        self.bump();
+        let c = self.peek();
+        match c {
+            Some('/') => {
+                self.bump();
+                self.skip_while(|c| c != '\n');
+                Some(TokenKind::Comment)
+            }
+            Some('=') => {
+                self.bump();
+                Some(TokenKind::Operator(Operator::SlashAssign))
+            }
+            _ => Some(TokenKind::Operator(Operator::Slash)),
+        }
+    }
+
+    /// Lex `.`: `...`, `..`, or `.`.
+    fn lex_dot(&mut self) -> Option<TokenKind> {
+        self.bump();
+        if self.peek() == Some('.') {
+            self.bump();
+            if self.peek() == Some('.') {
+                self.bump();
+                Some(TokenKind::Operator(Operator::Ellipsis))
+            } else {
+                Some(TokenKind::Operator(Operator::DoubleDot))
+            }
+        } else {
+            Some(TokenKind::Punctuation(Punctuation::Dot))
+        }
+    }
+
+    /// Lex punctuation, including the two-character `::`.
+    fn lex_punctuation(&mut self, c: char) -> Option<TokenKind> {
+        match c {
             '(' => {
                 self.bump();
                 Some(TokenKind::Punctuation(Punctuation::OpeningParenthesis))
@@ -232,20 +286,6 @@ impl<'input> Lexer<'input> {
                 self.bump();
                 Some(TokenKind::Punctuation(Punctuation::Comma))
             }
-            '.' => {
-                self.bump();
-                if self.peek() == Some('.') {
-                    self.bump();
-                    if self.peek() == Some('.') {
-                        self.bump();
-                        Some(TokenKind::Operator(Operator::Ellipsis))
-                    } else {
-                        Some(TokenKind::Operator(Operator::DoubleDot))
-                    }
-                } else {
-                    Some(TokenKind::Punctuation(Punctuation::Dot))
-                }
-            }
             ';' => {
                 self.bump();
                 Some(TokenKind::Punctuation(Punctuation::Semicolon))
@@ -259,85 +299,77 @@ impl<'input> Lexer<'input> {
                     Some(TokenKind::Punctuation(Punctuation::Colon))
                 }
             }
-            '\'' => self.lex_char_literal(),
-            '\"' => {
-                self.bump();
-                let mut escaped = String::new();
-                let mut lex_error: Option<&str> = None;
-                loop {
-                    match self.peek() {
+            _ => None,
+        }
+    }
+
+    /// Lex `"..."` string literals with escape sequences.
+    fn lex_string_literal(&mut self) -> Option<TokenKind> {
+        self.bump();
+        let mut escaped = String::new();
+        let mut lex_error: Option<&str> = None;
+        loop {
+            match self.peek() {
+                None => {
+                    lex_error = Some("unterminated string literal");
+                    break;
+                }
+                Some('"') => {
+                    self.bump();
+                    break;
+                }
+                Some('\\') => {
+                    self.bump();
+                    match self.bump() {
                         None => {
-                            lex_error = Some("unterminated string literal");
+                            lex_error = Some("unterminated string escape");
                             break;
                         }
-                        Some('\"') => {
-                            self.bump();
-                            break;
-                        }
-                        Some('\\') => {
-                            self.bump();
-                            match self.bump() {
-                                None => {
-                                    lex_error = Some("unterminated string escape");
-                                    break;
-                                }
-                                Some('n') => escaped.push('\n'),
-                                Some('t') => escaped.push('\t'),
-                                Some('\\') => escaped.push('\\'),
-                                Some('\"') => escaped.push('\"'),
-                                Some('\'') => escaped.push('\''),
-                                Some('0') => escaped.push('\0'),
-                                Some('r') => escaped.push('\r'),
-                                Some(c) => {
-                                    escaped.push('\\');
-                                    escaped.push(c);
-                                }
-                            }
-                        }
+                        Some('n') => escaped.push('\n'),
+                        Some('t') => escaped.push('\t'),
+                        Some('\\') => escaped.push('\\'),
+                        Some('"') => escaped.push('"'),
+                        Some('\'') => escaped.push('\''),
+                        Some('0') => escaped.push('\0'),
+                        Some('r') => escaped.push('\r'),
                         Some(c) => {
-                            self.bump();
+                            escaped.push('\\');
                             escaped.push(c);
                         }
                     }
                 }
-                if let Some(e) = lex_error {
-                    Some(TokenKind::Error(e.into()))
-                } else {
-                    Some(TokenKind::Literal(Literal::String(escaped)))
+                Some(c) => {
+                    self.bump();
+                    escaped.push(c);
                 }
             }
-            '@' => {
-                self.bump(); // consume '@'
-                match self.peek() {
-                    // `@name` is a builtin (type or function). The bare name is
-                    // resolved against the central builtin table.
-                    Some(c) if c.is_alphabetic() || c == '_' => {
-                        let start = self.position;
-                        self.skip_while(|c| c.is_alphanumeric() || c == '_');
-                        let name = &self.input[start..self.position];
-                        match Builtin::from_name(name) {
-                            Some(builtin) => Some(TokenKind::Builtin(builtin)),
-                            None => Some(TokenKind::Error(format!("unknown builtin '@{}'", name))),
-                        }
-                    }
-                    // A bare `@` not followed by an identifier stays punctuation.
-                    _ => Some(TokenKind::Punctuation(Punctuation::At)),
+        }
+        if let Some(e) = lex_error {
+            Some(TokenKind::Error(e.into()))
+        } else {
+            Some(TokenKind::Literal(Literal::String(escaped)))
+        }
+    }
+
+    /// Lex `@name` builtins, or a bare `@` punctuation.
+    /// Unknown `@names` produce a `TokenKind::Error` with the offending name.
+    fn lex_at_sign(&mut self) -> Option<TokenKind> {
+        self.bump(); // consume '@'
+        match self.peek() {
+            // `@name` is a builtin (type or function). The bare name is
+            // resolved against the central builtin table.
+            Some(c) if c.is_alphabetic() || c == '_' => {
+                let start = self.position;
+                self.skip_while(|c| c.is_alphanumeric() || c == '_');
+                let name = &self.input[start..self.position];
+                match Builtin::from_name(name) {
+                    Some(builtin) => Some(TokenKind::Builtin(builtin)),
+                    None => Some(TokenKind::Error(format!("unknown builtin '@{}'", name))),
                 }
             }
-            c if c.is_ascii_digit() => self.lex_numeric(c),
-            c if c.is_alphabetic() || c == '_' => Some(self.lex_identifier_or_keyword()),
-            c => {
-                self.bump();
-                Some(TokenKind::Unknown(c))
-            }
-        };
-        Some(Token::with_end(
-            kind?,
-            start_line,
-            start_col,
-            self.line,
-            self.column.saturating_sub(1),
-        ))
+            // A bare `@` not followed by an identifier stays punctuation.
+            _ => Some(TokenKind::Punctuation(Punctuation::At)),
+        }
     }
 
     fn lex_char_literal(&mut self) -> Option<TokenKind> {

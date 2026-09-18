@@ -53,28 +53,11 @@ pub enum Operand {
     Null,
 }
 
-/// Generic binary operation. Signedness / float-ness is carried by the
-/// `ty` field on `Instruction::Binary` so the backend can pick
-/// `SDiv` vs `UDiv`, `SLT` vs `ULT`, `LShr` vs `AShr`, etc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Rem,
-    Shl,
-    Shr,
-    And,
-    Or,
-    Xor,
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-}
+/// Generic binary operation, shared with the frontend (`TypedExprKind::Binary`).
+/// Signedness / float-ness is carried by the `ty` field on
+/// `Instruction::Binary` so the backend can pick `SDiv` vs `UDiv`, `SLT` vs
+/// `ULT`, `LShr` vs `AShr`, etc.
+pub use crate::frontend::typed_ast::BinOp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnOp {

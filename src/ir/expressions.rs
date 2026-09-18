@@ -1,29 +1,7 @@
-use super::{BinOp, Instruction, LowerError, Operand, UnOp};
-use crate::frontend::tokens::Operator;
-use crate::frontend::typed_ast::{Ty, TypedExpr, TypedExprKind};
+use super::{Instruction, LowerError, Operand, UnOp};
+use crate::frontend::typed_ast::{LogicalOp, Ty, TypedExpr, TypedExprKind};
 
 use super::builder::FunctionBuilder;
-pub(super) fn operator_to_binop(op: &Operator) -> Option<BinOp> {
-    match op {
-        Operator::Plus => Some(BinOp::Add),
-        Operator::Minus => Some(BinOp::Sub),
-        Operator::Star => Some(BinOp::Mul),
-        Operator::Slash => Some(BinOp::Div),
-        Operator::Percent => Some(BinOp::Rem),
-        Operator::LeftShift => Some(BinOp::Shl),
-        Operator::RightShift => Some(BinOp::Shr),
-        Operator::Ampersand => Some(BinOp::And),
-        Operator::Pipe => Some(BinOp::Or),
-        Operator::Caret => Some(BinOp::Xor),
-        Operator::DoubleEquals => Some(BinOp::Eq),
-        Operator::Different => Some(BinOp::Ne),
-        Operator::LesserThan => Some(BinOp::Lt),
-        Operator::LesserEqual => Some(BinOp::Le),
-        Operator::GreaterThan => Some(BinOp::Gt),
-        Operator::GreaterEqual => Some(BinOp::Ge),
-        _ => None,
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Expressions (each returns the Operand holding its value)
@@ -55,18 +33,10 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
             operator,
             right,
         } => {
-            // Short-circuit && / || via explicit control flow + join temp.
-            if matches!(operator, Operator::LogicalAnd | Operator::LogicalOr) {
-                return lower_short_circuit(b, expr, left, *operator, right);
-            }
+            // `operator` is already a semantic `BinOp` (mapped once in
+            // analysis), shared with `Instruction::Binary` — no conversion.
             let l = lower_expr(b, left)?;
             let r = lower_expr(b, right)?;
-            let op = operator_to_binop(operator).ok_or_else(|| {
-                LowerError::Unsupported(format!(
-                    "binary operator {:?} (assign-ops are desugared in analysis)",
-                    operator
-                ))
-            })?;
             let dst = b.fresh_temp();
             // `ty` is the *operand* type (left's) for opcode selection
             // (`SDiv` vs `UDiv`, `SLT` vs `ULT`, ...). For comparisons the
@@ -75,13 +45,19 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
             // `left.inferred_type`.
             b.emit(Instruction::Binary {
                 dst,
-                op,
+                op: *operator,
                 lhs: l,
                 rhs: r,
                 ty: left.inferred_type.clone(),
             });
             Ok(Operand::Temp(dst))
         }
+        // Short-circuit && / || via explicit control flow + join temp.
+        TypedExprKind::ShortCircuit {
+            left,
+            operator,
+            right,
+        } => lower_short_circuit(b, expr, left, *operator, right),
         TypedExprKind::Call { callee, args } => {
             let mut operands = Vec::with_capacity(args.len());
             for a in args {
@@ -208,7 +184,7 @@ pub(super) fn lower_short_circuit(
     b: &mut FunctionBuilder,
     _expr: &TypedExpr,
     left: &TypedExpr,
-    op: Operator,
+    op: LogicalOp,
     right: &TypedExpr,
 ) -> Result<Operand, LowerError> {
     use crate::frontend::tokens::builtin::BuiltinType;
@@ -217,7 +193,7 @@ pub(super) fn lower_short_circuit(
     let result = b.fresh_temp();
     let rhs_label = b.fresh_label();
     let merge_label = b.fresh_label();
-    let is_and = matches!(op, Operator::LogicalAnd);
+    let is_and = matches!(op, LogicalOp::And);
     // Seed the join temp with the short-circuit value, then overwrite from RHS.
     let short_val = Operand::ConstBool(!is_and);
     b.emit(Instruction::Copy {

@@ -6,7 +6,7 @@ use crate::frontend::tokens::Operator;
 use crate::frontend::tokens::builtin::{BuiltinFunction, BuiltinType};
 use crate::frontend::tokens::literal::Literal;
 use crate::frontend::typed_ast::{
-    SymbolTable, Ty, TypedExpr, TypedExprKind, TypedFunction, TypedSymbol,
+    BinOp, LogicalOp, SymbolTable, Ty, TypedExpr, TypedExprKind, TypedFunction, TypedSymbol,
 };
 
 use super::AnalysisError;
@@ -420,10 +420,25 @@ pub(super) fn expr_to_typed(
                         )
                         .into());
                     }
-                    (Ty::Builtin(BuiltinType::Boolean), l, r)
+                    let op = LogicalOp::from_syntax(operator)
+                        .ok_or_else(|| format!("unsupported binary operator {:?}", operator))?;
+                    return Ok(TypedExpr {
+                        inferred_type: Ty::Builtin(BuiltinType::Boolean),
+                        expression: TypedExprKind::ShortCircuit {
+                            left: Box::new(l),
+                            operator: op,
+                            right: Box::new(r),
+                        },
+                    });
                 }
                 op => return Err(format!("unsupported binary operator {:?}", op).into()),
             };
+            // Single mapping point from syntax to semantics: every operator
+            // that reaches here (arithmetic, comparison, equality) has a
+            // `BinOp`. Anything else is an internal error — the arm above
+            // already rejected non-binary operators.
+            let operator = BinOp::from_syntax(operator)
+                .ok_or_else(|| format!("unsupported binary operator {:?}", operator))?;
             Ok(TypedExpr {
                 inferred_type,
                 expression: TypedExprKind::Binary {
@@ -772,7 +787,7 @@ pub(super) fn expr_to_typed(
                     inferred_type: inner.inferred_type.clone(),
                     expression: TypedExprKind::Binary {
                         left: Box::new(zero),
-                        operator: Operator::Minus,
+                        operator: BinOp::Sub,
                         right: Box::new(inner),
                     },
                 })
@@ -797,7 +812,7 @@ pub(super) fn expr_to_typed(
                     inferred_type: inner.inferred_type.clone(),
                     expression: TypedExprKind::Binary {
                         left: Box::new(inner),
-                        operator: Operator::Caret,
+                        operator: BinOp::Xor,
                         right: Box::new(minus_one),
                     },
                 })
