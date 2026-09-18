@@ -11,9 +11,9 @@ use crate::backend::lowering;
 use crate::frontend::analyze::{AnalysisError, analyze};
 use crate::frontend::ast::{Ast, declaration::DeclarationNode};
 use crate::frontend::identifier::Identifier;
-use crate::frontend::typed_ast::{TypedProgram, TypedModule};
 use crate::frontend::parser::ParseError;
 use crate::frontend::parser::Parser;
+use crate::frontend::typed_ast::{TypedModule, TypedProgram};
 use crate::frontend::{lexer::Lexer, tokens::Token};
 
 /// Result of running the compiler frontend (lex + parse + analyze) without LLVM lowering.
@@ -132,7 +132,8 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
         }
     }
 
-    let mut typed_program = analyze(ast, &resolved_modules).map_err(|e| format!("Analysis failed: {}", e))?;
+    let mut typed_program =
+        analyze(ast, &resolved_modules).map_err(|e| format!("Analysis failed: {}", e))?;
 
     // Merge imported declarations into the main compilation unit for lowering
     let all_decls: Vec<_> = typed_program
@@ -142,7 +143,8 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
         .collect();
     typed_program.declarations = all_decls;
 
-    let c_src = lowering::lower(typed_program, &filename).map_err(|e| format!("Lowering failed: {}", e))?;
+    let c_src =
+        lowering::lower(typed_program, &filename).map_err(|e| format!("Lowering failed: {}", e))?;
 
     // Write LLVM IR and compile with clang
     // TODO: don't hard code out path

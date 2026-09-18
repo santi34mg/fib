@@ -4,12 +4,12 @@ mod tests {
     use std::path::Path;
 
     use crate::frontend::analyze::analyze;
-    use crate::frontend::typed_ast::{
-        TypedProgram, TypedDecl, TypedExprKind, TypedFunction, TypedStatement, Ty,
-    };
     use crate::frontend::lexer::Lexer;
     use crate::frontend::parser::Parser;
     use crate::frontend::tokens::{Token, builtin::BuiltinType};
+    use crate::frontend::typed_ast::{
+        Ty, TypedDecl, TypedExprKind, TypedFunction, TypedProgram, TypedStatement,
+    };
 
     fn get_typed(source: &str) -> TypedProgram {
         let src = source.to_string();
@@ -67,10 +67,7 @@ mod tests {
         let cu = get_typed("fn f() @float8 { return 3.14 }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(expr)) = &f.body[0] {
-            assert_eq!(
-                expr.inferred_type,
-                Ty::Builtin(BuiltinType::Float8)
-            );
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Float8));
         } else {
             panic!("expected Return");
         }
@@ -81,14 +78,8 @@ mod tests {
         let cu = get_typed("fn f() @bool { return true }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(expr)) = &f.body[0] {
-            assert_eq!(
-                expr.inferred_type,
-                Ty::Builtin(BuiltinType::Boolean)
-            );
-            assert!(matches!(
-                expr.expression,
-                TypedExprKind::LiteralBool(true)
-            ));
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
+            assert!(matches!(expr.expression, TypedExprKind::LiteralBool(true)));
         } else {
             panic!("expected Return");
         }
@@ -99,10 +90,7 @@ mod tests {
         let cu = get_typed(r#"fn f() @string { return "hi" }"#);
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(expr)) = &f.body[0] {
-            assert_eq!(
-                expr.inferred_type,
-                Ty::Builtin(BuiltinType::String)
-            );
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::String));
         } else {
             panic!("expected Return");
         }
@@ -327,10 +315,7 @@ mod tests {
         let cu = get_typed("fn f() @bool { a: @int4 = 1\n b: @int4 = 2\n return a < b }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(expr)) = &f.body[2] {
-            assert_eq!(
-                expr.inferred_type,
-                Ty::Builtin(BuiltinType::Boolean)
-            );
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
         } else {
             panic!("expected Return");
         }
@@ -341,10 +326,7 @@ mod tests {
         let cu = get_typed("fn f() @bool { a: @int4 = 1\n b: @int4 = 1\n return a == b }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(expr)) = &f.body[2] {
-            assert_eq!(
-                expr.inferred_type,
-                Ty::Builtin(BuiltinType::Boolean)
-            );
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
         } else {
             panic!("expected Return");
         }
@@ -355,15 +337,9 @@ mod tests {
         let cu = get_typed("fn f() @bool { a: @int4 = 1\n return a as @uint8 != 0 }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(expr)) = &f.body[1] {
-            assert_eq!(
-                expr.inferred_type,
-                Ty::Builtin(BuiltinType::Boolean)
-            );
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
             if let TypedExprKind::Binary { right, .. } = &expr.expression {
-                assert_eq!(
-                    right.inferred_type,
-                    Ty::Builtin(BuiltinType::UInt8)
-                );
+                assert_eq!(right.inferred_type, Ty::Builtin(BuiltinType::UInt8));
             } else {
                 panic!("expected Binary expression");
             }
@@ -377,10 +353,7 @@ mod tests {
         let cu = get_typed("fn f() @bool { a: @bool = true\n b: @bool = false\n return a && b }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(expr)) = &f.body[2] {
-            assert_eq!(
-                expr.inferred_type,
-                Ty::Builtin(BuiltinType::Boolean)
-            );
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
         } else {
             panic!("expected Return");
         }
@@ -391,10 +364,7 @@ mod tests {
         let cu = get_typed("fn f() @bool { a: @bool = true\n b: @bool = false\n return a || b }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(expr)) = &f.body[2] {
-            assert_eq!(
-                expr.inferred_type,
-                Ty::Builtin(BuiltinType::Boolean)
-            );
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
         } else {
             panic!("expected Return");
         }
@@ -493,7 +463,8 @@ mod tests {
 
     #[test]
     fn test_type_mismatch_struct_vs_int_errors() {
-        let err = get_typed_err("type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = 5 }");
+        let err =
+            get_typed_err("type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = 5 }");
         assert!(!err.is_empty(), "expected type mismatch error");
     }
 
@@ -596,10 +567,7 @@ mod tests {
             if let TypedStatement::Binding(b) = &f.body[0] {
                 let init = b.init.as_ref().expect("binding initializer");
                 assert_eq!(init.inferred_type, Ty::Builtin(expected));
-                assert!(matches!(
-                    init.expression,
-                    TypedExprKind::BuiltinCall { .. }
-                ));
+                assert!(matches!(init.expression, TypedExprKind::BuiltinCall { .. }));
             } else {
                 panic!("expected Binding statement for source {:?}", src);
             }

@@ -8,14 +8,14 @@ use crate::frontend::ast::{
     type_expression::TypeExpression, variable_declaration::VariableDeclaration,
 };
 use crate::frontend::identifier::Identifier;
-use crate::frontend::typed_ast::{
-    TypedProgram, GenericFunctionTemplate, TypedBinding, TypedDecl, TypedEnumVariant,
-    TypedExpr, TypedExprKind, TypedFunction, TypedIf, TypedModule, TypedPattern, TypedReturn,
-    TypedStatement, TypedSwitchArm, TypedSymbol, TypedTypeDecl, Ty, SymbolTable, ScopeKind,
-};
 use crate::frontend::tokens::Operator;
 use crate::frontend::tokens::builtin::{BuiltinFunction, BuiltinType};
 use crate::frontend::tokens::literal::Literal;
+use crate::frontend::typed_ast::{
+    GenericFunctionTemplate, ScopeKind, SymbolTable, Ty, TypedBinding, TypedDecl, TypedEnumVariant,
+    TypedExpr, TypedExprKind, TypedFunction, TypedIf, TypedModule, TypedPattern, TypedProgram,
+    TypedReturn, TypedStatement, TypedSwitchArm, TypedSymbol, TypedTypeDecl,
+};
 
 #[derive(Debug)]
 pub struct AnalysisError {
@@ -296,7 +296,9 @@ fn stmt_to_typed_inner(
             let field_index = struct_fields
                 .iter()
                 .position(|(name, _)| name == &field.value)
-                .ok_or_else(|| format!("stmt_to_typed: field {} not found in struct", field.value))?;
+                .ok_or_else(|| {
+                    format!("stmt_to_typed: field {} not found in struct", field.value)
+                })?;
             let e = expr_to_typed(expr, current_scope, generic_cache)?;
             Ok(TypedStatement::FieldAssign {
                 object: obj_typed,
@@ -336,7 +338,9 @@ fn stmt_to_typed_inner(
                 for expr in exprs {
                     typed_exprs.push(expr_to_typed(expr, current_scope, generic_cache)?);
                 }
-                Some(TypedReturn { values: typed_exprs })
+                Some(TypedReturn {
+                    values: typed_exprs,
+                })
             }
             None => None,
         })),
@@ -462,9 +466,11 @@ fn stmt_to_typed_inner(
             let variants = match &resolved {
                 Ty::Enum { variants } => variants.clone(),
                 other => {
-                    return Err(
-                        format!("stmt_to_typed: switch subject is not an enum: {:?}", other).into(),
-                    );
+                    return Err(format!(
+                        "stmt_to_typed: switch subject is not an enum: {:?}",
+                        other
+                    )
+                    .into());
                 }
             };
             let mut typed_arms = Vec::new();
@@ -538,7 +544,10 @@ fn stmt_to_typed_inner(
     }
 }
 
-fn validate_assignment_target(target: &PExpr, current_scope: &SymbolTable) -> Result<(), AnalysisError> {
+fn validate_assignment_target(
+    target: &PExpr,
+    current_scope: &SymbolTable,
+) -> Result<(), AnalysisError> {
     match target {
         PExpr::Identifier(id) => {
             if let Some(TypedSymbol::Binding(binding)) = current_scope.lookup(id)
@@ -627,8 +636,7 @@ fn multi_var_decl_to_typed(
             init: None,
             mutable: true,
         };
-        current_scope
-            .insert(identifier, TypedSymbol::Binding(binding.clone()));
+        current_scope.insert(identifier, TypedSymbol::Binding(binding.clone()));
         bindings.push(binding);
     }
 
@@ -745,8 +753,7 @@ inferred type of expression: {:?}"#,
         init,
         mutable: true,
     };
-    current_scope
-        .insert(var_decl.identifier, TypedSymbol::Binding(typed_var.clone()));
+    current_scope.insert(var_decl.identifier, TypedSymbol::Binding(typed_var.clone()));
     Ok(typed_var)
 }
 
@@ -785,10 +792,7 @@ fn is_boolean_type(ty: &Ty) -> bool {
     matches!(ty, Ty::Builtin(BuiltinType::Boolean))
 }
 
-fn coerce_expr_to_type(
-    mut expr: TypedExpr,
-    target: &Ty,
-) -> Result<TypedExpr, AnalysisError> {
+fn coerce_expr_to_type(mut expr: TypedExpr, target: &Ty) -> Result<TypedExpr, AnalysisError> {
     if &expr.inferred_type == target {
         return Ok(expr);
     }
@@ -799,19 +803,15 @@ fn coerce_expr_to_type(
     }
 
     match (&expr.expression, &expr.inferred_type, target) {
-        (
-            TypedExprKind::LiteralInt { .. },
-            Ty::Builtin(src),
-            Ty::Builtin(dst),
-        ) if is_integer_builtin(src) && is_integer_builtin(dst) => {
+        (TypedExprKind::LiteralInt { .. }, Ty::Builtin(src), Ty::Builtin(dst))
+            if is_integer_builtin(src) && is_integer_builtin(dst) =>
+        {
             expr.inferred_type = target.clone();
             Ok(expr)
         }
-        (
-            TypedExprKind::LiteralFloat { .. },
-            Ty::Builtin(src),
-            Ty::Builtin(dst),
-        ) if is_float_builtin(src) && is_float_builtin(dst) => {
+        (TypedExprKind::LiteralFloat { .. }, Ty::Builtin(src), Ty::Builtin(dst))
+            if is_float_builtin(src) && is_float_builtin(dst) =>
+        {
             expr.inferred_type = target.clone();
             Ok(expr)
         }
@@ -1046,12 +1046,13 @@ fn expr_to_typed(
                     .into());
                 };
                 let fval_typed = expr_to_typed(fval, current_scope, generic_cache)?;
-                let fval_typed = coerce_or_alias(fval_typed, spec_ty, current_scope).map_err(|_| {
-                    format!(
-                        "expr_to_typed: field '{}' of variant '{}.{}' expects type {:?}",
-                        fname.value, type_name, variant, spec_ty
-                    )
-                })?;
+                let fval_typed =
+                    coerce_or_alias(fval_typed, spec_ty, current_scope).map_err(|_| {
+                        format!(
+                            "expr_to_typed: field '{}' of variant '{}.{}' expects type {:?}",
+                            fname.value, type_name, variant, spec_ty
+                        )
+                    })?;
                 typed_fields.push((fname.value.clone(), fval_typed));
             }
             // Verify each declared field is supplied (order-insensitive).
@@ -1585,7 +1586,7 @@ fn resolve_struct_fields(
                 .lookup(id)
                 .ok_or_else(|| format!("resolve_struct_fields: type {} not found in scope", id))?;
             match symbol {
-                TypedSymbol::Type(inner_ty) => resolve_struct_fields(&inner_ty, current_scope),
+                TypedSymbol::Type(inner_ty) => resolve_struct_fields(inner_ty, current_scope),
                 _ => Err(format!("resolve_struct_fields: {} is not a type", id).into()),
             }
         }
@@ -1603,7 +1604,9 @@ fn map_type(type_expression: TypeExpression) -> Result<Ty, AnalysisError> {
             for f in fields {
                 typed_fields.push((f.label.value.clone(), Box::new(map_type(f.type_id)?)));
             }
-            Ty::Struct { fields: typed_fields }
+            Ty::Struct {
+                fields: typed_fields,
+            }
         }
         TypeExpression::Enum { variants } => {
             let mut typed_variants = Vec::new();
@@ -1678,8 +1681,7 @@ fn resolve_declaration(
         }
         DeclarationNode::TypeDeclaration(type_declaration) => {
             let ty = map_type(type_declaration.expression.clone())?;
-            current_scope
-                .insert(type_declaration.name.clone(), TypedSymbol::Type(ty));
+            current_scope.insert(type_declaration.name.clone(), TypedSymbol::Type(ty));
             Ok(())
         }
     }
