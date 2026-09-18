@@ -21,3 +21,4 @@ Fib is a systems programming language designed for performance, clarity, and dev
 - [Generics via Type Parameters](generics.md) — `T type` parameters
 
 For working programs that exercise these features end-to-end, see the [`samples/`](../samples) directory.
+Each sample carries an `Expected output:` header comment — the same strings `tests/e2e.rs` asserts on.

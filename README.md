@@ -1,5 +1,7 @@
 # Fib
 
+[![CI](https://github.com/santi34mg/fib/actions/workflows/ci.yml/badge.svg)](https://github.com/santi34mg/fib/actions/workflows/ci.yml)
+
 Fib is a systems programming language designed for performance, clarity, and developer control. 
 
 ## Compiler
@@ -34,6 +36,31 @@ To run any of the samples you can do so directly with cargo from the project roo
 cargo run -- samples/hello_world.fib -I=std
 ./out/hello_world
 ```
+
+`-I`/`--include-path` adds an import search directory (repeatable). The entry
+file's own directory is always searched first, so `-I=std` is what lets
+`import std::libc` resolve. `-o` overrides the default `out/<stem>` binary
+path.
+
+Useful flags (see `cargo run -- --help` for the full list):
+
+- `--check` — frontend only (lex + parse + analyze), no LLVM/clang needed.
+- `--emit=lex|parse|typed|llvm|bin` — stop after a stage.
+- `--emit-llvm` / `--llvm-out <FILE>` — keep the intermediate `.ll`.
+- `--cc <CC>` — C compiler for linking (defaults to `$CC`, else `clang-17`, else `clang`).
+- `-O <LEVEL>` — optimization level passed to clang as `-O<LEVEL>`.
+
+### Troubleshooting
+
+- `clang-17: not found` / linker errors: install a C compiler and ensure it
+  is on `$PATH`. Any recent `clang` works (`clang-17` is just preferred when
+  present); or point at yours explicitly: `cargo run -- samples/hello_world.fib -I=std --cc clang`.
+- Building the compiler itself needs LLVM 21 (CI installs it via
+  `ZhongRuoyu/setup-llvm@v0`). Frontend-only work (`--check`,
+  `--emit=lex|parse|typed`, `cargo check --no-default-features`) needs
+  neither LLVM nor clang.
+- No output binary? The default `--emit=bin` writes to `out/<stem>`
+  (`out/` is git-ignored); use `-o` to choose another path.
 
 ## Language Features
 
