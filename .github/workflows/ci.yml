@@ -1,15 +1,59 @@
-name: Dev CI
+name: CI
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - '.gitignore'
 
 jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format
+        run: cargo fmt --check
+
+  frontend:
+    name: Frontend (no LLVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        # Pinned via dtolnay stable; MSRV is implicitly "stable as of the
+        # last green CI run". If a toolchain bump breaks the build, the fix
+        # is to pin a date (e.g. `toolchain: stable-2026-09-01`) here.
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check (no default features)
+        run: cargo check --no-default-features
+
+      - name: Test (no default features)
+        # e2e.rs is `#![cfg(feature = "llvm")]`, so this exercises the
+        # frontend unit tests only — it catches silent-noop feature gating.
+        run: cargo test --no-default-features
+
   build_and_test:
     name: Build and run tests
     runs-on: ubuntu-latest
@@ -22,6 +66,11 @@ jobs:
         with:
           llvm-version: 21
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
       - name: Cache Rust dependencies
         id: cache-rs
         uses: actions/cache@v5
@@ -32,24 +81,44 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          # Includes the workflow file so LLVM/toolchain bumps invalidate
+          # the cache, not just Cargo.lock changes.
+          key: ${{ runner.os }}-llvm21-cargo-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-llvm21-cargo-
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      # Fail fast on formatting: cheaper than check/clippy/build.
+      - name: Format
+        run: cargo fmt --check
 
       - name: Check
         run: cargo check
 
-      - name: Format
-        run: cargo fmt --check
-
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Build
         run: cargo build
 
       - name: Test
         run: cargo test
+
+      - name: Test (all features)
+        run: cargo test --all-features
+
+  audit:
+    name: Security audit (advisory, non-blocking)
+    runs-on: ubuntu-latest
+    # Advisory only: inkwell/LLVM advisories must not block unrelated PRs.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit
+        run: cargo audit
