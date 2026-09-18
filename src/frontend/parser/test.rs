@@ -808,4 +808,139 @@ mod tests {
             panic!("unexpected AST: {:#?}", stmts[0]);
         }
     }
+
+    // ── 05 testing: shape coverage for previously untested constructs ──
+
+    #[test]
+    fn test_qualified_access_shape() {
+        let ast = get_ast("x := a::b");
+        let stmts = module_statements(&ast);
+        if let StatementKind::VariableDeclaration(decl) = stmts[0] {
+            let init = decl.expression.as_ref().expect("initializer");
+            if let Expression::QualifiedAccess { module, member } = init {
+                assert_eq!(module.value, "a");
+                assert_eq!(member.value, "b");
+            } else {
+                panic!("unexpected init: {:#?}", init);
+            }
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_builtin_call_shape() {
+        let ast = get_ast("x := @str_len(\"hi\")");
+        let stmts = module_statements(&ast);
+        if let StatementKind::VariableDeclaration(decl) = stmts[0] {
+            let init = decl.expression.as_ref().expect("initializer");
+            if let Expression::BuiltinCall { builtin, args } = init {
+                assert!(matches!(
+                    builtin,
+                    crate::frontend::tokens::builtin::BuiltinFunction::StrLen
+                ));
+                assert_eq!(args.len(), 1);
+            } else {
+                panic!("unexpected init: {:#?}", init);
+            }
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_builtin_call_missing_paren_errors() {
+        let err = get_ast_err("x := @str_len");
+        assert!(err.contains("expected '('"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_struct_construct_shape() {
+        let ast = get_ast("x := Point { x: 1, y: 2 }");
+        let stmts = module_statements(&ast);
+        if let StatementKind::VariableDeclaration(decl) = stmts[0] {
+            let init = decl.expression.as_ref().expect("initializer");
+            if let Expression::StructConstruct { type_name, fields } = init {
+                assert_eq!(type_name.value, "Point");
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].0.value, "x");
+                assert_eq!(fields[1].0.value, "y");
+            } else {
+                panic!("unexpected init: {:#?}", init);
+            }
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_enum_variant_construct_shape() {
+        let ast = get_ast("x := Color.Red { v: 1 }");
+        let stmts = module_statements(&ast);
+        if let StatementKind::VariableDeclaration(decl) = stmts[0] {
+            let init = decl.expression.as_ref().expect("initializer");
+            if let Expression::EnumVariantConstruct {
+                type_name,
+                variant,
+                fields,
+            } = init
+            {
+                assert_eq!(type_name.value, "Color");
+                assert_eq!(variant.value, "Red");
+                assert_eq!(fields.len(), 1);
+            } else {
+                panic!("unexpected init: {:#?}", init);
+            }
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_switch_full_shape() {
+        let ast = get_ast("fn f(c: @int4) @void { switch (c) { when .R { } when else { } } }");
+        let stmts = module_statements(&ast);
+        if let StatementKind::Switch { subject, arms } = stmts[0] {
+            assert!(matches!(subject, Expression::Identifier(_)));
+            assert_eq!(arms.len(), 2);
+            assert!(matches!(
+                arms[0].pattern,
+                crate::frontend::ast::pattern::Pattern::EnumVariant { .. }
+            ));
+            assert!(matches!(
+                arms[1].pattern,
+                crate::frontend::ast::pattern::Pattern::Wildcard
+            ));
+        } else {
+            panic!("unexpected AST: {:#?}", stmts[0]);
+        }
+    }
+
+    #[test]
+    fn test_import_alias_shape() {
+        let ast = get_ast("import a::b as c\nfn f() @void { }");
+        if let DeclarationNode::ImportDeclaration(import) = &ast.declarations[0] {
+            let path: Vec<_> = import.path.iter().map(|id| id.value.clone()).collect();
+            assert_eq!(path, vec!["a".to_string(), "b".to_string()]);
+            assert_eq!(import.alias.as_ref().expect("alias").value, "c");
+            assert!(import.selective.is_none());
+        } else {
+            panic!("unexpected decl: {:#?}", ast.declarations[0]);
+        }
+    }
+
+    #[test]
+    fn test_import_selective_shape() {
+        let ast = get_ast("import a::b::{X, y}\nfn f() @void { }");
+        if let DeclarationNode::ImportDeclaration(import) = &ast.declarations[0] {
+            let path: Vec<_> = import.path.iter().map(|id| id.value.clone()).collect();
+            assert_eq!(path, vec!["a".to_string(), "b".to_string()]);
+            let selective = import.selective.as_ref().expect("selective");
+            let names: Vec<_> = selective.iter().map(|id| id.value.clone()).collect();
+            assert_eq!(names, vec!["X".to_string(), "y".to_string()]);
+            assert!(import.alias.is_none());
+        } else {
+            panic!("unexpected decl: {:#?}", ast.declarations[0]);
+        }
+    }
 }

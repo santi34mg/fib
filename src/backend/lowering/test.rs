@@ -14,7 +14,11 @@ mod tests {
     use super::*;
     use crate::frontend::lexer::Lexer;
     use crate::frontend::parser::Parser;
+    use std::collections::HashMap;
     use std::path::PathBuf;
+
+    use super::super::expressions::compute_lvalue_ptr;
+    use crate::frontend::typed_ast::{TypedExpr, TypedExprKind};
 
     fn lower_ir_src(src: &str) -> String {
         let tokens: Vec<_> = Lexer::new(src).collect();
@@ -154,6 +158,33 @@ mod tests {
         let err = map_type_to_llvm(&ty, &ctx, scope).expect_err("expected UnknownLayout");
         assert!(
             err.to_string().contains("UnknownLayout"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn lvalue_of_undeclared_identifier_errors() {
+        let ctx = Context::create();
+        let module = ctx.create_module("lvalue_test");
+        let builder = ctx.create_builder();
+        let cctx = CodegenCtx {
+            ctx: &ctx,
+            module: &module,
+            builder: &builder,
+        };
+        let mut vars = HashMap::new();
+        let mut scope = SymbolTable::new();
+        let expr = TypedExpr {
+            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            expression: TypedExprKind::Identifier(Identifier {
+                value: "undeclared".to_string(),
+            }),
+        };
+        let err = compute_lvalue_ptr(&cctx, &mut vars, &mut scope, &expr)
+            .expect_err("expected no-alloca error");
+        assert!(
+            err.to_string().contains("no alloca"),
             "unexpected error: {}",
             err
         );

@@ -764,6 +764,181 @@ mod tests {
         get_typed("fn f() @void { return }");
     }
 
+    // ── 05 testing: negatives, escapes, generics, imports ───────────────────
+
+    #[test]
+    fn test_duplicate_struct_field_errors() {
+        let err = get_typed_err(
+            "type P struct { x: @int4, y: @int4 }\nfn f() @void { p: P = P { x: 1, x: 2 } }",
+        );
+        assert!(err.contains("duplicate field"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_missing_struct_field_errors() {
+        let err = get_typed_err(
+            "type P struct { x: @int4, y: @int4 }\nfn f() @void { p: P = P { x: 1 } }",
+        );
+        assert!(err.contains("missing field"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_call_arity_mismatch_errors() {
+        let err =
+            get_typed_err("fn f(a: @int4) @int4 { return a }\nfn g() @int4 { return f(1, 2) }");
+        assert!(err.contains("argument"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_switch_on_non_enum_errors() {
+        let err = get_typed_err("fn f(x: @int4) @void { switch (x) { when .R { } } }");
+        assert!(err.contains("not an enum"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_switch_payload_on_unit_variant_errors() {
+        let err = get_typed_err(
+            "type T enum { A { v: @int4 }, B }\n\
+             fn f(t: T) @int4 { switch (t) { when .B(x) { return 0 } when else { return 1 } } }",
+        );
+        assert!(err.contains("no payload"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_switch_payload_binding_works() {
+        let cu = get_typed(
+            "type T enum { A { v: @int4 }, B }\n\
+             fn f(t: T) @int4 { switch (t) { when .A(x) { return x.v } when else { return 0 } } }",
+        );
+        // Type declaration + function; the payload binding type-checked.
+        get_function(&cu, "f");
+        assert_eq!(
+            cu.declarations.len(),
+            2,
+            "unexpected decls: {:#?}",
+            cu.declarations
+        );
+    }
+
+    #[test]
+    fn test_invalid_string_escape_errors() {
+        let err = get_typed_err("fn f() @string { return \"a\\qb\" }");
+        assert!(err.contains("unknown escape"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_invalid_hex_escape_errors() {
+        let err = get_typed_err("fn f() @string { return \"a\\xZZb\" }");
+        assert!(
+            err.contains("invalid hex escape"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_generic_function_instantiates_per_type() {
+        let cu =
+            get_typed("fn id(T: type, x: T) T { return x }\nfn g() @int4 { return id(@int4, 5) }");
+        // `g` plus one monomorphized copy of `id`.
+        assert_eq!(cu.declarations.len(), 2);
+        let expr = return_expr(&cu, "g");
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
+    }
+
+    use crate::frontend::{identifier::Identifier, typed_ast::TypedModule};
+
+    /// Analyze `entry_src` with `deps` available as importable modules.
+    /// Each dep is `(module_name, source)`, importable as that single path
+    /// segment (no transitive dep imports).
+    fn get_typed_with_imports(
+        entry_src: &str,
+        deps: &[(&str, &str)],
+    ) -> Result<TypedProgram, crate::frontend::analyze::AnalysisError> {
+        use std::collections::HashMap;
+        let mut resolved = HashMap::new();
+        for (name, src) in deps {
+            let src = src.to_string();
+            let tokens: Vec<Token> = Lexer::new(&src).collect();
+            let mut parser = Parser::new(tokens.into_iter(), Path::new("test"), src.clone());
+            let ast = parser.parse().expect("dep parse failed");
+            let cu = analyze(ast, &HashMap::new()).expect("dep analysis failed");
+            let exports = cu.symbol_table.global_symbols().clone();
+            let declarations = [cu.declarations, cu.imported_declarations].concat();
+            resolved.insert(
+                vec![name.to_string()],
+                TypedModule {
+                    name: name.to_string(),
+                    path: vec![Identifier {
+                        value: name.to_string(),
+                    }],
+                    exports,
+                    declarations,
+                },
+            );
+        }
+        let src = entry_src.to_string();
+        let tokens: Vec<Token> = Lexer::new(&src).collect();
+        let mut parser = Parser::new(tokens.into_iter(), Path::new("test"), src.clone());
+        let ast = parser.parse().expect("parse failed");
+        analyze(ast, &resolved)
+    }
+
+    #[test]
+    fn test_selective_import_resolves_symbol() {
+        let cu = get_typed_with_imports(
+            "import m::{foo}\nfn main() @int4 { return foo() }",
+            &[("m", "fn foo() @int4 { return 7 }")],
+        )
+        .expect("selective import should resolve");
+        get_function(&cu, "main");
+        assert_eq!(cu.imported_declarations.len(), 1);
+    }
+
+    #[test]
+    fn test_aliased_import_qualifies_access() {
+        let cu = get_typed_with_imports(
+            "import m as mm\nfn main() @int4 { return mm::foo() }",
+            &[("m", "fn foo() @int4 { return 7 }")],
+        )
+        .expect("aliased import should resolve");
+        get_function(&cu, "main");
+    }
+
+    #[test]
+    fn test_selective_import_missing_symbol_errors() {
+        let err = get_typed_with_imports(
+            "import m::{nope}\nfn main() @int4 { return 0 }",
+            &[("m", "fn foo() @int4 { return 7 }")],
+        )
+        .expect_err("expected missing-symbol error")
+        .msg;
+        assert!(err.contains("nope"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_unknown_module_errors() {
+        let err = get_typed_with_imports("import nosuch::mod\nfn main() @int4 { return 0 }", &[])
+            .expect_err("expected unknown-module error")
+            .msg;
+        assert!(err.contains("nosuch::mod"), "unexpected error: {}", err);
+    }
+
+    // Known soundness gaps (filed, not fixed, in this testing ticket):
+    // these lock the DESIRED behavior but stay ignored until the checks land.
+
+    #[test]
+    #[ignore = "known gap: return values are not checked against the declared return type"]
+    fn test_return_type_mismatch_errors() {
+        get_typed_err("fn f() @int4 { return \"s\" }");
+    }
+
+    #[test]
+    #[ignore = "known gap: break/continue are accepted outside loops (no loop-depth tracking)"]
+    fn test_break_outside_loop_errors() {
+        get_typed_err("fn f() @void { break }");
+    }
+
     // ── 04 maintainability: BinOp / ShortCircuit mapping ────────────────────
 
     use crate::frontend::typed_ast::{BinOp, LogicalOp};

@@ -510,3 +510,5 @@ impl TypedIf {
             .is_some_and(Self::block_terminates)
     }
 }
+
+mod test;

@@ -12,3 +12,19 @@ Contributions must be made through a comprehensive pull request to the `dev` bra
 ## Coding conventions
 
 Please follow the rules defined by the formatter and linters in use.
+
+## Testing
+
+- `cargo test` runs everything: in-tree unit tests plus `tests/e2e.rs`, which
+  compiles every `samples/*.fib` through the library API and executes the
+  result (exact-stdout asserts for the deterministic samples, `fib_bench`
+  compile-only). It needs the default `llvm` feature and a C compiler.
+- `cargo test --lib` runs only unit tests (also works with
+  `--no-default-features`); `cargo test --test e2e` runs only the
+  end-to-end suite.
+- Conventions for new code:
+  - Every new lowering branch ships with a `samples/*.fib` reproducer so e2e
+    covers it.
+  - Every soundness fix ships with a `get_typed_err` negative test.
+  - For diagnostics, assert on `is_err()` plus a message substring/line —
+    not the exact full message, which is still evolving.

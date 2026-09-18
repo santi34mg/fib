@@ -157,6 +157,12 @@ mod tests {
             ("continue", TokenKind::Keyword(Keyword::Continue)),
             ("return", TokenKind::Keyword(Keyword::Return)),
             ("struct", TokenKind::Keyword(Keyword::Struct)),
+            ("enum", TokenKind::Keyword(Keyword::Enum)),
+            ("union", TokenKind::Keyword(Keyword::Union)),
+            ("type", TokenKind::Keyword(Keyword::Type)),
+            ("fn", TokenKind::Keyword(Keyword::Function)),
+            ("switch", TokenKind::Keyword(Keyword::Switch)),
+            ("when", TokenKind::Keyword(Keyword::When)),
             ("extern", TokenKind::Keyword(Keyword::Extern)),
             ("defer", TokenKind::Keyword(Keyword::Defer)),
             ("import", TokenKind::Keyword(Keyword::Import)),
@@ -198,6 +204,10 @@ mod tests {
             ("-=", Operator::MinusAssign),
             ("*=", Operator::StarAssign),
             ("/=", Operator::SlashAssign),
+            ("%=", Operator::PercentAssign),
+            ("->", Operator::ThinRightArrow),
+            ("..", Operator::DoubleDot),
+            ("...", Operator::Ellipsis),
         ];
         for (src, expected) in cases {
             let tokens: Vec<_> = Lexer::new(src).collect();
@@ -218,6 +228,9 @@ mod tests {
             (";", Punctuation::Semicolon),
             (",", Punctuation::Comma),
             (":", Punctuation::Colon),
+            (".", Punctuation::Dot),
+            ("::", Punctuation::DoubleColon),
+            ("@", Punctuation::At),
         ];
         for (src, expected) in cases {
             let tokens: Vec<_> = Lexer::new(src).collect();
