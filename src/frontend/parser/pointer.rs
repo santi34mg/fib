@@ -26,10 +26,7 @@ where
             TokenKind::Operator(Operator::Ampersand),
             "expected AMPERSAND (&) after token",
         )?;
-        if let TokenKind::Operator(Operator::Ampersand) = next_token.kind {
-            self.parse_pointer_type(next_token)
-        } else {
-            unreachable!()
-        }
+        // `expect_token` already verified the token, so no re-check needed.
+        self.parse_pointer_type(next_token)
     }
 }

@@ -192,12 +192,24 @@ where
                 TokenKind::Keyword(Keyword::Else)
                 | TokenKind::Operator(_)
                 | TokenKind::Punctuation(_)
-                | TokenKind::Error(_)
-                | TokenKind::Keyword(_)
-                | TokenKind::Unknown(_) => {
+                | TokenKind::Keyword(_) => {
                     let t = token.clone();
                     return Err(self.error(
                         &format!("cannot start a statement with {:?}", t.kind),
+                        t.line,
+                        t.column,
+                    ));
+                }
+                // Surface lexer diagnostics verbatim instead of burying
+                // them under "cannot start a statement with Error(...)".
+                TokenKind::Error(msg) => {
+                    let t = token.clone();
+                    return Err(self.error(msg, t.line, t.column));
+                }
+                TokenKind::Unknown(c) => {
+                    let t = token.clone();
+                    return Err(self.error(
+                        &format!("unknown character '{}'", c),
                         t.line,
                         t.column,
                     ));

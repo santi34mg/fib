@@ -58,7 +58,23 @@ where
                 }
             }
             _ => {
-                return Ok(None);
+                // Surface lexer diagnostics instead of silently reporting
+                // "not a type" downstream; anything else is not a type.
+                match &type_token.kind {
+                    TokenKind::Error(msg) => {
+                        return Err(self.error(msg, type_token.line, type_token.column));
+                    }
+                    TokenKind::Unknown(c) => {
+                        return Err(self.error(
+                            &format!("unknown character '{}'", c),
+                            type_token.line,
+                            type_token.column,
+                        ));
+                    }
+                    _ => {
+                        return Ok(None);
+                    }
+                }
             }
         };
         // Postfix array type: type[size]

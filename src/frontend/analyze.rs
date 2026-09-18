@@ -44,6 +44,16 @@ impl From<String> for AnalysisError {
     }
 }
 
+impl AnalysisError {
+    /// Attach a source line if none is set yet. Inner errors are more
+    /// precise than outer context, so an existing line always wins.
+    /// Use this instead of bare `format!(...)?` wherever a line is known.
+    pub fn with_line(mut self, line: usize) -> Self {
+        self.line.get_or_insert(line);
+        self
+    }
+}
+
 /// Perform semantic analysis on the parser AST and produce a vector of Typed functions.
 pub fn analyze(
     ast: Ast,
@@ -71,11 +81,14 @@ pub fn analyze(
                 }
             } else {
                 // Register as a named module in scope
-                let local_name = import
-                    .alias
-                    .as_ref()
-                    .map(|a| a.value.clone())
-                    .unwrap_or_else(|| import.path.last().unwrap().value.clone());
+                let local_name = match &import.alias {
+                    Some(a) => a.value.clone(),
+                    None => import
+                        .path
+                        .last()
+                        .map(|id| id.value.clone())
+                        .ok_or_else(|| "empty import path".to_string())?,
+                };
                 current_scope.insert_module(local_name, module.clone());
             }
         }

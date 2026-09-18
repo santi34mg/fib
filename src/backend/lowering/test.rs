@@ -5,8 +5,9 @@ use inkwell::values::BasicValue;
 use super::context::{CodegenCtx, coerce_int_to_llvm_type};
 use super::lower_ir;
 use super::types::map_type_to_llvm;
+use crate::frontend::identifier::Identifier;
 use crate::frontend::tokens::builtin::BuiltinType;
-use crate::frontend::typed_ast::{SymbolTable, Ty};
+use crate::frontend::typed_ast::{SymbolTable, Ty, TypedEnumVariant};
 
 #[cfg(all(test, feature = "llvm"))]
 mod tests {
@@ -130,5 +131,31 @@ mod tests {
         );
         assert!(ir.contains("br i1"), "expected cond br, got:\n{}", ir);
         assert!(ir.contains("ret"), "expected ret, got:\n{}", ir);
+    }
+
+    #[test]
+    fn unknown_layout_errors_instead_of_silent_zero() {
+        // An enum payload over an unresolvable type must fail loudly —
+        // a silent `(0, 1)` size would emit out-of-bounds stores.
+        let ctx = Context::create();
+        let scope = SymbolTable::new();
+        let ty = Ty::Enum {
+            variants: vec![TypedEnumVariant {
+                name: "V".to_string(),
+                discriminant: 0,
+                payload: Some(vec![(
+                    "f".to_string(),
+                    Ty::Identifier(Identifier {
+                        value: "Missing".to_string(),
+                    }),
+                )]),
+            }],
+        };
+        let err = map_type_to_llvm(&ty, &ctx, scope).expect_err("expected UnknownLayout");
+        assert!(
+            err.to_string().contains("UnknownLayout"),
+            "unexpected error: {}",
+            err
+        );
     }
 }

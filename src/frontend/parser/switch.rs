@@ -76,7 +76,8 @@ where
                     Pattern::Wildcard
                 }
                 _ => {
-                    let tok = self.peek().unwrap();
+                    let tok =
+                        self.expect_next("expected '.' followed by variant name, or 'else'")?;
                     return Err(self.error(
                         "expected '.' followed by variant name, or 'else'",
                         tok.line,

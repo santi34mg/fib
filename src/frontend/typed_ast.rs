@@ -74,10 +74,15 @@ impl SymbolTable {
     }
 
     pub fn exit_scope(&mut self) {
-        assert!(
+        // Unbalanced scope exit is an internal compiler bug. Never panic in
+        // library code: flag it in debug builds, no-op in release.
+        debug_assert!(
             self.scopes.len() > 1,
             "SymbolTable::exit_scope called on global scope"
         );
+        if self.scopes.len() <= 1 {
+            return;
+        }
         self.scopes.pop();
     }
 
@@ -86,11 +91,12 @@ impl SymbolTable {
     }
 
     /// Insert into the innermost scope. Returns any previous binding in that frame.
+    /// Returns `None` when there is no scope (defensive: the table always
+    /// carries at least the global frame; never panics).
     pub fn insert(&mut self, id: Identifier, sym: TypedSymbol) -> Option<TypedSymbol> {
         self.scopes
             .last_mut()
-            .expect("SymbolTable has no scopes")
-            .insert(id, sym)
+            .and_then(|frame| frame.insert(id, sym))
     }
 
     /// Lexical lookup: innermost frame first.
@@ -314,11 +320,11 @@ pub struct TypedReturn {
     pub values: Vec<TypedExpr>,
 }
 
-impl std::ops::Deref for TypedReturn {
-    type Target = TypedExpr;
-
-    fn deref(&self) -> &Self::Target {
-        &self.values[0]
+impl TypedReturn {
+    /// First return value, if any. Prefer this over indexing: a bare
+    /// `return;` carries an empty `values` vec and must not panic.
+    pub fn first(&self) -> Option<&TypedExpr> {
+        self.values.first()
     }
 }
 

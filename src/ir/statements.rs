@@ -40,10 +40,11 @@ pub(super) fn lower_function(
     // Note: fresh_symbol already inserted into scopes[0]; re-insert the same
     // ids into the new frame without allocating new slots.
     for (sym, name, _) in b.params.clone() {
-        b.scopes
-            .last_mut()
-            .expect("no function scope")
-            .insert(name, sym);
+        if let Some(frame) = b.scopes.last_mut() {
+            frame.insert(name, sym);
+        } else {
+            debug_assert!(false, "lower_function: no function scope frame");
+        }
     }
     for stmt in &f.body {
         lower_stmt(&mut b, stmt)?;
@@ -255,10 +256,10 @@ pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Resu
             Ok(())
         }
         TypedStatement::Defer(inner) => {
-            b.deferred
-                .last_mut()
-                .expect("deferred stack always has a frame")
-                .push((**inner).clone());
+            match b.deferred.last_mut() {
+                Some(frame) => frame.push((**inner).clone()),
+                None => debug_assert!(false, "defer outside of function body"),
+            }
             Ok(())
         }
         TypedStatement::MultiAssign { .. } => Err(LowerError::Unsupported(

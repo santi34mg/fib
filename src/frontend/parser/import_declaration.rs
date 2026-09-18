@@ -28,7 +28,7 @@ where
                 match &next.kind {
                     TokenKind::Identifier(_) => {
                         self.next(); // consume `::`
-                        let seg_token = self.next().unwrap();
+                        let seg_token = self.expect_next("expected identifier after '::'")?;
                         if let TokenKind::Identifier(id) = seg_token.kind {
                             path.push(id);
                         }
@@ -74,7 +74,7 @@ where
                 }
             } else {
                 // `::` at end of input — consume it and report the error
-                let dc = self.next().unwrap();
+                let dc = self.expect_next("expected identifier or '{' after '::'")?;
                 return Err(self.error(
                     "expected identifier or '{' after '::'",
                     dc.line,

@@ -63,10 +63,15 @@ impl FunctionBuilder {
         let s = SymbolId(self.next_sym);
         self.next_sym += 1;
         self.symbols.push((s, name.clone(), ty));
-        self.scopes
-            .last_mut()
-            .expect("FunctionBuilder has no scope")
-            .insert(name, s);
+        // The builder always carries at least the outer frame; degrade
+        // gracefully (fresh outer frame) instead of panicking if not.
+        if self.scopes.is_empty() {
+            debug_assert!(false, "FunctionBuilder used with no scope");
+            self.scopes.push(HashMap::new());
+        }
+        if let Some(frame) = self.scopes.last_mut() {
+            frame.insert(name, s);
+        }
         s
     }
 
@@ -130,8 +135,13 @@ impl FunctionBuilder {
                 let term = is_terminator(&instr);
                 cur_instrs.push(instr);
                 if term {
+                    let label = cur_label.take().unwrap_or_else(|| {
+                        let l = Label(self.next_label);
+                        self.next_label += 1;
+                        l
+                    });
                     blocks.push(BasicBlock {
-                        label: cur_label.take().unwrap(),
+                        label,
                         instrs: std::mem::take(&mut cur_instrs),
                     });
                     // Next block starts fresh; its label is assigned when we

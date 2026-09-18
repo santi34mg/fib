@@ -48,6 +48,15 @@ pub(super) fn is_boolean_type(ty: &Ty) -> bool {
     matches!(ty, Ty::Builtin(BuiltinType::Boolean))
 }
 
+/// Reject non-integer index expressions (floats, strings, pointers...).
+/// Integer widths need no coercion: lowering passes any int to `gep`.
+pub(super) fn require_integer_index(ty: &Ty, what: &str) -> Result<(), AnalysisError> {
+    match ty {
+        Ty::Builtin(b) if is_integer_builtin(b) => Ok(()),
+        _ => Err(format!("{} requires an integer index, found {:?}", what, ty).into()),
+    }
+}
+
 pub(super) fn coerce_expr_to_type(
     mut expr: TypedExpr,
     target: &Ty,
@@ -680,6 +689,7 @@ pub(super) fn expr_to_typed(
         PExpr::IndexAccess { object, index } => {
             let obj_typed = expr_to_typed(*object, current_scope, generic_cache)?;
             let idx_typed = expr_to_typed(*index, current_scope, generic_cache)?;
+            require_integer_index(&idx_typed.inferred_type, "index access")?;
             let pointee_ty = match &obj_typed.inferred_type {
                 Ty::Pointer(inner) => *inner.clone(),
                 Ty::Array { element_type, .. } => *element_type.clone(),
@@ -710,15 +720,25 @@ pub(super) fn expr_to_typed(
                     .into());
             }
             let elem_ty = typed_elements[0].inferred_type.clone();
-            for (i, e) in typed_elements.iter().enumerate() {
-                if e.inferred_type != elem_ty {
-                    return Err(format!(
-                        "array literal: element {} has type {:?}, expected {:?}",
-                        i, e.inferred_type, elem_ty
-                    )
-                    .into());
+            // Unify element types with the same numeric coercion rule as
+            // `var x: T = ...` (literals relabel, numerics insert `Cast`).
+            // This accepts e.g. `[@int(1), @int8(2)]` and `[1, null]`;
+            // genuinely incompatible mixes still error below.
+            let mut coerced = Vec::with_capacity(typed_elements.len());
+            for (i, e) in typed_elements.into_iter().enumerate() {
+                if i == 0 {
+                    coerced.push(e);
+                    continue;
                 }
+                let found = e.inferred_type.clone();
+                coerced.push(coerce_or_alias(e, &elem_ty, current_scope).map_err(|_| {
+                    format!(
+                        "array literal: element {} has incompatible type {:?}, expected {:?}",
+                        i, found, elem_ty
+                    )
+                })?);
             }
+            let typed_elements = coerced;
             let size = typed_elements.len() as u64;
             Ok(TypedExpr {
                 inferred_type: Ty::Array {

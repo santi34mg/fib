@@ -29,7 +29,13 @@ pub(crate) fn round_up(n: usize, align: usize) -> usize {
 /// rules (fields aligned to their natural alignment, structs padded to the
 /// largest field alignment). Used to size the payload region of tagged
 /// unions — undersizing it would let payload stores write out of bounds.
-pub(crate) fn typed_type_size_align(ty: &Ty, scope: &SymbolTable) -> (usize, usize) {
+///
+/// Returns an explicit `UnknownLayout` error for unresolvable nominal types
+/// instead of silently generating wrong code with a `(0, 1)` fallback.
+pub(crate) fn typed_type_size_align(
+    ty: &Ty,
+    scope: &SymbolTable,
+) -> Result<(usize, usize), Box<dyn Error>> {
     match ty {
         Ty::Builtin(b) => {
             let s = match b {
@@ -42,30 +48,30 @@ pub(crate) fn typed_type_size_align(ty: &Ty, scope: &SymbolTable) -> (usize, usi
                 BuiltinType::String => 8,
                 BuiltinType::Void => 0,
             };
-            (s, s.max(1))
+            Ok((s, s.max(1)))
         }
-        Ty::Pointer(_) | Ty::Function { .. } => (8, 8),
+        Ty::Pointer(_) | Ty::Function { .. } => Ok((8, 8)),
         Ty::Array { element_type, size } => {
-            let (s, a) = typed_type_size_align(element_type, scope);
-            (round_up(s, a) * (*size as usize), a)
+            let (s, a) = typed_type_size_align(element_type, scope)?;
+            Ok((round_up(s, a) * (*size as usize), a))
         }
         Ty::Struct { fields } => {
             struct_layout_size_align(fields.iter().map(|(_, t)| t.as_ref()), scope)
         }
         Ty::Tuple { elements } => struct_layout_size_align(elements.iter(), scope),
         Ty::Enum { variants } => {
-            let payload = enum_max_payload_bytes(variants, scope);
+            let payload = enum_max_payload_bytes(variants, scope)?;
             if payload == 0 {
-                (4, 4)
+                Ok((4, 4))
             } else {
                 // Matches the lowered shape `{ i32 tag, [N x i64] payload }`.
                 let words = payload.div_ceil(8);
-                (8 + words * 8, 8)
+                Ok((8 + words * 8, 8))
             }
         }
         Ty::Identifier(id) => match scope.lookup(id) {
             Some(TypedSymbol::Type(inner)) => typed_type_size_align(inner, scope),
-            _ => (0, 1),
+            _ => Err(format!("UnknownLayout: type '{}' not found in scope", id).into()),
         },
         Ty::QualifiedIdentifier { module, name } => {
             if let Some(m) = scope.lookup_module(module)
@@ -73,10 +79,14 @@ pub(crate) fn typed_type_size_align(ty: &Ty, scope: &SymbolTable) -> (usize, usi
             {
                 typed_type_size_align(inner, scope)
             } else {
-                (0, 1)
+                Err(format!(
+                    "UnknownLayout: type '{}::{}' not found in scope",
+                    module, name
+                )
+                .into())
             }
         }
-        Ty::Type => (0, 1),
+        Ty::Type => Err("UnknownLayout: comptime `type` value has no runtime layout".into()),
     }
 }
 
@@ -85,29 +95,31 @@ pub(crate) fn typed_type_size_align(ty: &Ty, scope: &SymbolTable) -> (usize, usi
 pub(crate) fn struct_layout_size_align<'t>(
     field_types: impl Iterator<Item = &'t Ty>,
     scope: &SymbolTable,
-) -> (usize, usize) {
+) -> Result<(usize, usize), Box<dyn Error>> {
     let mut offset = 0usize;
     let mut align = 1usize;
     for ty in field_types {
-        let (s, a) = typed_type_size_align(ty, scope);
+        let (s, a) = typed_type_size_align(ty, scope)?;
         offset = round_up(offset, a) + s;
         align = align.max(a);
     }
-    (round_up(offset, align), align)
+    Ok((round_up(offset, align), align))
 }
 
 /// Returns the maximum padded payload size (in bytes) across the variants of
 /// an enum, or 0 if the enum has no payload-carrying variants.
-pub(crate) fn enum_max_payload_bytes(variants: &[TypedEnumVariant], scope: &SymbolTable) -> usize {
-    variants
-        .iter()
-        .filter_map(|v| {
-            v.payload
-                .as_ref()
-                .map(|fs| struct_layout_size_align(fs.iter().map(|(_, t)| t), scope).0)
-        })
-        .max()
-        .unwrap_or(0)
+pub(crate) fn enum_max_payload_bytes(
+    variants: &[TypedEnumVariant],
+    scope: &SymbolTable,
+) -> Result<usize, Box<dyn Error>> {
+    let mut max = 0usize;
+    for v in variants {
+        if let Some(fs) = v.payload.as_ref() {
+            let (size, _) = struct_layout_size_align(fs.iter().map(|(_, t)| t), scope)?;
+            max = max.max(size);
+        }
+    }
+    Ok(max)
 }
 
 pub(crate) fn map_type_to_llvm<'ctx>(
@@ -170,7 +182,8 @@ pub(crate) fn map_type_to_llvm<'ctx>(
             Ok(ctx.struct_type(&field_types, false).into())
         }
         Ty::Enum { variants } => {
-            let payload_bytes = enum_max_payload_bytes(variants, &current_scope);
+            let payload_bytes = enum_max_payload_bytes(variants, &current_scope)
+                .map_err(|e| format!("lowering enum type: {}", e))?;
             if payload_bytes == 0 {
                 Ok(ctx.i32_type().into())
             } else {

@@ -646,4 +646,74 @@ mod tests {
             panic!("expected ArrayLiteral, got {:#?}", stmts[0]);
         }
     }
+
+    // ── 02 reliability: error paths (no panics, messages preserved) ──
+
+    fn get_ast_err(test_string: &str) -> String {
+        let trimmed = test_string.trim_start();
+        let src = if trimmed.starts_with("fn ")
+            || trimmed.starts_with("extern ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("type ")
+        {
+            test_string.to_string()
+        } else {
+            format!("fn __test() {{ {} }}", test_string)
+        };
+        let lexer = Lexer::new(&src);
+        let tokens: Vec<Token> = lexer.collect();
+        let mut parser = Parser::new(tokens.into_iter(), Path::new("test_instance"), src.clone());
+        match parser.parse() {
+            Ok(_) => panic!("expected parse error for {:?}", src),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_unterminated_string_surfaces_lexer_message() {
+        let err = get_ast_err(r#"x := "abc"#);
+        assert!(err.contains("unterminated"), "lexer message lost: {}", err);
+    }
+
+    #[test]
+    fn test_unknown_builtin_surfaces_lexer_message() {
+        let err = get_ast_err("x := @nope");
+        assert!(
+            err.contains("unknown builtin"),
+            "lexer message lost: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_unknown_character_surfaces() {
+        let err = get_ast_err("x := 5 $ 3");
+        assert!(
+            err.contains("unknown character"),
+            "lexer message lost: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_truncated_import_errors_without_panic() {
+        let err = get_ast_err("import std::");
+        assert!(err.contains("after '::'"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_truncated_switch_pattern_errors_without_panic() {
+        let err = get_ast_err("type Color enum { Red }\nfn f(c: Color) @void { switch (c) { when");
+        assert!(
+            err.contains("variant name") || err.contains("else"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_truncated_type_import_errors_without_panic() {
+        let err = get_ast_err("import std::io::");
+        assert!(err.contains("after '::'"), "unexpected error: {}", err);
+    }
 }

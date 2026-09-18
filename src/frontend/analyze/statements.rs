@@ -13,7 +13,9 @@ use crate::frontend::typed_ast::{
 };
 
 use super::AnalysisError;
-use super::expressions::{coerce_expr_to_type, coerce_or_alias, expr_to_typed};
+use super::expressions::{
+    coerce_expr_to_type, coerce_or_alias, expr_to_typed, require_integer_index,
+};
 use super::types::{map_type, resolve_struct_fields, resolve_type_alias};
 
 pub(super) fn stmt_to_typed(
@@ -22,10 +24,7 @@ pub(super) fn stmt_to_typed(
     generic_cache: &mut HashMap<String, TypedFunction>,
 ) -> Result<TypedStatement, AnalysisError> {
     let line = stmt.line;
-    stmt_to_typed_inner(stmt.kind, current_scope, generic_cache).map_err(|mut e| {
-        e.line.get_or_insert(line);
-        e
-    })
+    stmt_to_typed_inner(stmt.kind, current_scope, generic_cache).map_err(|e| e.with_line(line))
 }
 
 pub(super) fn stmt_to_typed_inner(
@@ -96,13 +95,22 @@ pub(super) fn stmt_to_typed_inner(
                     .into());
                 }
             };
-            let field_index = struct_fields
+            let (field_index, field_ty) = struct_fields
                 .iter()
-                .position(|(name, _)| name == &field.value)
+                .enumerate()
+                .find_map(|(i, (name, ty))| (name == &field.value).then_some((i, ty)))
                 .ok_or_else(|| {
                     format!("stmt_to_typed: field {} not found in struct", field.value)
                 })?;
             let e = expr_to_typed(expr, current_scope, generic_cache)?;
+            // Coerce the RHS to the field type, mirroring plain `Assign`.
+            let found = e.inferred_type.clone();
+            let e = coerce_or_alias(e, field_ty, current_scope).map_err(|_| {
+                format!(
+                    "cannot assign value of type {:?} to field '{}' of type {:?}",
+                    found, field.value, field_ty
+                )
+            })?;
             Ok(TypedStatement::FieldAssign {
                 object: obj_typed,
                 field: field.value,
@@ -225,9 +233,16 @@ pub(super) fn stmt_to_typed_inner(
                 }
             };
             let val_typed = expr_to_typed(expr, current_scope, generic_cache)?;
-            // Allow coercion of integer literals (which default to Int32) to the pointee type
-            let _val_ty = &val_typed.inferred_type;
-            let _ = pointee_ty; // type already verified above
+            // Coerce the RHS to the pointee type, mirroring plain `Assign`
+            // (previously the pointee type was discarded unchecked).
+            let found = val_typed.inferred_type.clone();
+            let val_typed =
+                coerce_or_alias(val_typed, &pointee_ty, current_scope).map_err(|_| {
+                    format!(
+                        "cannot assign value of type {:?} through pointer (expects {:?})",
+                        found, pointee_ty
+                    )
+                })?;
             Ok(TypedStatement::DerefAssign {
                 pointer: ptr_typed,
                 expr: val_typed,
@@ -239,8 +254,9 @@ pub(super) fn stmt_to_typed_inner(
             expr,
         } => {
             let obj_typed = expr_to_typed(object, current_scope, generic_cache)?;
-            match &obj_typed.inferred_type {
-                Ty::Pointer(_) | Ty::Array { .. } => {}
+            let elem_ty = match &obj_typed.inferred_type {
+                Ty::Pointer(inner) => inner.as_ref().clone(),
+                Ty::Array { element_type, .. } => element_type.as_ref().clone(),
                 other => {
                     return Err(format!(
                         "stmt_to_typed: IndexAssign on non-pointer type {:?}",
@@ -248,9 +264,18 @@ pub(super) fn stmt_to_typed_inner(
                     )
                     .into());
                 }
-            }
+            };
             let idx_typed = expr_to_typed(index, current_scope, generic_cache)?;
+            require_integer_index(&idx_typed.inferred_type, "index assignment")?;
             let val_typed = expr_to_typed(expr, current_scope, generic_cache)?;
+            // Coerce the value to the element type, mirroring plain `Assign`.
+            let found = val_typed.inferred_type.clone();
+            let val_typed = coerce_or_alias(val_typed, &elem_ty, current_scope).map_err(|_| {
+                format!(
+                    "cannot assign value of type {:?} to array element of type {:?}",
+                    found, elem_ty
+                )
+            })?;
             Ok(TypedStatement::IndexAssign {
                 object: obj_typed,
                 index: idx_typed,
@@ -475,7 +500,13 @@ pub(super) fn var_decl_to_typed(
     let ty = match (declared_ty, &init) {
         (Some(ty), _) => ty,
         (None, Some(init)) => init.inferred_type.clone(),
-        (None, None) => unreachable!("rejected above"),
+        // Defensive: the `None` arm above already rejected a missing
+        // initializer for inferred declarations — never panic here.
+        (None, None) => {
+            return Err("inferred variable declaration requires an initializer"
+                .to_string()
+                .into());
+        }
     };
     // check that type matches; allow struct-by-name to match struct literal type
     // `never` unifies with any type
@@ -520,11 +551,24 @@ pub(super) fn var_decl_to_typed(
                         )
                         .into());
                     }
-                    // Coerce element types in the initializer
+                    // Coerce each element to the declared element type with
+                    // the shared numeric/alias rule (literals relabel,
+                    // numerics insert `Cast`) instead of blindly relabeling,
+                    // which generated wrong code for widening element types.
                     if let TypedExprKind::ArrayLiteral { elements } = &mut init.expression {
-                        for elem in elements.iter_mut() {
-                            elem.inferred_type = *decl_elem.clone();
+                        let mut coerced = Vec::with_capacity(elements.len());
+                        for elem in std::mem::take(elements) {
+                            let found = elem.inferred_type.clone();
+                            coerced.push(
+                                coerce_or_alias(elem, decl_elem, current_scope).map_err(|_| {
+                                    format!(
+                                        "array element of type {:?} does not match declared element type {:?} for {}",
+                                        found, decl_elem, var_decl.identifier
+                                    )
+                                })?,
+                            );
                         }
+                        *elements = coerced;
                     }
                     init.inferred_type = ty.clone();
                 } else if let Ty::Builtin(_) = &ty {

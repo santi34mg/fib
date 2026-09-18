@@ -99,10 +99,10 @@ pub fn compile(compilation_options: CompilationOptions) -> Result<(), Box<dyn Er
     let mut parser = Parser::new(tokens.into_iter(), file, file_contents);
     let ast = match parser.parse() {
         Ok(ast) => ast,
-        Err(pe) => {
-            eprintln!("{}", pe);
-            return Err("Parser error.".to_string().into());
-        }
+        // Preserve the structured ParseError (file:line:col + message) for
+        // both CLI (`Error: {}`) and library users — never stringify to a
+        // generic "Parser error.".
+        Err(pe) => return Err(pe.to_string().into()),
     };
 
     // Build resolved module map (stdlib + user imports)

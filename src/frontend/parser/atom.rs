@@ -154,6 +154,19 @@ where
                 Expression::BuiltinCall { builtin: bf, args }
             }
             TokenKind::Literal(Literal::Null) => Expression::Literal(Literal::Null),
+            // Surface lexer diagnostics verbatim (e.g. unterminated
+            // strings, unknown `@builtins`) instead of a generic
+            // "expected an atom" message.
+            TokenKind::Error(msg) => {
+                return Err(self.error(&msg, token.line, token.column));
+            }
+            TokenKind::Unknown(c) => {
+                return Err(self.error(
+                    &format!("unknown character '{}'", c),
+                    token.line,
+                    token.column,
+                ));
+            }
             _ => {
                 return Err(self.error(
                     &format!("parse_atom: expected an atom, found {:?}", token.kind),
