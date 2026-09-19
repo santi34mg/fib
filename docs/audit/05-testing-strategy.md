@@ -1,35 +1,40 @@
 # Testing Strategy and Gaps
 
-> Note (2026-09-18): addressed items removed. This file now lists only
-> partially addressed points. Removed: e2e sample harness (`tests/e2e.rs`
-> compiles + runs all 13 samples with stdout asserts, wired into CI).
+> Note (2026-09-18): addressed items removed. This file has NO remaining
+> points. Removed: e2e sample harness (`tests/e2e.rs`), backend error-path
+> tests, negative parser/analyze tests, lexer edge cases, and the coverage
+> CI job (details below).
 
 ## Current state (verified 2026-09-18)
 
-- `tests/e2e.rs:1-167` (`#[cfg(feature = "llvm")]`) iterates `samples/*.fib` via `compile_project`, executes, asserts exit code + exact stdout; `fib_bench` is compile-only; runs inside `build_and_test` via `cargo test`.
-- `src/backend/lowering/test.rs` (8 tests, gated `#[cfg(all(test, feature = "llvm"))]`, `Context::create()` per test): `coerce_int_to_llvm_type` happy path (`:34-73`), `map_type_to_llvm` unsigned widths + `Void`-is-err (`:75-100`), `UnknownLayout` (`:140-164`), one `compute_lvalue_ptr` error (`:166-191`), `lower_ir` incl. `udiv/ugt` (`:102-138`).
-- Parser tests: `get_ast` still panics on `Err` (`parser/test.rs:14-35`); `get_ast_err` added (`:652-670`) with 7 negatives (`:672,678,688,698,704,714,852`); precedence shapes covered positively (`:722-810`), `QualifiedAccess` vs `BuiltinCall` (`:814-849`).
-- Analyze tests: 23 `get_typed_err` call sites with substring/line asserts; dup/missing struct field (`:770,778`), arity (`:786`), switch non-enum/payload (`:793,799`), escapes (`:824,830`), selective/unknown imports (`:909,920`) covered. But `test_return_type_mismatch_errors` (`:930-934`) and `test_break_outside_loop_errors` (`:936-940`) are `#[ignore]`d known-gaps; no mutability-violation or switch-exhaustiveness negatives.
-- Lexer matrices done (`test_all_keywords:150-177` all 21 variants, `test_operators:179-218` incl. `%=,->,.., ...`, `test_punctuation:220-241` incl. `.,::,@`); error-branch coverage is only unterminated string as `Error` token (`:541`) + via parser (`parser/test.rs:672`), `@nope` (`:434,544`), `$` only indirectly via parser (`:688-696`).
-- Policy prose exists (`CONTRIBUTING:34-39` + PR-template checklist); no `tarpaulin`/`llvm-cov` job anywhere.
+- `tests/e2e.rs` (`#[cfg(feature = "llvm")]`) compiles + runs 15 samples
+  via `compile_project`, asserting exact stdout (incl. new
+  `e2e_unsigned_ops` `:101`); `fib_bench` is compile-only;
+  `e2e_broken_source_is_an_error_not_a_panic` pins no-panic. Full suite:
+  269 lib tests + 15 e2e + 3, zero `#[ignore]`.
+- §1 Backend error paths (gated `#[cfg(all(test, feature = "llvm"))]`):
+  `coerce_width_change_without_insert_block_errors`, one `compute_lvalue_ptr`
+  error per shape (`lvalue_of_undeclared_identifier_errors`,
+  `lvalue_of_non_lvalue_expression_errors`,
+  `lvalue_field_access_on_non_struct_errors`), `build_tuple_value_arity_mismatch_errors`,
+  `unpack_tuple_value_of_non_tuple_errors`, `call_result_of_void_call_errors`,
+  `unknown_layout`/`Void`-is-err mapping, `lower_ir` incl. `udiv/ugt`).
+- §2 Parser negatives: `get_ast` returns `Result<Ast, ParseError>`
+  (`parser/test.rs:14`); 16 `get_ast_err` negatives (EOF shapes, duplicate
+  struct fields, `raw_unary`, etc.). Analyze negatives: 32 `get_typed_err`
+  call sites with substring/line asserts — incl. `test_return_type_mismatch_errors`
+  and `test_break_outside_loop_errors` (both formerly `#[ignore]`, now
+  enforced) plus new `test_continue_outside_loop_errors`,
+  `test_break_inside_nested_loop_is_fine`,
+  `test_assign_to_immutable_switch_binding_errors`,
+  `test_switch_non_exhaustive_errors`, `test_switch_wildcard_is_exhaustive`.
+- §3 Lexer edges: direct `TokenKind::Unknown` (`test_unknown_character_is_direct_unknown_token`
+  `:552`), unterminated char/string, char-escape/hex-escape/string-escape
+  error branches (`:560-649`), `@nope`/`$` negatives.
+- §4 Coverage: `cargo tarpaulin` runs as an advisory, non-blocking CI job
+  (never gating; comment warns against chasing 100% on lowering files).
+- Policy prose exists (`CONTRIBUTING` + PR-template checklist);
+  `cargo clippy --all-features --all-targets -D warnings` in CI.
 
-## Remaining points
-
-### 1. Backend unit tests without LLVM sweat [PARTIALLY ADDRESSED]
-Covered: happy-path `coerce_*`, unsigned/`Void` mapping, one `compute_lvalue_ptr` error, `lower_ir` smoke.
-
-Remaining: `coerce_*` error paths (currently only `Ok` asserted), more `compute_lvalue_ptr` error shapes. Keep gating backend tests behind `#[cfg(feature = "llvm")]` and frontend tests feature-free.
-
-### 2. Negative parser/analyze tests [PARTIALLY ADDRESSED]
-Remaining:
-- Parser: change `get_ast` to return `Result` (still panics), grow from 7 to ~15 negatives. Missing: more EOF shapes, `break`-outside-loop at parse level if applicable, duplicate struct fields, `break` outside loop / return-mismatch at analyze level (see below).
-- Analyze: un-`#[ignore]` and enforce `return-type-mismatch` (`:930-934`) and `break-outside-loop` (`:936-940`) — the checks don't exist yet, the tests lock nothing. Add mutability-violation and switch-exhaustiveness negatives.
-- Assert style stays: `is_err()` + substring/line, not exact full message, until diagnostics stabilize.
-
-### 3. Lexer edge cases [PARTIALLY ADDRESSED]
-Matrices done. Remaining: unterminated char, char-escape/hex-escape/string-escape error branches (`lexer.rs:314,325,380,385,399`), direct `TokenKind::Unknown` test (`lexer.rs:82`; `$` is only covered indirectly via the parser). Char escapes only have positive tests (`:330,337`).
-
-### 4. Coverage policy [PARTIALLY ADDRESSED]
-Policy half done (reproducer-per-branch + `get_typed_err`-per-fix, enforced by PR template). Remaining: add `cargo tarpaulin` or `llvm-cov` as advisory (not gating) in CI. Do NOT chase 100% line coverage on the lowering files — it incentivizes tautological tests.
-
-Cost ordering: lexer edges (hours) < negatives (days) < backend error paths (days) < coverage tuning. Lexer + negatives should precede any parser-dedup sequel; e2e net already exists for IR work.
+Cost ordering from the original audit is now moot: the lexer edges,
+negatives, and parser-`Result` items all landed before the IR cutover.

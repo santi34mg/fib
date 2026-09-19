@@ -1,5 +1,6 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
-    ast::type_expression::TypeExpression,
+    ast::type_expression::{TypeExpression, TypeExpressionKind},
     parser::ParseResult,
     tokens::{Punctuation, Token, TokenKind},
 };
@@ -52,7 +53,10 @@ where
         if elements.len() == 1 {
             Ok(elements.remove(0))
         } else {
-            Ok(TypeExpression::Tuple { elements })
+            Ok(TypeExpression::at(
+                TypeExpressionKind::Tuple { elements },
+                Span::new(type_token.line, type_token.column),
+            ))
         }
     }
 }

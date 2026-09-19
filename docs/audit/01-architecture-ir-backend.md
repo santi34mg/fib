@@ -1,49 +1,79 @@
 # Architecture, IR, and Backend
 
 > Note (2026-09-18): addressed items removed. This file now lists only
-> partially addressed or unaddressed points. Removed: empty
-> `src/backend/interpreter/` decision (deleted).
+> truly-remaining points. Removed: empty `src/backend/interpreter/` decision
+> (deleted); §4 unsigned-integer execution tests (added
+> `samples/unsigned_ops.fib` + `e2e_unsigned_ops`, values > `iN::MAX` for
+> div/rem/cmp/shr — see `tests/e2e.rs:101`); §1 driver cutover to the IR
+> middle-end; §2 `FunctionLowering` refactor (DONE, see below); §3
+> control-flow dedup helpers (DONE, see below).
 
 ## Current state (verified 2026-09-18)
 
-- `src/ir/` is now split (`mod.rs`, `builder.rs`, `expressions.rs`, `statements.rs`, `display.rs`, `test.rs`). `lower_typed_program(TypedProgram) -> Result<IrProgram, LowerError>` exists (`src/ir/mod.rs:274-295`) but covers a core subset only — header at `:8-15` still says the backend consumes typed AST directly; `MultiAssign/MultiBinding/FieldAssign/DerefAssign/IndexAssign/Switch/Const` return `LowerError::Unsupported` (`src/ir/statements.rs:265-283`, `src/ir/mod.rs:283-287`).
-- Production path is unchanged: `src/backend/lowering/llvm_lower.rs:19` `lower(TypedProgram, …)` called from `src/driver.rs:631-632`. The `IrProgram` consumer is parallel dead code: `src/backend/lowering/ir_lower.rs:28` `lower_ir` (`#[allow(dead_code)]`), exported but never called from the driver.
-- `src/ir/test.rs:23-136` has 8 tests (straight-line, `if+for` → `if/goto`, `&&`, `defer`, `break/continue`, `SymbolId` shadowing, extern, `switch/struct` → `Err`).
-- `src/backend/lowering/` is split (`llvm_lower.rs:202` lines + `context.rs`, `expressions.rs:901`, `statements.rs:658`, `types.rs`, `ir_lower.rs:865`, `mod.rs`). No `defer.rs`; defer helpers live in `context.rs:182-209`.
-- `FunctionLowering` (`src/backend/lowering/context.rs:38-49`) is a `#[allow(dead_code)]` stub — defined but never constructed; lowering still threads `(ctx, vars, scope, loop_ctx, deferred_stack)` tuples (e.g. `statements.rs:21-28`).
-- Unsigned codegen is correct in both paths via `ty_is_unsigned` (`src/ir/mod.rs:246-258`): direct path uses `build_int_unsigned_div/rem`, `UGT/UGE/ULT/ULE`, `build_right_shift(..., !is_unsigned)` (`src/backend/lowering/expressions.rs:322-331,381-430,457`); IR path mirrors it (`src/backend/lowering/ir_lower.rs:525-567,637-757`).
+- Driver cutover is LIVE: `driver::lower_to_llvm_ir` (`src/driver.rs:799`)
+  tries `ir::lower_typed_program` then the `ir_lower` consumer
+  (`backend::lowering::lower_ir`), and falls back to the direct
+  `lowering::lower` path on *any* error. `IrProgram` is on the production
+  path for every program that fits the core subset; aggregates, tuples,
+  pointers, enum-payloads, referenced module-`const` globals, and
+  multi-value returns fall back to the direct path.
+- `lower_typed_program` covers locals, integer/bool/float arithmetic,
+  calls, `if`/`for`/`break`/`continue`, inline `defer`, `return`,
+  assignment forms (`MultiAssign`/`MultiBinding`/`FieldAssign`/
+  `DerefAssign`/`IndexAssign`), plain-enum `switch`, and module-`const`
+  globals (`src/ir/mod.rs:8-17`). Anything else returns
+  `LowerError::Unsupported` and the driver falls back.
+- The `IrProgram` consumer (`src/backend/lowering/ir_lower.rs`, no longer
+  `#[allow(dead_code)]`) handles every instruction the importer can emit
+  except referenced module-`const` globals and multi-value `return` — both
+  error and therefore trigger the driver fallback (never silently
+  miscompiles).
+- **§2 DONE — `FunctionLowering` owns the lowering state.**
+  `src/backend/lowering/context.rs` now defines the struct holding `ctx +
+  fn_ctx + function + vars + scope + deferred_stack + loop_ctx`
+  (`context.rs:38-`, no more `#[allow(dead_code)]`, marker comment
+  removed). Methods: `new`, `insert_block(&self, what)` (fn-name-aware),
+  `parent_function`, `loop_ctx`, `enter_loop`/`exit_loop` (all
+  `pub(super)`), `emit_deferred_frame`, `emit_frames_from(stack, from)`.
+  `expr.rs` (`codegen_expr`/`compute_lvalue_ptr`/`store_lvalue`/
+  `build_tuple_value`), `statements.rs` (`codegen_stmt`), and
+  `llvm_lower.rs` (per-function construction, void-return tail via a
+  cloned `deferred_stack` + `emit_frames_from`) are converted; the
+  module-`const` branch builds its own `FunctionLowering`. Free helpers
+  kept: `insert_block` (still used by `ir_lower.rs:354` + `test.rs`),
+  `unpack_tuple_value`, `get_or_declare`, `call_result`,
+  `coerce_int_to_llvm_type`, `map_type_to_llvm`, `create_entry_allocas`.
+- **§3 DONE — control-flow scaffolding deduplicated.** New `FunctionLowering`
+  helpers in `statements.rs`: `emit_sequence_with_fallthrough(bb, site,
+  frame_name, stmts, succ)` (push deferred frame → emit stmts → pop → only
+  if no terminator, `emit_deferred_frame` + branch to `succ`) now serves
+  `if`-then/else, `switch` arms + wildcard default, and `for` bodies;
+  `emit_loop(init, cond, post, body)` owns the whole `for` arm (loop ctx,
+  cond/body/post/after blocks) — `for` post intentionally runs with the
+  *enclosing* deferred frame, preserving previous semantics exactly.
+  Short-circuit moved to `emit_short_circuit(op, left, right)` in
+  `expressions.rs` (rhs/merge blocks + `phi`). All helpers return `Result`
+  and never panic on a missing insert block. No behavior change: 269 lib +
+  15 e2e + 3 probe tests green, clippy `-D warnings` clean, `cargo fmt`
+  clean (verified 2026-09-18).
+- Unsigned codegen is correct in both paths via `ty_is_unsigned`
+  (`src/ir/mod.rs:266`): direct path uses
+  `build_int_unsigned_div/rem`, `UGT/UGE/ULT/ULE`, logical `LShr`
+  (`src/backend/lowering/expressions.rs:322-331,381-430,457`); IR path
+  mirrors it (`src/backend/lowering/ir_lower.rs:525-567,637-757`) and
+  `e2e_unsigned_ops` executes values above `iN::MAX`.
 
 ## Remaining points
 
-### 1. Finish the IR middle-end [PARTIALLY ADDRESSED]
-Remaining: extend `lower_typed_program` beyond the core subset (assignment forms, `switch`, consts), then cut `driver` over to `lower_ir` and delete/flag-gate the direct path.
+### 5. Full structured diagnostics (scoped: see audit 02)
 
-What it unlocks:
-- A testable, backend-independent place for desugaring, constant folding, dead-code elimination, borrow/move checks later.
-- LLVM lowering becomes mostly mechanical `BasicBlock -> append_basic_block`.
-- Future custom backend reuses the same IR.
+02 considers a `CompilerError { kind, line, col, hint }` across frontend +
+backend. Deliberately deferred until the `FunctionLowering`/IR churn
+settled. See `docs/audit/02-structured-diagnostics.md` for the scoping
+decision.
 
-Trade-offs:
-- **Double lowering bugs.** During migration you maintain two paths. Needs a flag or parallel e2e tests to avoid drift.
-- **Design lock-in.** `Operand::Place(String)` names bindings by string; you will want `SymbolId`s eventually (IR tests already use shadowing `SymbolId`s — propagate that into the real type).
+### 6. Release/versioning (scoped: see audit 06)
 
-### 2. Finish the `FunctionLowering` refactor [PARTIALLY ADDRESSED]
-File split is done; the struct migration is not. Remaining: make `FunctionLowering` own `ctx + vars + scope + loop_ctx + deferred_stack`, move `insert_block()` (`context.rs:74-81`) onto it, and convert `expressions.rs` / `statements.rs` / `ir_lower.rs` call sites off the tuples.
-
-Trade-offs:
-- **Pro:** reviewability, parallel work, easier to forbid `unwrap` per module.
-- **Con:** inkwell lifetimes make the conversion fiddly; do it in one focused refactor with `cargo test` green, not interleaved with IR migration.
-
-### 3. Deduplicate control-flow scaffolding [NOT ADDRESSED]
-`statements.rs:326,331,336,392-395,497,512` repeats `append_basic_block`; `:347,362,376,407,420,443,463` repeats `position_at_end`; short-circuit `rhs_bb/merge_bb + phi` is inline in `expressions.rs:279-295`. Only `insert_block/parent_function` (`context.rs:74-91`) and defer-frame emitters exist — no `emit_if / emit_short_circuit / emit_loop`.
-
-**Opportunity:** helpers like `emit_if(cond, then_fn, else_fn)`, `emit_short_circuit(op,lhs,rhs)`, `emit_loop(...)`.
-
-Trade-offs:
-- **Pro:** fixes `defer + break/continue` consistently in one place.
-- **Con:** over-abstraction hides LLVM block ordering bugs. Keep helpers small and return `Result`, never panic on missing insert block.
-
-### 4. Unsigned integers: execution tests [PARTIALLY ADDRESSED]
-Codegen is fixed; tests are not per the audit bar (`values > iN::MAX` executed). Current coverage is only `src/backend/lowering/test.rs:111-129` (`uint8 = 200`, asserts IR string contains `udiv/ugt`) plus `zext/sext` (`:34-73`). No `URem/ULT/ULE/UGE/LShr` execution, no e2e uint case.
-
-Remaining: add execution tests (via e2e sample or backend `Context::create` JIT/run) with values `> iN::MAX` for `div/rem/cmp/shr`. Trade-off: small churn, high correctness value — do early before stdlib depends on wraparound behavior.
+06§2 covers how compiled `out/` binaries are distributed (nightly local
+builds vs `cargo install --git` vs tagged GitHub Releases). See
+`docs/audit/06-testing-tooling-release.md`.

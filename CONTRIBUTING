@@ -37,6 +37,9 @@ No `rustfmt.toml`/`clippy.toml` — defaults are enforced by CI.
   - Every soundness fix ships with a `get_typed_err` negative test.
   - For diagnostics, assert on `is_err()` plus a message substring/line —
     not the exact full message, which is still evolving.
+- Coverage (`cargo tarpaulin`, advisory CI job, non-blocking): use it to
+  find untested code, not to gate merges. Do not chase 100% line coverage
+  on the lowering files — it incentivizes tautological tests.
 
 ## Commit messages
 

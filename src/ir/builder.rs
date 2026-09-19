@@ -94,6 +94,10 @@ impl FunctionBuilder {
         self.instrs.push(instr);
     }
 
+    pub(super) fn emitted_any(&self) -> bool {
+        !self.instrs.is_empty()
+    }
+
     pub(super) fn finish(mut self) -> IrFunction {
         // Split flat instruction stream into basic blocks at LabelDefs AND
         // terminators (Goto/IfGoto/Return/Unreachable). Each terminator ends

@@ -28,7 +28,7 @@ mod tests {
         let ast = parser.parse().expect("parse failed");
         analyze(ast, &HashMap::new())
             .expect_err("expected analysis error")
-            .msg
+            .message
     }
 
     fn get_function<'a>(cu: &'a TypedProgram, name: &str) -> &'a TypedFunction {
@@ -736,24 +736,23 @@ mod tests {
         let mut parser = Parser::new(tokens.into_iter(), Path::new("test"), src.clone());
         let ast = parser.parse().expect("parse failed");
         let err = analyze(ast, &HashMap::new()).expect_err("expected analysis error");
-        assert_eq!(err.line, Some(3), "error should point at line 3: {}", err);
+        assert_eq!(
+            err.span.map(|s| s.line),
+            Some(3),
+            "error should point at line 3: {}",
+            err
+        );
     }
 
     #[test]
     fn with_line_keeps_inner_precise_line() {
         use crate::frontend::analyze::AnalysisError;
-        let err = AnalysisError {
-            msg: "inner".to_string(),
-            line: Some(2),
-        }
-        .with_line(9);
-        assert_eq!(err.line, Some(2));
-        let err = AnalysisError {
-            msg: "outer".to_string(),
-            line: None,
-        }
-        .with_line(9);
-        assert_eq!(err.line, Some(9));
+        let err = AnalysisError::from("inner".to_string())
+            .with_line(2)
+            .with_line(9);
+        assert_eq!(err.span.map(|s| s.line), Some(2));
+        let err = AnalysisError::from("outer".to_string()).with_line(9);
+        assert_eq!(err.span.map(|s| s.line), Some(9));
     }
 
     #[test]
@@ -912,7 +911,7 @@ mod tests {
             &[("m", "fn foo() @int4 { return 7 }")],
         )
         .expect_err("expected missing-symbol error")
-        .msg;
+        .message;
         assert!(err.contains("nope"), "unexpected error: {}", err);
     }
 
@@ -920,7 +919,7 @@ mod tests {
     fn test_unknown_module_errors() {
         let err = get_typed_with_imports("import nosuch::mod\nfn main() @int4 { return 0 }", &[])
             .expect_err("expected unknown-module error")
-            .msg;
+            .message;
         assert!(err.contains("nosuch::mod"), "unexpected error: {}", err);
     }
 
@@ -928,15 +927,66 @@ mod tests {
     // these lock the DESIRED behavior but stay ignored until the checks land.
 
     #[test]
-    #[ignore = "known gap: return values are not checked against the declared return type"]
     fn test_return_type_mismatch_errors() {
+        // Value type mismatches the declared return type.
         get_typed_err("fn f() @int4 { return \"s\" }");
+        // Non-void function with a valueless `return`.
+        get_typed_err("fn f() @int4 { return }");
+        // Void function returning a value.
+        get_typed_err("fn f() @void { return 0 }");
     }
 
     #[test]
-    #[ignore = "known gap: break/continue are accepted outside loops (no loop-depth tracking)"]
     fn test_break_outside_loop_errors() {
         get_typed_err("fn f() @void { break }");
+    }
+
+    #[test]
+    fn test_continue_outside_loop_errors() {
+        get_typed_err("fn f() @void { continue }");
+    }
+
+    #[test]
+    fn test_break_inside_nested_loop_is_fine() {
+        // Loop-depth tracking must accept `break` in a nested loop.
+        get_typed(
+            "fn f() @void { for (i: @int4 = 0; i < 10; i = i + 1) { for (j: @int4 = 0; j < 10; j = j + 1) { break } } }",
+        );
+    }
+
+    #[test]
+    fn test_assign_to_immutable_switch_binding_errors() {
+        // Mutability violation: the payload binding in a `when .A(a)` arm is
+        // an immutable binding; assigning to it must be rejected.
+        let err = get_typed_err(
+            "type T enum { A { x: @int4 } }\nfn f(t: T) @void { switch (t) { when .A(a) { a = 5 } } }",
+        );
+        assert!(
+            err.contains("cannot assign to constant"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_switch_non_exhaustive_errors() {
+        // Missing a variant and no wildcard arm: the enum switch must be
+        // exhaustive.
+        let err =
+            get_typed_err("type T enum { A, B }\nfn f(t: T) @void { switch (t) { when .A { } } }");
+        assert!(
+            err.contains("not exhaustive") && err.contains("B"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_switch_wildcard_is_exhaustive() {
+        // A wildcard arm satisfies exhaustiveness without naming every variant.
+        get_typed(
+            "type T enum { A, B }\nfn f(t: T) @void { switch (t) { when .A { } when else { } } }",
+        );
     }
 
     // ── 04 maintainability: BinOp / ShortCircuit mapping ────────────────────
@@ -1046,5 +1096,48 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    // ── 04 maintainability: coercion/assignment unification locks ─────────
+    // Added BEFORE the coerce_to/check_assignable unification to lock the
+    // current strictness: mismatched field/deref/index stores and
+    // incompatible array-literal mixes must keep failing analysis.
+
+    #[test]
+    fn coercion_unify_field_assign_rejects_bool_for_int() {
+        let err = get_typed_err(
+            "type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = Point { x: 1, y: 2 }\np.x = true }",
+        );
+        assert!(
+            err.contains("cannot assign value of type"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn coercion_unify_deref_assign_rejects_bool_for_int() {
+        let err = get_typed_err("fn f(p: *@int4) @void { p.* = true }");
+        assert!(
+            err.contains("cannot assign value of type"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn coercion_unify_index_assign_rejects_bool_for_int() {
+        let err = get_typed_err("fn f() { arr: @int4[2] = [1, 2]\narr.[0] = true }");
+        assert!(err.contains("array element"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn coercion_unify_array_literal_rejects_int_bool_mix() {
+        let err = get_typed_err("fn f() { a := [1, true] }");
+        assert!(
+            err.contains("incompatible type"),
+            "unexpected error: {}",
+            err
+        );
     }
 }

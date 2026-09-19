@@ -26,6 +26,7 @@ where
 
     pub fn parse_statement(&mut self) -> ParseResult<Option<Statement>> {
         let line = self.peek().map(|t| t.line).unwrap_or(0);
+        let column = self.peek().map(|t| t.column).unwrap_or(0);
         let stmt = if let Some(token) = self.peek() {
             match &token.kind {
                 TokenKind::Comment => {
@@ -221,6 +222,9 @@ where
 
         // Optionally consume a semicolon if present
         self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
-        Ok(Some(Statement { kind: stmt, line }))
+        Ok(Some(Statement {
+            kind: stmt,
+            span: crate::diagnostics::Span::new(line, column),
+        }))
     }
 }

@@ -8,11 +8,11 @@
 //! logical vs arithmetic shift). See `crate::ir::{ty_is_unsigned,
 //! ty_is_float}` for the single source of truth used at use sites.
 
-use std::error::Error;
-
 use inkwell::AddressSpace;
 use inkwell::context::Context;
 use inkwell::types::{BasicType, BasicTypeEnum};
+
+use super::error::LowerError;
 
 use crate::frontend::tokens::builtin::BuiltinType;
 use crate::frontend::typed_ast::{SymbolTable, Ty, TypedEnumVariant, TypedSymbol};
@@ -35,7 +35,7 @@ pub(crate) fn round_up(n: usize, align: usize) -> usize {
 pub(crate) fn typed_type_size_align(
     ty: &Ty,
     scope: &SymbolTable,
-) -> Result<(usize, usize), Box<dyn Error>> {
+) -> Result<(usize, usize), LowerError> {
     match ty {
         Ty::Builtin(b) => {
             let s = match b {
@@ -71,7 +71,10 @@ pub(crate) fn typed_type_size_align(
         }
         Ty::Identifier(id) => match scope.lookup(id) {
             Some(TypedSymbol::Type(inner)) => typed_type_size_align(inner, scope),
-            _ => Err(format!("UnknownLayout: type '{}' not found in scope", id).into()),
+            _ => Err(LowerError::unknown_layout(format!(
+                "type '{}' not found in scope",
+                id
+            ))),
         },
         Ty::QualifiedIdentifier { module, name } => {
             if let Some(m) = scope.lookup_module(module)
@@ -79,14 +82,15 @@ pub(crate) fn typed_type_size_align(
             {
                 typed_type_size_align(inner, scope)
             } else {
-                Err(format!(
-                    "UnknownLayout: type '{}::{}' not found in scope",
+                Err(LowerError::unknown_layout(format!(
+                    "type '{}::{}' not found in scope",
                     module, name
-                )
-                .into())
+                )))
             }
         }
-        Ty::Type => Err("UnknownLayout: comptime `type` value has no runtime layout".into()),
+        Ty::Type => Err(LowerError::unknown_layout(
+            "comptime `type` value has no runtime layout",
+        )),
     }
 }
 
@@ -95,7 +99,7 @@ pub(crate) fn typed_type_size_align(
 pub(crate) fn struct_layout_size_align<'t>(
     field_types: impl Iterator<Item = &'t Ty>,
     scope: &SymbolTable,
-) -> Result<(usize, usize), Box<dyn Error>> {
+) -> Result<(usize, usize), LowerError> {
     let mut offset = 0usize;
     let mut align = 1usize;
     for ty in field_types {
@@ -111,7 +115,7 @@ pub(crate) fn struct_layout_size_align<'t>(
 pub(crate) fn enum_max_payload_bytes(
     variants: &[TypedEnumVariant],
     scope: &SymbolTable,
-) -> Result<usize, Box<dyn Error>> {
+) -> Result<usize, LowerError> {
     let mut max = 0usize;
     for v in variants {
         if let Some(fs) = v.payload.as_ref() {
@@ -126,7 +130,7 @@ pub(crate) fn map_type_to_llvm<'ctx>(
     ty: &Ty,
     ctx: &'ctx Context,
     current_scope: SymbolTable,
-) -> Result<BasicTypeEnum<'ctx>, Box<dyn Error>> {
+) -> Result<BasicTypeEnum<'ctx>, LowerError> {
     match ty {
         Ty::Builtin(builtin) => {
             let any_ty = match builtin {
@@ -153,18 +157,25 @@ pub(crate) fn map_type_to_llvm<'ctx>(
                 }
                 BuiltinType::Char => BasicTypeEnum::IntType(ctx.i8_type()),
                 BuiltinType::Never => BasicTypeEnum::IntType(ctx.bool_type()),
-                BuiltinType::Void => return Err("void type cannot be used as a value type".into()),
+                BuiltinType::Void => {
+                    return Err(LowerError::unsupported(
+                        "void type cannot be used as a value type",
+                    ));
+                }
             };
             Ok(any_ty)
         }
         Ty::Identifier(identifier) => {
-            let symbol = current_scope
-                .lookup(identifier)
-                .ok_or_else(|| format!("identifier {} not found in current scope", identifier))?;
+            let symbol = current_scope.lookup(identifier).ok_or_else(|| {
+                LowerError::unknown_layout(format!("type '{}' not found in scope", identifier))
+            })?;
             if let TypedSymbol::Type(ty) = symbol {
                 map_type_to_llvm(ty, ctx, current_scope.clone())
             } else {
-                Err(format!("symbol {:?} is not a type", symbol).into())
+                Err(LowerError::unknown_layout(format!(
+                    "symbol '{:?}' is not a type",
+                    symbol
+                )))
             }
         }
         Ty::Struct { fields } => {
@@ -182,8 +193,7 @@ pub(crate) fn map_type_to_llvm<'ctx>(
             Ok(ctx.struct_type(&field_types, false).into())
         }
         Ty::Enum { variants } => {
-            let payload_bytes = enum_max_payload_bytes(variants, &current_scope)
-                .map_err(|e| format!("lowering enum type: {}", e))?;
+            let payload_bytes = enum_max_payload_bytes(variants, &current_scope)?;
             if payload_bytes == 0 {
                 Ok(ctx.i32_type().into())
             } else {
@@ -205,25 +215,28 @@ pub(crate) fn map_type_to_llvm<'ctx>(
             // Function pointers are opaque `ptr` in LLVM 16.
             Ok(ctx.ptr_type(AddressSpace::default()).into())
         }
-        Ty::Type => {
-            Err("compiler bug: Ty::Type reached LLVM lowering — comptime type values must not appear in runtime code".into())
-        }
+        Ty::Type => Err(LowerError::unsupported(
+            "compiler bug: Ty::Type reached LLVM lowering — comptime type values must not appear in runtime code",
+        )),
         Ty::QualifiedIdentifier { module, name } => {
             // Resolve through the scope's imported modules
             let module_data = current_scope.lookup_module(module).ok_or_else(|| {
-                format!("map_type_to_llvm: module '{}' not found in scope", module)
+                LowerError::unknown_layout(format!("type '{}' not found in scope", module))
             })?;
             let sym = module_data.exports.get(name).ok_or_else(|| {
-                format!(
-                    "map_type_to_llvm: '{}' not found in module '{}'",
-                    name, module
-                )
+                LowerError::unknown_layout(format!(
+                    "type '{}::{}' not found in scope",
+                    module, name
+                ))
             })?;
             if let TypedSymbol::Type(inner_ty) = sym {
                 let inner_ty = inner_ty.clone();
                 map_type_to_llvm(&inner_ty, ctx, current_scope)
             } else {
-                Err(format!("map_type_to_llvm: '{}::{}' is not a type", module, name).into())
+                Err(LowerError::unknown_layout(format!(
+                    "'{}::{}' is not a type",
+                    module, name
+                )))
             }
         }
     }

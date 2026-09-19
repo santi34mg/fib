@@ -1,5 +1,9 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
-    ast::{expression::Expression, type_expression::TypeExpression},
+    ast::{
+        expression::{Expression, ExpressionKind},
+        type_expression::{TypeExpression, TypeExpressionKind},
+    },
     identifier::Identifier,
     parser::ParseResult,
     tokens::{Punctuation, Token, TokenKind},
@@ -16,7 +20,10 @@ where
             Some(first_token) => match first_token.kind {
                 TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => {
                     let fields = self.parse_type_fields()?;
-                    Ok(TypeExpression::Struct { fields })
+                    Ok(TypeExpression::at(
+                        TypeExpressionKind::Struct { fields },
+                        Span::new(type_token.line, type_token.column),
+                    ))
                 }
                 _ => Err(self.error(
                     "expected an open curly brace",
@@ -66,9 +73,16 @@ where
     }
 
     /// Parse `TypeName { field: value, ... }` after the type name.
-    /// Assumes `{` was already consumed.
-    pub fn parse_struct_construct(&mut self, type_name: Identifier) -> ParseResult<Expression> {
+    /// Assumes `{` was already consumed; `span` is the type name's position.
+    pub fn parse_struct_construct(
+        &mut self,
+        type_name: Identifier,
+        span: Span,
+    ) -> ParseResult<Expression> {
         let fields = self.parse_brace_fields("struct construction")?;
-        Ok(Expression::StructConstruct { type_name, fields })
+        Ok(Expression::at(
+            ExpressionKind::StructConstruct { type_name, fields },
+            span,
+        ))
     }
 }

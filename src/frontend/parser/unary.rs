@@ -1,5 +1,6 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
-    ast::expression::Expression,
+    ast::expression::{Expression, ExpressionKind},
     parser::ParseResult,
     tokens::{Operator, Token, TokenKind},
 };
@@ -15,27 +16,39 @@ where
             match &token.kind {
                 TokenKind::Operator(Operator::LogicalNot) => {
                     self.next();
+                    let span = Span::new(token.line, token.column);
                     let expr = self.parse_unary()?;
-                    Ok(Expression::Unary {
-                        operator: Operator::LogicalNot,
-                        expression: Box::new(expr),
-                    })
+                    Ok(Expression::at(
+                        ExpressionKind::Unary {
+                            operator: Operator::LogicalNot,
+                            expression: Box::new(expr),
+                        },
+                        span,
+                    ))
                 }
                 TokenKind::Operator(Operator::Minus) => {
                     self.next();
+                    let span = Span::new(token.line, token.column);
                     let expr = self.parse_unary()?;
-                    Ok(Expression::Unary {
-                        operator: Operator::Minus,
-                        expression: Box::new(expr),
-                    })
+                    Ok(Expression::at(
+                        ExpressionKind::Unary {
+                            operator: Operator::Minus,
+                            expression: Box::new(expr),
+                        },
+                        span,
+                    ))
                 }
                 TokenKind::Operator(Operator::Tilde) => {
                     self.next();
+                    let span = Span::new(token.line, token.column);
                     let expr = self.parse_unary()?;
-                    Ok(Expression::Unary {
-                        operator: Operator::Tilde,
-                        expression: Box::new(expr),
-                    })
+                    Ok(Expression::at(
+                        ExpressionKind::Unary {
+                            operator: Operator::Tilde,
+                            expression: Box::new(expr),
+                        },
+                        span,
+                    ))
                 }
                 _ => self.parse_atom(),
             }

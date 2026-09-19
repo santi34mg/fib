@@ -1,14 +1,15 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
     ast::{expression::Expression, switch::SwitchArm, variable_declaration::VariableDeclaration},
     identifier::Identifier,
 };
 
-/// A statement together with the source line it starts on, used to point
-/// analysis errors at the relevant line of source code.
+/// A statement together with the source position it starts on, used to point
+/// analysis errors at the relevant spot in the source.
 #[derive(Debug, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
-    pub line: usize,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

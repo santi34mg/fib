@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::{
-    expression::Expression as PExpr, field::Field, function_declaration::FunctionDeclaration,
-    statement::StatementKind, type_expression::TypeExpression,
+    expression::{Expression as PExpr, ExpressionKind as PExprKind},
+    field::Field,
+    function_declaration::FunctionDeclaration,
+    statement::StatementKind,
+    type_expression::{TypeExpression, TypeExpressionKind},
 };
 use crate::frontend::identifier::Identifier;
 use crate::frontend::typed_ast::{
@@ -18,24 +21,24 @@ pub(super) fn is_generic_function(fn_decl: &FunctionDeclaration) -> bool {
         .signature
         .parameters
         .iter()
-        .any(|p| matches!(p.parameter_type, TypeExpression::TypeKeyword))
+        .any(|p| matches!(&p.parameter_type.kind, TypeExpressionKind::TypeKeyword))
 }
 
 /// Compute a stable mangle string for a type expression (used in generic function name mangling).
 pub(super) fn mangle_type_expr(te: &TypeExpression) -> String {
-    match te {
-        TypeExpression::Builtin(bt) => format!("{}", bt),
-        TypeExpression::Identifier(id) => id.value.clone(),
-        TypeExpression::Pointer { pointed_type, .. } => {
+    match &te.kind {
+        TypeExpressionKind::Builtin(bt) => format!("{}", bt),
+        TypeExpressionKind::Identifier(id) => id.value.clone(),
+        TypeExpressionKind::Pointer { pointed_type, .. } => {
             format!("ptr_{}", mangle_type_expr(pointed_type))
         }
-        TypeExpression::Array { element_type, size } => {
+        TypeExpressionKind::Array { element_type, size } => {
             format!("arr{}_{}", size, mangle_type_expr(element_type))
         }
-        TypeExpression::Struct { .. } => "struct".to_string(),
-        TypeExpression::Enum { .. } => "enum".to_string(),
-        TypeExpression::Function { .. } => "fn".to_string(),
-        TypeExpression::Tuple { elements } => format!(
+        TypeExpressionKind::Struct { .. } => "struct".to_string(),
+        TypeExpressionKind::Enum { .. } => "enum".to_string(),
+        TypeExpressionKind::Function { .. } => "fn".to_string(),
+        TypeExpressionKind::Tuple { elements } => format!(
             "tuple_{}",
             elements
                 .iter()
@@ -43,10 +46,10 @@ pub(super) fn mangle_type_expr(te: &TypeExpression) -> String {
                 .collect::<Vec<_>>()
                 .join("_")
         ),
-        TypeExpression::QualifiedIdentifier { module, name } => {
+        TypeExpressionKind::QualifiedIdentifier { module, name } => {
             format!("{}__{}", module.value, name.value)
         }
-        TypeExpression::TypeKeyword => "type".to_string(),
+        TypeExpressionKind::TypeKeyword => "type".to_string(),
     }
 }
 
@@ -55,82 +58,100 @@ pub(super) fn substitute_type(
     te: &TypeExpression,
     subs: &HashMap<String, TypeExpression>,
 ) -> TypeExpression {
-    match te {
-        TypeExpression::Identifier(id) => {
+    let span = te.span;
+    match &te.kind {
+        TypeExpressionKind::Identifier(id) => {
             if let Some(replacement) = subs.get(&id.value) {
                 replacement.clone()
             } else {
                 te.clone()
             }
         }
-        TypeExpression::Pointer { pointed_type } => TypeExpression::Pointer {
-            pointed_type: Box::new(substitute_type(pointed_type, subs)),
-        },
-        TypeExpression::Array { element_type, size } => TypeExpression::Array {
-            element_type: Box::new(substitute_type(element_type, subs)),
-            size: *size,
-        },
-        TypeExpression::Struct { fields } => TypeExpression::Struct {
-            fields: fields
-                .iter()
-                .map(|f| Field {
-                    label: f.label.clone(),
-                    type_id: substitute_type(&f.type_id, subs),
-                })
-                .collect(),
-        },
-        TypeExpression::Function {
+        TypeExpressionKind::Pointer { pointed_type } => TypeExpression::at(
+            TypeExpressionKind::Pointer {
+                pointed_type: Box::new(substitute_type(pointed_type, subs)),
+            },
+            span,
+        ),
+        TypeExpressionKind::Array { element_type, size } => TypeExpression::at(
+            TypeExpressionKind::Array {
+                element_type: Box::new(substitute_type(element_type, subs)),
+                size: *size,
+            },
+            span,
+        ),
+        TypeExpressionKind::Struct { fields } => TypeExpression::at(
+            TypeExpressionKind::Struct {
+                fields: fields
+                    .iter()
+                    .map(|f| Field {
+                        label: f.label.clone(),
+                        type_id: substitute_type(&f.type_id, subs),
+                    })
+                    .collect(),
+            },
+            span,
+        ),
+        TypeExpressionKind::Function {
             argument_types,
             return_type,
-        } => TypeExpression::Function {
-            argument_types: argument_types
-                .iter()
-                .map(|t| substitute_type(t, subs))
-                .collect(),
-            return_type: Box::new(substitute_type(return_type, subs)),
-        },
-        TypeExpression::Tuple { elements } => TypeExpression::Tuple {
-            elements: elements.iter().map(|t| substitute_type(t, subs)).collect(),
-        },
+        } => TypeExpression::at(
+            TypeExpressionKind::Function {
+                argument_types: argument_types
+                    .iter()
+                    .map(|t| substitute_type(t, subs))
+                    .collect(),
+                return_type: Box::new(substitute_type(return_type, subs)),
+            },
+            span,
+        ),
+        TypeExpressionKind::Tuple { elements } => TypeExpression::at(
+            TypeExpressionKind::Tuple {
+                elements: elements.iter().map(|t| substitute_type(t, subs)).collect(),
+            },
+            span,
+        ),
         // Builtins, QualifiedIdentifier, TypeKeyword contain no substitutable identifiers
         _ => te.clone(),
     }
 }
 
 pub(super) fn substitute_in_expr(expr: &mut PExpr, subs: &HashMap<String, TypeExpression>) {
-    match expr {
-        PExpr::Cast {
+    match &mut expr.kind {
+        PExprKind::Cast {
             target_type,
             expr: inner,
         } => {
             *target_type = substitute_type(target_type, subs);
             substitute_in_expr(inner, subs);
         }
-        PExpr::Binary { left, right, .. } => {
+        PExprKind::Binary { left, right, .. } => {
             substitute_in_expr(left, subs);
             substitute_in_expr(right, subs);
         }
-        PExpr::Unary { expression, .. } => substitute_in_expr(expression, subs),
-        PExpr::Call { callee, args } => {
+        PExprKind::Unary { expression, .. } => substitute_in_expr(expression, subs),
+        PExprKind::Call { callee, args } => {
             substitute_in_expr(callee, subs);
             for arg in args {
                 substitute_in_expr(arg, subs);
             }
         }
-        PExpr::FieldAccess { object, .. } => substitute_in_expr(object, subs),
-        PExpr::AddressOf(inner) | PExpr::Dereference(inner) | PExpr::Grouping(inner) => {
+        PExprKind::FieldAccess { object, .. } => substitute_in_expr(object, subs),
+        PExprKind::AddressOf(inner)
+        | PExprKind::Dereference(inner)
+        | PExprKind::Grouping(inner) => {
             substitute_in_expr(inner, subs);
         }
-        PExpr::IndexAccess { object, index } => {
+        PExprKind::IndexAccess { object, index } => {
             substitute_in_expr(object, subs);
             substitute_in_expr(index, subs);
         }
-        PExpr::ArrayLiteral { elements } => {
+        PExprKind::ArrayLiteral { elements } => {
             for e in elements {
                 substitute_in_expr(e, subs);
             }
         }
-        PExpr::StructConstruct { fields, .. } => {
+        PExprKind::StructConstruct { fields, .. } => {
             for (_, val) in fields {
                 substitute_in_expr(val, subs);
             }
@@ -255,12 +276,15 @@ pub(super) fn instantiate_generic(
                 template.name, param_name
             )
         })?;
-        let type_expr = match arg {
-            PExpr::TypeValue(te) => te.clone(),
-            PExpr::Identifier(id) => {
+        let type_expr = match &arg.kind {
+            PExprKind::TypeValue(te) => te.clone(),
+            PExprKind::Identifier(id) => {
                 // A user-defined type name passed as argument
                 match scope.lookup(id) {
-                    Some(TypedSymbol::Type(_)) => TypeExpression::Identifier(id.clone()),
+                    Some(TypedSymbol::Type(_)) => TypeExpression::at(
+                        TypeExpressionKind::Identifier(id.clone()),
+                        arg.span,
+                    ),
                     _ => return Err(format!(
                         "generic call to '{}': argument for comptime param '{}' must be a type, got identifier '{}'",
                         template.name, param_name, id

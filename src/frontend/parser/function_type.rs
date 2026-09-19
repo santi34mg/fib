@@ -1,5 +1,6 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
-    ast::type_expression::TypeExpression,
+    ast::type_expression::{TypeExpression, TypeExpressionKind},
     parser::ParseResult,
     tokens::{Operator, Punctuation, Token, TokenKind},
 };
@@ -55,9 +56,12 @@ where
                 return Err(self.error("expected a return type", arrow.line, arrow.column));
             }
         };
-        Ok(TypeExpression::Function {
-            argument_types,
-            return_type: Box::new(return_type),
-        })
+        Ok(TypeExpression::at(
+            TypeExpressionKind::Function {
+                argument_types,
+                return_type: Box::new(return_type),
+            },
+            Span::new(type_token.line, type_token.column),
+        ))
     }
 }

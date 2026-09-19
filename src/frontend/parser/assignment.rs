@@ -1,5 +1,8 @@
 use crate::frontend::{
-    ast::{expression::Expression, statement::StatementKind},
+    ast::{
+        expression::{Expression, ExpressionKind},
+        statement::StatementKind,
+    },
     parser::ParseResult,
     tokens::Token,
 };
@@ -16,21 +19,21 @@ where
         lhs: Expression,
         rhs: Expression,
     ) -> ParseResult<StatementKind> {
-        match lhs {
-            Expression::Identifier(id) => Ok(StatementKind::Assignment {
+        match lhs.kind {
+            ExpressionKind::Identifier(id) => Ok(StatementKind::Assignment {
                 identifier: id,
                 expr: rhs,
             }),
-            Expression::FieldAccess { object, field } => Ok(StatementKind::FieldAssign {
+            ExpressionKind::FieldAccess { object, field } => Ok(StatementKind::FieldAssign {
                 object: *object,
                 field,
                 expr: rhs,
             }),
-            Expression::Dereference(inner) => Ok(StatementKind::DerefAssign {
+            ExpressionKind::Dereference(inner) => Ok(StatementKind::DerefAssign {
                 pointer: *inner,
                 expr: rhs,
             }),
-            Expression::IndexAccess { object, index } => Ok(StatementKind::IndexAssign {
+            ExpressionKind::IndexAccess { object, index } => Ok(StatementKind::IndexAssign {
                 object: *object,
                 index: *index,
                 expr: rhs,

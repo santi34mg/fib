@@ -545,4 +545,112 @@ mod tests {
         assert_eq!(toks.len(), 1);
         assert!(matches!(toks[0].kind, TokenKind::Error(_)));
     }
+
+    // ── 05 testing: char/string escape + unknown-char error branches ──
+
+    #[test]
+    fn test_unknown_character_is_direct_unknown_token() {
+        // `lexer.rs:82` — `$` lexes to `TokenKind::Unknown`, not `Error`.
+        let toks: Vec<_> = Lexer::new("$").collect();
+        assert_eq!(toks.len(), 1);
+        assert_eq!(toks[0].kind, TokenKind::Unknown('$'));
+    }
+
+    #[test]
+    fn test_unterminated_char_literal_errors() {
+        // `lexer.rs:380` — EOF right after the opening quote.
+        let toks: Vec<_> = Lexer::new("'").collect();
+        assert_eq!(toks.len(), 1);
+        if let TokenKind::Error(msg) = &toks[0].kind {
+            assert!(msg.contains("unterminated character"), "got: {}", msg);
+        } else {
+            panic!("expected Error, got {:?}", toks[0].kind);
+        }
+    }
+
+    #[test]
+    fn test_unterminated_char_escape_errors() {
+        // `lexer.rs:385` — backslash with nothing after it.
+        let toks: Vec<_> = Lexer::new("'\\").collect();
+        assert_eq!(toks.len(), 1);
+        if let TokenKind::Error(msg) = &toks[0].kind {
+            assert!(
+                msg.contains("unterminated character escape"),
+                "got: {}",
+                msg
+            );
+        } else {
+            panic!("expected Error, got {:?}", toks[0].kind);
+        }
+    }
+
+    #[test]
+    fn test_unterminated_hex_escape_errors() {
+        // `lexer.rs:399` — `\x` with fewer than two hex digits before EOF.
+        for src in ["'\\x1", "'\\x"] {
+            let toks: Vec<_> = Lexer::new(src).collect();
+            assert!(
+                matches!(toks[0].kind, TokenKind::Error(_)),
+                "expected Error for {:?}, got {:?}",
+                src,
+                toks.iter().map(|t| &t.kind).collect::<Vec<_>>()
+            );
+            if let TokenKind::Error(msg) = &toks[0].kind {
+                assert!(msg.contains("unterminated hex"), "got: {}", msg);
+            }
+        }
+    }
+
+    #[test]
+    fn test_invalid_char_escape_errors() {
+        // Bad `\q` escape — the char helper rejects it instead of emitting a char.
+        let toks: Vec<_> = Lexer::new("'\\q'").collect();
+        assert!(
+            matches!(toks[0].kind, TokenKind::Error(_)),
+            "expected Error, got {:?}",
+            toks[0].kind
+        );
+        if let TokenKind::Error(msg) = &toks[0].kind {
+            assert!(msg.contains("Invalid escape"), "got: {}", msg);
+        }
+    }
+
+    #[test]
+    fn test_invalid_hex_escape_errors() {
+        // Non-hex digits after `\x` — the `is_ascii_hexdigit` branch fails.
+        let toks: Vec<_> = Lexer::new("'\\xZZ'").collect();
+        assert!(
+            matches!(toks[0].kind, TokenKind::Error(_)),
+            "expected Error, got {:?}",
+            toks[0].kind
+        );
+        if let TokenKind::Error(msg) = &toks[0].kind {
+            assert!(msg.contains("hex"), "got: {}", msg);
+        }
+    }
+
+    #[test]
+    fn test_unterminated_string_escape_errors() {
+        // `lexer.rs:325` — backslash is the last char before EOF inside a string.
+        let toks: Vec<_> = Lexer::new("\"abc\\").collect();
+        assert_eq!(toks.len(), 1);
+        if let TokenKind::Error(msg) = &toks[0].kind {
+            assert!(msg.contains("unterminated string escape"), "got: {}", msg);
+        } else {
+            panic!("expected Error, got {:?}", toks[0].kind);
+        }
+    }
+
+    #[test]
+    fn test_unterminated_string_literal_errors() {
+        // `lexer.rs:314` — EOF before the closing quote (direct lexer-level pin;
+        // the parser surfaces the same message, covered in parser tests).
+        let toks: Vec<_> = Lexer::new("\"abc").collect();
+        assert_eq!(toks.len(), 1);
+        if let TokenKind::Error(msg) = &toks[0].kind {
+            assert!(msg.contains("unterminated string"), "got: {}", msg);
+        } else {
+            panic!("expected Error, got {:?}", toks[0].kind);
+        }
+    }
 }

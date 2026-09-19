@@ -81,9 +81,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          # Includes the workflow file so LLVM/toolchain bumps invalidate
-          # the cache, not just Cargo.lock changes.
-          key: ${{ runner.os }}-llvm21-cargo-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml') }}
+          # Includes the workflow file and the pinned toolchain (`rust-toolchain.toml`)
+          # so LLVM/toolchain bumps invalidate the cache, not just Cargo.lock changes.
+          key: ${{ runner.os }}-llvm21-cargo-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml', 'rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-llvm21-cargo-
 
@@ -122,3 +122,45 @@ jobs:
 
       - name: Audit
         run: cargo audit
+
+  deny:
+    name: Dependency license check (advisory, non-blocking)
+    runs-on: ubuntu-latest
+    # Advisory only, like `audit`: license/duplicate violations are surfaced
+    # in PRs but never gate merges while inkwell/LLVM remain holdouts.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check
+        run: cargo deny check
+
+  coverage:
+    name: Coverage (advisory, non-blocking)
+    runs-on: ubuntu-latest
+    # Advisory only: coverage is informational, never gating. Do NOT chase
+    # 100% line coverage on the lowering files — it incentivizes
+    # tautological tests.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup LLVM
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 21
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+
+      - name: Coverage (advisory)
+        run: cargo tarpaulin --out Stdout --timeout 300

@@ -1,28 +1,39 @@
 # Driver, CLI, and Module Resolution
 
-> Note (2026-09-18): addressed items removed. This file now lists only the
-> partially addressed point. Removed: `compile()` stage split (+ `--emit`,
-> `FrontendResponse` wiring), configurable `--output/--emit-llvm/--cc/-O` +
-> `CC` env + tempfile + distinct stdout/stderr, feature-gating (`--check`
-> without LLVM, no silent no-op), parser error preservation via
-> `DriverError::Parse(#[from])`.
+> Note (2026-09-18): addressed items removed. This file has NO remaining
+> points. Removed: `compile()` stage split (+ `--emit`, `FrontendResponse`
+> wiring), configurable `--output/--emit-llvm/--cc/-O` + `CC` env +
+> tempfile + distinct stdout/stderr, feature-gating (`--check` without
+> LLVM, no silent no-op), parser error preservation via
+> `DriverError::Parse(#[from])`, module-resolution duplication (see below).
 
 ## Current state (verified 2026-09-18)
 
-- `compile()` is staged (`validate_path`, `read_source`, `lex/parse_source`, `resolve_imports:469`, `analyze_entry:557`, `run_frontend:595`, `lower_to_llvm_ir:631`, `emit_llvm_ir:695`, `link_llvm_ir:737`, `compile:813` orchestration).
-- Module loading is half-unified: `load_module_source() -> (PathBuf, String)` (`driver.rs:406`) + `parse_module_ast` (`:459`) are reused for transitive imports (`:509-510`); old `FIXME` and `resolving: Vec<Vec<String>>` are gone. Cycle detection is `HashSet<Vec<String>> resolving_set` + `resolving_stack` (`:474-475`) with `CircularImport{stack}` (`:162`, joined `" -> "` at `:221-223`, tested at `:1087`).
-- Driver dedupes by symbol (`decl_key fn:/type:/const:` at `:564`, `dedupe_declarations:579`, used at `:844-845`) — but the lowering-side duplicate guard remains: `llvm_lower.rs:80-82` (`count_basic_blocks() > 0 => continue`) and `ir_lower.rs:80-84` (`return Ok(()) // duplicate via diamond import`).
-- Keys are still `Vec<String>` (`:473` `HashMap<Vec<String>, TypedModule>`); no `canonicalize()`, no path interning, no `Ast`/error cache. Two-way search (full path + drop-first-segment fallback, `:415-440`) is retained.
+- `compile()` is staged (`validate_path`, `read_source`,
+  `lex/parse_source`, `resolve_imports`, `analyze_entry`, `run_frontend`,
+  `lower_to_llvm_ir`, `emit_llvm_ir`, `link_llvm_ir`, `compile`
+  orchestration).
+- §1(a) Single load path: `load_module` (`driver.rs:525`) is the
+  import resolve-read-parse entry; the entry file goes through
+  `load_entry` (`:537`), and both funnel through the shared
+  `lex_source`/`parse_source` core (documented at `:520-545`) — exactly
+  one lex+parse path.
+- §1(b) Canonical keys + path interning: `canonicalize_module_path`
+  (`:558`) + `path_intern` inside `resolve_imports` (`:604`) map one
+  canonical `PathBuf` per distinct file; alias-spelled imports of the
+  same file reuse the cached `TypedModule` (no re-read/re-parse/re-analyze),
+  and alias cycles still report `CircularImport`. The two-way search
+  (full path + drop-first-segment fallback, `module_candidate_paths` `:415`)
+  is retained and documented as load-bearing for `-I <repo>/std`.
+- §1(c) Lowering-side diamond-import hacks are REMOVED: `llvm_lower.rs`
+  no longer carries the `count_basic_blocks() > 0 => continue` guard and
+  `ir_lower.rs:80-82` has no duplicate-skip — both rely on
+  `dedupe_declarations` (`:749`). Proven by
+  `resolve_imports_diamond_is_deduped` (`:1229`) and the full-pipeline
+  compile-and-run diamond proof (`:1320`).
+- Cycle detection is `HashSet<Vec<String>>` + `resolving_stack` with
+  `CircularImport{stack}` (joined `" -> "`), tested.
 
-## Remaining points
-
-### 1. Module resolution duplication [PARTIALLY ADDRESSED]
-Done: shared `load_module_source`/`parse_module_ast` for imports, `HashSet` cycle detection with import stack, driver-side `dedupe_declarations`.
-
-Remaining:
-- a) Single `load_module(path, search_roots) -> Result<(PathBuf, String, Ast)>` reused for the entry file too (entry still does `read_source + lex + parse` at `:598-607` instead of going through it).
-- b) Canonicalized keys + file-path interning; cache `Ast`/`TypedModule` by resolved path (keys are still bare `Vec<String>`; no parse-error cache with file context). Decide whether to keep the two-way search or document it.
-- c) Remove the lowering-side diamond-import hacks (`llvm_lower.rs:80-82`, `ir_lower.rs:80-84`) once driver dedupe fully covers it — dedupe must be proven by a diamond-import test first.
-
-Trade-offs:
-- **Correctness vs. velocity.** A real module system (visibility, separate compilation, incremental cache) is a multi-week project. Items (a)-(c) above are the short-term slice that removes the duplication without redesigning modules.
+No remaining points. The short-term slice is complete; a real module
+system (visibility, separate compilation, incremental cache) is a
+multi-week project deliberately out of scope — revisit only on demand.

@@ -1,5 +1,5 @@
 use crate::frontend::{
-    ast::expression::Expression,
+    ast::expression::{Expression, ExpressionKind},
     parser::ParseResult,
     tokens::{Keyword, Token, TokenKind},
 };
@@ -20,10 +20,14 @@ where
                 let (line, col) = self.peek().map_or((0, 0), |t| (t.line, t.column));
                 self.error("expected type after 'as'", line, col)
             })?;
-            expr = Expression::Cast {
-                expr: Box::new(expr),
-                target_type,
-            };
+            let span = expr.span;
+            expr = Expression::at(
+                ExpressionKind::Cast {
+                    expr: Box::new(expr),
+                    target_type,
+                },
+                span,
+            );
         }
         Ok(expr)
     }

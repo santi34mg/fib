@@ -1,21 +1,21 @@
 use std::collections::HashMap;
 
-use crate::frontend::ast::pattern::Pattern;
 use crate::frontend::ast::{
-    expression::Expression as PExpr, statement::Statement, statement::StatementKind,
-    type_expression::TypeExpression, variable_declaration::VariableDeclaration,
+    expression::{Expression as PExpr, ExpressionKind as PExprKind},
+    pattern::Pattern,
+    statement::Statement,
+    statement::StatementKind,
+    type_expression::TypeExpressionKind,
+    variable_declaration::VariableDeclaration,
 };
 use crate::frontend::identifier::Identifier;
-use crate::frontend::tokens::builtin::BuiltinType;
 use crate::frontend::typed_ast::{
     ScopeKind, SymbolTable, Ty, TypedBinding, TypedExpr, TypedExprKind, TypedFunction, TypedIf,
     TypedPattern, TypedReturn, TypedStatement, TypedSwitchArm, TypedSymbol,
 };
 
 use super::AnalysisError;
-use super::expressions::{
-    coerce_expr_to_type, coerce_or_alias, expr_to_typed, require_integer_index,
-};
+use super::expressions::{check_assignable, coerce_to, expr_to_typed, require_integer_index};
 use super::types::{map_type, resolve_struct_fields, resolve_type_alias};
 
 pub(super) fn stmt_to_typed(
@@ -23,14 +23,29 @@ pub(super) fn stmt_to_typed(
     current_scope: &mut SymbolTable,
     generic_cache: &mut HashMap<String, TypedFunction>,
 ) -> Result<TypedStatement, AnalysisError> {
-    let line = stmt.line;
-    stmt_to_typed_inner(stmt.kind, current_scope, generic_cache).map_err(|e| e.with_line(line))
+    stmt_to_typed_at(stmt, current_scope, generic_cache, 0)
+}
+
+/// Depth-aware core: `loop_depth` counts lexically enclosing `for` loops so
+/// `break`/`continue` can be rejected outside any loop. Nested body statements
+/// recurse through this (preserving depth) instead of `stmt_to_typed`, which
+/// always starts at depth 0.
+fn stmt_to_typed_at(
+    stmt: Statement,
+    current_scope: &mut SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+    loop_depth: usize,
+) -> Result<TypedStatement, AnalysisError> {
+    let span = stmt.span;
+    stmt_to_typed_inner(stmt.kind, current_scope, generic_cache, loop_depth)
+        .map_err(|e| e.with_span_fallback(span))
 }
 
 pub(super) fn stmt_to_typed_inner(
     stmt: StatementKind,
     current_scope: &mut SymbolTable,
     generic_cache: &mut HashMap<String, TypedFunction>,
+    loop_depth: usize,
 ) -> Result<TypedStatement, AnalysisError> {
     match stmt {
         StatementKind::VariableDeclaration(variable_declaration) => Ok(TypedStatement::Binding(
@@ -40,7 +55,11 @@ pub(super) fn stmt_to_typed_inner(
             let target_ty = match current_scope.lookup(&identifier) {
                 Some(TypedSymbol::Binding(binding)) => {
                     if !binding.mutable {
-                        return Err(format!("cannot assign to constant '{}'", identifier).into());
+                        return Err(AnalysisError::from(format!(
+                            "cannot assign to constant '{}'",
+                            identifier
+                        ))
+                        .with_hint("declare the binding with `var` to make it mutable"));
                     }
                     binding.ty.clone()
                 }
@@ -54,13 +73,12 @@ pub(super) fn stmt_to_typed_inner(
                 }
             };
             let e = expr_to_typed(expr, current_scope, generic_cache)?;
-            let found = e.inferred_type.clone();
-            let e = coerce_or_alias(e, &target_ty, current_scope).map_err(|_| {
-                format!(
-                    "cannot assign value of type {:?} to '{}' of type {:?}",
-                    found, identifier, target_ty
-                )
-            })?;
+            let e = check_assignable(
+                &target_ty,
+                e,
+                current_scope,
+                &format!("'{}' of type {:?}", identifier, target_ty),
+            )?;
             Ok(TypedStatement::Assign {
                 name: identifier,
                 expr: e,
@@ -75,7 +93,7 @@ pub(super) fn stmt_to_typed_inner(
             // shape, which we use to compute the field index.
             // If the object is a plain identifier referring to an immutable
             // binding, surface a friendly error.
-            if let PExpr::Identifier(id) = &object
+            if let PExprKind::Identifier(id) = &object.kind
                 && let Some(TypedSymbol::Binding(b)) = current_scope.lookup(id)
                 && !b.mutable
             {
@@ -103,14 +121,13 @@ pub(super) fn stmt_to_typed_inner(
                     format!("stmt_to_typed: field {} not found in struct", field.value)
                 })?;
             let e = expr_to_typed(expr, current_scope, generic_cache)?;
-            // Coerce the RHS to the field type, mirroring plain `Assign`.
-            let found = e.inferred_type.clone();
-            let e = coerce_or_alias(e, field_ty, current_scope).map_err(|_| {
-                format!(
-                    "cannot assign value of type {:?} to field '{}' of type {:?}",
-                    found, field.value, field_ty
-                )
-            })?;
+            // Coerce the RHS to the field type via the shared assignment check.
+            let e = check_assignable(
+                field_ty,
+                e,
+                current_scope,
+                &format!("field '{}' of type {:?}", field.value, field_ty),
+            )?;
             Ok(TypedStatement::FieldAssign {
                 object: obj_typed,
                 field: field.value,
@@ -166,7 +183,12 @@ pub(super) fn stmt_to_typed_inner(
             current_scope.enter_scope(ScopeKind::Block);
             let mut then_h = Vec::new();
             for s in then_branch {
-                then_h.push(stmt_to_typed(s, current_scope, generic_cache)?);
+                then_h.push(stmt_to_typed_at(
+                    s,
+                    current_scope,
+                    generic_cache,
+                    loop_depth,
+                )?);
             }
             current_scope.exit_scope();
             let else_h = match else_branch {
@@ -174,7 +196,12 @@ pub(super) fn stmt_to_typed_inner(
                     current_scope.enter_scope(ScopeKind::Block);
                     let mut ev = Vec::new();
                     for s in v {
-                        ev.push(stmt_to_typed(s, current_scope, generic_cache)?);
+                        ev.push(stmt_to_typed_at(
+                            s,
+                            current_scope,
+                            generic_cache,
+                            loop_depth,
+                        )?);
                     }
                     current_scope.exit_scope();
                     Some(ev)
@@ -197,7 +224,12 @@ pub(super) fn stmt_to_typed_inner(
             // binding is visible to cond/post/body) that doesn't leak out.
             current_scope.enter_scope(ScopeKind::Block);
             let init_h = match initializer {
-                Some(b) => Some(Box::new(stmt_to_typed(*b, current_scope, generic_cache)?)),
+                Some(b) => Some(Box::new(stmt_to_typed_at(
+                    *b,
+                    current_scope,
+                    generic_cache,
+                    loop_depth,
+                )?)),
                 None => None,
             };
             let cond_h = match condition {
@@ -205,12 +237,22 @@ pub(super) fn stmt_to_typed_inner(
                 None => None,
             };
             let post_h = match increment {
-                Some(b) => Some(Box::new(stmt_to_typed(*b, current_scope, generic_cache)?)),
+                Some(b) => Some(Box::new(stmt_to_typed_at(
+                    *b,
+                    current_scope,
+                    generic_cache,
+                    loop_depth,
+                )?)),
                 None => None,
             };
             let mut body_h = Vec::new();
             for s in body {
-                body_h.push(stmt_to_typed(s, current_scope, generic_cache)?);
+                body_h.push(stmt_to_typed_at(
+                    s,
+                    current_scope,
+                    generic_cache,
+                    loop_depth + 1,
+                )?);
             }
             current_scope.exit_scope();
             Ok(TypedStatement::For {
@@ -233,16 +275,13 @@ pub(super) fn stmt_to_typed_inner(
                 }
             };
             let val_typed = expr_to_typed(expr, current_scope, generic_cache)?;
-            // Coerce the RHS to the pointee type, mirroring plain `Assign`
-            // (previously the pointee type was discarded unchecked).
-            let found = val_typed.inferred_type.clone();
-            let val_typed =
-                coerce_or_alias(val_typed, &pointee_ty, current_scope).map_err(|_| {
-                    format!(
-                        "cannot assign value of type {:?} through pointer (expects {:?})",
-                        found, pointee_ty
-                    )
-                })?;
+            // Coerce the RHS to the pointee type via the shared assignment check.
+            let val_typed = check_assignable(
+                &pointee_ty,
+                val_typed,
+                current_scope,
+                &format!("pointee of type {:?} through pointer", pointee_ty),
+            )?;
             Ok(TypedStatement::DerefAssign {
                 pointer: ptr_typed,
                 expr: val_typed,
@@ -268,24 +307,35 @@ pub(super) fn stmt_to_typed_inner(
             let idx_typed = expr_to_typed(index, current_scope, generic_cache)?;
             require_integer_index(&idx_typed.inferred_type, "index assignment")?;
             let val_typed = expr_to_typed(expr, current_scope, generic_cache)?;
-            // Coerce the value to the element type, mirroring plain `Assign`.
-            let found = val_typed.inferred_type.clone();
-            let val_typed = coerce_or_alias(val_typed, &elem_ty, current_scope).map_err(|_| {
-                format!(
-                    "cannot assign value of type {:?} to array element of type {:?}",
-                    found, elem_ty
-                )
-            })?;
+            // Coerce the value to the element type via the shared assignment check.
+            let val_typed = check_assignable(
+                &elem_ty,
+                val_typed,
+                current_scope,
+                &format!("array element of type {:?}", elem_ty),
+            )?;
             Ok(TypedStatement::IndexAssign {
                 object: obj_typed,
                 index: idx_typed,
                 expr: val_typed,
             })
         }
-        StatementKind::Break => Ok(TypedStatement::Break),
-        StatementKind::Continue => Ok(TypedStatement::Continue),
+        StatementKind::Break => {
+            if loop_depth == 0 {
+                return Err("`break` is only allowed inside a loop".to_string().into());
+            }
+            Ok(TypedStatement::Break)
+        }
+        StatementKind::Continue => {
+            if loop_depth == 0 {
+                return Err("`continue` is only allowed inside a loop"
+                    .to_string()
+                    .into());
+            }
+            Ok(TypedStatement::Continue)
+        }
         StatementKind::Defer(inner) => {
-            let typed_inner = stmt_to_typed(*inner, current_scope, generic_cache)?;
+            let typed_inner = stmt_to_typed_at(*inner, current_scope, generic_cache, loop_depth)?;
             Ok(TypedStatement::Defer(Box::new(typed_inner)))
         }
         StatementKind::Switch { subject, arms } => {
@@ -356,13 +406,45 @@ pub(super) fn stmt_to_typed_inner(
                 }
                 let mut body_h = Vec::new();
                 for s in arm.body {
-                    body_h.push(stmt_to_typed(s, current_scope, generic_cache)?);
+                    body_h.push(stmt_to_typed_at(
+                        s,
+                        current_scope,
+                        generic_cache,
+                        loop_depth,
+                    )?);
                 }
                 current_scope.exit_scope();
                 typed_arms.push(TypedSwitchArm {
                     pattern: typed_pattern,
                     body: body_h,
                 });
+            }
+            // Exhaustiveness: every variant must be covered unless a wildcard
+            // arm exists. The wildcard itself is checked at typetime, so an
+            // arm list with no wildcard and missing variants is a compile error.
+            let has_wildcard = typed_arms
+                .iter()
+                .any(|arm| matches!(arm.pattern, TypedPattern::Wildcard));
+            if !has_wildcard {
+                let covered: Vec<u32> = typed_arms
+                    .iter()
+                    .filter_map(|arm| match &arm.pattern {
+                        TypedPattern::EnumVariant { discriminant, .. } => Some(*discriminant),
+                        TypedPattern::Wildcard => None,
+                    })
+                    .collect();
+                let missing: Vec<String> = variants
+                    .iter()
+                    .filter(|v| !covered.contains(&v.discriminant))
+                    .map(|v| v.name.clone())
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(format!(
+                        "switch on enum is not exhaustive: missing variant(s) {} (add `when _` or cover them)",
+                        missing.join(", ")
+                    )
+                    .into());
+                }
             }
             Ok(TypedStatement::Switch {
                 subject: subj_typed,
@@ -376,8 +458,8 @@ pub(super) fn validate_assignment_target(
     target: &PExpr,
     current_scope: &SymbolTable,
 ) -> Result<(), AnalysisError> {
-    match target {
-        PExpr::Identifier(id) => {
+    match &target.kind {
+        PExprKind::Identifier(id) => {
             if let Some(TypedSymbol::Binding(binding)) = current_scope.lookup(id)
                 && !binding.mutable
             {
@@ -385,8 +467,8 @@ pub(super) fn validate_assignment_target(
             }
             Ok(())
         }
-        PExpr::FieldAccess { object, .. } => {
-            if let PExpr::Identifier(id) = object.as_ref()
+        PExprKind::FieldAccess { object, .. } => {
+            if let PExprKind::Identifier(id) = &object.kind
                 && let Some(TypedSymbol::Binding(binding)) = current_scope.lookup(id)
                 && !binding.mutable
             {
@@ -394,54 +476,62 @@ pub(super) fn validate_assignment_target(
             }
             Ok(())
         }
-        PExpr::Dereference(_) | PExpr::IndexAccess { .. } => Ok(()),
+        PExprKind::Dereference(_) | PExprKind::IndexAccess { .. } => Ok(()),
         _ => Err("invalid multi-assignment target".to_string().into()),
     }
+}
+
+/// Shared arity rule for `a, b = ...` (multi-assignment) and `q, r := ...`
+/// (multi-variable declaration): either one value per target, or a single
+/// tuple-typed value with one element per target. Returns the per-target
+/// types on success, `None` on arity mismatch (callers attach their own
+/// `multi-assignment` / `multi-variable declaration` wording).
+fn resolve_multi_value_types(target_count: usize, values: &[TypedExpr]) -> Option<Vec<Ty>> {
+    if values.len() == target_count {
+        return Some(
+            values
+                .iter()
+                .map(|value| value.inferred_type.clone())
+                .collect(),
+        );
+    }
+    if values.len() == 1
+        && let Ty::Tuple { elements } = &values[0].inferred_type
+        && elements.len() == target_count
+    {
+        return Some(elements.clone());
+    }
+    None
 }
 
 pub(super) fn validate_multi_assignment_shape(
     targets: &[TypedExpr],
     values: &[TypedExpr],
 ) -> Result<(), AnalysisError> {
-    if values.len() == targets.len() {
-        return Ok(());
+    match resolve_multi_value_types(targets.len(), values) {
+        Some(_) => Ok(()),
+        None => Err(format!(
+            "multi-assignment arity mismatch: {} target(s), {} value expression(s)",
+            targets.len(),
+            values.len()
+        )
+        .into()),
     }
-    if values.len() == 1
-        && let Ty::Tuple { elements } = &values[0].inferred_type
-        && elements.len() == targets.len()
-    {
-        return Ok(());
-    }
-    Err(format!(
-        "multi-assignment arity mismatch: {} target(s), {} value expression(s)",
-        targets.len(),
-        values.len()
-    )
-    .into())
 }
 
 pub(super) fn infer_multi_binding_types(
     identifiers: &[Identifier],
     values: &[TypedExpr],
 ) -> Result<Vec<Ty>, AnalysisError> {
-    if values.len() == identifiers.len() {
-        return Ok(values
-            .iter()
-            .map(|value| value.inferred_type.clone())
-            .collect());
+    match resolve_multi_value_types(identifiers.len(), values) {
+        Some(binding_types) => Ok(binding_types),
+        None => Err(format!(
+            "multi-variable declaration arity mismatch: {} identifier(s), {} value expression(s)",
+            identifiers.len(),
+            values.len()
+        )
+        .into()),
     }
-    if values.len() == 1
-        && let Ty::Tuple { elements } = &values[0].inferred_type
-        && elements.len() == identifiers.len()
-    {
-        return Ok(elements.clone());
-    }
-    Err(format!(
-        "multi-variable declaration arity mismatch: {} identifier(s), {} value expression(s)",
-        identifiers.len(),
-        values.len()
-    )
-    .into())
 }
 
 pub(super) fn multi_var_decl_to_typed(
@@ -480,7 +570,7 @@ pub(super) fn var_decl_to_typed(
     generic_cache: &mut HashMap<String, TypedFunction>,
 ) -> Result<TypedBinding, AnalysisError> {
     let declared_ty = match var_decl.constant_type {
-        Some(TypeExpression::TypeKeyword) => {
+        Some(t) if matches!(&t.kind, TypeExpressionKind::TypeKeyword) => {
             return Err("mutable type bindings (`var type`) are not yet supported; use `const type` for compile-time type aliases".to_string().into());
         }
         Some(t) => Some(map_type(t)?),
@@ -503,95 +593,70 @@ pub(super) fn var_decl_to_typed(
         // Defensive: the `None` arm above already rejected a missing
         // initializer for inferred declarations — never panic here.
         (None, None) => {
-            return Err("inferred variable declaration requires an initializer"
-                .to_string()
-                .into());
+            return Err(AnalysisError::from(
+                "inferred variable declaration requires an initializer".to_string(),
+            )
+            .with_hint(
+                "add an initializer, or declare an explicit type and defer initialization, e.g. `var @int4 x;`",
+            ));
         }
     };
-    // check that type matches; allow struct-by-name to match struct literal type
-    // `never` unifies with any type
+    // Check the initializer against the declared/inferred type. Array
+    // initializers need their size checked first (`coerce_to` never compares
+    // sizes); everything else goes through the single `coerce_to` rule
+    // (`Never`/`null` re-annotates, aliases match structurally, numerics
+    // relabel literals or insert `Cast`).
     let init = match init {
         None => None,
-        Some(mut init) => {
-            if init.inferred_type == Ty::Builtin(BuiltinType::Never) {
-                init.inferred_type = ty.clone();
-            }
-            if init.inferred_type != ty {
-                // When the declared type is an identifier (e.g. `Point`) and the init
-                // expression is a StructConstruct, the inferred type is the resolved
-                // Ty::Struct directly.  In that case, accept the match by
-                // annotating the init expression with the identifier type so the rest
-                // of the pipeline sees a consistent declared type.
-                let resolved_ty_match = match &ty {
-                    Ty::Identifier(id) => match current_scope.lookup(id) {
-                        Some(TypedSymbol::Type(inner)) => *inner == init.inferred_type,
-                        _ => false,
-                    },
-                    _ => false,
-                };
-                if resolved_ty_match {
-                    // Replace the init's inferred type with the declared identifier type
-                    // so that subsequent lookups (e.g. binding type in codegen) return
-                    // the identifier-keyed type.
-                    init.inferred_type = ty.clone();
-                } else if let (
-                    Ty::Array {
-                        element_type: decl_elem,
-                        size: decl_size,
-                    },
-                    Ty::Array {
-                        size: init_size, ..
-                    },
-                ) = (&ty, &init.inferred_type)
-                {
-                    if *decl_size != *init_size {
-                        return Err(format!(
-                            "array size mismatch for {}: declared size {} but initializer has {} elements",
-                            var_decl.identifier, decl_size, init_size
-                        )
-                        .into());
-                    }
-                    // Coerce each element to the declared element type with
-                    // the shared numeric/alias rule (literals relabel,
-                    // numerics insert `Cast`) instead of blindly relabeling,
-                    // which generated wrong code for widening element types.
-                    if let TypedExprKind::ArrayLiteral { elements } = &mut init.expression {
-                        let mut coerced = Vec::with_capacity(elements.len());
-                        for elem in std::mem::take(elements) {
-                            let found = elem.inferred_type.clone();
-                            coerced.push(
-                                coerce_or_alias(elem, decl_elem, current_scope).map_err(|_| {
-                                    format!(
-                                        "array element of type {:?} does not match declared element type {:?} for {}",
-                                        found, decl_elem, var_decl.identifier
-                                    )
-                                })?,
-                            );
-                        }
-                        *elements = coerced;
-                    }
-                    init.inferred_type = ty.clone();
-                } else if let Ty::Builtin(_) = &ty {
-                    // Numeric mismatches get a real conversion (literals are just
-                    // re-typed; other expressions get a cast); anything else errors.
-                    let found = init.inferred_type.clone();
-                    init = coerce_expr_to_type(init, &ty).map_err(|_| {
-                        format!(
-                            "initialization type {:?} does not match declared type {:?} for {}",
-                            found, ty, var_decl.identifier
-                        )
-                    })?;
-                } else {
+        Some(init) => {
+            if let (
+                Ty::Array {
+                    element_type: decl_elem,
+                    size: decl_size,
+                },
+                Ty::Array {
+                    size: init_size, ..
+                },
+            ) = (&ty, &init.inferred_type)
+            {
+                if *decl_size != *init_size {
                     return Err(format!(
-                        r#"initalization type does not match explicit type for {}
-explicit type: {:?}
-inferred type of expression: {:?}"#,
-                        var_decl.identifier, ty, init.inferred_type
+                        "array size mismatch for {}: declared size {} but initializer has {} elements",
+                        var_decl.identifier, decl_size, init_size
                     )
                     .into());
                 }
+                let mut init = init;
+                // Coerce each literal element to the declared element type
+                // with the shared rule instead of blindly relabeling, which
+                // generated wrong code for widening element types.
+                if let TypedExprKind::ArrayLiteral { elements } = &mut init.expression {
+                    let mut coerced = Vec::with_capacity(elements.len());
+                    for elem in std::mem::take(elements) {
+                        let found = elem.inferred_type.clone();
+                        coerced.push(coerce_to(decl_elem, elem, current_scope).map_err(|_| {
+                            format!(
+                                "array element of type {:?} does not match declared element type {:?} for {}",
+                                found, decl_elem, var_decl.identifier
+                            )
+                        })?);
+                    }
+                    *elements = coerced;
+                }
+                init.inferred_type = ty.clone();
+                Some(init)
+            } else if init.inferred_type == ty {
+                Some(init)
+            } else {
+                let found = init.inferred_type.clone();
+                let init = coerce_to(&ty, init, current_scope).map_err(|_| {
+                    format!(
+                        "initialization type {:?} does not match declared type {:?} for {}",
+                        found, ty, var_decl.identifier
+                    )
+                })?;
+                Some(init)
             }
-            Some(init)
         }
     };
     let typed_var = TypedBinding {

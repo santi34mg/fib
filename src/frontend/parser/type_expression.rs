@@ -1,5 +1,6 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
-    ast::type_expression::TypeExpression,
+    ast::type_expression::{TypeExpression, TypeExpressionKind},
     parser::ParseResult,
     tokens::{Keyword, Literal, Operator, Punctuation, Token, TokenKind, builtin::Builtin},
 };
@@ -17,10 +18,11 @@ where
         } else {
             return Ok(None);
         };
+        let span = Span::new(type_token.line, type_token.column);
         let var_type: TypeExpression = match type_token.kind {
             TokenKind::Builtin(Builtin::BuiltinType(builtin_type)) => {
                 self.next();
-                TypeExpression::Builtin(builtin_type)
+                TypeExpression::at(TypeExpressionKind::Builtin(builtin_type), span)
             }
             TokenKind::Keyword(ref keyword) => {
                 self.next();
@@ -28,7 +30,7 @@ where
                     Keyword::Struct => self.parse_struct_literal(&type_token)?,
                     Keyword::Enum => self.parse_enum_literal(&type_token)?,
                     Keyword::Function => self.parse_function_type(&type_token)?,
-                    Keyword::Type => TypeExpression::TypeKeyword,
+                    Keyword::Type => TypeExpression::at(TypeExpressionKind::TypeKeyword, span),
                     _ => return Err(self.error("not a type", type_token.line, type_token.column)),
                 }
             }
@@ -52,9 +54,12 @@ where
                 ) {
                     self.next(); // consume `::`
                     let name = self.expect_identifier("expected type name after '::'")?;
-                    TypeExpression::QualifiedIdentifier { module, name }
+                    TypeExpression::at(
+                        TypeExpressionKind::QualifiedIdentifier { module, name },
+                        span,
+                    )
                 } else {
-                    TypeExpression::Identifier(module)
+                    TypeExpression::at(TypeExpressionKind::Identifier(module), span)
                 }
             }
             _ => {
@@ -100,10 +105,13 @@ where
                 TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
                 "expected ']' after array size",
             )?;
-            TypeExpression::Array {
-                element_type: Box::new(var_type),
-                size,
-            }
+            TypeExpression::at(
+                TypeExpressionKind::Array {
+                    element_type: Box::new(var_type),
+                    size,
+                },
+                span,
+            )
         } else {
             var_type
         };

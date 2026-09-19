@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::error::Error;
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::context::Context;
@@ -8,6 +7,7 @@ use inkwell::values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, Pointe
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
 use super::context::{CodegenCtx, coerce_int_to_llvm_type, insert_block};
+use super::error::LowerError;
 use super::types::map_type_to_llvm;
 use crate::frontend::tokens::builtin::BuiltinType;
 use crate::frontend::typed_ast::{SymbolTable, Ty};
@@ -24,8 +24,7 @@ use crate::ir as ir_mod;
 // ---------------------------------------------------------------------------
 
 /// Lower an IR program to LLVM IR text (core subset).
-#[allow(dead_code)]
-pub fn lower_ir(program: ir_mod::IrProgram, module_name: &str) -> Result<String, Box<dyn Error>> {
+pub fn lower_ir(program: ir_mod::IrProgram, module_name: &str) -> Result<String, LowerError> {
     let ctx = Context::create();
     let module = ctx.create_module(module_name);
     let builder = ctx.create_builder();
@@ -42,11 +41,10 @@ pub fn lower_ir(program: ir_mod::IrProgram, module_name: &str) -> Result<String,
     Ok(module.print_to_string().to_string())
 }
 
-#[allow(dead_code)]
 pub(super) fn lower_ir_function<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     func: &ir_mod::IrFunction,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), LowerError> {
     use inkwell::module::Linkage;
 
     // Function type from IR signature (core subset: builtin types only;
@@ -77,11 +75,8 @@ pub(super) fn lower_ir_function<'ctx, 'r>(
         return Ok(());
     }
 
-    if let Some(existing) = ctx.module.get_function(&func.name)
-        && existing.count_basic_blocks() > 0
-    {
-        return Ok(()); // duplicate via diamond import; keep first body
-    }
+    // No duplicate guard here: the driver deduplicates declarations
+    // (`dedupe_declarations`) before lowering, so each function is defined once.
     let function = ctx.module.add_function(&func.name, fn_ty, None);
 
     // Symbol metadata for loads/stores/coercions.
@@ -375,7 +370,6 @@ pub(super) fn lower_ir_function<'ctx, 'r>(
     Ok(())
 }
 
-#[allow(dead_code)]
 pub(super) fn operand_ty(
     op: &ir_mod::Operand,
     temp_tys: &HashMap<ir_mod::Temp, Ty>,
@@ -392,7 +386,6 @@ pub(super) fn operand_ty(
     }
 }
 
-#[allow(dead_code)]
 pub(super) fn operand_is_unsigned(
     op: &ir_mod::Operand,
     temp_tys: &HashMap<ir_mod::Temp, Ty>,
@@ -405,7 +398,6 @@ pub(super) fn operand_is_unsigned(
     }
 }
 
-#[allow(dead_code)]
 pub(super) fn resolve_operand<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     vars: &HashMap<ir_mod::SymbolId, PointerValue<'ctx>>,
@@ -413,7 +405,7 @@ pub(super) fn resolve_operand<'ctx, 'r>(
     sym_ty: &HashMap<ir_mod::SymbolId, Ty>,
     empty_scope: &SymbolTable,
     op: &ir_mod::Operand,
-) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
+) -> Result<BasicValueEnum<'ctx>, LowerError> {
     match op {
         ir_mod::Operand::Temp(t) => temps
             .get(t)
@@ -465,14 +457,13 @@ pub(super) fn resolve_operand<'ctx, 'r>(
     }
 }
 
-#[allow(dead_code)]
 pub(super) fn build_ir_binary<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     op: ir_mod::BinOp,
     l: BasicValueEnum<'ctx>,
     r: BasicValueEnum<'ctx>,
     ty: &Ty,
-) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
+) -> Result<BasicValueEnum<'ctx>, LowerError> {
     use ir_mod::BinOp as Op;
     let is_float = ir_mod::ty_is_float(ty);
     let is_unsigned = ir_mod::ty_is_unsigned(ty);
@@ -760,14 +751,13 @@ pub(super) fn build_ir_binary<'ctx, 'r>(
 
 /// Lower an IR `Cast` (mirrors the `codegen_expr` cast arms: int->int
 /// keys off the source type, int->float off source, float->int off target).
-#[allow(dead_code)]
 pub(super) fn build_ir_cast<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     src: BasicValueEnum<'ctx>,
     from: &Ty,
     target: &Ty,
     dst_ty: BasicTypeEnum<'ctx>,
-) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
+) -> Result<BasicValueEnum<'ctx>, LowerError> {
     use crate::frontend::tokens::builtin::BuiltinType;
     let src_signed = matches!(
         from,

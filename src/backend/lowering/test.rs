@@ -2,7 +2,8 @@ use inkwell::context::Context;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::BasicValue;
 
-use super::context::{CodegenCtx, coerce_int_to_llvm_type};
+use super::context::{CodegenCtx, FunctionLowering, coerce_int_to_llvm_type};
+use super::error::LowerError;
 use super::lower_ir;
 use super::types::map_type_to_llvm;
 use crate::frontend::identifier::Identifier;
@@ -17,7 +18,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use super::super::expressions::compute_lvalue_ptr;
+    use super::super::expressions::{call_result, unpack_tuple_value};
     use crate::frontend::typed_ast::{TypedExpr, TypedExprKind};
 
     fn lower_ir_src(src: &str) -> String {
@@ -173,20 +174,294 @@ mod tests {
             module: &module,
             builder: &builder,
         };
-        let mut vars = HashMap::new();
-        let mut scope = SymbolTable::new();
+        let fn_ty = ctx.i32_type().fn_type(&[], false);
+        let function = module.add_function("probe", fn_ty, None);
+        let mut fl = FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new());
         let expr = TypedExpr {
             inferred_type: Ty::Builtin(BuiltinType::Int4),
             expression: TypedExprKind::Identifier(Identifier {
                 value: "undeclared".to_string(),
             }),
         };
-        let err = compute_lvalue_ptr(&cctx, &mut vars, &mut scope, &expr)
+        let err = fl
+            .compute_lvalue_ptr(&expr)
             .expect_err("expected no-alloca error");
         assert!(
             err.to_string().contains("no alloca"),
             "unexpected error: {}",
             err
         );
+    }
+
+    // ── error paths: coercion needs a positioned builder ──
+
+    #[test]
+    fn coerce_width_change_without_insert_block_errors() {
+        // A fresh builder has no insert block, so any width-changing
+        // coercion (zext/sext/trunc) fails with `UnsetPosition` instead of
+        // emitting into the void.
+        let ctx = Context::create();
+        let module = ctx.create_module("coerce_err_test");
+        let builder = ctx.create_builder();
+        let cctx = CodegenCtx {
+            ctx: &ctx,
+            module: &module,
+            builder: &builder,
+        };
+        let i8_val = ctx.i8_type().const_int(1, false).as_basic_value_enum();
+        let i64_ty = ctx.i64_type().as_basic_type_enum();
+        let err = coerce_int_to_llvm_type(&cctx, i8_val, i64_ty, true)
+            .expect_err("expected unset-position error on widening");
+        assert!(
+            err.to_string().contains("position"),
+            "unexpected error: {}",
+            err
+        );
+        let i64_val = ctx.i64_type().const_int(1, false).as_basic_value_enum();
+        let i8_ty = ctx.i8_type().as_basic_type_enum();
+        let err = coerce_int_to_llvm_type(&cctx, i64_val, i8_ty, false)
+            .expect_err("expected unset-position error on truncation");
+        assert!(
+            err.to_string().contains("position"),
+            "unexpected error: {}",
+            err
+        );
+        // Same-width coercion is a no-op: it never touches the builder, so it
+        // succeeds even without an insert block.
+        let same = coerce_int_to_llvm_type(&cctx, i8_val, i8_ty, true).expect("no-op coerce");
+        assert_eq!(same, i8_val);
+    }
+
+    // ── error paths: more `compute_lvalue_ptr` shapes ──
+
+    #[test]
+    fn lvalue_of_non_lvalue_expression_errors() {
+        let ctx = Context::create();
+        let module = ctx.create_module("lvalue_nonlvalue_test");
+        let builder = ctx.create_builder();
+        let cctx = CodegenCtx {
+            ctx: &ctx,
+            module: &module,
+            builder: &builder,
+        };
+        let fn_ty = ctx.i32_type().fn_type(&[], false);
+        let function = module.add_function("probe", fn_ty, None);
+        let mut fl = FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new());
+        let expr = TypedExpr {
+            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            expression: TypedExprKind::LiteralInt { value: 1 },
+        };
+        let err = fl
+            .compute_lvalue_ptr(&expr)
+            .expect_err("expected not-an-lvalue error");
+        assert!(
+            err.to_string().contains("not an lvalue"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn lvalue_field_access_on_non_struct_errors() {
+        let ctx = Context::create();
+        let module = ctx.create_module("lvalue_field_test");
+        let builder = ctx.create_builder();
+        let cctx = CodegenCtx {
+            ctx: &ctx,
+            module: &module,
+            builder: &builder,
+        };
+        let i32_ty = ctx.i32_type();
+        let fn_ty = i32_ty.fn_type(&[], false);
+        let function = module.add_function("f", fn_ty, None);
+        let entry = ctx.append_basic_block(function, "entry");
+        builder.position_at_end(entry);
+        let alloca = builder.build_alloca(i32_ty, "s_addr").expect("alloca");
+        let mut vars = HashMap::new();
+        vars.insert(
+            Identifier {
+                value: "s".to_string(),
+            },
+            alloca,
+        );
+        let scope = SymbolTable::new();
+        let object = TypedExpr {
+            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            expression: TypedExprKind::Identifier(Identifier {
+                value: "s".to_string(),
+            }),
+        };
+        let expr = TypedExpr {
+            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            expression: TypedExprKind::FieldAccess {
+                object: Box::new(object),
+                field: "x".to_string(),
+                field_index: 0,
+            },
+        };
+        let mut fl = FunctionLowering::new(&cctx, function, vars, scope);
+        let err = fl
+            .compute_lvalue_ptr(&expr)
+            .expect_err("expected non-struct error");
+        assert!(
+            err.to_string().contains("non-struct"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    // ── error paths: tuple helpers around coercion ──
+
+    #[test]
+    fn build_tuple_value_arity_mismatch_errors() {
+        let ctx = Context::create();
+        let module = ctx.create_module("tuple_arity_test");
+        let builder = ctx.create_builder();
+        let cctx = CodegenCtx {
+            ctx: &ctx,
+            module: &module,
+            builder: &builder,
+        };
+        let fn_ty = ctx.i32_type().fn_type(&[], false);
+        let function = module.add_function("probe", fn_ty, None);
+        let mut fl = FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new());
+        let i32_ty = ctx.i32_type();
+        let tuple_ty = ctx.struct_type(&[i32_ty.into(), i32_ty.into()], false);
+        let expr = TypedExpr {
+            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            expression: TypedExprKind::LiteralInt { value: 1 },
+        };
+        // Two fields but only one value: the arity check fires before any
+        // coercion or builder use.
+        let err = fl
+            .build_tuple_value(&[expr], tuple_ty)
+            .expect_err("expected arity error");
+        assert!(
+            err.to_string().contains("return arity mismatch"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn unpack_tuple_value_of_non_tuple_errors() {
+        let ctx = Context::create();
+        let module = ctx.create_module("unpack_arity_test");
+        let builder = ctx.create_builder();
+        let cctx = CodegenCtx {
+            ctx: &ctx,
+            module: &module,
+            builder: &builder,
+        };
+        let int_val = ctx.i32_type().const_int(0, false).as_basic_value_enum();
+        let err = unpack_tuple_value(&cctx, int_val, 1).expect_err("expected tuple error");
+        assert!(
+            err.to_string().contains("multiple-return tuple"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn call_result_of_void_call_errors() {
+        let ctx = Context::create();
+        let module = ctx.create_module("call_result_test");
+        let builder = ctx.create_builder();
+        let cctx = CodegenCtx {
+            ctx: &ctx,
+            module: &module,
+            builder: &builder,
+        };
+        let void_ty = ctx.void_type();
+        let fn_ty = void_ty.fn_type(&[], false);
+        let function = module.add_function("void_fn", fn_ty, None);
+        let entry = ctx.append_basic_block(function, "entry");
+        builder.position_at_end(entry);
+        let call_site = builder.build_call(function, &[], "voidcall").expect("call");
+        let err = call_result(call_site).expect_err("expected void-call error");
+        assert!(
+            err.to_string().contains("expected a return value"),
+            "unexpected error: {}",
+            err
+        );
+        builder.build_return(None).expect("ret");
+        let _ = cctx;
+    }
+
+    // ── audit 02 §1: typed LowerError ────────────────────────────────────
+
+    #[test]
+    fn insert_block_without_position_reports_missing_block() {
+        // A fresh builder has no insert block: `insert_block` must return the
+        // typed `MissingBlock` (not a stringly `Box<dyn Error>`).
+        let ctx = Context::create();
+        let module = ctx.create_module("missing_block_test");
+        let builder = ctx.create_builder();
+        let cctx = CodegenCtx {
+            ctx: &ctx,
+            module: &module,
+            builder: &builder,
+        };
+        let err =
+            super::super::context::insert_block(&cctx, "probe-site").expect_err("expected error");
+        match &err {
+            LowerError::MissingBlock { what, .. } => assert_eq!(what, "probe-site"),
+            other => panic!("expected MissingBlock, got {:?}", other),
+        }
+        assert!(
+            err.to_string().contains("no insert block"),
+            "unexpected rendering: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn missing_block_rendering_carries_fn_and_line() {
+        let err = LowerError::missing_block("probe", Some("my_fn".to_string()), Some(3));
+        let msg = err.to_string();
+        assert!(msg.contains("probe"), "missing site: {}", msg);
+        assert!(msg.contains("my_fn"), "missing fn name: {}", msg);
+        assert!(msg.contains('3'), "missing line: {}", msg);
+        assert!(msg.contains("no insert block"), "missing kind: {}", msg);
+        // Bare form (free `insert_block` with no function context) keeps the
+        // historical rendering.
+        let bare = LowerError::missing_block("probe", None, None);
+        assert_eq!(bare.to_string(), "lowering 'probe': no insert block");
+    }
+
+    #[test]
+    fn unknown_layout_is_typed_and_keeps_prefix() {
+        // `types.rs` ad-hoc `UnknownLayout: ...` strings are now the typed
+        // `UnknownLayout` variant; the `UnknownLayout: ` prefix is kept so
+        // existing diagnostics/tests matching on it still work.
+        let ctx = Context::create();
+        let scope = SymbolTable::new();
+        let ty = Ty::Identifier(Identifier {
+            value: "Missing".to_string(),
+        });
+        let err = map_type_to_llvm(&ty, &ctx, scope).expect_err("expected UnknownLayout");
+        match &err {
+            LowerError::UnknownLayout { name } => assert!(
+                name.contains("Missing"),
+                "variant should name the type, got: {}",
+                name
+            ),
+            other => panic!("expected UnknownLayout, got {:?}", other),
+        }
+        assert!(
+            err.to_string().contains("UnknownLayout"),
+            "prefix lost: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn builder_errors_convert_to_lower_error() {
+        // `From<BuilderError>` keeps `?` working after the
+        // `Box<dyn Error>` -> `LowerError` conversion.
+        let err = LowerError::from("plain string still becomes Unsupported".to_string());
+        assert!(matches!(err, LowerError::Unsupported(_)));
+        let err = LowerError::from("static str likewise");
+        assert!(matches!(err, LowerError::Unsupported(_)));
     }
 }

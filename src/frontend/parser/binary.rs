@@ -1,4 +1,8 @@
-use crate::frontend::{ast::expression::Expression, parser::ParseResult, tokens::Token};
+use crate::frontend::{
+    ast::expression::{Expression, ExpressionKind},
+    parser::ParseResult,
+    tokens::Token,
+};
 
 use super::Parser;
 
@@ -27,11 +31,15 @@ where
                     let op = *op;
                     self.next();
                     let right = Box::new(operand(self)?);
-                    expr = Expression::Binary {
-                        left: Box::new(expr),
-                        operator: op,
-                        right,
-                    };
+                    let span = expr.span;
+                    expr = Expression::at(
+                        ExpressionKind::Binary {
+                            left: Box::new(expr),
+                            operator: op,
+                            right,
+                        },
+                        span,
+                    );
                 }
                 _ => break,
             }

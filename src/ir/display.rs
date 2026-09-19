@@ -190,6 +190,11 @@ impl fmt::Display for Instruction {
                     .join(", ");
                 write!(f, "switch {} [{}] default {}", subject, cs, default)
             }
+            Self::TupleExtract {
+                dst, src, index, ..
+            } => {
+                write!(f, "{} = tuple_extract {}[{}]", dst, src, index)
+            }
             Self::IfGoto { cond, target } => write!(f, "if {} goto {}", cond, target),
             Self::Goto { target } => write!(f, "goto {}", target),
             Self::LabelDef(l) => write!(f, "{}:", l),
@@ -236,6 +241,9 @@ impl fmt::Display for IrFunction {
 
 impl fmt::Display for IrProgram {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for c in &self.consts {
+            writeln!(f, "const {} : {} = {}", c.name, c.ty, c.init)?;
+        }
         for func in &self.functions {
             writeln!(f, "{}", func)?;
         }

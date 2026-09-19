@@ -1,11 +1,27 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
     ast::type_expression::TypeExpression,
     identifier::Identifier,
     tokens::{Literal, Operator, builtin::BuiltinFunction},
 };
 
+/// An expression together with the source position it starts on. The
+/// analyzer records these spans so type errors can point at the exact
+/// offending sub-expression.
 #[derive(Debug, Clone)]
-pub enum Expression {
+pub struct Expression {
+    pub kind: ExpressionKind,
+    pub span: Span,
+}
+
+impl Expression {
+    pub const fn at(kind: ExpressionKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ExpressionKind {
     Binary {
         left: Box<Expression>,
         operator: Operator,

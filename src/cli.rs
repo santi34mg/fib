@@ -1,7 +1,8 @@
 use clap::Parser;
 use std::{path::PathBuf, process};
 
-use crate::driver::{CompilationOptions, CompileOutput, DriverError, EmitKind};
+use crate::diagnostics::CompilerError;
+use crate::driver::{CompilationOptions, CompileOutput, EmitKind};
 
 fn parse_emit_kind(s: &str) -> Result<EmitKind, String> {
     s.parse()
@@ -106,7 +107,7 @@ fn print_frontend(emit: EmitKind, frontend: &crate::driver::FrontendResponse, ch
     }
 }
 
-fn run(args: Args) -> Result<(), DriverError> {
+fn run(args: Args) -> Result<(), Box<CompilerError>> {
     let check_only = args.check;
     let opts = CompilationOptions::from(args);
     match crate::driver::compile(&opts)? {
@@ -130,7 +131,9 @@ fn run(args: Args) -> Result<(), DriverError> {
 
 pub fn exec_command(args: Args) {
     if let Err(e) = run(args) {
-        eprintln!("Error: {}", e);
+        // Single rendering path: every stage produces a `CompilerError`, so
+        // the user always sees the same aligned `error[kind]: ...` panel.
+        eprintln!("{}", e);
         process::exit(1);
     }
 }

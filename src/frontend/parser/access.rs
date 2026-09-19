@@ -1,5 +1,5 @@
 use crate::frontend::{
-    ast::expression::Expression,
+    ast::expression::{Expression, ExpressionKind},
     parser::ParseResult,
     tokens::{Operator, Punctuation, Token, TokenKind},
 };
@@ -22,10 +22,14 @@ where
             ) {
                 self.next(); // consume '('
                 let args = self.parse_call_arguments("function call arguments")?;
-                expr = Expression::Call {
-                    callee: Box::new(expr),
-                    args,
-                };
+                let span = expr.span;
+                expr = Expression::at(
+                    ExpressionKind::Call {
+                        callee: Box::new(expr),
+                        args,
+                    },
+                    span,
+                );
             } else if matches!(token.kind, TokenKind::Punctuation(Punctuation::Dot)) {
                 self.next(); // consume '.'
                 // Check for `.[ index ]` before consuming
@@ -42,26 +46,33 @@ where
                         TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
                         "parse_atom: expected ']' after index expression",
                     )?;
-                    expr = Expression::IndexAccess {
-                        object: Box::new(expr),
-                        index: Box::new(index),
-                    };
+                    let span = expr.span;
+                    expr = Expression::at(
+                        ExpressionKind::IndexAccess {
+                            object: Box::new(expr),
+                            index: Box::new(index),
+                        },
+                        span,
+                    );
                 } else {
                     let next_token =
                         self.expect_next("parse_atom: expected field name or operator after '.'")?;
                     match next_token.kind {
                         TokenKind::Operator(Operator::Star) => {
-                            expr = Expression::Dereference(Box::new(expr));
+                            let span = expr.span;
+                            expr =
+                                Expression::at(ExpressionKind::Dereference(Box::new(expr)), span);
                         }
                         TokenKind::Operator(Operator::Ampersand) => {
-                            expr = Expression::AddressOf(Box::new(expr));
+                            let span = expr.span;
+                            expr = Expression::at(ExpressionKind::AddressOf(Box::new(expr)), span);
                         }
                         TokenKind::Identifier(f) => {
                             // If this is `TypeName.Variant { ... }` — an enum
                             // variant construction with payload — capture it
                             // here. Otherwise it's a plain field access.
                             if !self.no_struct_literal
-                                && let Expression::Identifier(type_name) = &expr
+                                && let ExpressionKind::Identifier(type_name) = &expr.kind
                                 && matches!(
                                     self.peek(),
                                     Some(Token {
@@ -75,16 +86,24 @@ where
                                 self.next(); // consume '{'
                                 let fields = self.parse_brace_fields("variant payload")?;
                                 let tn = type_name.clone();
-                                expr = Expression::EnumVariantConstruct {
-                                    type_name: tn,
-                                    variant: f,
-                                    fields,
-                                };
+                                let span = expr.span;
+                                expr = Expression::at(
+                                    ExpressionKind::EnumVariantConstruct {
+                                        type_name: tn,
+                                        variant: f,
+                                        fields,
+                                    },
+                                    span,
+                                );
                             } else {
-                                expr = Expression::FieldAccess {
-                                    object: Box::new(expr),
-                                    field: f,
-                                };
+                                let span = expr.span;
+                                expr = Expression::at(
+                                    ExpressionKind::FieldAccess {
+                                        object: Box::new(expr),
+                                        field: f,
+                                    },
+                                    span,
+                                );
                             }
                         }
                         _ => {

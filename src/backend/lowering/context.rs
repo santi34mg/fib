@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::error::Error;
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
@@ -8,11 +7,12 @@ use inkwell::module::Module;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 
-use super::statements::codegen_stmt;
+use super::error::LowerError;
 use super::types::map_type_to_llvm;
 use crate::frontend::identifier::Identifier;
 use crate::frontend::typed_ast::{SymbolTable, TypedFunction, TypedStatement};
 
+#[derive(Clone, Copy)]
 pub(super) struct LoopContext<'ctx> {
     pub(super) break_bb: BasicBlock<'ctx>,
     pub(super) continue_bb: BasicBlock<'ctx>,
@@ -30,23 +30,22 @@ pub(super) struct CodegenCtx<'ctx, 'r> {
 
 /// Per-function lowering state. This is the designated owner for the
 /// `llvm_lower.rs` split (phase 4): `types.rs` keeps `map_type_to_llvm`,
-/// `expr.rs` gets `codegen_expr`, `stmt.rs` gets `codegen_stmt`, and all of
-/// them take `&FunctionLowering` instead of the current
-/// `(ctx, vars, scope, loop_ctx, deferred_stack)` tuple. Introduced now so
-/// new helpers (`insert_block`, `emit_if`, IR consumer) build on it instead
-/// of adding more free-function params.
-#[allow(dead_code)]
+/// `expr.rs` provides `codegen_expr`, `stmt.rs` provides `codegen_stmt`, and
+/// all of them take `&FunctionLowering` instead of the current
+/// `(ctx, vars, scope, loop_ctx, deferred_stack)` tuple. New helpers
+/// (`insert_block`, `parent_function`, `emit_frames_from`, ...) build on it
+/// instead of adding more free-function params.
 pub(super) struct FunctionLowering<'ctx, 'r> {
     pub(super) ctx: &'r CodegenCtx<'ctx, 'r>,
     function: FunctionValue<'ctx>,
-    vars: HashMap<Identifier, PointerValue<'ctx>>,
-    scope: SymbolTable,
-    deferred_stack: Vec<Vec<TypedStatement>>,
+    pub(super) vars: HashMap<Identifier, PointerValue<'ctx>>,
+    pub(super) scope: SymbolTable,
+    pub(super) deferred_stack: Vec<Vec<TypedStatement>>,
+    loop_ctx: Option<LoopContext<'ctx>>,
 }
 
-#[allow(dead_code)]
 impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
-    fn new(
+    pub(super) fn new(
         ctx: &'r CodegenCtx<'ctx, 'r>,
         function: FunctionValue<'ctx>,
         vars: HashMap<Identifier, PointerValue<'ctx>>,
@@ -58,36 +57,92 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             vars,
             scope,
             deferred_stack: vec![Vec::new()],
+            loop_ctx: None,
         }
     }
 
     /// Current insert block with context (replaces `get_insert_block().unwrap()`).
-    fn insert_block(&self, what: &str) -> Result<BasicBlock<'ctx>, Box<dyn Error>> {
-        self.ctx
-            .builder
-            .get_insert_block()
-            .ok_or_else(|| format!("lowering '{}': no insert block", what).into())
+    /// `LowerError::MissingBlock` carries the site (`what`), the enclosing
+    /// function name, and an optional line.
+    pub(super) fn insert_block(&self, what: &str) -> Result<BasicBlock<'ctx>, LowerError> {
+        self.ctx.builder.get_insert_block().ok_or_else(|| {
+            LowerError::missing_block(
+                what,
+                Some(self.function.get_name().to_string_lossy().into_owned()),
+                None,
+            )
+        })
+    }
+
+    /// Enclosing function with context (replaces `get_parent().unwrap()`).
+    pub(super) fn parent_function(&self, what: &str) -> Result<FunctionValue<'ctx>, LowerError> {
+        self.insert_block(what)?.get_parent().ok_or_else(|| {
+            LowerError::missing_block(
+                what,
+                Some(self.function.get_name().to_string_lossy().into_owned()),
+                None,
+            )
+        })
+    }
+
+    /// Loop context for `break`/`continue`, if currently inside a loop.
+    pub(super) fn loop_ctx(&self) -> Option<&LoopContext<'ctx>> {
+        self.loop_ctx.as_ref()
+    }
+
+    pub(super) fn enter_loop(&mut self, loop_ctx: LoopContext<'ctx>) -> Option<LoopContext<'ctx>> {
+        self.loop_ctx.replace(loop_ctx)
+    }
+
+    pub(super) fn exit_loop(&mut self, previous: Option<LoopContext<'ctx>>) {
+        self.loop_ctx = previous;
+    }
+
+    /// Emit one deferred frame in reverse order (LIFO). Deferred statements
+    /// run with a fresh empty deferred stack and no loop context, mirroring
+    /// the previous free-function behavior.
+    pub(super) fn emit_deferred_frame(
+        &mut self,
+        frame: &[TypedStatement],
+    ) -> Result<(), LowerError> {
+        let saved_stack = std::mem::take(&mut self.deferred_stack);
+        let saved_loop = self.loop_ctx.take();
+        let res = (|| {
+            for stmt in frame.iter().rev() {
+                self.codegen_stmt(stmt)?;
+            }
+            Ok(())
+        })();
+        self.deferred_stack = saved_stack;
+        self.loop_ctx = saved_loop;
+        res
+    }
+
+    /// Emit the deferred frames at `stack[from..]`, innermost frame first. Used
+    /// on early exits: `return` unwinds everything (`from = 0`), `break` /
+    /// `continue` unwind the frames opened inside the loop.
+    pub(super) fn emit_frames_from(
+        &mut self,
+        stack: Vec<Vec<TypedStatement>>,
+        from: usize,
+    ) -> Result<(), LowerError> {
+        for frame in stack[from.min(stack.len())..].iter().rev() {
+            self.emit_deferred_frame(frame)?;
+        }
+        Ok(())
     }
 }
 
 /// Current insert block with context (replaces `get_insert_block().unwrap()`).
+/// Kept as a free function for call sites that build blocks without a
+/// `FunctionLowering` (the IR lowering path and unit tests).
 pub(super) fn insert_block<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     what: &str,
-) -> Result<BasicBlock<'ctx>, Box<dyn Error>> {
+) -> Result<BasicBlock<'ctx>, LowerError> {
     ctx.builder
         .get_insert_block()
-        .ok_or_else(|| format!("lowering '{}': no insert block", what).into())
-}
-
-/// Enclosing function with context (replaces `get_parent().unwrap()`).
-pub(super) fn parent_function<'ctx, 'r>(
-    ctx: &CodegenCtx<'ctx, 'r>,
-    what: &str,
-) -> Result<FunctionValue<'ctx>, Box<dyn Error>> {
-    Ok(insert_block(ctx, what)?
-        .get_parent()
-        .ok_or_else(|| format!("lowering '{}': insert block has no parent function", what))?)
+        .ok_or_else(|| LowerError::missing_block(what, None, None))
 }
 
 /// Lower Typed into LLVM IR represented as a string.
@@ -99,7 +154,7 @@ pub(super) fn coerce_int_to_llvm_type<'ctx, 'r>(
     value: BasicValueEnum<'ctx>,
     target_type: BasicTypeEnum<'ctx>,
     is_unsigned: bool,
-) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
+) -> Result<BasicValueEnum<'ctx>, LowerError> {
     match (value, target_type) {
         (BasicValueEnum::IntValue(iv), BasicTypeEnum::IntType(it)) => {
             let src_bits = iv.get_type().get_bit_width();
@@ -135,7 +190,7 @@ pub(super) fn create_entry_allocas<'ctx>(
     function: FunctionValue<'ctx>,
     typed_fn: TypedFunction,
     current_scope: SymbolTable,
-) -> Result<HashMap<Identifier, PointerValue<'ctx>>, Box<dyn Error>> {
+) -> Result<HashMap<Identifier, PointerValue<'ctx>>, LowerError> {
     let mut vars = HashMap::new();
 
     let entry = function.get_first_basic_block().ok_or_else(|| {
@@ -177,33 +232,4 @@ pub(super) fn create_entry_allocas<'ctx>(
         vars.insert(param_name.clone(), alloca);
     }
     Ok(vars)
-}
-
-pub(super) fn emit_deferred_frame<'ctx, 'r>(
-    ctx: &CodegenCtx<'ctx, 'r>,
-    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut SymbolTable,
-    frame: &[TypedStatement],
-) -> Result<(), Box<dyn Error>> {
-    // Emit deferred statements in reverse order (LIFO)
-    for stmt in frame.iter().rev() {
-        codegen_stmt(ctx, vars, current_scope, stmt, None, &mut vec![Vec::new()])?;
-    }
-    Ok(())
-}
-
-/// Emit the deferred frames at `stack[from..]`, innermost frame first. Used
-/// on early exits: `return` unwinds everything (`from = 0`), `break` /
-/// `continue` unwind the frames opened inside the loop.
-pub(super) fn emit_frames_from<'ctx, 'r>(
-    ctx: &CodegenCtx<'ctx, 'r>,
-    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut SymbolTable,
-    stack: &[Vec<TypedStatement>],
-    from: usize,
-) -> Result<(), Box<dyn Error>> {
-    for frame in stack[from.min(stack.len())..].iter().rev() {
-        emit_deferred_frame(ctx, vars, current_scope, frame)?;
-    }
-    Ok(())
 }

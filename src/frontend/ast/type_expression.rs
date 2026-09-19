@@ -1,13 +1,27 @@
 use std::fmt;
 
+use crate::diagnostics::Span;
 use crate::frontend::{
     ast::{enum_variant::EnumVariant, field::Field},
     identifier::Identifier,
     tokens::builtin::BuiltinType,
 };
 
+/// A syntax type expression together with the source position it starts on.
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypeExpression {
+pub struct TypeExpression {
+    pub kind: TypeExpressionKind,
+    pub span: Span,
+}
+
+impl TypeExpression {
+    pub const fn at(kind: TypeExpressionKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeExpressionKind {
     Builtin(BuiltinType),
     Identifier(Identifier),
     Function {
@@ -37,42 +51,48 @@ pub enum TypeExpression {
     /// The `type` keyword used as a type annotation — indicates this binding holds a compile-time type value.
     TypeKeyword,
 }
-impl fmt::Display for TypeExpression {
+impl fmt::Display for TypeExpressionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TypeExpression::Builtin(builtin_type) => {
+            TypeExpressionKind::Builtin(builtin_type) => {
                 write!(f, "{}", builtin_type)
             }
-            TypeExpression::Identifier(identifier) => {
+            TypeExpressionKind::Identifier(identifier) => {
                 write!(f, "{}", identifier)
             }
-            TypeExpression::Function {
+            TypeExpressionKind::Function {
                 argument_types,
                 return_type,
             } => {
                 write!(f, "function({:?}) -> {}", argument_types, return_type)
             }
-            TypeExpression::Struct { fields } => {
+            TypeExpressionKind::Struct { fields } => {
                 write!(f, "struct {{ {:?} }}", fields)
             }
-            TypeExpression::Tuple { elements } => {
+            TypeExpressionKind::Tuple { elements } => {
                 write!(f, "({:?})", elements)
             }
-            TypeExpression::Enum { variants } => {
+            TypeExpressionKind::Enum { variants } => {
                 write!(f, "enum {{ {:?} }}", variants)
             }
-            TypeExpression::Array { element_type, size } => {
+            TypeExpressionKind::Array { element_type, size } => {
                 write!(f, "{}[{}]", element_type, size)
             }
-            TypeExpression::QualifiedIdentifier { module, name } => {
+            TypeExpressionKind::QualifiedIdentifier { module, name } => {
                 write!(f, "{}::{}", module, name)
             }
-            TypeExpression::TypeKeyword => {
+            TypeExpressionKind::TypeKeyword => {
                 write!(f, "type")
             }
-            TypeExpression::Pointer { pointed_type } => {
+            TypeExpressionKind::Pointer { pointed_type } => {
                 write!(f, "*{}", *pointed_type)
             }
         }
+    }
+}
+
+impl fmt::Display for TypeExpression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
     }
 }

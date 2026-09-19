@@ -1,5 +1,8 @@
 use crate::frontend::{
-    ast::{expression::Expression, statement::StatementKind},
+    ast::{
+        expression::{Expression, ExpressionKind},
+        statement::StatementKind,
+    },
     parser::ParseResult,
     tokens::{Operator, Punctuation, Token, TokenKind},
 };
@@ -53,8 +56,8 @@ where
                 let mut identifiers = Vec::new();
                 let (line, column) = self.last_pos;
                 for target in targets {
-                    match target {
-                        Expression::Identifier(identifier) => identifiers.push(identifier),
+                    match target.kind {
+                        ExpressionKind::Identifier(identifier) => identifiers.push(identifier),
                         _ => return Err(self.error("invalid declaration target", line, column)),
                     }
                 }
@@ -104,11 +107,15 @@ where
         if let Some(binop) = compound_op {
             self.next(); // consume the compound op
             let rhs = self.parse_expression()?;
-            let combined = Expression::Binary {
-                left: Box::new(lhs.clone()),
-                operator: binop,
-                right: Box::new(rhs),
-            };
+            let span = lhs.span;
+            let combined = Expression::at(
+                ExpressionKind::Binary {
+                    left: Box::new(lhs.clone()),
+                    operator: binop,
+                    right: Box::new(rhs),
+                },
+                span,
+            );
             return self.lhs_to_assignment(lhs, combined);
         }
 

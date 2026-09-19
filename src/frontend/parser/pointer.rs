@@ -1,5 +1,6 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
-    ast::type_expression::TypeExpression,
+    ast::type_expression::{TypeExpression, TypeExpressionKind},
     parser::ParseResult,
     tokens::{Operator, Token, TokenKind},
 };
@@ -16,9 +17,12 @@ where
                 return Err(self.error("expected type", next_token.line, next_token.column));
             }
         };
-        Ok(TypeExpression::Pointer {
-            pointed_type: Box::new(pointed_type),
-        })
+        Ok(TypeExpression::at(
+            TypeExpressionKind::Pointer {
+                pointed_type: Box::new(pointed_type),
+            },
+            Span::new(next_token.line, next_token.column),
+        ))
     }
 
     pub fn parse_pointer(&mut self) -> ParseResult<TypeExpression> {

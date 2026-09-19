@@ -1,5 +1,9 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
-    ast::{enum_variant::EnumVariant, type_expression::TypeExpression},
+    ast::{
+        enum_variant::EnumVariant,
+        type_expression::{TypeExpression, TypeExpressionKind},
+    },
     parser::ParseResult,
     tokens::{Punctuation, Token, TokenKind},
 };
@@ -45,6 +49,9 @@ where
             self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
         }
         let _ = type_token;
-        Ok(TypeExpression::Enum { variants })
+        Ok(TypeExpression::at(
+            TypeExpressionKind::Enum { variants },
+            Span::new(type_token.line, type_token.column),
+        ))
     }
 }

@@ -21,6 +21,7 @@ resolves). The entry file's own directory is always searched first.
 - `hello_world.fib` — minimal `libc::printf` program.
 - `minimal.fib` — smallest valid program (`fn main`, no imports, no output).
 - `bitwise_ops.fib` — shifts/masks over `@uint4` (IPv4 packing, permission flags, popcount).
+- `unsigned_ops.fib` — unsigned `div`/`rem`/`cmp`/`shr` with values above the signed maximum (must pick `udiv`/`urem`/`ult`/`lshr`).
 - `enums.fib` — plain enum discriminant cast (`Color.Green` → `1`).
 - `switch_enum.fib` — `switch`/`when` dispatch over a plain enum.
 - `tagged_union.fib` — enum variants with payloads (`Integer`/`Boolean`/`EOF`).

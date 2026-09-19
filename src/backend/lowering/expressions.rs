@@ -1,147 +1,143 @@
-use std::collections::HashMap;
-use std::error::Error;
-
 use inkwell::types::{BasicMetadataTypeEnum, BasicTypeEnum, FunctionType};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
 };
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
-use super::context::{CodegenCtx, coerce_int_to_llvm_type, insert_block, parent_function};
+use super::context::{CodegenCtx, FunctionLowering, coerce_int_to_llvm_type};
+use super::error::LowerError;
 use super::types::map_type_to_llvm;
-use crate::frontend::identifier::Identifier;
 use crate::frontend::tokens::builtin::{BuiltinFunction, BuiltinType};
 use crate::frontend::typed_ast::{
     BinOp, LogicalOp, SymbolTable, Ty, TypedExpr, TypedExprKind, TypedSymbol,
 };
 
-/// Compute a pointer to the lvalue represented by `expr`. Supports identifiers,
-/// field access chains, index access, and dereferences. Used by AddressOf and
-/// by assignment lowering.
-pub(super) fn compute_lvalue_ptr<'ctx, 'r>(
-    ctx: &'r CodegenCtx<'ctx, 'r>,
-    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut SymbolTable,
-    expr: &TypedExpr,
-) -> Result<PointerValue<'ctx>, Box<dyn Error>> {
-    match &expr.expression {
-        TypedExprKind::Identifier(name) => {
-            let ptr = *vars
-                .get(name)
-                .ok_or_else(|| format!("compute_lvalue_ptr: no alloca for identifier {}", name))?;
-            Ok(ptr)
-        }
-        TypedExprKind::Deref(inner) => {
-            let v = codegen_expr(ctx, vars, current_scope, inner)?;
-            Ok(v.into_pointer_value())
-        }
-        TypedExprKind::FieldAccess {
-            object,
-            field: _,
-            field_index,
-        } => {
-            let base_ptr = compute_lvalue_ptr(ctx, vars, current_scope, object)?;
-            let struct_ty =
-                map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
-            let BasicTypeEnum::StructType(st) = struct_ty else {
-                return Err("compute_lvalue_ptr: FieldAccess on non-struct type".into());
-            };
-            let gep =
-                ctx.builder
-                    .build_struct_gep(st, base_ptr, *field_index as u32, "fieldptr")?;
-            Ok(gep)
-        }
-        TypedExprKind::IndexAccess { object, index } => {
-            let idx_val = codegen_expr(ctx, vars, current_scope, index)?;
-            let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
-            match &object.inferred_type {
-                Ty::Array { .. } => {
-                    let arr_ty =
-                        map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
-                    let base_ptr = compute_lvalue_ptr(ctx, vars, current_scope, object)?;
-                    let i32_zero = ctx.ctx.i32_type().const_int(0, false);
-                    let gep = unsafe {
-                        ctx.builder.build_gep(
-                            arr_ty,
-                            base_ptr,
-                            &[i32_zero, idx_val.into_int_value()],
-                            "arr_idx_ptr",
-                        )?
-                    };
-                    Ok(gep)
-                }
-                _ => {
-                    let ptr_val = codegen_expr(ctx, vars, current_scope, object)?;
-                    let gep = unsafe {
-                        ctx.builder.build_gep(
-                            elem_ty,
-                            ptr_val.into_pointer_value(),
-                            &[idx_val.into_int_value()],
-                            "idx_ptr",
-                        )?
-                    };
-                    Ok(gep)
+impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
+    /// Compute a pointer to the lvalue represented by `expr`. Supports identifiers,
+    /// field access chains, index access, and dereferences. Used by AddressOf and
+    /// by assignment lowering.
+    pub(super) fn compute_lvalue_ptr(
+        &mut self,
+        expr: &TypedExpr,
+    ) -> Result<PointerValue<'ctx>, LowerError> {
+        let ctx = self.ctx;
+        match &expr.expression {
+            TypedExprKind::Identifier(name) => {
+                let ptr = *self.vars.get(name).ok_or_else(|| {
+                    format!("compute_lvalue_ptr: no alloca for identifier {}", name)
+                })?;
+                Ok(ptr)
+            }
+            TypedExprKind::Deref(inner) => {
+                let v = self.codegen_expr(inner)?;
+                Ok(v.into_pointer_value())
+            }
+            TypedExprKind::FieldAccess {
+                object,
+                field: _,
+                field_index,
+            } => {
+                let base_ptr = self.compute_lvalue_ptr(object)?;
+                let struct_ty =
+                    map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
+                let BasicTypeEnum::StructType(st) = struct_ty else {
+                    return Err("compute_lvalue_ptr: FieldAccess on non-struct type".into());
+                };
+                let gep =
+                    ctx.builder
+                        .build_struct_gep(st, base_ptr, *field_index as u32, "fieldptr")?;
+                Ok(gep)
+            }
+            TypedExprKind::IndexAccess { object, index } => {
+                let idx_val = self.codegen_expr(index)?;
+                let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
+                match &object.inferred_type {
+                    Ty::Array { .. } => {
+                        let arr_ty =
+                            map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
+                        let base_ptr = self.compute_lvalue_ptr(object)?;
+                        let i32_zero = ctx.ctx.i32_type().const_int(0, false);
+                        let gep = unsafe {
+                            ctx.builder.build_gep(
+                                arr_ty,
+                                base_ptr,
+                                &[i32_zero, idx_val.into_int_value()],
+                                "arr_idx_ptr",
+                            )?
+                        };
+                        Ok(gep)
+                    }
+                    _ => {
+                        let ptr_val = self.codegen_expr(object)?;
+                        let gep = unsafe {
+                            ctx.builder.build_gep(
+                                elem_ty,
+                                ptr_val.into_pointer_value(),
+                                &[idx_val.into_int_value()],
+                                "idx_ptr",
+                            )?
+                        };
+                        Ok(gep)
+                    }
                 }
             }
+            _ => Err("compute_lvalue_ptr: not an lvalue expression".into()),
         }
-        _ => Err("compute_lvalue_ptr: not an lvalue expression".into()),
     }
-}
-pub(super) fn build_tuple_value<'ctx, 'r>(
-    ctx: &CodegenCtx<'ctx, 'r>,
-    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut SymbolTable,
-    exprs: &[TypedExpr],
-    tuple_ty: inkwell::types::StructType<'ctx>,
-) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
-    if tuple_ty.count_fields() as usize != exprs.len() {
-        return Err(format!(
-            "return arity mismatch: function expects {} value(s), return has {} expression(s)",
-            tuple_ty.count_fields(),
-            exprs.len()
-        )
-        .into());
+    pub(super) fn build_tuple_value(
+        &mut self,
+        exprs: &[TypedExpr],
+        tuple_ty: inkwell::types::StructType<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, LowerError> {
+        let ctx = self.ctx;
+        if tuple_ty.count_fields() as usize != exprs.len() {
+            return Err(format!(
+                "return arity mismatch: function expects {} value(s), return has {} expression(s)",
+                tuple_ty.count_fields(),
+                exprs.len()
+            )
+            .into());
+        }
+        let alloca = ctx.builder.build_alloca(tuple_ty, "multirettmp")?;
+        for (idx, expr) in exprs.iter().enumerate() {
+            let raw_val = self.codegen_expr(expr)?;
+            let field_ty = tuple_ty
+                .get_field_type_at_index(idx as u32)
+                .ok_or_else(|| format!("tuple return has no field at index {}", idx))?;
+            let val = coerce_int_to_llvm_type(
+                ctx,
+                raw_val,
+                field_ty,
+                crate::ir::ty_is_unsigned(&expr.inferred_type),
+            )?;
+            let gep =
+                ctx.builder
+                    .build_struct_gep(tuple_ty, alloca, idx as u32, "multiretfield")?;
+            ctx.builder.build_store(gep, val)?;
+        }
+        Ok(ctx.builder.build_load(tuple_ty, alloca, "multiretload")?)
     }
-    let alloca = ctx.builder.build_alloca(tuple_ty, "multirettmp")?;
-    for (idx, expr) in exprs.iter().enumerate() {
-        let raw_val = codegen_expr(ctx, vars, current_scope, expr)?;
-        let field_ty = tuple_ty
-            .get_field_type_at_index(idx as u32)
-            .ok_or_else(|| format!("tuple return has no field at index {}", idx))?;
-        let val = coerce_int_to_llvm_type(
-            ctx,
-            raw_val,
-            field_ty,
-            crate::ir::ty_is_unsigned(&expr.inferred_type),
-        )?;
-        let gep = ctx
-            .builder
-            .build_struct_gep(tuple_ty, alloca, idx as u32, "multiretfield")?;
-        ctx.builder.build_store(gep, val)?;
-    }
-    Ok(ctx.builder.build_load(tuple_ty, alloca, "multiretload")?)
-}
 
-pub(super) fn store_lvalue<'ctx, 'r>(
-    ctx: &'r CodegenCtx<'ctx, 'r>,
-    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut SymbolTable,
-    target: &TypedExpr,
-    value: BasicValueEnum<'ctx>,
-    is_unsigned: bool,
-) -> Result<(), Box<dyn Error>> {
-    let ptr = compute_lvalue_ptr(ctx, vars, current_scope, target)?;
-    let target_ty = map_type_to_llvm(&target.inferred_type, ctx.ctx, current_scope.clone())?;
-    let value = coerce_int_to_llvm_type(ctx, value, target_ty, is_unsigned)?;
-    ctx.builder.build_store(ptr, value)?;
-    Ok(())
+    pub(super) fn store_lvalue(
+        &mut self,
+        target: &TypedExpr,
+        value: BasicValueEnum<'ctx>,
+        is_unsigned: bool,
+    ) -> Result<(), LowerError> {
+        let ctx = self.ctx;
+        let ptr = self.compute_lvalue_ptr(target)?;
+        let target_ty = map_type_to_llvm(&target.inferred_type, ctx.ctx, self.scope.clone())?;
+        let value = coerce_int_to_llvm_type(ctx, value, target_ty, is_unsigned)?;
+        ctx.builder.build_store(ptr, value)?;
+        Ok(())
+    }
 }
 
 pub(super) fn unpack_tuple_value<'ctx, 'r>(
     ctx: &CodegenCtx<'ctx, 'r>,
     tuple_value: BasicValueEnum<'ctx>,
     expected_count: usize,
-) -> Result<Vec<BasicValueEnum<'ctx>>, Box<dyn Error>> {
+) -> Result<Vec<BasicValueEnum<'ctx>>, LowerError> {
     let BasicValueEnum::StructValue(struct_value) = tuple_value else {
         return Err("multi-assignment expected a multiple-return tuple value".into());
     };
@@ -188,7 +184,7 @@ pub(super) fn get_or_declare<'ctx>(
 /// Extract the basic return value of a call site, erroring if the call is void.
 pub(super) fn call_result<'ctx>(
     cs: inkwell::values::CallSiteValue<'ctx>,
-) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
+) -> Result<BasicValueEnum<'ctx>, LowerError> {
     match cs.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => Ok(v),
         inkwell::values::ValueKind::Instruction(_) => {
@@ -197,13 +193,49 @@ pub(super) fn call_result<'ctx>(
     }
 }
 
-pub(super) fn codegen_expr<'ctx, 'r>(
-    ctx: &'r CodegenCtx<'ctx, 'r>,
-    vars: &mut HashMap<Identifier, PointerValue<'ctx>>,
-    current_scope: &mut SymbolTable,
-    expr: &TypedExpr,
-) -> Result<BasicValueEnum<'ctx>, Box<dyn Error>> {
-    match &expr.expression {
+impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
+    /// `&&` / `||` short-circuit: only evaluate the RHS when the LHS
+    /// doesn't already decide the result.
+    fn emit_short_circuit(
+        &mut self,
+        operator: LogicalOp,
+        left: BasicValueEnum<'ctx>,
+        right: &TypedExpr,
+    ) -> Result<BasicValueEnum<'ctx>, LowerError> {
+        let ctx = self.ctx;
+        let func = self.parent_function("short-circuit")?;
+        let lhs_bb = self.insert_block("short-circuit lhs")?;
+        let rhs_bb = ctx.ctx.append_basic_block(func, "sc_rhs");
+        let merge_bb = ctx.ctx.append_basic_block(func, "sc_merge");
+        let is_and = matches!(operator, LogicalOp::And);
+        if is_and {
+            ctx.builder
+                .build_conditional_branch(left.into_int_value(), rhs_bb, merge_bb)?;
+        } else {
+            ctx.builder
+                .build_conditional_branch(left.into_int_value(), merge_bb, rhs_bb)?;
+        }
+        ctx.builder.position_at_end(rhs_bb);
+        let r = self.codegen_expr(right)?;
+        // RHS evaluation may itself have produced new blocks.
+        let rhs_end_bb = self.insert_block("short-circuit rhs end")?;
+        ctx.builder.build_unconditional_branch(merge_bb)?;
+        ctx.builder.position_at_end(merge_bb);
+        let phi = ctx.builder.build_phi(ctx.ctx.bool_type(), "sctmp")?;
+        let short_val = ctx
+            .ctx
+            .bool_type()
+            .const_int(if is_and { 0 } else { 1 }, false);
+        phi.add_incoming(&[(&short_val, lhs_bb), (&r.into_int_value(), rhs_end_bb)]);
+        Ok(phi.as_basic_value())
+    }
+
+    pub(super) fn codegen_expr(
+        &mut self,
+        expr: &TypedExpr,
+    ) -> Result<BasicValueEnum<'ctx>, LowerError> {
+        let ctx = self.ctx;
+        match &expr.expression {
         TypedExprKind::LiteralInt { value } => {
             if let BasicTypeEnum::IntType(ty) =
                 map_type_to_llvm(&expr.inferred_type, ctx.ctx, SymbolTable::new())?
@@ -249,15 +281,15 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             Ok(ptr.as_pointer_value().as_basic_value_enum())
         }
         TypedExprKind::Identifier(name) => {
-            let ty = if let TypedSymbol::Binding(var) = current_scope
+            let ty = if let TypedSymbol::Binding(var) = self.scope
                 .lookup(name)
                 .ok_or_else(|| format!("didnt find type for name {}", name))?
             {
-                map_type_to_llvm(&var.ty, ctx.ctx, current_scope.clone())?
+                map_type_to_llvm(&var.ty, ctx.ctx, self.scope.clone())?
             } else {
                 return Err(format!("codegen_expr: {} is not a variable", name).into());
             };
-            let ptr = vars
+            let ptr = self.vars
                 .get(name)
                 .ok_or_else(|| format!("codegen_expr: didnt find ptr for name {}", name))?;
             let load = ctx.builder.build_load(ty, *ptr, &format!("load_{}", name))?;
@@ -271,45 +303,16 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             operator,
             right,
         } => {
-            let l = codegen_expr(ctx, vars, current_scope, left)?;
-            // `&&` / `||` short-circuit: only evaluate the RHS when the LHS
-            // doesn't already decide the result.
-            let func = parent_function(ctx, "short-circuit")?;
-            let lhs_bb = insert_block(ctx, "short-circuit lhs")?;
-            let rhs_bb = ctx.ctx.append_basic_block(func, "sc_rhs");
-            let merge_bb = ctx.ctx.append_basic_block(func, "sc_merge");
-            let is_and = matches!(operator, LogicalOp::And);
-                if is_and {
-                    ctx.builder
-                        .build_conditional_branch(l.into_int_value(), rhs_bb, merge_bb)?;
-                } else {
-                    ctx.builder
-                        .build_conditional_branch(l.into_int_value(), merge_bb, rhs_bb)?;
-                }
-                ctx.builder.position_at_end(rhs_bb);
-                let r = codegen_expr(ctx, vars, current_scope, right)?;
-                // RHS evaluation may itself have produced new blocks.
-                let rhs_end_bb = insert_block(ctx, "short-circuit rhs end")?;
-                ctx.builder.build_unconditional_branch(merge_bb)?;
-                ctx.builder.position_at_end(merge_bb);
-                let phi = ctx.builder.build_phi(ctx.ctx.bool_type(), "sctmp")?;
-                let short_val = ctx
-                    .ctx
-                    .bool_type()
-                    .const_int(if is_and { 0 } else { 1 }, false);
-                phi.add_incoming(&[
-                    (&short_val, lhs_bb),
-                    (&r.into_int_value(), rhs_end_bb),
-                ]);
-                Ok(phi.as_basic_value())
-            }
+            let l = self.codegen_expr(left)?;
+            self.emit_short_circuit(*operator, l, right)
+        }
         TypedExprKind::Binary {
             left,
             operator,
             right,
         } => {
-            let l = codegen_expr(ctx, vars, current_scope, left)?;
-            let r = codegen_expr(ctx, vars, current_scope, right)?;
+            let l = self.codegen_expr( left)?;
+            let r = self.codegen_expr( right)?;
             let is_float = matches!(
                 left.inferred_type,
                 Ty::Builtin(
@@ -334,7 +337,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                     if is_float {
                         Ok(ctx.builder.build_float_add(l.into_float_value(), r.into_float_value(), "faddtmp")?.as_basic_value_enum())
                     } else if let Ty::Pointer(inner_ty) = &left.inferred_type {
-                        let elem_ty = map_type_to_llvm(inner_ty, ctx.ctx, current_scope.clone())?;
+                        let elem_ty = map_type_to_llvm(inner_ty, ctx.ctx, self.scope.clone())?;
                         let gep = unsafe {
                             ctx.builder.build_gep(
                                 elem_ty,
@@ -354,7 +357,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                     if is_float {
                         Ok(ctx.builder.build_float_sub(l.into_float_value(), r.into_float_value(), "fsubtmp")?.as_basic_value_enum())
                     } else if let Ty::Pointer(inner_ty) = &left.inferred_type {
-                        let elem_ty = map_type_to_llvm(inner_ty, ctx.ctx, current_scope.clone())?;
+                        let elem_ty = map_type_to_llvm(inner_ty, ctx.ctx, self.scope.clone())?;
                         let neg_idx = ctx.builder.build_int_neg(r.into_int_value(), "neg_idx")?;
                         let gep = unsafe {
                             ctx.builder.build_gep(
@@ -470,7 +473,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
         TypedExprKind::Call { callee, args } => {
             let mut arg_values = Vec::new();
             for a in args.iter() {
-                let av = codegen_expr(ctx, vars, current_scope, a)?;
+                let av = self.codegen_expr( a)?;
                 arg_values.push(av);
             }
             // Lookup function; if not declared yet, auto-declare it as an external
@@ -483,7 +486,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                     let fn_ty = if let Ty::Builtin(BuiltinType::Void) = &expr.inferred_type {
                         ctx.ctx.void_type().fn_type(&param_types, false)
                     } else {
-                        let ret_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+                        let ret_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
                         match ret_ty {
                             BasicTypeEnum::IntType(it) => it.fn_type(&param_types, false),
                             BasicTypeEnum::PointerType(pt) => pt.fn_type(&param_types, false),
@@ -511,7 +514,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             let i64_ty = ctx.ctx.i64_type();
             let mut arg_vals = Vec::with_capacity(args.len());
             for a in args.iter() {
-                arg_vals.push(codegen_expr(ctx, vars, current_scope, a)?);
+                arg_vals.push(self.codegen_expr( a)?);
             }
             match builtin {
                 // strlen(s) -> i64
@@ -588,20 +591,20 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             // The object expression should be an Identifier whose alloca we can find.
             let struct_ptr = match &object.expression {
                 TypedExprKind::Identifier(name) => {
-                    *vars.get(name).ok_or_else(|| {
+                    *self.vars.get(name).ok_or_else(|| {
                         format!("codegen_expr: no alloca for struct identifier {}", name)
                     })?
                 }
                 _ => {
                     // For more complex cases (e.g. nested field access), codegen
                     // the object and store it to a temporary alloca first.
-                    let obj_val = codegen_expr(ctx, vars, current_scope, object)?;
+                    let obj_val = self.codegen_expr( object)?;
                     let tmp = ctx.builder.build_alloca(obj_val.get_type(), "struct_tmp")?;
                     ctx.builder.build_store(tmp, obj_val)?;
                     tmp
                 }
             };
-            let struct_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
+            let struct_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
             let BasicTypeEnum::StructType(st) = struct_ty else {
                 return Err("codegen_expr: FieldAccess on non-struct type".to_string().into());
             };
@@ -614,13 +617,13 @@ pub(super) fn codegen_expr<'ctx, 'r>(
         }
         TypedExprKind::StructConstruct { type_name: _, fields } => {
             // Allocate a struct, fill each field, then load the whole value.
-            let struct_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+            let struct_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
             let BasicTypeEnum::StructType(st) = struct_ty else {
                 return Err("codegen_expr: StructConstruct on non-struct type".to_string().into());
             };
             let alloca = ctx.builder.build_alloca(st, "structtmp")?;
             for (idx, (_, field_expr)) in fields.iter().enumerate() {
-                let val = codegen_expr(ctx, vars, current_scope, field_expr)?;
+                let val = self.codegen_expr( field_expr)?;
                 let gep = ctx.builder.build_struct_gep(st, alloca, idx as u32, "fieldptr")?;
                 ctx.builder.build_store(gep, val)?;
             }
@@ -628,19 +631,19 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             Ok(loaded)
         }
         TypedExprKind::AddressOf(inner) => {
-            let ptr = compute_lvalue_ptr(ctx, vars, current_scope, inner)?;
+            let ptr = self.compute_lvalue_ptr( inner)?;
             Ok(ptr.as_basic_value_enum())
         }
         TypedExprKind::Deref(inner) => {
             // Codegen the pointer expression, then load through it.
-            let ptr_val = codegen_expr(ctx, vars, current_scope, inner)?;
-            let pointee_llvm_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+            let ptr_val = self.codegen_expr( inner)?;
+            let pointee_llvm_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
             let loaded = ctx.builder.build_load(pointee_llvm_ty, ptr_val.into_pointer_value(), "deref")?;
             Ok(loaded)
         }
         TypedExprKind::Cast { expr: inner, target_type } => {
-            let src = codegen_expr(ctx, vars, current_scope, inner)?;
-            let dst_ty = map_type_to_llvm(target_type, ctx.ctx, current_scope.clone())?;
+            let src = self.codegen_expr( inner)?;
+            let dst_ty = map_type_to_llvm(target_type, ctx.ctx, self.scope.clone())?;
             match (src, dst_ty) {
                 // int -> int
                 (BasicValueEnum::IntValue(iv), BasicTypeEnum::IntType(it)) => {
@@ -730,11 +733,11 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             }
         }
         TypedExprKind::ArrayLiteral { elements } => {
-            let arr_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+            let arr_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
             let alloca = ctx.builder.build_alloca(arr_ty, "arrtmp")?;
             let i32_zero = ctx.ctx.i32_type().const_int(0, false);
             for (i, elem) in elements.iter().enumerate() {
-                let val = codegen_expr(ctx, vars, current_scope, elem)?;
+                let val = self.codegen_expr( elem)?;
                 let idx = ctx.ctx.i32_type().const_int(i as u64, false);
                 let elem_ptr = unsafe {
                     ctx.builder.build_gep(
@@ -750,13 +753,13 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             Ok(loaded)
         }
         TypedExprKind::IndexAccess { object, index } => {
-            let idx_val = codegen_expr(ctx, vars, current_scope, index)?;
-            let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+            let idx_val = self.codegen_expr( index)?;
+            let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
             match &object.inferred_type {
                 Ty::Array { .. } => {
-                    let arr_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, current_scope.clone())?;
+                    let arr_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
                     // Need a pointer to the array for GEP — store to temp alloca
-                    let arr_val = codegen_expr(ctx, vars, current_scope, object)?;
+                    let arr_val = self.codegen_expr( object)?;
                     let alloca = ctx.builder.build_alloca(arr_ty, "arridxtmp")?;
                     ctx.builder.build_store(alloca, arr_val)?;
                     let i32_zero = ctx.ctx.i32_type().const_int(0, false);
@@ -772,7 +775,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                     Ok(loaded)
                 }
                 _ => {
-                    let ptr_val = codegen_expr(ctx, vars, current_scope, object)?;
+                    let ptr_val = self.codegen_expr( object)?;
                     let gep = unsafe {
                         ctx.builder.build_gep(
                             elem_ty,
@@ -789,8 +792,8 @@ pub(super) fn codegen_expr<'ctx, 'r>(
         TypedExprKind::QualifiedAccess { module: module_name, name } => {
             // Qualified access: look up the mangled name in the LLVM module.
             let mangled = format!("{}__{}", module_name, name.value);
-            if let Some(ptr) = vars.get(name) {
-                let ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+            if let Some(ptr) = self.vars.get(name) {
+                let ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
                 Ok(ctx.builder.build_load(ty, *ptr, &mangled)?)
             } else if let Some(func) = ctx.module.get_function(&mangled) {
                 Ok(func.as_global_value().as_pointer_value().as_basic_value_enum())
@@ -804,7 +807,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
         TypedExprKind::EnumLiteral { discriminant, .. } => {
             // Determine the LLVM representation from the enum's resolved type.
             let llvm_ty =
-                map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+                map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
             let i32_ty = ctx.ctx.i32_type();
             let tag = i32_ty.const_int(*discriminant as u64, false);
             match llvm_ty {
@@ -839,7 +842,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
         } => {
             // Lower the enum struct type, alloca it, write tag, build the
             // payload struct and store it via a bitcast pointer.
-            let llvm_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, current_scope.clone())?;
+            let llvm_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
             let BasicTypeEnum::StructType(enum_st) = llvm_ty else {
                 return Err(format!(
                     "EnumVariantConstruct: enum LLVM type is not a struct: {:?}",
@@ -871,7 +874,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             // Build payload struct type matching the declared field order.
             let payload_field_tys: Vec<BasicTypeEnum> = payload_spec
                 .iter()
-                .map(|(_, t)| map_type_to_llvm(t, ctx.ctx, current_scope.clone()))
+                .map(|(_, t)| map_type_to_llvm(t, ctx.ctx, self.scope.clone()))
                 .collect::<Result<_, _>>()?;
             let payload_st = ctx.ctx.struct_type(&payload_field_tys, false);
             // GEP payload region, then bitcast to the variant's payload struct
@@ -887,7 +890,7 @@ pub(super) fn codegen_expr<'ctx, 'r>(
                     .ok_or_else(|| {
                         format!("EnumVariantConstruct: missing payload field '{}'", fname)
                     })?;
-                let v_val = codegen_expr(ctx, vars, current_scope, val)?;
+                let v_val = self.codegen_expr( val)?;
                 let field_ptr =
                     ctx.builder
                         .build_struct_gep(payload_st, payload_ptr, idx as u32, "varfldptr")?;
@@ -897,5 +900,6 @@ pub(super) fn codegen_expr<'ctx, 'r>(
             let loaded = ctx.builder.build_load(enum_st, alloca, "enumload")?;
             Ok(loaded)
         }
+    }
     }
 }

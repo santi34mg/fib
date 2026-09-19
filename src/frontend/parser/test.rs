@@ -5,7 +5,8 @@ mod tests {
     use crate::frontend::ast::statement::StatementKind;
     use crate::frontend::ast::variable_declaration::VariableDeclaration;
     use crate::frontend::ast::{
-        Ast, declaration::DeclarationNode, expression::Expression, type_expression::TypeExpression,
+        Ast, declaration::DeclarationNode, expression::Expression, expression::ExpressionKind,
+        type_expression::TypeExpression, type_expression::TypeExpressionKind,
     };
     use crate::frontend::lexer::Lexer;
     use crate::frontend::parser::Parser;
@@ -53,7 +54,10 @@ mod tests {
         assert_eq!(stmts.len(), 1);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::Literal(Literal::Integer(1)))
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Literal(Literal::Integer(1)),
+                ..
+            })
         ));
     }
 
@@ -63,17 +67,33 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = stmts[0]
         {
             let l_expr = *left.clone();
             let op = operator;
             let r_expr = *right.clone();
-            assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
-            assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
+            assert!(matches!(
+                l_expr,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+                    ..
+                }
+            ));
+            assert!(matches!(
+                r_expr,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                    ..
+                }
+            ));
             assert!(matches!(op, Operator::Plus));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -86,17 +106,33 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = stmts[0]
         {
             let l_expr = *left.clone();
             let op = operator;
             let r_expr = *right.clone();
-            assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
-            assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
+            assert!(matches!(
+                l_expr,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+                    ..
+                }
+            ));
+            assert!(matches!(
+                r_expr,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                    ..
+                }
+            ));
             assert!(matches!(op, Operator::Minus));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -109,17 +145,33 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = stmts[0]
         {
             let l_expr = *left.clone();
             let op = operator;
             let r_expr = *right.clone();
-            assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
-            assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
+            assert!(matches!(
+                l_expr,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+                    ..
+                }
+            ));
+            assert!(matches!(
+                r_expr,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                    ..
+                }
+            ));
             assert!(matches!(op, Operator::Star));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -132,17 +184,33 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = stmts[0]
         {
             let l_expr = *left.clone();
             let op = operator;
             let r_expr = *right.clone();
-            assert!(matches!(l_expr, Expression::Literal(Literal::Integer(1))));
-            assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
+            assert!(matches!(
+                l_expr,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+                    ..
+                }
+            ));
+            assert!(matches!(
+                r_expr,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                    ..
+                }
+            ));
             assert!(matches!(op, Operator::Slash));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -155,17 +223,33 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = &stmts[0]
         {
             let l_expr = *left.clone();
             let op = operator;
             let r_expr = *right.clone();
-            assert!(matches!(l_expr, Expression::Binary { .. }));
-            assert!(matches!(r_expr, Expression::Literal(Literal::Integer(2))));
+            assert!(matches!(
+                l_expr,
+                Expression {
+                    kind: ExpressionKind::Binary { .. },
+                    ..
+                }
+            ));
+            assert!(matches!(
+                r_expr,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                    ..
+                }
+            ));
             assert!(matches!(op, Operator::Plus));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -180,8 +264,16 @@ mod tests {
         assert_eq!(stmts.len(), 1);
         if let StatementKind::VariableDeclaration(VariableDeclaration {
             identifier,
-            constant_type: Some(TypeExpression::Builtin(_)),
-            expression: Some(Expression::Literal(Literal::Integer(0))),
+            constant_type:
+                Some(TypeExpression {
+                    kind: TypeExpressionKind::Builtin(_),
+                    ..
+                }),
+            expression:
+                Some(Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(0)),
+                    ..
+                }),
         }) = stmts[0]
         {
             assert_eq!(identifier.value, "count");
@@ -216,8 +308,16 @@ mod tests {
         assert_eq!(stmts.len(), 1);
         if let StatementKind::VariableDeclaration(VariableDeclaration {
             identifier,
-            constant_type: Some(TypeExpression::Builtin(_)),
-            expression: Some(Expression::Literal(Literal::Integer(0))),
+            constant_type:
+                Some(TypeExpression {
+                    kind: TypeExpressionKind::Builtin(_),
+                    ..
+                }),
+            expression:
+                Some(Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(0)),
+                    ..
+                }),
         }) = stmts[0]
         {
             assert_eq!(identifier.value, "count");
@@ -235,7 +335,11 @@ mod tests {
         if let StatementKind::VariableDeclaration(VariableDeclaration {
             identifier,
             constant_type: None,
-            expression: Some(Expression::Literal(Literal::Integer(0))),
+            expression:
+                Some(Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(0)),
+                    ..
+                }),
         }) = stmts[0]
         {
             assert_eq!(identifier.value, "count");
@@ -281,7 +385,7 @@ mod tests {
             &body.statements[0].kind,
             StatementKind::Return(Some(exprs))
                 if exprs.len() == 1
-                    && matches!(exprs[0], Expression::Literal(Literal::Integer(42)))
+                    && matches!(exprs[0], Expression { kind: ExpressionKind::Literal(Literal::Integer(42)), .. })
         ));
     }
 
@@ -318,7 +422,10 @@ mod tests {
         {
             assert!(matches!(
                 condition,
-                Expression::Literal(Literal::Boolean(true))
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Boolean(true)),
+                    ..
+                }
             ));
             assert_eq!(then_branch.len(), 1);
             assert!(else_branch.is_none());
@@ -419,8 +526,18 @@ mod tests {
         let test_string = "foo(1, 2, 3)";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
-        if let StatementKind::ExpressionStatement(Expression::Call { callee, args }) = stmts[0] {
-            assert!(matches!(**callee, Expression::Identifier(_)));
+        if let StatementKind::ExpressionStatement(Expression {
+            kind: ExpressionKind::Call { callee, args },
+            ..
+        }) = stmts[0]
+        {
+            assert!(matches!(
+                **callee,
+                Expression {
+                    kind: ExpressionKind::Identifier(_),
+                    ..
+                }
+            ));
             assert_eq!(args.len(), 3);
         } else {
             panic!("expected Call expression, got {:#?}", stmts[0]);
@@ -434,8 +551,11 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::Unary {
-                operator: Operator::Minus,
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Unary {
+                    operator: Operator::Minus,
+                    ..
+                },
                 ..
             })
         ));
@@ -448,8 +568,11 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::Unary {
-                operator: Operator::LogicalNot,
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Unary {
+                    operator: Operator::LogicalNot,
+                    ..
+                },
                 ..
             })
         ));
@@ -462,8 +585,11 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::Binary {
-                operator: Operator::DoubleEquals,
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Binary {
+                    operator: Operator::DoubleEquals,
+                    ..
+                },
                 ..
             })
         ));
@@ -476,8 +602,11 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::Binary {
-                operator: Operator::LogicalAnd,
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Binary {
+                    operator: Operator::LogicalAnd,
+                    ..
+                },
                 ..
             })
         ));
@@ -489,11 +618,19 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         // The outer operation must be multiplication with LHS being a grouping
-        if let StatementKind::ExpressionStatement(Expression::Binary { left, operator, .. }) =
-            stmts[0]
+        if let StatementKind::ExpressionStatement(Expression {
+            kind: ExpressionKind::Binary { left, operator, .. },
+            ..
+        }) = stmts[0]
         {
             assert!(matches!(operator, Operator::Star));
-            assert!(matches!(**left, Expression::Grouping(_)));
+            assert!(matches!(
+                **left,
+                Expression {
+                    kind: ExpressionKind::Grouping(_),
+                    ..
+                }
+            ));
         } else {
             panic!("unexpected AST: {:#?}", stmts[0]);
         }
@@ -506,7 +643,10 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::FieldAccess { .. })
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::FieldAccess { .. },
+                ..
+            })
         ));
     }
 
@@ -517,7 +657,10 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::Cast { .. })
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Cast { .. },
+                ..
+            })
         ));
     }
 
@@ -528,7 +671,10 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::AddressOf(_))
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::AddressOf(_),
+                ..
+            })
         ));
     }
 
@@ -539,7 +685,10 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::Dereference(_))
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Dereference(_),
+                ..
+            })
         ));
     }
 
@@ -550,7 +699,10 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::IndexAccess { .. })
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::IndexAccess { .. },
+                ..
+            })
         ));
     }
 
@@ -561,7 +713,10 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::Literal(Literal::String(_)))
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Literal(Literal::String(_)),
+                ..
+            })
         ));
     }
 
@@ -573,11 +728,17 @@ mod tests {
         let stmts_f = module_statements(&ast_f);
         assert!(matches!(
             stmts_t[0],
-            StatementKind::ExpressionStatement(Expression::Literal(Literal::Boolean(true)))
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Literal(Literal::Boolean(true)),
+                ..
+            })
         ));
         assert!(matches!(
             stmts_f[0],
-            StatementKind::ExpressionStatement(Expression::Literal(Literal::Boolean(false)))
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Literal(Literal::Boolean(false)),
+                ..
+            })
         ));
     }
 
@@ -587,7 +748,10 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
-            StatementKind::ExpressionStatement(Expression::Literal(Literal::Null))
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Literal(Literal::Null),
+                ..
+            })
         ));
     }
 
@@ -612,15 +776,31 @@ mod tests {
         // 1 + 2 * 3 should parse as 1 + (2 * 3)
         let ast = get_ast("1 + 2 * 3");
         let stmts = module_statements(&ast);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = stmts[0]
         {
             assert!(matches!(operator, Operator::Plus));
-            assert!(matches!(**left, Expression::Literal(Literal::Integer(1))));
-            assert!(matches!(**right, Expression::Binary { .. }));
+            assert!(matches!(
+                **left,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+                    ..
+                }
+            ));
+            assert!(matches!(
+                **right,
+                Expression {
+                    kind: ExpressionKind::Binary { .. },
+                    ..
+                }
+            ));
         } else {
             panic!("unexpected AST");
         }
@@ -639,7 +819,10 @@ mod tests {
         let test_string = "[1, 2, 3]";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
-        if let StatementKind::ExpressionStatement(Expression::ArrayLiteral { elements }) = stmts[0]
+        if let StatementKind::ExpressionStatement(Expression {
+            kind: ExpressionKind::ArrayLiteral { elements },
+            ..
+        }) = stmts[0]
         {
             assert_eq!(elements.len(), 3);
         } else {
@@ -724,15 +907,31 @@ mod tests {
         // 8 - 4 - 2 parses as (8 - 4) - 2
         let ast = get_ast("8 - 4 - 2");
         let stmts = module_statements(&ast);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = stmts[0]
         {
             assert!(matches!(operator, Operator::Minus));
-            assert!(matches!(**right, Expression::Literal(Literal::Integer(2))));
-            assert!(matches!(**left, Expression::Binary { .. }));
+            assert!(matches!(
+                **right,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                    ..
+                }
+            ));
+            assert!(matches!(
+                **left,
+                Expression {
+                    kind: ExpressionKind::Binary { .. },
+                    ..
+                }
+            ));
         } else {
             panic!("unexpected AST: {:#?}", stmts[0]);
         }
@@ -743,16 +942,30 @@ mod tests {
         // 1 << 2 + 3 parses as 1 << (2 + 3)
         let ast = get_ast("1 << 2 + 3");
         let stmts = module_statements(&ast);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = stmts[0]
         {
             assert!(matches!(operator, Operator::LeftShift));
-            assert!(matches!(**left, Expression::Literal(Literal::Integer(1))));
-            if let Expression::Binary {
-                operator: inner_op, ..
+            assert!(matches!(
+                **left,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+                    ..
+                }
+            ));
+            if let Expression {
+                kind:
+                    ExpressionKind::Binary {
+                        operator: inner_op, ..
+                    },
+                ..
             } = &**right
             {
                 assert!(matches!(inner_op, Operator::Plus));
@@ -769,16 +982,30 @@ mod tests {
         // a && b || c parses as (a && b) || c
         let ast = get_ast("a && b || c");
         let stmts = module_statements(&ast);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = stmts[0]
         {
             assert!(matches!(operator, Operator::LogicalOr));
-            assert!(matches!(**right, Expression::Identifier(_)));
-            if let Expression::Binary {
-                operator: inner_op, ..
+            assert!(matches!(
+                **right,
+                Expression {
+                    kind: ExpressionKind::Identifier(_),
+                    ..
+                }
+            ));
+            if let Expression {
+                kind:
+                    ExpressionKind::Binary {
+                        operator: inner_op, ..
+                    },
+                ..
             } = &**left
             {
                 assert!(matches!(inner_op, Operator::LogicalAnd));
@@ -795,15 +1022,31 @@ mod tests {
         // 1 + 2 == 3 parses as (1 + 2) == 3
         let ast = get_ast("1 + 2 == 3");
         let stmts = module_statements(&ast);
-        if let StatementKind::ExpressionStatement(Expression::Binary {
-            left,
-            operator,
-            right,
+        if let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::Binary {
+                    left,
+                    operator,
+                    right,
+                },
+            ..
         }) = stmts[0]
         {
             assert!(matches!(operator, Operator::DoubleEquals));
-            assert!(matches!(**right, Expression::Literal(Literal::Integer(3))));
-            assert!(matches!(**left, Expression::Binary { .. }));
+            assert!(matches!(
+                **right,
+                Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(3)),
+                    ..
+                }
+            ));
+            assert!(matches!(
+                **left,
+                Expression {
+                    kind: ExpressionKind::Binary { .. },
+                    ..
+                }
+            ));
         } else {
             panic!("unexpected AST: {:#?}", stmts[0]);
         }
@@ -817,7 +1060,11 @@ mod tests {
         let stmts = module_statements(&ast);
         if let StatementKind::VariableDeclaration(decl) = stmts[0] {
             let init = decl.expression.as_ref().expect("initializer");
-            if let Expression::QualifiedAccess { module, member } = init {
+            if let Expression {
+                kind: ExpressionKind::QualifiedAccess { module, member },
+                ..
+            } = init
+            {
                 assert_eq!(module.value, "a");
                 assert_eq!(member.value, "b");
             } else {
@@ -834,7 +1081,11 @@ mod tests {
         let stmts = module_statements(&ast);
         if let StatementKind::VariableDeclaration(decl) = stmts[0] {
             let init = decl.expression.as_ref().expect("initializer");
-            if let Expression::BuiltinCall { builtin, args } = init {
+            if let Expression {
+                kind: ExpressionKind::BuiltinCall { builtin, args },
+                ..
+            } = init
+            {
                 assert!(matches!(
                     builtin,
                     crate::frontend::tokens::builtin::BuiltinFunction::StrLen
@@ -860,7 +1111,11 @@ mod tests {
         let stmts = module_statements(&ast);
         if let StatementKind::VariableDeclaration(decl) = stmts[0] {
             let init = decl.expression.as_ref().expect("initializer");
-            if let Expression::StructConstruct { type_name, fields } = init {
+            if let Expression {
+                kind: ExpressionKind::StructConstruct { type_name, fields },
+                ..
+            } = init
+            {
                 assert_eq!(type_name.value, "Point");
                 assert_eq!(fields.len(), 2);
                 assert_eq!(fields[0].0.value, "x");
@@ -879,10 +1134,14 @@ mod tests {
         let stmts = module_statements(&ast);
         if let StatementKind::VariableDeclaration(decl) = stmts[0] {
             let init = decl.expression.as_ref().expect("initializer");
-            if let Expression::EnumVariantConstruct {
-                type_name,
-                variant,
-                fields,
+            if let Expression {
+                kind:
+                    ExpressionKind::EnumVariantConstruct {
+                        type_name,
+                        variant,
+                        fields,
+                    },
+                ..
             } = init
             {
                 assert_eq!(type_name.value, "Color");
@@ -901,7 +1160,13 @@ mod tests {
         let ast = get_ast("fn f(c: @int4) @void { switch (c) { when .R { } when else { } } }");
         let stmts = module_statements(&ast);
         if let StatementKind::Switch { subject, arms } = stmts[0] {
-            assert!(matches!(subject, Expression::Identifier(_)));
+            assert!(matches!(
+                subject,
+                Expression {
+                    kind: ExpressionKind::Identifier(_),
+                    ..
+                }
+            ));
             assert_eq!(arms.len(), 2);
             assert!(matches!(
                 arms[0].pattern,

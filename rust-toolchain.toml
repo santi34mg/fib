@@ -1,0 +1,8 @@
+[toolchain]
+# Pinned to the stable that last went green in CI (rustc 1.98.0, 2026-08-18).
+# This pin doubles as the MSRV policy: any other toolchain may build but is
+# unsupported. The dtolnay/rust-toolchain action picks this file up
+# automatically, so no `toolchain:` input is needed in ci.yml; `rustup`
+# honors it for local builds too. Bump deliberately, never by drift.
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]

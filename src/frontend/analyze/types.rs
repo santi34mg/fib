@@ -1,4 +1,7 @@
-use crate::frontend::ast::{declaration::DeclarationNode, type_expression::TypeExpression};
+use crate::frontend::ast::{
+    declaration::DeclarationNode,
+    type_expression::{TypeExpression, TypeExpressionKind},
+};
 use crate::frontend::typed_ast::{SymbolTable, Ty, TypedEnumVariant, TypedSymbol};
 
 use super::AnalysisError;
@@ -39,11 +42,16 @@ pub(super) fn resolve_struct_fields(
 }
 
 pub(super) fn map_type(type_expression: TypeExpression) -> Result<Ty, AnalysisError> {
-    let typed_typekind = match type_expression {
-        TypeExpression::TypeKeyword => Ty::Type,
-        TypeExpression::Builtin(builtin) => Ty::Builtin(builtin),
-        TypeExpression::Identifier(identifier) => Ty::Identifier(identifier),
-        TypeExpression::Struct { fields } => {
+    let span = type_expression.span;
+    map_type_inner(type_expression).map_err(|e| e.with_span_fallback(span))
+}
+
+fn map_type_inner(type_expression: TypeExpression) -> Result<Ty, AnalysisError> {
+    let typed_typekind = match type_expression.kind {
+        TypeExpressionKind::TypeKeyword => Ty::Type,
+        TypeExpressionKind::Builtin(builtin) => Ty::Builtin(builtin),
+        TypeExpressionKind::Identifier(identifier) => Ty::Identifier(identifier),
+        TypeExpressionKind::Struct { fields } => {
             let mut typed_fields = Vec::new();
             for f in fields {
                 typed_fields.push((f.label.value.clone(), Box::new(map_type(f.type_id)?)));
@@ -52,7 +60,7 @@ pub(super) fn map_type(type_expression: TypeExpression) -> Result<Ty, AnalysisEr
                 fields: typed_fields,
             }
         }
-        TypeExpression::Enum { variants } => {
+        TypeExpressionKind::Enum { variants } => {
             let mut typed_variants = Vec::new();
             for (idx, v) in variants.into_iter().enumerate() {
                 let payload = match v.payload {
@@ -75,7 +83,7 @@ pub(super) fn map_type(type_expression: TypeExpression) -> Result<Ty, AnalysisEr
                 variants: typed_variants,
             }
         }
-        TypeExpression::Function {
+        TypeExpressionKind::Function {
             argument_types,
             return_type,
         } => {
@@ -88,7 +96,7 @@ pub(super) fn map_type(type_expression: TypeExpression) -> Result<Ty, AnalysisEr
                 return_type: Box::new(map_type(*return_type)?),
             }
         }
-        TypeExpression::Tuple { elements } => {
+        TypeExpressionKind::Tuple { elements } => {
             let mut mapped_elements = Vec::new();
             for element in elements {
                 mapped_elements.push(map_type(element)?);
@@ -97,15 +105,15 @@ pub(super) fn map_type(type_expression: TypeExpression) -> Result<Ty, AnalysisEr
                 elements: mapped_elements,
             }
         }
-        TypeExpression::Pointer { pointed_type } => {
+        TypeExpressionKind::Pointer { pointed_type } => {
             let inner = map_type(*pointed_type)?;
             Ty::Pointer(Box::new(inner))
         }
-        TypeExpression::Array { element_type, size } => Ty::Array {
+        TypeExpressionKind::Array { element_type, size } => Ty::Array {
             element_type: Box::new(map_type(*element_type)?),
             size,
         },
-        TypeExpression::QualifiedIdentifier { module, name } => Ty::QualifiedIdentifier {
+        TypeExpressionKind::QualifiedIdentifier { module, name } => Ty::QualifiedIdentifier {
             module: module.value.clone(),
             name,
         },

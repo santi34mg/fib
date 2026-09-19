@@ -5,14 +5,18 @@
 //! flat representation: at most one operation per instruction, control
 //! flow only via labels and jumps, values in temporaries.
 //!
-//! Status: `lower_typed_program` implements the core subset (locals,
-//! integer/bool/float arithmetic, calls, `if`/`for`/`break`/`continue`,
-//! `defer` via inline duplication at `return`/`break`/`continue`, `return`).
-//! Aggregate / pointer / enum / `switch` / multi-value nodes are modeled
-//! as explicit `Instruction` variants (design lock) but return
-//! `LowerError::Unsupported` until phase 2b. `backend::lowering` still
-//! consumes the typed AST directly; migration to consume `IrProgram`
-//! happens after parity tests pass.
+//! Status: `lower_typed_program` implements locals, integer/bool/float
+//! arithmetic, calls, `if`/`for`/`break`/`continue`, `defer` (inline
+//! duplication), `return`, plus assignment forms (`MultiAssign` /
+//! `MultiBinding` / `FieldAssign` / `DerefAssign` / `IndexAssign`),
+//! plain-enum `switch` (no payload bindings), and module-level `const`
+//! globals. Aggregate / pointer / enum-payload / qualified nodes are
+//! modeled as explicit `Instruction` variants; complex shapes still return
+//! `LowerError::Unsupported` so the driver can fall back to the direct
+//! `TypedProgram -> LLVM` path. `driver::lower_to_llvm_ir` tries this
+//! import first, then the `ir_lower` consumer; on any `Unsupported` (or
+//! consumer gap) it falls back, so `IrProgram` is on the production path
+//! for every program that fits the core subset.
 
 use std::fmt;
 
@@ -184,6 +188,12 @@ pub enum Instruction {
         cases: Vec<(u32, Label)>,
         default: Label,
     },
+    TupleExtract {
+        dst: Temp,
+        src: Operand,
+        index: usize,
+        ty: Ty,
+    },
     // --- control flow (flat only) ---
     IfGoto {
         cond: Operand,
@@ -217,9 +227,21 @@ pub struct IrFunction {
     pub blocks: Vec<BasicBlock>,
 }
 
+/// A module-level constant: a typed global with a constant initializer.
+/// Only constant-foldable initializers (literals lowered to `Operand::Const*`
+/// with no emitted instructions) are accepted; anything else returns
+/// `LowerError::Unsupported` so the driver falls back to the direct path.
+#[derive(Debug, Clone)]
+pub struct IrConst {
+    pub name: String,
+    pub ty: Ty,
+    pub init: Operand,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct IrProgram {
     pub functions: Vec<IrFunction>,
+    pub consts: Vec<IrConst>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,8 +291,11 @@ pub fn ty_is_float(ty: &Ty) -> bool {
 
 /// Lower a typed program to flat IR.
 ///
-/// Handles the core subset; everything else returns
-/// `LowerError::Unsupported` with the source construct named.
+/// Handles locals, arithmetic, calls, `if`/`for`/`break`/`continue`,
+/// `defer`, `return`, assignment forms, plain-enum `switch`, and
+/// module-level `const` globals. Anything else returns
+/// `LowerError::Unsupported` with the source construct named so the
+/// driver can fall back to the direct path.
 pub fn lower_typed_program(program: TypedProgram) -> Result<IrProgram, LowerError> {
     let mut out = IrProgram::default();
     let mut decls = program.declarations;
@@ -281,10 +306,7 @@ pub fn lower_typed_program(program: TypedProgram) -> Result<IrProgram, LowerErro
                 out.functions.push(lower_function(f)?);
             }
             TypedDecl::Const(b) => {
-                return Err(LowerError::Unsupported(format!(
-                    "module-level const '{}' (lower via function bodies first)",
-                    b.name
-                )));
+                out.consts.push(lower_const(b)?);
             }
             TypedDecl::Type(_) => {
                 // Types live in the scope; no code to emit.
@@ -292,4 +314,51 @@ pub fn lower_typed_program(program: TypedProgram) -> Result<IrProgram, LowerErro
         }
     }
     Ok(out)
+}
+
+/// Lower a module-level `const` to an `IrConst` global.
+///
+/// Only constant initializers (no emitted instructions, constant operand)
+/// are accepted; anything requiring runtime code returns `Unsupported`.
+fn lower_const(b: &crate::frontend::typed_ast::TypedBinding) -> Result<IrConst, LowerError> {
+    use crate::frontend::tokens::builtin::BuiltinType;
+    let init_expr = b.init.as_ref().ok_or_else(|| {
+        LowerError::Unsupported(format!(
+            "module-level const '{}' has no initializer",
+            b.name
+        ))
+    })?;
+    // Lower with a throwaway builder: const inits must not emit code.
+    let mut tmp =
+        builder::FunctionBuilder::new("__const_init".to_string(), b.ty.clone(), true, false);
+    let operand = expressions::lower_expr(&mut tmp, init_expr)?;
+    if tmp.emitted_any() {
+        return Err(LowerError::Unsupported(format!(
+            "module-level const '{}' needs runtime lowering",
+            b.name
+        )));
+    }
+    // Accept only constant operands; temps/symbols need runtime slots.
+    let is_const = matches!(
+        operand,
+        Operand::ConstInt { .. }
+            | Operand::ConstFloat { .. }
+            | Operand::ConstBool(_)
+            | Operand::StringLit(_)
+            | Operand::Null
+    );
+    if !is_const {
+        // Void-typed const inits (e.g. calls) lower to a dummy bool; still
+        // not a compile-time constant.
+        let _ = BuiltinType::Void;
+        return Err(LowerError::Unsupported(format!(
+            "module-level const '{}' needs runtime lowering",
+            b.name
+        )));
+    }
+    Ok(IrConst {
+        name: b.name.value.clone(),
+        ty: b.ty.clone(),
+        init: operand,
+    })
 }

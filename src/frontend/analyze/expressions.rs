@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::frontend::ast::expression::Expression as PExpr;
+use crate::frontend::ast::expression::{Expression as PExpr, ExpressionKind as PExprKind};
 use crate::frontend::identifier::Identifier;
 use crate::frontend::tokens::Operator;
 use crate::frontend::tokens::builtin::{BuiltinFunction, BuiltinType};
@@ -57,15 +57,39 @@ pub(super) fn require_integer_index(ty: &Ty, what: &str) -> Result<(), AnalysisE
     }
 }
 
-pub(super) fn coerce_expr_to_type(
-    mut expr: TypedExpr,
+/// Single coercion entry point: bring `expr` to `target` type.
+///
+/// This subsumes the former `coerce_expr_to_type` + `coerce_or_alias` pair,
+/// which duplicated the equality/`Never`/numeric logic and forced every
+/// call site to pick one. Resolution order:
+/// 1. identical types pass through;
+/// 2. `Never` (the inferred type of `null` and diverging expressions)
+///    unifies with any type by re-annotation;
+/// 3. alias-equivalent types (same shape after `resolve_type_alias`)
+///    re-annotate with the target, no conversion emitted;
+/// 4. integer/float literals relabel to the target width, other numerics
+///    convert via an explicit `Cast`.
+///
+/// Anything else errors.
+pub(super) fn coerce_to(
     target: &Ty,
+    expr: TypedExpr,
+    scope: &SymbolTable,
 ) -> Result<TypedExpr, AnalysisError> {
     if &expr.inferred_type == target {
         return Ok(expr);
     }
 
     if expr.inferred_type == Ty::Builtin(BuiltinType::Never) {
+        let mut expr = expr;
+        expr.inferred_type = target.clone();
+        return Ok(expr);
+    }
+
+    if resolve_type_alias(target.clone(), scope)
+        == resolve_type_alias(expr.inferred_type.clone(), scope)
+    {
+        let mut expr = expr;
         expr.inferred_type = target.clone();
         return Ok(expr);
     }
@@ -74,12 +98,14 @@ pub(super) fn coerce_expr_to_type(
         (TypedExprKind::LiteralInt { .. }, Ty::Builtin(src), Ty::Builtin(dst))
             if is_integer_builtin(src) && is_integer_builtin(dst) =>
         {
+            let mut expr = expr;
             expr.inferred_type = target.clone();
             Ok(expr)
         }
         (TypedExprKind::LiteralFloat { .. }, Ty::Builtin(src), Ty::Builtin(dst))
             if is_float_builtin(src) && is_float_builtin(dst) =>
         {
+            let mut expr = expr;
             expr.inferred_type = target.clone();
             Ok(expr)
         }
@@ -98,25 +124,21 @@ pub(super) fn coerce_expr_to_type(
     }
 }
 
-/// Like `coerce_expr_to_type`, but also accepts the case where the target is
-/// a named type alias of the expression's structural type (or vice versa),
-/// in which case the expression is just re-annotated with the target type.
-pub(super) fn coerce_or_alias(
-    expr: TypedExpr,
+/// Coerce an assignment RHS (`value`) to the store target type, wrapping
+/// coercion failures in the shared "cannot assign value of type ..." error.
+/// `what` describes the target, e.g. `'x' of type @int4`,
+/// `field 'x' of type @int4`, `array element of type @int4`.
+/// Used by all four assignment forms (`Assign`, `FieldAssign`,
+/// `DerefAssign`, `IndexAssign`) so their strictness stays identical.
+pub(super) fn check_assignable(
     target: &Ty,
+    value: TypedExpr,
     scope: &SymbolTable,
+    what: &str,
 ) -> Result<TypedExpr, AnalysisError> {
-    if &expr.inferred_type == target {
-        return Ok(expr);
-    }
-    if resolve_type_alias(target.clone(), scope)
-        == resolve_type_alias(expr.inferred_type.clone(), scope)
-    {
-        let mut e = expr;
-        e.inferred_type = target.clone();
-        return Ok(e);
-    }
-    coerce_expr_to_type(expr, target)
+    let found = value.inferred_type.clone();
+    coerce_to(target, value, scope)
+        .map_err(|_| format!("cannot assign value of type {:?} to {}", found, what).into())
 }
 
 pub(super) fn check_call_args(
@@ -153,7 +175,7 @@ pub(super) fn check_call_args(
         let harg = match params.get(i) {
             Some((param_name, param_type)) => {
                 let found_type = harg.inferred_type.clone();
-                coerce_expr_to_type(harg, param_type).map_err(|_| {
+                coerce_to(param_type, harg, current_scope).map_err(|_| {
                     format!(
                         "{}: argument '{}' expects type {:?}, but found {:?}",
                         func_name, param_name.value, param_type, found_type
@@ -173,27 +195,37 @@ pub(super) fn expr_to_typed(
     current_scope: &SymbolTable,
     generic_cache: &mut HashMap<String, TypedFunction>,
 ) -> Result<TypedExpr, AnalysisError> {
-    match expr {
-        PExpr::Literal(Literal::Integer(value)) => {
+    let span = expr.span;
+    expr_to_typed_inner(expr, current_scope, generic_cache).map_err(|e| e.with_span_fallback(span))
+}
+
+fn expr_to_typed_inner(
+    expr: PExpr,
+    current_scope: &SymbolTable,
+    generic_cache: &mut HashMap<String, TypedFunction>,
+) -> Result<TypedExpr, AnalysisError> {
+    let span = expr.span;
+    match expr.kind {
+        PExprKind::Literal(Literal::Integer(value)) => {
             // Default to Int32 (i32); explicit type annotations coerce as needed.
             Ok(TypedExpr {
                 inferred_type: Ty::Builtin(BuiltinType::Int4),
                 expression: TypedExprKind::LiteralInt { value },
             })
         }
-        PExpr::Literal(Literal::Boolean(b)) => Ok(TypedExpr {
+        PExprKind::Literal(Literal::Boolean(b)) => Ok(TypedExpr {
             inferred_type: Ty::Builtin(BuiltinType::Boolean),
             expression: TypedExprKind::LiteralBool(b),
         }),
-        PExpr::Literal(Literal::Float(f)) => Ok(TypedExpr {
+        PExprKind::Literal(Literal::Float(f)) => Ok(TypedExpr {
             inferred_type: Ty::Builtin(BuiltinType::Float8),
             expression: TypedExprKind::LiteralFloat { value: f },
         }),
-        PExpr::Literal(Literal::Character(c)) => Ok(TypedExpr {
+        PExprKind::Literal(Literal::Character(c)) => Ok(TypedExpr {
             inferred_type: Ty::Builtin(BuiltinType::Char),
             expression: TypedExprKind::LiteralInt { value: c as u64 },
         }),
-        PExpr::Literal(Literal::String(raw)) => {
+        PExprKind::Literal(Literal::String(raw)) => {
             let value = process_escape_sequences(&raw)?;
             Ok(TypedExpr {
                 inferred_type: Ty::Builtin(BuiltinType::String),
@@ -202,11 +234,11 @@ pub(super) fn expr_to_typed(
         }
         // `null` unifies with any type (like `never`); it is concretized by
         // the context it is used in (declaration type, comparison operand, ...).
-        PExpr::Literal(Literal::Null) => Ok(TypedExpr {
+        PExprKind::Literal(Literal::Null) => Ok(TypedExpr {
             inferred_type: Ty::Builtin(BuiltinType::Never),
             expression: TypedExprKind::Null,
         }),
-        PExpr::BuiltinCall { builtin, args } => {
+        PExprKind::BuiltinCall { builtin, args } => {
             // Every string builtin takes `@string` arguments; only the arity and
             // return type differ.
             let (arity, ret) = match builtin {
@@ -228,15 +260,16 @@ pub(super) fn expr_to_typed(
             for (i, arg) in args.into_iter().enumerate() {
                 let harg = expr_to_typed(arg, current_scope, generic_cache)?;
                 let found = harg.inferred_type.clone();
-                let harg = coerce_expr_to_type(harg, &string_ty).map_err(|_| -> AnalysisError {
-                    format!(
-                        "{}: argument {} expects type @string, but found {:?}",
-                        builtin,
-                        i + 1,
-                        found
-                    )
-                    .into()
-                })?;
+                let harg =
+                    coerce_to(&string_ty, harg, current_scope).map_err(|_| -> AnalysisError {
+                        format!(
+                            "{}: argument {} expects type @string, but found {:?}",
+                            builtin,
+                            i + 1,
+                            found
+                        )
+                        .into()
+                    })?;
                 hargs.push(harg);
             }
             Ok(TypedExpr {
@@ -247,7 +280,7 @@ pub(super) fn expr_to_typed(
                 },
             })
         }
-        PExpr::Identifier(name) => {
+        PExprKind::Identifier(name) => {
             let sym = current_scope
                 .lookup(&name)
                 .ok_or_else(|| format!("expr_to_typed: identifier {} not found in scope", name))?;
@@ -268,7 +301,7 @@ pub(super) fn expr_to_typed(
                 }
             }
         }
-        PExpr::EnumVariantConstruct {
+        PExprKind::EnumVariantConstruct {
             type_name,
             variant,
             fields,
@@ -314,13 +347,12 @@ pub(super) fn expr_to_typed(
                     .into());
                 };
                 let fval_typed = expr_to_typed(fval, current_scope, generic_cache)?;
-                let fval_typed =
-                    coerce_or_alias(fval_typed, spec_ty, current_scope).map_err(|_| {
-                        format!(
-                            "expr_to_typed: field '{}' of variant '{}.{}' expects type {:?}",
-                            fname.value, type_name, variant, spec_ty
-                        )
-                    })?;
+                let fval_typed = coerce_to(spec_ty, fval_typed, current_scope).map_err(|_| {
+                    format!(
+                        "expr_to_typed: field '{}' of variant '{}.{}' expects type {:?}",
+                        fname.value, type_name, variant, spec_ty
+                    )
+                })?;
                 typed_fields.push((fname.value.clone(), fval_typed));
             }
             // Verify each declared field is supplied (order-insensitive).
@@ -344,14 +376,14 @@ pub(super) fn expr_to_typed(
                 },
             })
         }
-        PExpr::TypeValue(te) => {
+        PExprKind::TypeValue(te) => {
             let typed_type = map_type(te)?;
             Ok(TypedExpr {
                 inferred_type: Ty::Type,
                 expression: TypedExprKind::ComptimeType(typed_type),
             })
         }
-        PExpr::Binary {
+        PExprKind::Binary {
             left,
             operator,
             right,
@@ -374,7 +406,7 @@ pub(super) fn expr_to_typed(
                     if matches!(l.inferred_type, Ty::Pointer(_)) {
                         (l.inferred_type.clone(), l, r)
                     } else if is_numeric_type(&l.inferred_type) {
-                        let r = coerce_expr_to_type(r, &l.inferred_type)?;
+                        let r = coerce_to(&l.inferred_type, r, current_scope)?;
                         (l.inferred_type.clone(), l, r)
                     } else {
                         return Err(format!(
@@ -395,7 +427,7 @@ pub(super) fn expr_to_typed(
                         )
                         .into());
                     }
-                    let r = coerce_expr_to_type(r, &l.inferred_type)?;
+                    let r = coerce_to(&l.inferred_type, r, current_scope)?;
                     (Ty::Builtin(BuiltinType::Boolean), l, r)
                 }
                 Operator::DoubleEquals | Operator::Different => {
@@ -405,10 +437,10 @@ pub(super) fn expr_to_typed(
                         && r.inferred_type != Ty::Builtin(BuiltinType::Never)
                     {
                         let target = r.inferred_type.clone();
-                        let l = coerce_expr_to_type(l, &target)?;
+                        let l = coerce_to(&target, l, current_scope)?;
                         (Ty::Builtin(BuiltinType::Boolean), l, r)
                     } else {
-                        let r = coerce_expr_to_type(r, &l.inferred_type)?;
+                        let r = coerce_to(&l.inferred_type, r, current_scope)?;
                         (Ty::Builtin(BuiltinType::Boolean), l, r)
                     }
                 }
@@ -448,11 +480,11 @@ pub(super) fn expr_to_typed(
                 },
             })
         }
-        PExpr::Grouping(inner) => expr_to_typed(*inner, current_scope, generic_cache),
-        PExpr::Call { callee, args } => {
-            match *callee {
-                PExpr::Identifier(name) => {
-                    match current_scope.lookup(&name).cloned() {
+        PExprKind::Grouping(inner) => expr_to_typed(*inner, current_scope, generic_cache),
+        PExprKind::Call { callee, args } => {
+            match &callee.kind {
+                PExprKind::Identifier(name) => {
+                    match current_scope.lookup(name).cloned() {
                         Some(TypedSymbol::GenericFunction(template)) => {
                             // Generic call: extract comptime type args and instantiate.
                             let (mangled_name, return_type) = instantiate_generic(
@@ -498,18 +530,21 @@ pub(super) fn expr_to_typed(
                             "expr_to_typed: symbol {} is not a function",
                             name
                         ).into()),
-                        None => Err(format!(
+                        None => Err(AnalysisError::from(format!(
                             "expr_to_typed: unknown function '{}' — did you forget an extern declaration?",
                             name
-                        ).into()),
+                        ))
+                        .with_hint(
+                            "declare it with `extern` to bind a C function, or define a function with that name in this module",
+                        )),
                     }
                 }
-                PExpr::QualifiedAccess { module, member } => {
+                PExprKind::QualifiedAccess { module, member } => {
                     let module_alias = module.value.clone();
                     let typed_module = current_scope
                         .lookup_module(&module_alias)
                         .ok_or_else(|| format!("unknown module '{}'", module_alias))?;
-                    let func = match typed_module.exports.get(&member) {
+                    let func = match typed_module.exports.get(member) {
                         Some(TypedSymbol::Function(f)) => f.clone(),
                         Some(_) => {
                             return Err(format!(
@@ -558,9 +593,9 @@ pub(super) fn expr_to_typed(
                 ),
             }
         }
-        PExpr::FieldAccess { object, field } => {
+        PExprKind::FieldAccess { object, field } => {
             // Special case: `TypeName.VariantName` on an enum produces an EnumLiteral.
-            if let PExpr::Identifier(type_name) = &*object
+            if let PExprKind::Identifier(type_name) = &object.kind
                 && let Some(TypedSymbol::Type(ty)) = current_scope.lookup(type_name)
             {
                 let resolved = resolve_type_alias(ty.clone(), current_scope);
@@ -605,7 +640,7 @@ pub(super) fn expr_to_typed(
                 },
             })
         }
-        PExpr::StructConstruct { type_name, fields } => {
+        PExprKind::StructConstruct { type_name, fields } => {
             // Look up the struct type in scope
             let struct_ty = match current_scope
                 .lookup(&type_name)
@@ -649,7 +684,7 @@ pub(super) fn expr_to_typed(
                         )
                     })?;
                 let (n, fval) = provided.remove(pos);
-                let fval = coerce_or_alias(fval, fty.as_ref(), current_scope).map_err(|_| {
+                let fval = coerce_to(fty.as_ref(), fval, current_scope).map_err(|_| {
                     format!(
                         "expr_to_typed: field {} of struct {} expects type {:?}",
                         fname, type_name, fty
@@ -665,7 +700,7 @@ pub(super) fn expr_to_typed(
                 },
             })
         }
-        PExpr::AddressOf(inner) => {
+        PExprKind::AddressOf(inner) => {
             let inner_typed = expr_to_typed(*inner, current_scope, generic_cache)?;
             let ptr_ty = Ty::Pointer(Box::new(inner_typed.inferred_type.clone()));
             Ok(TypedExpr {
@@ -673,7 +708,7 @@ pub(super) fn expr_to_typed(
                 expression: TypedExprKind::AddressOf(Box::new(inner_typed)),
             })
         }
-        PExpr::Dereference(inner) => {
+        PExprKind::Dereference(inner) => {
             let inner_typed = expr_to_typed(*inner, current_scope, generic_cache)?;
             let pointee_ty = match &inner_typed.inferred_type {
                 Ty::Pointer(pointee) => *pointee.clone(),
@@ -690,7 +725,7 @@ pub(super) fn expr_to_typed(
                 expression: TypedExprKind::Deref(Box::new(inner_typed)),
             })
         }
-        PExpr::Cast { expr, target_type } => {
+        PExprKind::Cast { expr, target_type } => {
             let inner_typed = expr_to_typed(*expr, current_scope, generic_cache)?;
             let typed_target = map_type(target_type)?;
             Ok(TypedExpr {
@@ -701,7 +736,7 @@ pub(super) fn expr_to_typed(
                 },
             })
         }
-        PExpr::IndexAccess { object, index } => {
+        PExprKind::IndexAccess { object, index } => {
             let obj_typed = expr_to_typed(*object, current_scope, generic_cache)?;
             let idx_typed = expr_to_typed(*index, current_scope, generic_cache)?;
             require_integer_index(&idx_typed.inferred_type, "index access")?;
@@ -724,7 +759,7 @@ pub(super) fn expr_to_typed(
                 },
             })
         }
-        PExpr::ArrayLiteral { elements } => {
+        PExprKind::ArrayLiteral { elements } => {
             let typed_elements: Vec<TypedExpr> = elements
                 .into_iter()
                 .map(|e| expr_to_typed(e, current_scope, generic_cache))
@@ -746,7 +781,7 @@ pub(super) fn expr_to_typed(
                     continue;
                 }
                 let found = e.inferred_type.clone();
-                coerced.push(coerce_or_alias(e, &elem_ty, current_scope).map_err(|_| {
+                coerced.push(coerce_to(&elem_ty, e, current_scope).map_err(|_| {
                     format!(
                         "array literal: element {} has incompatible type {:?}, expected {:?}",
                         i, found, elem_ty
@@ -765,7 +800,7 @@ pub(super) fn expr_to_typed(
                 },
             })
         }
-        PExpr::Unary {
+        PExprKind::Unary {
             operator,
             expression,
         } => match operator {
@@ -793,11 +828,17 @@ pub(super) fn expr_to_typed(
                 })
             }
             Operator::LogicalNot => expr_to_typed(
-                PExpr::Binary {
-                    left: expression,
-                    operator: Operator::DoubleEquals,
-                    right: Box::new(PExpr::Literal(Literal::Boolean(false))),
-                },
+                PExpr::at(
+                    PExprKind::Binary {
+                        left: expression,
+                        operator: Operator::DoubleEquals,
+                        right: Box::new(PExpr::at(
+                            PExprKind::Literal(Literal::Boolean(false)),
+                            span,
+                        )),
+                    },
+                    span,
+                ),
                 current_scope,
                 generic_cache,
             ),
@@ -819,7 +860,7 @@ pub(super) fn expr_to_typed(
             }
             op => Err(format!("unsupported unary operator {:?}", op).into()),
         },
-        PExpr::QualifiedAccess { module, member } => {
+        PExprKind::QualifiedAccess { module, member } => {
             let module_alias = module.value.clone();
             let typed_module = current_scope
                 .lookup_module(&module_alias)

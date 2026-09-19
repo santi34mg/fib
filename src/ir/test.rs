@@ -113,12 +113,31 @@ mod tests {
     }
 
     #[test]
-    fn ir_switch_is_explicitly_unsupported() {
-        let err = lower_src(
+    fn ir_switch_plain_enum_lowers_to_dispatch() {
+        let prog = lower_src(
             "type Color enum { Red, Green }\nfn main() @int { c: Color = Color.Red\nswitch (c) { when .Red { return 1 }\nwhen else { return 0 } } }",
         )
-        .expect_err("switch should be phase 2b");
-        assert!(err.contains("switch"), "unexpected error: {}", err);
+        .expect("plain-enum switch should lower");
+        let text = prog.to_string();
+        assert!(
+            text.contains("switch"),
+            "expected SwitchDispatch, got:\n{}",
+            text
+        );
+        assert!(text.contains("return"), "expected return, got:\n{}", text);
+    }
+
+    #[test]
+    fn ir_switch_with_payload_binding_stays_unsupported() {
+        let err = lower_src(
+            "type Token enum { Integer { value: @uint4 }, EOF }\nfn describe(t: Token) @void { switch (t) { when .Integer(i) { return }\nwhen .EOF { return } } }\nfn main() @int { return 0 }",
+        )
+        .expect_err("payload binding should fall back");
+        assert!(
+            err.contains("payload") || err.contains("fallback"),
+            "unexpected error: {}",
+            err
+        );
     }
 
     #[test]

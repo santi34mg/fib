@@ -1,26 +1,21 @@
 use std::collections::HashMap;
 
-use super::context::{CodegenCtx, create_entry_allocas, emit_frames_from};
-use super::expressions::codegen_expr;
-use super::statements::codegen_stmt;
+use super::context::{CodegenCtx, FunctionLowering, create_entry_allocas};
+use super::error::LowerError;
 use super::types::map_type_to_llvm;
-use crate::frontend::identifier::Identifier;
 use crate::frontend::tokens::builtin::BuiltinType;
 use crate::frontend::typed_ast::{
-    ScopeKind, Ty, TypedBinding, TypedDecl, TypedProgram, TypedStatement, TypedSymbol,
+    ScopeKind, Ty, TypedBinding, TypedDecl, TypedProgram, TypedSymbol,
 };
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, FunctionType};
-use inkwell::values::PointerValue;
-use std::error::Error;
 
-pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String, Box<dyn Error>> {
+pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String, LowerError> {
     let ctx = Context::create();
     let module: Module<'_> = ctx.create_module(module_name);
     let builder: Builder<'_> = ctx.create_builder();
-    let mut vars: HashMap<Identifier, PointerValue> = HashMap::new();
 
     let codegen_ctx = CodegenCtx {
         ctx: &ctx,
@@ -73,18 +68,17 @@ pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String
                 }
 
                 // Reuse an existing forward declaration (e.g. auto-declared at a call site)
-                // rather than creating a duplicate with a mangled name. If the
-                // function already has a body, this is a duplicate declaration
-                // (the same module can be reached through several import
-                // paths) — skip it instead of corrupting the existing one.
+                // rather than creating a duplicate with a mangled name.
+                // Duplicate definitions cannot reach lowering: the driver
+                // merges imported + local declarations with
+                // `dedupe_declarations`, so each symbol is emitted exactly once.
                 let function = match module.get_function(&function_name) {
-                    Some(f) if f.count_basic_blocks() > 0 => continue,
                     Some(f) => f,
                     None => module.add_function(&function_name, fn_ty, None),
                 };
                 let entry = ctx.append_basic_block(function, "entry");
                 builder.position_at_end(entry);
-                let mut entry_vars = create_entry_allocas(
+                let entry_vars = create_entry_allocas(
                     &ctx,
                     function,
                     typed_function.clone(),
@@ -105,16 +99,9 @@ pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String
                         }),
                     );
                 }
-                let mut fn_deferred: Vec<Vec<TypedStatement>> = vec![Vec::new()];
+                let mut fl = FunctionLowering::new(&codegen_ctx, function, entry_vars, fn_scope);
                 for stmt in typed_function.body.iter() {
-                    codegen_stmt(
-                        &codegen_ctx,
-                        &mut entry_vars,
-                        &mut fn_scope,
-                        stmt,
-                        None,
-                        &mut fn_deferred,
-                    )?;
+                    fl.codegen_stmt(stmt)?;
                 }
                 // For void functions, if the current block at the end of
                 // codegen has no terminator (i.e. the function falls off the
@@ -124,16 +111,11 @@ pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String
                     && let Some(cur_bb) = builder.get_insert_block()
                     && cur_bb.get_terminator().is_none()
                 {
-                    emit_frames_from(
-                        &codegen_ctx,
-                        &mut entry_vars,
-                        &mut fn_scope,
-                        &fn_deferred,
-                        0,
-                    )?;
+                    let stack = fl.deferred_stack.clone();
+                    fl.emit_frames_from(stack, 0)?;
                     let _ = builder.build_return(None);
                 }
-                fn_scope.exit_scope();
+                fl.scope.exit_scope();
                 // Seal any basic blocks that have no terminator (e.g. an
                 // unreachable merge block after an if where both branches
                 // return).  LLVM requires every block to have a terminator.
@@ -160,12 +142,26 @@ pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String
                     )
                     .into());
                 }
+                let function = builder
+                    .get_insert_block()
+                    .expect("checked above")
+                    .get_parent()
+                    .expect("insert block inside a function body has a parent");
+                let mut fl = FunctionLowering::new(
+                    &codegen_ctx,
+                    function,
+                    HashMap::new(),
+                    compilation_unit.symbol_table.clone(),
+                );
                 let ty = map_type_to_llvm(
                     &typed_binding.ty,
                     &ctx,
                     compilation_unit.symbol_table.clone(),
                 )?;
-                let alloca = match builder.build_alloca(ty, &format!("{}_addr", typed_binding.name))
+                let alloca = match fl
+                    .ctx
+                    .builder
+                    .build_alloca(ty, &format!("{}_addr", typed_binding.name))
                 {
                     Ok(a) => a,
                     Err(e) => {
@@ -176,19 +172,12 @@ pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String
                         continue;
                     }
                 };
-                // store the param value into the alloca
-                let _ = codegen_ctx.builder.build_store(
-                    alloca,
-                    codegen_expr(
-                        &codegen_ctx,
-                        &mut vars,
-                        &mut compilation_unit.symbol_table.clone(),
-                        &typed_binding
-                            .init
-                            .ok_or_else(|| "no init for binding".to_string())?,
-                    )?,
-                );
-                vars.insert(typed_binding.name, alloca);
+                let init = typed_binding
+                    .init
+                    .as_ref()
+                    .ok_or_else(|| "no init for binding".to_string())?;
+                // store the value into the alloca
+                let _ = fl.ctx.builder.build_store(alloca, fl.codegen_expr(init)?);
             }
         }
     }
