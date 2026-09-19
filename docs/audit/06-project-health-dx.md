@@ -6,7 +6,8 @@
 > filter), docs/onboarding (badge, `--help`, `-I`, clang troubleshooting,
 > real `samples`/`std` READMEs, sample output oracles), hygiene (fresh
 > lock, `out/` ignored, no stray configs, Keep-a-Changelog, PR template
-> with conventional titles), §1 CI hardening items (c) and (d).
+> with conventional titles), §1 CI hardening items (c) and (d),
+> the §2 release/versioning decision (see below).
 
 ## Current state (verified 2026-09-18)
 
@@ -18,18 +19,15 @@
   `cargo test`, `cargo test --all-features`); three advisory
   non-blocking jobs — `audit`, `deny` (cargo-deny check), `coverage`
   (tarpaulin) — none of which gate merges.
-- No tags/releases; version still `0.0.1` (`Cargo.toml:3`). MSRV is now a
-  concrete number via the `rust-toolchain.toml` pin, not just "stable".
+- Version `0.1.0` (`Cargo.toml:3`) with **`v0.1.0` tagged on `main`**
+  (trunk-based: feature branch `refactor/better-modules` fast-forwarded;
+  main stays at the release commit until the next change). Install is
+  build-from-source (no prebuilt binaries), matching the deferred multi-OS
+  matrix: LLVM 21 setup triples CI minutes and flakes on Windows, and
+  shipping prebuilt LLVM-linked binaries would raise MIT/Dual licensing
+  questions. GitHub Release `v0.1.0` carries the build instructions; the
+  CHANGELOG links `[0.1.0]` to it.
 
 ## Remaining points
 
-### 2. Versioning and release story
-No tags or releases exist; install is build-from-source. Remaining:
-decide nightly `out/` binaries vs. `cargo install --git` vs. GitHub
-Releases with prebuilt `fibc`, and MIT/Dual licensing of binaries if ship
-prebuilt LLVM-linked ones.
-
-Trade-offs: multi-OS matrix (ubuntu/macos/windows) is deferred — LLVM 21
-setup triples CI minutes and flakes on Windows. This is a product decision
-for the maintainer, not an engineering gap; revisit when the stdlib
-stabilizes.
+- None. (Future observations marked here until triaged.)
