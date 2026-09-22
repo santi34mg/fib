@@ -1127,17 +1127,266 @@ mod tests {
 
     #[test]
     fn coercion_unify_index_assign_rejects_bool_for_int() {
-        let err = get_typed_err("fn f() { arr: @int4[2] = [1, 2]\narr.[0] = true }");
+        let err = get_typed_err("fn f() { arr: @int4[2] = [1, 2];\narr.[0] = true; }");
         assert!(err.contains("array element"), "unexpected error: {}", err);
     }
 
     #[test]
     fn coercion_unify_array_literal_rejects_int_bool_mix() {
-        let err = get_typed_err("fn f() { a := [1, true] }");
+        let err = get_typed_err("fn f() { a := [1, true]; }");
         assert!(
             err.contains("incompatible type"),
             "unexpected error: {}",
             err
         );
+    }
+
+    // ── @usize builtin + comptime .@len ────────────────────────────────────
+
+    #[test]
+    fn test_usize_builtin_type() {
+        let cu = get_typed("fn f() @usize { return 0; }");
+        let f = get_function(&cu, "f");
+        assert_eq!(f.return_type, Ty::Builtin(BuiltinType::Usize));
+    }
+
+    #[test]
+    fn test_array_len_property_returns_usize() {
+        let cu = get_typed("fn f(arr: @int4[3]) @usize { return arr.@len; }");
+        let f = get_function(&cu, "f");
+        let expr = return_expr(&cu, "f");
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Usize));
+        assert!(matches!(expr.expression, TypedExprKind::ArrayLen { .. }));
+        let _ = f;
+    }
+
+    #[test]
+    fn test_array_len_property_through_type_alias() {
+        let cu = get_typed("type Ints @int4[2]\nfn f(arr: Ints) @usize { return arr.@len; }");
+        let expr = return_expr(&cu, "f");
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Usize));
+        assert!(matches!(expr.expression, TypedExprKind::ArrayLen { .. }));
+    }
+
+    #[test]
+    fn test_array_len_property_rejects_non_array() {
+        let err = get_typed_err("fn f(x: @int4) @usize { return x.@len; }");
+        assert!(
+            err.contains("'.@len' is only defined for arrays"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    // ── Slices `T[]` ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_slice_type_in_signature() {
+        let cu = get_typed("fn f(s: @int4[]) @void {}");
+        let f = get_function(&cu, "f");
+        assert_eq!(
+            f.params[0].1,
+            Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4)))
+        );
+    }
+
+    #[test]
+    fn test_slice_len_property_returns_usize() {
+        let cu = get_typed("fn f(s: @int4[]) @usize { return s.@len; }");
+        let expr = return_expr(&cu, "f");
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Usize));
+        assert!(matches!(expr.expression, TypedExprKind::ArrayLen { .. }));
+    }
+
+    #[test]
+    fn test_slice_index_returns_element() {
+        let cu = get_typed("fn f(s: @int4[]) @int4 { return s.[0]; }");
+        let expr = return_expr(&cu, "f");
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
+        assert!(matches!(expr.expression, TypedExprKind::IndexAccess { .. }));
+    }
+
+    #[test]
+    fn test_slice_index_assign_accepts_element() {
+        let cu = get_typed("fn f(s: @int4[]) @void { s.[0] = 1; }");
+        let _ = get_function(&cu, "f");
+    }
+
+    #[test]
+    fn test_array_slices_to_slice_on_assignment() {
+        let cu = get_typed("fn f() { arr: @int4[2] = [1, 2];\ns: @int4[] = arr.[0..2]; }");
+        let f = get_function(&cu, "f");
+        match &f.body[1] {
+            TypedStatement::Binding(b) => {
+                assert_eq!(b.ty, Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4))));
+                assert!(
+                    matches!(
+                        b.init,
+                        Some(TypedExpr {
+                            expression: TypedExprKind::Slice { .. },
+                            ..
+                        })
+                    ),
+                    "expected Slice init, got {:?}",
+                    b.init
+                );
+            }
+            other => panic!("expected Binding, found {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_array_implicit_decay_to_slice_rejected() {
+        let err = get_typed_err("fn f() { arr: @int4[2] = [1, 2];\ns: @int4[] = arr; }");
+        assert!(
+            err.contains("does not match declared type") || err.contains("cannot coerce"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_array_literal_decays_to_slice() {
+        let cu = get_typed("fn f() { s: @int4[] = [1, 2, 3]; }");
+        let f = get_function(&cu, "f");
+        match &f.body[0] {
+            TypedStatement::Binding(b) => assert!(matches!(
+                b.init,
+                Some(TypedExpr {
+                    expression: TypedExprKind::ArrayToSlice { .. },
+                    ..
+                })
+            )),
+            other => panic!("expected Binding, found {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_array_slice_at_call_site() {
+        let cu = get_typed(
+            "fn g(s: @int4[]) @int4 { return s.[0]; }\nfn f() @int4 { arr: @int4[2] = [7, 8];\nreturn g(arr.[0..2]); }",
+        );
+        let f = get_function(&cu, "f");
+        match &f.body[1] {
+            TypedStatement::Return(Some(ret)) => {
+                let call = ret.first().expect("return value");
+                assert!(matches!(call.expression, TypedExprKind::Call { .. }));
+                if let TypedExprKind::Call { args, .. } = &call.expression {
+                    assert!(matches!(
+                        args[0].expression,
+                        TypedExprKind::Slice { .. }
+                    ));
+                }
+            }
+            other => panic!("expected Return, found {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_array_implicit_decay_at_call_site_rejected() {
+        let err = get_typed_err(
+            "fn g(s: @int4[]) @int4 { return s.[0]; }\nfn f() @int4 { arr: @int4[2] = [7, 8];\nreturn g(arr); }",
+        );
+        assert!(
+            err.contains("expects type") || err.contains("cannot coerce"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_slice_rejects_wrong_element_type() {
+        let err = get_typed_err("fn f() { arr: @int8[2] = [1, 2];\ns: @int4[] = arr; }");
+        assert!(
+            err.contains("does not match declared type") || err.contains("cannot coerce"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_slice_index_rejects_non_integer() {
+        let err = get_typed_err("fn f(s: @int4[]) @int4 { return s.[true]; }");
+        assert!(err.contains("integer index"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_slice_cast_via_as() {
+        let cu = get_typed("fn f() { arr: @int4[2] = [1, 2];\ns: @int4[] = arr as @int4[]; }");
+        let _ = get_function(&cu, "f");
+    }
+
+    #[test]
+    fn test_slice_range_on_slice() {
+        let cu = get_typed("fn f(s: @int4[]) @void { t: @int4[] = s.[1..2]; }");
+        let f = get_function(&cu, "f");
+        match &f.body[0] {
+            TypedStatement::Binding(b) => {
+                assert_eq!(b.ty, Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4))));
+                assert!(matches!(
+                    b.init.as_ref().expect("init").expression,
+                    TypedExprKind::Slice { .. }
+                ));
+            }
+            other => panic!("expected Binding, found {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_slice_range_rejects_non_array() {
+        let err = get_typed_err("fn f(x: @int4) @void { s: @int4[] = x.[0..1]; }");
+        assert!(
+            err.contains("non-array/slice"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_slice_range_rejects_non_integer_bounds() {
+        let err =
+            get_typed_err("fn f() { arr: @int4[2] = [1, 2];\ns: @int4[] = arr.[0..true]; }");
+        assert!(err.contains("integer index"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_slice_range_open_and_inclusive_forms() {
+        // Each must type-check to `T[]` with the right shape.
+        let cases = [
+            (
+                "fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[0.=1]; }",
+                true,
+            ),
+            ("fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[1..]; }", false),
+            ("fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[..2]; }", false),
+            (
+                "fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[.=2]; }",
+                true,
+            ),
+            ("fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[..]; }", false),
+            ("fn f(s: @int4[]) @void { t: @int4[] = s.[1..]; }", false),
+        ];
+        for (src, want_incl) in cases {
+            let cu = get_typed(src);
+            let f = get_function(&cu, "f");
+            let binding = match &f.body[f.body.len() - 1] {
+                TypedStatement::Binding(b) => b,
+                other => panic!("expected Binding for {}, found {:?}", src, other),
+            };
+            assert_eq!(
+                binding.ty,
+                Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4))),
+                "slice type for {}",
+                src
+            );
+            match binding.init.as_ref().expect("init").expression.clone() {
+                TypedExprKind::Slice { inclusive, .. } => assert_eq!(
+                    inclusive, want_incl,
+                    "inclusive flag for {}",
+                    src
+                ),
+                other => panic!("expected Slice for {}, found {:?}", src, other),
+            }
+        }
     }
 }

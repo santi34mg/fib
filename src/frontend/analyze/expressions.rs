@@ -26,6 +26,7 @@ pub(super) fn is_integer_builtin(builtin: &BuiltinType) -> bool {
             | BuiltinType::UInt4
             | BuiltinType::UInt8
             | BuiltinType::UInt16
+            | BuiltinType::Usize
             | BuiltinType::Char
     )
 }
@@ -67,10 +68,13 @@ pub(super) fn require_integer_index(ty: &Ty, what: &str) -> Result<(), AnalysisE
 ///    unifies with any type by re-annotation;
 /// 3. alias-equivalent types (same shape after `resolve_type_alias`)
 ///    re-annotate with the target, no conversion emitted;
-/// 4. integer/float literals relabel to the target width, other numerics
+/// 4. an array *literal* builds a `T[]` view (`ArrayToSlice`) by first
+///    coercing its elements (so `[1, 2]` works for `@int8[]`);
+/// 5. integer/float literals relabel to the target width, other numerics
 ///    convert via an explicit `Cast`.
 ///
-/// Anything else errors.
+/// Array values never decay implicitly: use `arr.[a..b]` for a `[a, b)`
+/// view or `arr as T[]` for the full range. Anything else errors.
 pub(super) fn coerce_to(
     target: &Ty,
     expr: TypedExpr,
@@ -92,6 +96,45 @@ pub(super) fn coerce_to(
         let mut expr = expr;
         expr.inferred_type = target.clone();
         return Ok(expr);
+    }
+
+    // Slice views: `T[]` → `T[]` re-annotates across aliases, and an
+    // array *literal* coerces its elements then builds a view (so
+    // `[1, 2]` works for `@int8[]`). Named array values never decay
+    // implicitly — use `arr.[a..b]` or `arr as T[]`.
+    {
+        let target_resolved = resolve_type_alias(target.clone(), scope);
+        let source_resolved = resolve_type_alias(expr.inferred_type.clone(), scope);
+        if let (Ty::Slice(target_elem), Ty::Slice(source_elem)) =
+            (&target_resolved, &source_resolved)
+            && resolve_type_alias((**target_elem).clone(), scope)
+                == resolve_type_alias((**source_elem).clone(), scope)
+        {
+            let mut expr = expr;
+            expr.inferred_type = target.clone();
+            return Ok(expr);
+        }
+        if let Ty::Slice(target_elem) = &target_resolved
+            && let TypedExprKind::ArrayLiteral { elements } = expr.expression
+        {
+            let mut coerced = Vec::with_capacity(elements.len());
+            for elem in elements {
+                coerced.push(coerce_to(target_elem, elem, scope)?);
+            }
+            let array = TypedExpr {
+                inferred_type: Ty::Array {
+                    element_type: target_elem.clone(),
+                    size: coerced.len() as u64,
+                },
+                expression: TypedExprKind::ArrayLiteral { elements: coerced },
+            };
+            return Ok(TypedExpr {
+                inferred_type: target.clone(),
+                expression: TypedExprKind::ArrayToSlice {
+                    array: Box::new(array),
+                },
+            });
+        }
     }
 
     match (&expr.expression, &expr.inferred_type, target) {
@@ -493,11 +536,38 @@ fn expr_to_typed_inner(
                                 current_scope,
                                 generic_cache,
                             )?;
-                            // Build Typed args for runtime (non-comptime) parameters only.
+                            // Build Typed args for runtime (non-comptime) parameters only,
+                            // coercing each to the instantiated param type (array
+                            // literals still build a slice when the callee takes
+                            // `T[]`; named arrays need `arr.[a..b]` or `as`).
+                            let instantiated_params = generic_cache
+                                .get(&mangled_name)
+                                .map(|f| f.params.clone())
+                                .unwrap_or_default();
                             let mut hargs = Vec::new();
+                            let mut param_idx = 0;
                             for (i, arg) in args.into_iter().enumerate() {
                                 if !template.comptime_params.contains(&i) {
-                                    hargs.push(expr_to_typed(arg, current_scope, generic_cache)?);
+                                    let harg = expr_to_typed(arg, current_scope, generic_cache)?;
+                                    let harg = match instantiated_params.get(param_idx) {
+                                        Some((param_name, param_ty)) => {
+                                            let found = harg.inferred_type.clone();
+                                            coerce_to(param_ty, harg, current_scope).map_err(
+                                                |_| {
+                                                    format!(
+                                                        "{}: argument '{}' expects type {:?}, but found {:?}",
+                                                        mangled_name,
+                                                        param_name.value,
+                                                        param_ty,
+                                                        found
+                                                    )
+                                                },
+                                            )?
+                                        }
+                                        None => harg,
+                                    };
+                                    hargs.push(harg);
+                                    param_idx += 1;
                                 }
                             }
                             Ok(TypedExpr {
@@ -620,6 +690,24 @@ fn expr_to_typed_inner(
                 }
             }
             let obj_typed = expr_to_typed(*object, current_scope, generic_cache)?;
+            // `arr.@len` / `slice.@len` — element count (`@usize`). Arrays
+            // lower to a comptime constant; slices load the stored length.
+            if field.value == "@len" {
+                let resolved = resolve_type_alias(obj_typed.inferred_type.clone(), current_scope);
+                return match &resolved {
+                    Ty::Array { .. } | Ty::Slice(_) => Ok(TypedExpr {
+                        inferred_type: Ty::Builtin(BuiltinType::Usize),
+                        expression: TypedExprKind::ArrayLen {
+                            array: Box::new(obj_typed),
+                        },
+                    }),
+                    other => Err(format!(
+                        "expr_to_typed: '.@len' is only defined for arrays and slices, found {:?}",
+                        other
+                    )
+                    .into()),
+                };
+            }
             let struct_fields = resolve_struct_fields(&obj_typed.inferred_type, current_scope)?;
             let field_index = struct_fields
                 .iter()
@@ -728,6 +816,31 @@ fn expr_to_typed_inner(
         PExprKind::Cast { expr, target_type } => {
             let inner_typed = expr_to_typed(*expr, current_scope, generic_cache)?;
             let typed_target = map_type(target_type)?;
+            // Array literals still coerce via `coerce_to` (element-wise).
+            if let Ok(coerced) = coerce_to(&typed_target, inner_typed.clone(), current_scope)
+                && matches!(coerced.expression, TypedExprKind::ArrayToSlice { .. })
+            {
+                return Ok(coerced);
+            }
+            // `arr as T[]` is the explicit full-range view (a numeric
+            // `Cast` cannot lower array → struct).
+            {
+                let target_resolved = resolve_type_alias(typed_target.clone(), current_scope);
+                let source_resolved =
+                    resolve_type_alias(inner_typed.inferred_type.clone(), current_scope);
+                if let (Ty::Slice(target_elem), Ty::Array { element_type: src_elem, .. }) =
+                    (&target_resolved, &source_resolved)
+                    && resolve_type_alias((**target_elem).clone(), current_scope)
+                        == resolve_type_alias((**src_elem).clone(), current_scope)
+                {
+                    return Ok(TypedExpr {
+                        inferred_type: typed_target.clone(),
+                        expression: TypedExprKind::ArrayToSlice {
+                            array: Box::new(inner_typed),
+                        },
+                    });
+                }
+            }
             Ok(TypedExpr {
                 inferred_type: typed_target.clone(),
                 expression: TypedExprKind::Cast {
@@ -736,16 +849,77 @@ fn expr_to_typed_inner(
                 },
             })
         }
+        PExprKind::Slice {
+            object,
+            start,
+            end,
+            inclusive,
+        } => {
+            let obj_typed = expr_to_typed(*object, current_scope, generic_cache)?;
+            let start_typed = start
+                .map(|s| expr_to_typed(*s, current_scope, generic_cache))
+                .transpose()?;
+            let end_typed = end
+                .map(|e| expr_to_typed(*e, current_scope, generic_cache))
+                .transpose()?;
+            if let Some(s) = &start_typed {
+                require_integer_index(&s.inferred_type, "slice start")?;
+            }
+            if let Some(e) = &end_typed {
+                require_integer_index(&e.inferred_type, "slice end")?;
+            }
+            if inclusive && end_typed.is_none() {
+                return Err(
+                    "expr_to_typed: inclusive slice '.=' requires an end bound".into(),
+                );
+            }
+            let resolved = resolve_type_alias(obj_typed.inferred_type.clone(), current_scope);
+            let elem_ty = match &resolved {
+                Ty::Array { element_type, .. } => *element_type.clone(),
+                Ty::Slice(element_type) => *element_type.clone(),
+                other => {
+                    return Err(format!(
+                        "expr_to_typed: slice on non-array/slice type {:?}",
+                        other
+                    )
+                    .into());
+                }
+            };
+            Ok(TypedExpr {
+                inferred_type: Ty::Slice(Box::new(elem_ty)),
+                expression: TypedExprKind::Slice {
+                    object: Box::new(obj_typed),
+                    start: start_typed.map(Box::new),
+                    end: end_typed.map(Box::new),
+                    inclusive,
+                },
+            })
+        }
         PExprKind::IndexAccess { object, index } => {
             let obj_typed = expr_to_typed(*object, current_scope, generic_cache)?;
             let idx_typed = expr_to_typed(*index, current_scope, generic_cache)?;
             require_integer_index(&idx_typed.inferred_type, "index access")?;
-            let pointee_ty = match &obj_typed.inferred_type {
+            // Resolve aliases so `type Vec @int4[]` elements index correctly.
+            let resolved = resolve_type_alias(obj_typed.inferred_type.clone(), current_scope);
+            let pointee_ty = match &resolved {
                 Ty::Pointer(inner) => *inner.clone(),
                 Ty::Array { element_type, .. } => *element_type.clone(),
+                Ty::Slice(element_type) => *element_type.clone(),
+                Ty::Identifier(_) => match &obj_typed.inferred_type {
+                    Ty::Pointer(inner) => *inner.clone(),
+                    Ty::Array { element_type, .. } => *element_type.clone(),
+                    Ty::Slice(element_type) => *element_type.clone(),
+                    other => {
+                        return Err(format!(
+                            "expr_to_typed: index access on non-pointer/array/slice type {:?}",
+                            other
+                        )
+                        .into());
+                    }
+                },
                 other => {
                     return Err(format!(
-                        "expr_to_typed: index access on non-pointer type {:?}",
+                        "expr_to_typed: index access on non-pointer/array/slice type {:?}",
                         other
                     )
                     .into());

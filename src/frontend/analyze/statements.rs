@@ -293,12 +293,14 @@ pub(super) fn stmt_to_typed_inner(
             expr,
         } => {
             let obj_typed = expr_to_typed(object, current_scope, generic_cache)?;
-            let elem_ty = match &obj_typed.inferred_type {
+            let resolved = resolve_type_alias(obj_typed.inferred_type.clone(), current_scope);
+            let elem_ty = match &resolved {
                 Ty::Pointer(inner) => inner.as_ref().clone(),
                 Ty::Array { element_type, .. } => element_type.as_ref().clone(),
+                Ty::Slice(element_type) => element_type.as_ref().clone(),
                 other => {
                     return Err(format!(
-                        "stmt_to_typed: IndexAssign on non-pointer type {:?}",
+                        "stmt_to_typed: IndexAssign on non-pointer/array/slice type {:?}",
                         other
                     )
                     .into());
