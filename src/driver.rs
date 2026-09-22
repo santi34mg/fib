@@ -105,6 +105,10 @@ pub struct CompilationOptions {
     /// Optimization level passed to clang as `-O<level>`.
     /// Accepted: `0`, `1`, `2`, `3`, `s`, `z`.
     pub opt_level: Option<String>,
+    /// Release mode (`--release`): skip debug runtime bounds checks.
+    /// When false (default, debug) every `arr.[i]` / `arr.[a..b]` lowers to
+    /// an explicit OOB check that reports to stderr and aborts.
+    pub release: bool,
 }
 
 impl CompilationOptions {
@@ -120,7 +124,14 @@ impl CompilationOptions {
             llvm_out: None,
             cc: None,
             opt_level: None,
+            release: false,
         }
+    }
+
+    /// Debug runtime bounds checks are on unless `--release` was passed.
+    /// Compile-time checks for constant bounds always run, in both modes.
+    pub fn emit_bounds_checks(&self) -> bool {
+        !self.release
     }
 
     /// The stage that will actually run (`--check` forces `Typed`).
@@ -889,7 +900,11 @@ pub fn check_project(opts: &CompilationOptions) -> Result<FrontendResponse, Driv
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "llvm")]
-pub fn lower_to_llvm_ir(program: TypedProgram, module_name: &str) -> Result<String, DriverError> {
+pub fn lower_to_llvm_ir(
+    program: TypedProgram,
+    module_name: &str,
+    emit_bounds_checks: bool,
+) -> Result<String, DriverError> {
     // Middle-end first: try the flat `IrProgram` path (`lower_ir`). It
     // handles locals, integer/bool/float arithmetic, calls, `if`/`for`/
     // `break`/`continue`, inline `defer`, `return`, assignment forms,
@@ -904,11 +919,16 @@ pub fn lower_to_llvm_ir(program: TypedProgram, module_name: &str) -> Result<Stri
     {
         return Ok(text);
     }
-    lowering::lower(program, module_name).map_err(|e| DriverError::Lower(e.to_string()))
+    lowering::lower(program, module_name, emit_bounds_checks)
+        .map_err(|e| DriverError::Lower(e.to_string()))
 }
 
 #[cfg(not(feature = "llvm"))]
-pub fn lower_to_llvm_ir(_program: TypedProgram, _module_name: &str) -> Result<String, DriverError> {
+pub fn lower_to_llvm_ir(
+    _program: TypedProgram,
+    _module_name: &str,
+    _emit_bounds_checks: bool,
+) -> Result<String, DriverError> {
     Err(DriverError::LlvmUnavailable("codegen"))
 }
 
@@ -1147,7 +1167,7 @@ fn compile_inner(opts: &CompilationOptions) -> Result<CompileOutput, DriverError
         typed.declarations = dedupe_declarations(imported, local);
         typed.imported_declarations = Vec::new();
 
-        let ir = lower_to_llvm_ir(typed, &frontend.filename)?;
+        let ir = lower_to_llvm_ir(typed, &frontend.filename, opts.emit_bounds_checks())?;
 
         match emit {
             EmitKind::Llvm => {
@@ -1230,6 +1250,7 @@ mod tests {
             llvm_out: None,
             cc: None,
             opt_level: None,
+            release: false,
         }
     }
 

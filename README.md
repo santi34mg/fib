@@ -49,6 +49,9 @@ Useful flags (see `cargo run -- --help` for the full list):
 - `--emit-llvm` / `--llvm-out <FILE>` — keep the intermediate `.ll`.
 - `--cc <CC>` — C compiler for linking (defaults to `$CC`, else `clang-17`, else `clang`).
 - `-O <LEVEL>` — optimization level passed to clang as `-O<LEVEL>`.
+- `--release` — skip debug runtime bounds checks on `arr.[i]` / `arr.[a..b]`
+  (by default every index/slice traps to stderr + abort on OOB; constant
+  OOB is always a compile error).
 
 ### Troubleshooting
 

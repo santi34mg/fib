@@ -76,10 +76,10 @@ fn main() @int4 {
 Rules:
 
 - Build a slice explicitly with `arr.[a..b]` (`[a, b)`, so `len = b - a`).
-  It works on arrays and on slices (sub-slicing); bounds are unchecked.
+  It works on arrays and on slices (sub-slicing).
   There is no implicit `T[N]` → `T[]` conversion: `s: @int4[] = arr`
   is an error.
-- Range forms (all unchecked, `len = eff_end - start`):
+- Range forms (`len = eff_end - start`):
   - `arr.[a..b]` → `[a, b)`; `arr.[a.=b]` → `[a, b]` (inclusive)
   - `arr.[a..]` → `[a, len)`; `arr.[..b]` → `[0, b)`
   - `arr.[.=b]` → `[0, b]` (inclusive); `arr.[..]` → full range.
@@ -91,5 +91,21 @@ Rules:
 - `s.@len` returns the runtime length as `@usize`.
 - Slices compose with aliases (`type Ints @int4[]`) and generics
   (`fn first(T: type, s: T[]) T { return s.[0] }`).
+
+## Bounds checking
+
+Out-of-bounds access is never silent UB. Two layers, both explicit:
+
+1. **Compile time (always on).** When the index/bounds are comptime-known
+   constants (literals, constant arithmetic, `arr.@len`), the compiler
+   rejects OOB programs with a spanned error:
+   `arr.[4]` on `@int4[4]`, `arr.[0..5]` on a length-4 array, and inverted
+   ranges like `arr.[3..2]` all fail analysis — in debug and release alike.
+2. **Runtime (debug builds).** Every other `arr.[i]` / `arr.[a..b]` lowers
+   to an explicit `oob_trap` / `oob_cont` block (visible in `--emit-llvm`):
+   on violation it prints to stderr and aborts gracefully, e.g.
+   `fib: index out of bounds: index 4, len 4`. Pass `--release` to skip
+   these checks (unchecked, C-like). Pointer indexing `p.[i]` is never
+   checked — a raw pointer carries no length.
 
 See `samples/slices.fib` for a runnable program.

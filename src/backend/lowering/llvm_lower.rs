@@ -12,7 +12,11 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, FunctionType};
 
-pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String, LowerError> {
+pub fn lower(
+    compilation_unit: TypedProgram,
+    module_name: &str,
+    emit_bounds_checks: bool,
+) -> Result<String, LowerError> {
     let ctx = Context::create();
     let module: Module<'_> = ctx.create_module(module_name);
     let builder: Builder<'_> = ctx.create_builder();
@@ -99,7 +103,13 @@ pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String
                         }),
                     );
                 }
-                let mut fl = FunctionLowering::new(&codegen_ctx, function, entry_vars, fn_scope);
+                let mut fl = FunctionLowering::new(
+                    &codegen_ctx,
+                    function,
+                    entry_vars,
+                    fn_scope,
+                    emit_bounds_checks,
+                );
                 for stmt in typed_function.body.iter() {
                     fl.codegen_stmt(stmt)?;
                 }
@@ -152,6 +162,7 @@ pub fn lower(compilation_unit: TypedProgram, module_name: &str) -> Result<String
                     function,
                     HashMap::new(),
                     compilation_unit.symbol_table.clone(),
+                    emit_bounds_checks,
                 );
                 let ty = map_type_to_llvm(
                     &typed_binding.ty,

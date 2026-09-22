@@ -58,6 +58,220 @@ pub(super) fn require_integer_index(ty: &Ty, what: &str) -> Result<(), AnalysisE
     }
 }
 
+/// Bit width and signedness (`true` = unsigned) of an integer type.
+/// `None` for non-integers (floats, bools, pointers, ...).
+fn int_type_info(ty: &Ty) -> Option<(u32, bool)> {
+    match ty {
+        Ty::Builtin(b) => match b {
+            BuiltinType::Int1 => Some((8, false)),
+            BuiltinType::Int2 => Some((16, false)),
+            BuiltinType::Int4 => Some((32, false)),
+            BuiltinType::Int8 => Some((64, false)),
+            BuiltinType::Int16 => Some((128, false)),
+            BuiltinType::UInt1 => Some((8, true)),
+            BuiltinType::UInt2 => Some((16, true)),
+            BuiltinType::UInt4 => Some((32, true)),
+            BuiltinType::UInt8 => Some((64, true)),
+            BuiltinType::UInt16 => Some((128, true)),
+            BuiltinType::Usize => Some((64, true)),
+            BuiltinType::Char => Some((8, true)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Wrap a raw value into an N-bit (un)signed integer (two's complement).
+fn wrap_to_int(value: i128, bits: u32, unsigned: bool) -> i128 {
+    if bits >= 128 {
+        return value;
+    }
+    let mask = (1i128 << bits) - 1;
+    let raw = value & mask;
+    if unsigned {
+        raw
+    } else {
+        let sign = 1i128 << (bits - 1);
+        if raw & sign != 0 {
+            raw - (1i128 << bits)
+        } else {
+            raw
+        }
+    }
+}
+
+/// Best-effort compile-time evaluation of an integer expression.
+///
+/// Handles literals (interpreted in their inferred width/signedness, so a
+/// signed `-1` and an unsigned `255` evaluate distinctly), constant integer
+/// arithmetic, int-to-int casts, and `arr.@len` on fixed-size arrays.
+/// Returns `None` when the value is only known at runtime (variables, call
+/// results, slice lengths, ...) — those defer to the debug runtime check.
+pub(super) fn eval_const_int(expr: &TypedExpr, scope: &SymbolTable) -> Option<i128> {
+    match &expr.expression {
+        TypedExprKind::LiteralInt { value } => {
+            let (bits, unsigned) = int_type_info(&expr.inferred_type)?;
+            Some(wrap_to_int(*value as i128, bits, unsigned))
+        }
+        TypedExprKind::Binary {
+            left,
+            operator,
+            right,
+        } => {
+            let l = eval_const_int(left, scope)?;
+            let r = eval_const_int(right, scope)?;
+            let (bits, unsigned) = int_type_info(&expr.inferred_type)?;
+            let v = match operator {
+                BinOp::Add => l.checked_add(r)?,
+                BinOp::Sub => l.checked_sub(r)?,
+                BinOp::Mul => l.checked_mul(r)?,
+                BinOp::Div => l.checked_div(r)?,
+                BinOp::Rem => l.checked_rem(r)?,
+                BinOp::And => l & r,
+                BinOp::Or => l | r,
+                BinOp::Xor => l ^ r,
+                BinOp::Shl | BinOp::Shr => {
+                    // A shift at/above the width is poison at runtime, so
+                    // refuse to fold it rather than guess a wrapped value.
+                    let shift: u32 = r.try_into().ok()?;
+                    if shift >= bits {
+                        return None;
+                    }
+                    if matches!(operator, BinOp::Shl) {
+                        l.checked_shl(shift)?
+                    } else {
+                        l.checked_shr(shift)?
+                    }
+                }
+                // Comparisons produce `@bool`, never an integer.
+                _ => return None,
+            };
+            Some(wrap_to_int(v, bits, unsigned))
+        }
+        TypedExprKind::Cast {
+            expr: inner,
+            target_type,
+        } => {
+            let v = eval_const_int(inner, scope)?;
+            let (bits, unsigned) = int_type_info(target_type)?;
+            Some(wrap_to_int(v, bits, unsigned))
+        }
+        TypedExprKind::ArrayLen { array } => {
+            match resolve_type_alias(array.inferred_type.clone(), scope) {
+                Ty::Array { size, .. } => Some(size as i128),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Compile-time index check against a fixed array length.
+///
+/// Errors when `index` is a comptime-known constant outside `0..len`.
+/// Anything else (variables, call results, ...) passes here and is verified
+/// by the debug runtime check instead — so this never rejects a program
+/// that could be in bounds.
+pub(super) fn check_const_index(
+    len: u64,
+    index: &TypedExpr,
+    scope: &SymbolTable,
+    what: &str,
+) -> Result<(), AnalysisError> {
+    if let Some(v) = eval_const_int(index, scope)
+        && (v < 0 || v as u128 >= len as u128)
+    {
+        return Err(AnalysisError::from(format!(
+            "{}: index {} out of bounds for array of length {}",
+            what, v, len
+        ))
+        .with_hint(format!("valid indices are 0..{}", len)));
+    }
+    Ok(())
+}
+
+/// Compile-time slice-range check.
+///
+/// `obj_len` is `Some` for arrays (fixed length) and `None` for slices
+/// (runtime length). Each comptime-known bound is validated independently,
+/// so `arr.[i..99]` still fails on a length-4 array even when `i` is dynamic.
+/// Fully dynamic ranges pass here and are verified by the debug runtime check.
+pub(super) fn check_const_slice_bounds(
+    obj_len: Option<u64>,
+    start: Option<&TypedExpr>,
+    end: Option<&TypedExpr>,
+    inclusive: bool,
+    scope: &SymbolTable,
+) -> Result<(), AnalysisError> {
+    let start_const = start.and_then(|s| eval_const_int(s, scope));
+    // An inclusive `[a.=b]` end covers index `b`, i.e. exclusive `b + 1`.
+    // An overflowing `b + 1` is out of bounds for any real array.
+    let end_const = end.and_then(|e| {
+        let v = eval_const_int(e, scope)?;
+        if inclusive { v.checked_add(1) } else { Some(v) }
+    });
+    if let Some(len) = obj_len {
+        let len = len as i128;
+        if let Some(s) = start_const
+            && (s < 0 || s > len)
+        {
+            return Err(AnalysisError::from(format!(
+                "slice start {} out of bounds for array of length {}",
+                s, len
+            ))
+            .with_hint(format!("start must satisfy 0 <= start <= {}", len)));
+        }
+        if let Some(e) = end_const
+            && (e < 0 || e > len)
+        {
+            return Err(AnalysisError::from(format!(
+                "slice end {} out of bounds for array of length {}",
+                e, len
+            ))
+            .with_hint(if inclusive {
+                format!(
+                    "note: `.=` is inclusive, so `[a.={}]` needs length {}",
+                    e - 1,
+                    e
+                )
+            } else {
+                format!("end must satisfy 0 <= end <= {}", len)
+            }));
+        }
+    } else {
+        // Slice base: the length is runtime, but negative constants and an
+        // inverted constant range are out of bounds for every length.
+        if let Some(s) = start_const
+            && s < 0
+        {
+            return Err(AnalysisError::from(format!(
+                "slice start {} out of bounds: negative bound",
+                s
+            ))
+            .with_hint("slice bounds must be >= 0".to_string()));
+        }
+        if let Some(e) = end_const
+            && e < 0
+        {
+            return Err(AnalysisError::from(format!(
+                "slice end {} out of bounds: negative bound",
+                e
+            ))
+            .with_hint("slice bounds must be >= 0".to_string()));
+        }
+    }
+    if let (Some(s), Some(e)) = (start_const, end_const)
+        && s > e
+    {
+        return Err(AnalysisError::from(format!(
+            "slice range is inverted: start {} is after end {}",
+            s, e
+        ))
+        .with_hint("slice requires start <= end".to_string()));
+    }
+    Ok(())
+}
+
 /// Single coercion entry point: bring `expr` to `target` type.
 ///
 /// This subsumes the former `coerce_expr_to_type` + `coerce_or_alias` pair,
@@ -888,6 +1102,19 @@ fn expr_to_typed_inner(
                     .into());
                 }
             };
+            // Compile-time range check whenever the bounds are constants.
+            // Dynamic bounds pass here and trap at runtime in debug builds.
+            let obj_len = match &resolved {
+                Ty::Array { size, .. } => Some(*size),
+                _ => None,
+            };
+            check_const_slice_bounds(
+                obj_len,
+                start_typed.as_ref(),
+                end_typed.as_ref(),
+                inclusive,
+                current_scope,
+            )?;
             Ok(TypedExpr {
                 inferred_type: Ty::Slice(Box::new(elem_ty)),
                 expression: TypedExprKind::Slice {
@@ -904,6 +1131,21 @@ fn expr_to_typed_inner(
             require_integer_index(&idx_typed.inferred_type, "index access")?;
             // Resolve aliases so `type Vec @int4[]` elements index correctly.
             let resolved = resolve_type_alias(obj_typed.inferred_type.clone(), current_scope);
+            // Compile-time bounds check for fixed arrays with a constant
+            // index. Dynamic indices (and slices/pointers, whose length is
+            // runtime) trap at runtime in debug builds instead.
+            if let Ty::Array { size, .. } = &resolved {
+                check_const_index(*size, &idx_typed, current_scope, "index access")?;
+            } else if let Ty::Slice(_) = &resolved
+                && let Some(v) = eval_const_int(&idx_typed, current_scope)
+                && v < 0
+            {
+                return Err(AnalysisError::from(format!(
+                    "index access: index {} out of bounds: negative index",
+                    v
+                ))
+                .with_hint("slice indices must be >= 0".to_string()));
+            }
             let pointee_ty = match &resolved {
                 Ty::Pointer(inner) => *inner.clone(),
                 Ty::Array { element_type, .. } => *element_type.clone(),

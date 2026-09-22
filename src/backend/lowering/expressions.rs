@@ -1,6 +1,6 @@
 use inkwell::types::{BasicMetadataTypeEnum, BasicTypeEnum, FunctionType};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
+    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
 };
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
@@ -50,12 +50,16 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             }
             TypedExprKind::IndexAccess { object, index } => {
                 let idx_val = self.codegen_expr(index)?;
+                let idx_int = idx_val.into_int_value();
+                let idx_unsigned = crate::ir::ty_is_unsigned(&index.inferred_type);
                 let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
                 let obj_resolved = self.resolve_ty(&object.inferred_type);
                 match &obj_resolved {
-                    Ty::Array { .. } => {
+                    Ty::Array { size, .. } => {
                         let arr_ty =
                             map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
+                        let len_val = ctx.ctx.i64_type().const_int(*size, false);
+                        self.emit_index_bounds_check(idx_int, idx_unsigned, len_val)?;
                         let base_ptr = self.compute_lvalue_ptr(object)?;
                         let i32_zero = ctx.ctx.i32_type().const_int(0, false);
                         let gep = unsafe {
@@ -71,7 +75,8 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                     Ty::Slice(_) => {
                         // Slices are `{ ptr, len }` values: load the struct,
                         // extract the data pointer, then GEP by the index.
-                        let ptr_val = self.slice_data_ptr(object)?;
+                        let (ptr_val, len_val) = self.slice_ptr_and_len(object)?;
+                        self.emit_index_bounds_check(idx_int, idx_unsigned, len_val)?;
                         let gep = unsafe {
                             ctx.builder.build_gep(
                                 elem_ty,
@@ -112,25 +117,35 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             }
         }
     }
-    /// Data pointer of a slice-typed expression (`{ ptr, len }` value).
-    /// Codegens the slice, spills it to a temp alloca, and loads field 0.
-    pub(super) fn slice_data_ptr(
+    /// `(data_ptr, len)` of a slice-typed expression with a single evaluation
+    /// of the slice value. Prefer this over `slice_data_ptr` + `slice_len_value`
+    /// (which would evaluate the expression twice) whenever both are needed.
+    pub(super) fn slice_ptr_and_len(
         &mut self,
         slice_expr: &TypedExpr,
-    ) -> Result<PointerValue<'ctx>, LowerError> {
+    ) -> Result<(PointerValue<'ctx>, IntValue<'ctx>), LowerError> {
         let ctx = self.ctx;
         let slice_val = self.codegen_expr(slice_expr)?;
         let slice_llvm_ty =
             map_type_to_llvm(&slice_expr.inferred_type, ctx.ctx, self.scope.clone())?;
         let BasicTypeEnum::StructType(st) = slice_llvm_ty else {
-            return Err("slice_data_ptr: slice type is not a struct".into());
+            return Err("slice_ptr_and_len: slice type is not a struct".into());
         };
         let alloca = ctx.builder.build_alloca(st, "slicetmp")?;
         ctx.builder.build_store(alloca, slice_val)?;
         let ptr_gep = ctx.builder.build_struct_gep(st, alloca, 0, "sliceptr")?;
         let ptr_ty = ctx.ctx.ptr_type(AddressSpace::default());
-        let loaded = ctx.builder.build_load(ptr_ty, ptr_gep, "sliceloadptr")?;
-        Ok(loaded.into_pointer_value())
+        let ptr = ctx
+            .builder
+            .build_load(ptr_ty, ptr_gep, "sliceloadptr")?
+            .into_pointer_value();
+        let len_gep = ctx.builder.build_struct_gep(st, alloca, 1, "slicelenptr")?;
+        let len_ty = ctx.ctx.i64_type();
+        let len = ctx
+            .builder
+            .build_load(len_ty, len_gep, "slicelen")?
+            .into_int_value();
+        Ok((ptr, len))
     }
     /// Length of a slice-typed expression: load field 1 of `{ ptr, len }`.
     fn slice_len_value(
@@ -149,6 +164,163 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
         let len_gep = ctx.builder.build_struct_gep(st, alloca, 1, "slicelenptr")?;
         let len_ty = ctx.ctx.i64_type();
         Ok(ctx.builder.build_load(len_ty, len_gep, "slicelen")?)
+    }
+    /// Extend an index/length value to `i128` without changing its value
+    /// (`sext` for signed Fib ints, `zext` for unsigned), so OOB comparisons
+    /// are exact for every integer width instead of truncating `@int16`.
+    fn extend_to_i128(
+        &self,
+        value: IntValue<'ctx>,
+        is_unsigned: bool,
+    ) -> Result<IntValue<'ctx>, LowerError> {
+        let ctx = self.ctx;
+        let i128_ty = ctx.ctx.i128_type();
+        let src_bits = value.get_type().get_bit_width();
+        if src_bits == 128 {
+            return Ok(value);
+        }
+        if src_bits > 128 {
+            return Err("bounds check: integer wider than 128 bits".into());
+        }
+        if is_unsigned {
+            Ok(ctx.builder.build_int_z_extend(value, i128_ty, "oob_zext")?)
+        } else {
+            Ok(ctx.builder.build_int_s_extend(value, i128_ty, "oob_sext")?)
+        }
+    }
+    /// Emit `if (fail) { report; abort; }` with explicit `oob_trap` /
+    /// `oob_cont` blocks, so the check is hard to miss in `--emit-llvm`
+    /// output. The report goes to stderr (fd 2) via `dprintf`, then `abort`
+    /// crashes gracefully with `SIGABRT`. Leaves the builder in `oob_cont`.
+    fn emit_bounds_trap(
+        &mut self,
+        fail: IntValue<'ctx>,
+        fmt: &str,
+        print_args: Vec<BasicMetadataValueEnum<'ctx>>,
+    ) -> Result<(), LowerError> {
+        let ctx = self.ctx;
+        let func = self.parent_function("bounds check")?;
+        let trap_bb = ctx.ctx.append_basic_block(func, "oob_trap");
+        let cont_bb = ctx.ctx.append_basic_block(func, "oob_cont");
+        ctx.builder
+            .build_conditional_branch(fail, trap_bb, cont_bb)?;
+        ctx.builder.position_at_end(trap_bb);
+        // `dprintf(2, fmt, ...)`: stderr without needing the `stderr` global.
+        let ptr_ty = ctx.ctx.ptr_type(AddressSpace::default());
+        let i32_ty = ctx.ctx.i32_type();
+        let dprintf_ty = i32_ty.fn_type(&[i32_ty.into(), ptr_ty.into()], true);
+        let dprintf = get_or_declare(ctx, "dprintf", dprintf_ty);
+        let fmt_ptr = ctx.builder.build_global_string_ptr(fmt, "oob_msg")?;
+        let mut call_args: Vec<BasicMetadataValueEnum> = vec![
+            i32_ty.const_int(2, false).into(),
+            fmt_ptr.as_pointer_value().into(),
+        ];
+        call_args.extend(print_args);
+        ctx.builder.build_call(dprintf, &call_args, "oob_report")?;
+        let abort_ty = ctx.ctx.void_type().fn_type(&[], false);
+        let abort = get_or_declare(ctx, "abort", abort_ty);
+        ctx.builder.build_call(abort, &[], "oob_abort")?;
+        ctx.builder.build_unreachable()?;
+        ctx.builder.position_at_end(cont_bb);
+        Ok(())
+    }
+    /// Truncate `i128` check values to `i64` for the `%lld` report message.
+    /// Display-only: the trap decision already ran at full width, so extreme
+    /// values still trap correctly even if the printed number wraps.
+    fn truncate_for_report(
+        &self,
+        values: &[IntValue<'ctx>],
+    ) -> Result<Vec<BasicMetadataValueEnum<'ctx>>, LowerError> {
+        let ctx = self.ctx;
+        let i64_ty = ctx.ctx.i64_type();
+        let mut out = Vec::with_capacity(values.len());
+        for v in values {
+            out.push(
+                ctx.builder
+                    .build_int_truncate(*v, i64_ty, "oob_report64")?
+                    .into(),
+            );
+        }
+        Ok(out)
+    }
+    /// Debug bounds check for `obj.[idx]`: traps when `idx >= len` (and when
+    /// `idx < 0` for signed indices). Skipped entirely with `--release`.
+    /// `len` must be non-negative (array size or slice length).
+    pub(super) fn emit_index_bounds_check(
+        &mut self,
+        idx: IntValue<'ctx>,
+        idx_is_unsigned: bool,
+        len_i64: IntValue<'ctx>,
+    ) -> Result<(), LowerError> {
+        if !self.bounds_checks {
+            return Ok(());
+        }
+        let ctx = self.ctx;
+        let idx128 = self.extend_to_i128(idx, idx_is_unsigned)?;
+        let len128 = self.extend_to_i128(len_i64, true)?;
+        let fail = if idx_is_unsigned {
+            ctx.builder
+                .build_int_compare(IntPredicate::UGE, idx128, len128, "oob_idx_fail")?
+        } else {
+            let neg = ctx.builder.build_int_compare(
+                IntPredicate::SLT,
+                idx128,
+                ctx.ctx.i128_type().const_zero(),
+                "oob_idx_neg",
+            )?;
+            let past =
+                ctx.builder
+                    .build_int_compare(IntPredicate::SGE, idx128, len128, "oob_idx_past")?;
+            ctx.builder.build_or(neg, past, "oob_idx_fail")?
+        };
+        let print_args = self.truncate_for_report(&[idx128, len128])?;
+        self.emit_bounds_trap(
+            fail,
+            "fib: index out of bounds: index %lld, len %lld\n",
+            print_args,
+        )
+    }
+    /// Debug bounds check for `obj.[start..end]`: traps unless
+    /// `0 <= start <= end <= len`. All values are `i128` (sign-preserved) so
+    /// the comparison is exact. Skipped entirely with `--release`.
+    pub(super) fn emit_slice_bounds_check(
+        &mut self,
+        start: IntValue<'ctx>,
+        end: IntValue<'ctx>,
+        len: IntValue<'ctx>,
+    ) -> Result<(), LowerError> {
+        if !self.bounds_checks {
+            return Ok(());
+        }
+        let ctx = self.ctx;
+        let zero = ctx.ctx.i128_type().const_zero();
+        let bad_start_lo =
+            ctx.builder
+                .build_int_compare(IntPredicate::SLT, start, zero, "oob_start_neg")?;
+        let bad_start_hi =
+            ctx.builder
+                .build_int_compare(IntPredicate::SGT, start, len, "oob_start_past")?;
+        let bad_end_lo =
+            ctx.builder
+                .build_int_compare(IntPredicate::SLT, end, zero, "oob_end_neg")?;
+        let bad_end_hi =
+            ctx.builder
+                .build_int_compare(IntPredicate::SGT, end, len, "oob_end_past")?;
+        let inverted =
+            ctx.builder
+                .build_int_compare(IntPredicate::SGT, start, end, "oob_inverted")?;
+        let fail = ctx
+            .builder
+            .build_or(bad_start_lo, bad_start_hi, "oob_slice_fail")?;
+        let fail = ctx.builder.build_or(fail, bad_end_lo, "oob_slice_fail")?;
+        let fail = ctx.builder.build_or(fail, bad_end_hi, "oob_slice_fail")?;
+        let fail = ctx.builder.build_or(fail, inverted, "oob_slice_fail")?;
+        let print_args = self.truncate_for_report(&[start, end, len])?;
+        self.emit_bounds_trap(
+            fail,
+            "fib: slice out of bounds: start %lld, end %lld, len %lld\n",
+            print_args,
+        )
     }
     /// Build a `{ ptr, len }` slice value from an array-typed expression.
     fn build_slice_from_array(
@@ -255,12 +427,14 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             }
         };
         let elem_llvm_ty = map_type_to_llvm(&elem_ty, ctx.ctx, self.scope.clone())?;
-        // Base pointer to element 0 of the underlying storage.
-        let base_ptr = match &obj_resolved {
-            Ty::Array { .. } => {
+        // Base pointer to element 0 of the underlying storage, plus the
+        // object length. The slice value is evaluated once (`slice_ptr_and_len`)
+        // so bounds with side effects still run a single time.
+        let (base_ptr, len64) = match &obj_resolved {
+            Ty::Array { size, .. } => {
                 let arr_llvm_ty =
                     map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
-                if let TypedExprKind::Identifier(name) = &object.expression
+                let base = if let TypedExprKind::Identifier(name) = &object.expression
                     && let Some(alloca) = self.vars.get(name)
                 {
                     let i32_zero = ctx.ctx.i32_type().const_int(0, false);
@@ -285,42 +459,39 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                             "slice_range_base",
                         )?
                     }
-                }
+                };
+                (base, ctx.ctx.i64_type().const_int(*size, false))
             }
-            Ty::Slice(_) => self.slice_data_ptr(object)?,
+            Ty::Slice(_) => self.slice_ptr_and_len(object)?,
             _ => unreachable!("checked above"),
         };
         let i64_ty = ctx.ctx.i64_type();
         // `start`: codegen once (bounds may have side effects); omitted → 0.
-        let (start_gep, start64) = match start {
+        // The original width is kept for the exact debug check below.
+        let (start_gep, start64, start_orig) = match start {
             Some(s) => {
                 let v = self.codegen_expr(s)?.into_int_value();
-                let v64 = coerce_int_to_llvm_type(
-                    ctx,
-                    v.as_basic_value_enum(),
-                    i64_ty.into(),
-                    crate::ir::ty_is_unsigned(&s.inferred_type),
-                )?
-                .into_int_value();
-                (v, v64)
+                let unsigned = crate::ir::ty_is_unsigned(&s.inferred_type);
+                let v64 =
+                    coerce_int_to_llvm_type(ctx, v.as_basic_value_enum(), i64_ty.into(), unsigned)?
+                        .into_int_value();
+                (v, v64, Some((v, unsigned)))
             }
             None => (
                 ctx.ctx.i32_type().const_int(0, false),
                 i64_ty.const_int(0, false),
+                None,
             ),
         };
         // Effective exclusive end: omitted → object length; inclusive → end + 1.
-        let end64 = match end {
+        let (end64, end_orig) = match end {
             Some(e) => {
                 let v = self.codegen_expr(e)?.into_int_value();
-                let v64 = coerce_int_to_llvm_type(
-                    ctx,
-                    v.as_basic_value_enum(),
-                    i64_ty.into(),
-                    crate::ir::ty_is_unsigned(&e.inferred_type),
-                )?
-                .into_int_value();
-                if inclusive {
+                let unsigned = crate::ir::ty_is_unsigned(&e.inferred_type);
+                let v64 =
+                    coerce_int_to_llvm_type(ctx, v.as_basic_value_enum(), i64_ty.into(), unsigned)?
+                        .into_int_value();
+                let eff = if inclusive {
                     ctx.builder.build_int_add(
                         v64,
                         i64_ty.const_int(1, false),
@@ -328,14 +499,33 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                     )?
                 } else {
                     v64
-                }
+                };
+                (eff, Some((v, unsigned)))
             }
-            None => match &obj_resolved {
-                Ty::Array { size, .. } => i64_ty.const_int(*size, false),
-                Ty::Slice(_) => self.slice_len_value(object)?.into_int_value(),
-                _ => unreachable!("checked above"),
-            },
+            None => (len64, None),
         };
+        // Debug check (`--release` skips it): `0 <= start <= end <= len`,
+        // compared at full width so `@int16` bounds stay exact. Runs before
+        // the `base + start` pointer arithmetic below.
+        if self.bounds_checks {
+            let start128 = match start_orig {
+                Some((v, unsigned)) => self.extend_to_i128(v, unsigned)?,
+                None => self.extend_to_i128(i64_ty.const_int(0, false), true)?,
+            };
+            let mut end128 = match end_orig {
+                Some((v, unsigned)) => self.extend_to_i128(v, unsigned)?,
+                None => self.extend_to_i128(len64, true)?,
+            };
+            if inclusive {
+                end128 = ctx.builder.build_int_add(
+                    end128,
+                    ctx.ctx.i128_type().const_int(1, false),
+                    "oob_incl",
+                )?;
+            }
+            let len128 = self.extend_to_i128(len64, true)?;
+            self.emit_slice_bounds_check(start128, end128, len128)?;
+        }
         // `ptr = base + start`.
         let ptr = unsafe {
             ctx.builder
@@ -1053,11 +1243,15 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
         }
         TypedExprKind::IndexAccess { object, index } => {
             let idx_val = self.codegen_expr( index)?;
+            let idx_int = idx_val.into_int_value();
+            let idx_unsigned = crate::ir::ty_is_unsigned(&index.inferred_type);
             let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
             let obj_resolved = self.resolve_ty(&object.inferred_type);
             match &obj_resolved {
-                Ty::Array { .. } => {
+                Ty::Array { size, .. } => {
                     let arr_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
+                    let len_val = ctx.ctx.i64_type().const_int(*size, false);
+                    self.emit_index_bounds_check(idx_int, idx_unsigned, len_val)?;
                     // Need a pointer to the array for GEP — store to temp alloca
                     let arr_val = self.codegen_expr( object)?;
                     let alloca = ctx.builder.build_alloca(arr_ty, "arridxtmp")?;
@@ -1075,7 +1269,8 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                     Ok(loaded)
                 }
                 Ty::Slice(_) => {
-                    let data_ptr = self.slice_data_ptr(object)?;
+                    let (data_ptr, len_val) = self.slice_ptr_and_len(object)?;
+                    self.emit_index_bounds_check(idx_int, idx_unsigned, len_val)?;
                     let gep = unsafe {
                         ctx.builder.build_gep(
                             elem_ty,

@@ -1394,4 +1394,78 @@ mod tests {
             }
         }
     }
+
+    // ── Compile-time bounds checks ────────────────────────────────────────
+
+    #[test]
+    fn test_const_index_past_end_rejected() {
+        let err = get_typed_err("fn f() @int4 { arr: @int4[4] = [1, 2, 3, 4];\nreturn arr.[4]; }");
+        assert!(err.contains("out of bounds"), "unexpected error: {}", err);
+        assert!(err.contains('4'), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_const_negative_index_rejected() {
+        // Unary minus desugars to `0 - 1`, which the const evaluator folds.
+        let err =
+            get_typed_err("fn f() @int4 { arr: @int4[4] = [1, 2, 3, 4];\nreturn arr.[0 - 1]; }");
+        assert!(err.contains("out of bounds"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_const_index_assign_past_end_rejected() {
+        let err = get_typed_err("fn f() @void { arr: @int4[2] = [1, 2];\narr.[2] = 9; }");
+        assert!(err.contains("out of bounds"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_dynamic_index_passes_analysis() {
+        // A variable index is not comptime-known: analysis accepts it and the
+        // debug backend emits the runtime check instead.
+        let cu =
+            get_typed("fn f(i: @int4) @int4 { arr: @int4[4] = [1, 2, 3, 4];\nreturn arr.[i]; }");
+        assert_eq!(cu.declarations.len(), 1);
+    }
+
+    #[test]
+    fn test_const_slice_end_past_len_rejected() {
+        let err = get_typed_err(
+            "fn f() @void { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[0..5]; }",
+        );
+        assert!(err.contains("out of bounds"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_const_slice_inclusive_end_past_len_rejected() {
+        // `[0.=4]` covers index 4, which a length-4 array does not have.
+        let err = get_typed_err(
+            "fn f() @void { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[0.=4]; }",
+        );
+        assert!(err.contains("out of bounds"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_const_slice_inverted_rejected() {
+        let err = get_typed_err(
+            "fn f() @void { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[3..2]; }",
+        );
+        assert!(err.contains("inverted"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_const_slice_negative_on_slice_rejected() {
+        // Slice length is runtime, but a negative constant bound is OOB for
+        // every length.
+        let err = get_typed_err("fn f(s: @int4[]) @void { t: @int4[] = s.[0 - 1..2]; }");
+        assert!(err.contains("out of bounds"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_const_slice_partial_dynamic_still_checked() {
+        // Only the end is constant, but `99` exceeds every bound of a len-4 array.
+        let err = get_typed_err(
+            "fn f(i: @int4) @void { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[i..99]; }",
+        );
+        assert!(err.contains("out of bounds"), "unexpected error: {}", err);
+    }
 }

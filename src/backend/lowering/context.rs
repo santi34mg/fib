@@ -42,6 +42,9 @@ pub(super) struct FunctionLowering<'ctx, 'r> {
     pub(super) scope: SymbolTable,
     pub(super) deferred_stack: Vec<Vec<TypedStatement>>,
     loop_ctx: Option<LoopContext<'ctx>>,
+    /// Debug runtime bounds checks for `arr.[i]` / `arr.[a..b]`.
+    /// True unless `--release` was passed; compile-time checks always run.
+    pub(super) bounds_checks: bool,
 }
 
 impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
@@ -50,6 +53,7 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
         function: FunctionValue<'ctx>,
         vars: HashMap<Identifier, PointerValue<'ctx>>,
         scope: SymbolTable,
+        bounds_checks: bool,
     ) -> Self {
         Self {
             ctx,
@@ -58,6 +62,7 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             scope,
             deferred_stack: vec![Vec::new()],
             loop_ctx: None,
+            bounds_checks,
         }
     }
 

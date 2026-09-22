@@ -15,7 +15,10 @@ use crate::frontend::typed_ast::{
 };
 
 use super::AnalysisError;
-use super::expressions::{check_assignable, coerce_to, expr_to_typed, require_integer_index};
+use super::expressions::{
+    check_assignable, check_const_index, coerce_to, eval_const_int, expr_to_typed,
+    require_integer_index,
+};
 use super::types::{map_type, resolve_struct_fields, resolve_type_alias};
 
 pub(super) fn stmt_to_typed(
@@ -308,6 +311,20 @@ pub(super) fn stmt_to_typed_inner(
             };
             let idx_typed = expr_to_typed(index, current_scope, generic_cache)?;
             require_integer_index(&idx_typed.inferred_type, "index assignment")?;
+            // Same compile-time bounds check as index reads: constant OOB
+            // indices on fixed arrays fail here, the rest trap in debug builds.
+            if let Ty::Array { size, .. } = &resolved {
+                check_const_index(*size, &idx_typed, current_scope, "index assignment")?;
+            } else if let Ty::Slice(_) = &resolved
+                && let Some(v) = eval_const_int(&idx_typed, current_scope)
+                && v < 0
+            {
+                return Err(AnalysisError::from(format!(
+                    "index assignment: index {} out of bounds: negative index",
+                    v
+                ))
+                .with_hint("slice indices must be >= 0".to_string()));
+            }
             let val_typed = expr_to_typed(expr, current_scope, generic_cache)?;
             // Coerce the value to the element type via the shared assignment check.
             let val_typed = check_assignable(

@@ -202,7 +202,8 @@ mod tests {
         };
         let fn_ty = ctx.i32_type().fn_type(&[], false);
         let function = module.add_function("probe", fn_ty, None);
-        let mut fl = FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new());
+        let mut fl =
+            FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new(), false);
         let expr = TypedExpr {
             inferred_type: Ty::Builtin(BuiltinType::Int4),
             expression: TypedExprKind::Identifier(Identifier {
@@ -272,7 +273,8 @@ mod tests {
         };
         let fn_ty = ctx.i32_type().fn_type(&[], false);
         let function = module.add_function("probe", fn_ty, None);
-        let mut fl = FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new());
+        let mut fl =
+            FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new(), false);
         let expr = TypedExpr {
             inferred_type: Ty::Builtin(BuiltinType::Int4),
             expression: TypedExprKind::LiteralInt { value: 1 },
@@ -325,7 +327,7 @@ mod tests {
                 field_index: 0,
             },
         };
-        let mut fl = FunctionLowering::new(&cctx, function, vars, scope);
+        let mut fl = FunctionLowering::new(&cctx, function, vars, scope, false);
         let err = fl
             .compute_lvalue_ptr(&expr)
             .expect_err("expected non-struct error");
@@ -350,7 +352,8 @@ mod tests {
         };
         let fn_ty = ctx.i32_type().fn_type(&[], false);
         let function = module.add_function("probe", fn_ty, None);
-        let mut fl = FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new());
+        let mut fl =
+            FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new(), false);
         let i32_ty = ctx.i32_type();
         let tuple_ty = ctx.struct_type(&[i32_ty.into(), i32_ty.into()], false);
         let expr = TypedExpr {
@@ -489,5 +492,81 @@ mod tests {
         assert!(matches!(err, LowerError::Unsupported(_)));
         let err = LowerError::from("static str likewise");
         assert!(matches!(err, LowerError::Unsupported(_)));
+    }
+
+    // ── debug bounds checks ─────────────────────────────────────────────
+
+    /// Analyze + lower directly (the IR middle-end rejects index/slice, so
+    /// this exercises the `TypedProgram -> LLVM` path that owns the checks).
+    fn lower_direct_src(src: &str, bounds_checks: bool) -> String {
+        let tokens: Vec<_> = Lexer::new(src).collect();
+        let path = PathBuf::from("test.fib");
+        let mut parser = Parser::new(tokens.into_iter(), &path, src.to_string());
+        let ast = parser.parse().expect("parse failed");
+        let typed =
+            crate::frontend::analyze::analyze(ast, &Default::default()).expect("analysis failed");
+        super::super::llvm_lower::lower(typed, "test", bounds_checks).expect("lower failed")
+    }
+
+    #[test]
+    fn index_access_emits_oob_trap_in_debug() {
+        let ir = lower_direct_src(
+            "fn main() @int4 { arr: @int4[4] = [1, 2, 3, 4];\ni: @int4 = 2;\nreturn arr.[i]; }",
+            true,
+        );
+        assert!(ir.contains("oob_trap"), "missing trap block:\n{}", ir);
+        assert!(ir.contains("oob_cont"), "missing cont block:\n{}", ir);
+        assert!(ir.contains("dprintf"), "missing stderr report:\n{}", ir);
+        assert!(ir.contains("abort"), "missing abort:\n{}", ir);
+        assert!(
+            ir.contains("index out of bounds"),
+            "missing message:\n{}",
+            ir
+        );
+    }
+
+    #[test]
+    fn index_access_omits_oob_trap_in_release() {
+        let ir = lower_direct_src(
+            "fn main() @int4 { arr: @int4[4] = [1, 2, 3, 4];\ni: @int4 = 2;\nreturn arr.[i]; }",
+            false,
+        );
+        assert!(
+            !ir.contains("oob_trap"),
+            "trap leaked into release:\n{}",
+            ir
+        );
+        assert!(
+            !ir.contains("dprintf"),
+            "report leaked into release:\n{}",
+            ir
+        );
+    }
+
+    #[test]
+    fn slice_range_emits_oob_trap_in_debug() {
+        let ir = lower_direct_src(
+            "fn f(a: @int4, b: @int4) @void { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[a..b]; }",
+            true,
+        );
+        assert!(
+            ir.contains("slice out of bounds"),
+            "missing slice message:\n{}",
+            ir
+        );
+        assert!(ir.contains("oob_trap"), "missing trap block:\n{}", ir);
+    }
+
+    #[test]
+    fn slice_range_omits_oob_trap_in_release() {
+        let ir = lower_direct_src(
+            "fn f(a: @int4, b: @int4) @void { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[a..b]; }",
+            false,
+        );
+        assert!(
+            !ir.contains("oob_trap"),
+            "trap leaked into release:\n{}",
+            ir
+        );
     }
 }

@@ -58,6 +58,13 @@ pub struct Args {
     /// Accepted: 0, 1, 2, 3, s, z.
     #[arg(short = 'O', long = "opt-level", value_name = "LEVEL")]
     pub opt_level: Option<String>,
+
+    /// Release mode: skip the debug runtime bounds checks on `arr.[i]` and
+    /// `arr.[a..b]`. By default (debug) every index/slice emits an explicit
+    /// OOB check that reports to stderr and aborts. Compile-time checks for
+    /// constant bounds always run, in both modes.
+    #[arg(long = "release")]
+    pub release: bool,
 }
 
 impl From<Args> for CompilationOptions {
@@ -73,6 +80,7 @@ impl From<Args> for CompilationOptions {
             llvm_out: args.llvm_out,
             cc: args.cc,
             opt_level: args.opt_level,
+            release: args.release,
         }
     }
 }
@@ -187,6 +195,16 @@ mod tests {
         let args = Args::try_parse_from(["fibc", "main.fib", "--check"]).expect("parse");
         let opts = CompilationOptions::from(args);
         assert_eq!(opts.effective_emit(), EmitKind::Typed);
+    }
+
+    #[test]
+    fn cli_release_defaults_off_and_parses() {
+        let args = Args::try_parse_from(["fibc", "main.fib"]).expect("parse");
+        assert!(!args.release);
+        assert!(CompilationOptions::from(args).emit_bounds_checks());
+        let args = Args::try_parse_from(["fibc", "main.fib", "--release"]).expect("parse");
+        assert!(args.release);
+        assert!(!CompilationOptions::from(args).emit_bounds_checks());
     }
 
     #[test]

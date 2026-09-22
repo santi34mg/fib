@@ -199,13 +199,17 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                 expr,
             } => {
                 let idx_val = self.codegen_expr(index)?;
+                let idx_int = idx_val.into_int_value();
+                let idx_unsigned = crate::ir::ty_is_unsigned(&index.inferred_type);
                 let val = self.codegen_expr(expr)?;
                 // Resolve aliases so `type Vec @int4[]` still indexes as a slice.
                 let obj_resolved = self.resolve_ty(&object.inferred_type);
                 match &obj_resolved {
-                    Ty::Array { .. } => {
+                    Ty::Array { size, .. } => {
                         let arr_ty =
                             map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
+                        let len_val = ctx.ctx.i64_type().const_int(*size, false);
+                        self.emit_index_bounds_check(idx_int, idx_unsigned, len_val)?;
                         // Get the alloca for the array identifier directly
                         let arr_ptr = if let TypedExprKind::Identifier(name) = &object.expression {
                             *self
@@ -245,7 +249,8 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                         Ok(None)
                     }
                     Ty::Slice(_) => {
-                        let data_ptr = self.slice_data_ptr(object)?;
+                        let (data_ptr, len_val) = self.slice_ptr_and_len(object)?;
+                        self.emit_index_bounds_check(idx_int, idx_unsigned, len_val)?;
                         let elem_ty =
                             map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
                         let gep = unsafe {

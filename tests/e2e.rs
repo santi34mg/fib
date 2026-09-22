@@ -181,6 +181,42 @@ fn e2e_fib_bench_compiles() {
 }
 
 #[test]
+fn e2e_oob_index_traps_with_message_in_debug() {
+    // A dynamic OOB index passes analysis (only constant OOB fails there)
+    // and must trap at runtime: stderr report + non-zero exit (SIGABRT).
+    let dir = tempfile::tempdir().expect("e2e tempdir");
+    let src_path = dir.path().join("oob.fib");
+    std::fs::write(
+        &src_path,
+        "fn main() @int4 {\narr: @int4[4] = [10, 20, 30, 40];\ni: @int4 = 4;\nreturn arr.[i];\n}\n",
+    )
+    .expect("write oob.fib");
+    let root = project_root();
+    let mut opts = CompilationOptions::new(src_path);
+    opts.include_paths = vec![root.join("std")];
+    opts.output = Some(dir.path().join("oob"));
+    let binary = match fibc::compile_project(&opts).expect("e2e compile oob") {
+        CompileOutput::Binary { binary, .. } => binary,
+        other => panic!("e2e compile oob: expected Binary, got {:?}", other),
+    };
+    let out = Command::new(&binary).output().expect("e2e run oob");
+    // `abort` dies by signal (SIGABRT), so `code()` is `None`: assert on
+    // `success()`, not on a specific non-zero code.
+    assert!(!out.status.success(), "OOB must fail");
+    let stderr = String::from_utf8(out.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.contains("index out of bounds"),
+        "neat stderr message, got: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("4"),
+        "message names index/len, got: {}",
+        stderr
+    );
+}
+
+#[test]
 fn e2e_broken_source_is_an_error_not_a_panic() {
     let dir = tempfile::tempdir().expect("e2e tempdir");
     let src_path = dir.path().join("broken.fib");
