@@ -828,8 +828,13 @@ fn expr_to_typed_inner(
                 let target_resolved = resolve_type_alias(typed_target.clone(), current_scope);
                 let source_resolved =
                     resolve_type_alias(inner_typed.inferred_type.clone(), current_scope);
-                if let (Ty::Slice(target_elem), Ty::Array { element_type: src_elem, .. }) =
-                    (&target_resolved, &source_resolved)
+                if let (
+                    Ty::Slice(target_elem),
+                    Ty::Array {
+                        element_type: src_elem,
+                        ..
+                    },
+                ) = (&target_resolved, &source_resolved)
                     && resolve_type_alias((**target_elem).clone(), current_scope)
                         == resolve_type_alias((**src_elem).clone(), current_scope)
                 {
@@ -869,9 +874,7 @@ fn expr_to_typed_inner(
                 require_integer_index(&e.inferred_type, "slice end")?;
             }
             if inclusive && end_typed.is_none() {
-                return Err(
-                    "expr_to_typed: inclusive slice '.=' requires an end bound".into(),
-                );
+                return Err("expr_to_typed: inclusive slice '.=' requires an end bound".into());
             }
             let resolved = resolve_type_alias(obj_typed.inferred_type.clone(), current_scope);
             let elem_ty = match &resolved {

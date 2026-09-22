@@ -765,18 +765,13 @@ mod tests {
             "arr.[0..=];",
             "arr.[..=];",
         ] {
-            let err = crate::frontend::lexer::Lexer::new(src)
-                .collect::<Vec<_>>();
+            let err = crate::frontend::lexer::Lexer::new(src).collect::<Vec<_>>();
             let mut parser = crate::frontend::parser::Parser::new(
                 err.into_iter(),
                 std::path::Path::new("test"),
                 src.to_string(),
             );
-            assert!(
-                parser.parse().is_err(),
-                "expected parse error for {}",
-                src
-            );
+            assert!(parser.parse().is_err(), "expected parse error for {}", src);
         }
     }
 

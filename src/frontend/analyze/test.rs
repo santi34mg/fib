@@ -359,7 +359,8 @@ mod tests {
 
     #[test]
     fn test_logical_and_result_is_bool() {
-        let cu = get_typed("fn f() @bool { a: @bool = true;\n b: @bool = false;\n return a && b; }");
+        let cu =
+            get_typed("fn f() @bool { a: @bool = true;\n b: @bool = false;\n return a && b; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
@@ -371,7 +372,8 @@ mod tests {
 
     #[test]
     fn test_logical_or_result_is_bool() {
-        let cu = get_typed("fn f() @bool { a: @bool = true;\n b: @bool = false;\n return a || b; }");
+        let cu =
+            get_typed("fn f() @bool { a: @bool = true;\n b: @bool = false;\n return a || b; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
@@ -572,7 +574,10 @@ mod tests {
     fn test_builtin_string_calls_infer_types() {
         let cases = [
             (r#"fn f() { x := @str_len("a"); }"#, BuiltinType::UInt8),
-            (r#"fn f() { x := @str_eq("a", "b"); }"#, BuiltinType::Boolean),
+            (
+                r#"fn f() { x := @str_eq("a", "b"); }"#,
+                BuiltinType::Boolean,
+            ),
             (r#"fn f() { x := @concat("a", "b"); }"#, BuiltinType::String),
         ];
         for (src, expected) in cases {
@@ -837,8 +842,9 @@ mod tests {
 
     #[test]
     fn test_generic_function_instantiates_per_type() {
-        let cu =
-            get_typed("fn id(T: type, x: T) T { return x; }\nfn g() @int4 { return id(@int4, 5); }");
+        let cu = get_typed(
+            "fn id(T: type, x: T) T { return x; }\nfn g() @int4 { return id(@int4, 5); }",
+        );
         // `g` plus one monomorphized copy of `id`.
         assert_eq!(cu.declarations.len(), 2);
         let expr = return_expr(&cu, "g");
@@ -1272,10 +1278,7 @@ mod tests {
                 let call = ret.first().expect("return value");
                 assert!(matches!(call.expression, TypedExprKind::Call { .. }));
                 if let TypedExprKind::Call { args, .. } = &call.expression {
-                    assert!(matches!(
-                        args[0].expression,
-                        TypedExprKind::Slice { .. }
-                    ));
+                    assert!(matches!(args[0].expression, TypedExprKind::Slice { .. }));
                 }
             }
             other => panic!("expected Return, found {:?}", other),
@@ -1335,17 +1338,12 @@ mod tests {
     #[test]
     fn test_slice_range_rejects_non_array() {
         let err = get_typed_err("fn f(x: @int4) @void { s: @int4[] = x.[0..1]; }");
-        assert!(
-            err.contains("non-array/slice"),
-            "unexpected error: {}",
-            err
-        );
+        assert!(err.contains("non-array/slice"), "unexpected error: {}", err);
     }
 
     #[test]
     fn test_slice_range_rejects_non_integer_bounds() {
-        let err =
-            get_typed_err("fn f() { arr: @int4[2] = [1, 2];\ns: @int4[] = arr.[0..true]; }");
+        let err = get_typed_err("fn f() { arr: @int4[2] = [1, 2];\ns: @int4[] = arr.[0..true]; }");
         assert!(err.contains("integer index"), "unexpected error: {}", err);
     }
 
@@ -1357,13 +1355,22 @@ mod tests {
                 "fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[0.=1]; }",
                 true,
             ),
-            ("fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[1..]; }", false),
-            ("fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[..2]; }", false),
+            (
+                "fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[1..]; }",
+                false,
+            ),
+            (
+                "fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[..2]; }",
+                false,
+            ),
             (
                 "fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[.=2]; }",
                 true,
             ),
-            ("fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[..]; }", false),
+            (
+                "fn f() { arr: @int4[4] = [1, 2, 3, 4];\ns: @int4[] = arr.[..]; }",
+                false,
+            ),
             ("fn f(s: @int4[]) @void { t: @int4[] = s.[1..]; }", false),
         ];
         for (src, want_incl) in cases {
@@ -1380,11 +1387,9 @@ mod tests {
                 src
             );
             match binding.init.as_ref().expect("init").expression.clone() {
-                TypedExprKind::Slice { inclusive, .. } => assert_eq!(
-                    inclusive, want_incl,
-                    "inclusive flag for {}",
-                    src
-                ),
+                TypedExprKind::Slice { inclusive, .. } => {
+                    assert_eq!(inclusive, want_incl, "inclusive flag for {}", src)
+                }
                 other => panic!("expected Slice for {}, found {:?}", src, other),
             }
         }

@@ -51,11 +51,9 @@ where
                     Ok(())
                 }
                 TokenKind::Error(msg) => Err(self.error(&msg, t.line, t.column)),
-                TokenKind::Unknown(c) => Err(self.error(
-                    &format!("unknown character '{}'", c),
-                    t.line,
-                    t.column,
-                )),
+                TokenKind::Unknown(c) => {
+                    Err(self.error(&format!("unknown character '{}'", c), t.line, t.column))
+                }
                 _ => Err(self.error("expected ';' at end of statement", t.line, t.column)),
             },
             None => {
@@ -121,8 +119,7 @@ where
                             ) {
                                 // `else if` chains share the outer `;`: parse the
                                 // inner `if` without its own terminator.
-                                let (kind, iline, icolumn) =
-                                    self.parse_statement_inner_some()?;
+                                let (kind, iline, icolumn) = self.parse_statement_inner_some()?;
                                 let inner = Statement {
                                     kind,
                                     span: crate::diagnostics::Span::new(iline, icolumn),

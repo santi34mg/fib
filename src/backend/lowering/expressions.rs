@@ -338,14 +338,12 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
         };
         // `ptr = base + start`.
         let ptr = unsafe {
-            ctx.builder.build_gep(
-                elem_llvm_ty,
-                base_ptr,
-                &[start_gep],
-                "slice_range_ptr",
-            )?
+            ctx.builder
+                .build_gep(elem_llvm_ty, base_ptr, &[start_gep], "slice_range_ptr")?
         };
-        let len = ctx.builder.build_int_sub(end64, start64, "slice_range_len")?;
+        let len = ctx
+            .builder
+            .build_int_sub(end64, start64, "slice_range_len")?;
         let slice_llvm_ty = map_type_to_llvm(slice_ty, ctx.ctx, self.scope.clone())?;
         let BasicTypeEnum::StructType(st) = slice_llvm_ty else {
             return Err("Slice: slice type is not a struct".into());
@@ -884,11 +882,11 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                 Ty::Identifier(_) => {
                     // Alias that did not resolve (e.g. unknown): keep the
                     // old error shape for diagnostics.
-                    return Err(format!(
+                    Err(format!(
                         "codegen_expr: cannot resolve array type for '.@len' on {:?}",
                         array.inferred_type
                     )
-                    .into());
+                    .into())
                 }
                 other => Err(format!(
                     "codegen_expr: '.@len' on non-array/slice type {:?}",

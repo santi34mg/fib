@@ -66,6 +66,7 @@ pub enum ExpressionKind {
     /// - `obj.[a..b]` → `[a, b)`, `obj.[a.=b]` → `[a, b]` (inclusive)
     /// - `obj.[a..]` → `[a, len)`, `obj.[..b]` → `[0, b)`,
     ///   `obj.[.=b]` → `[0, b]` (inclusive), `obj.[..]` → full range.
+    ///
     /// `None` means an omitted bound; `inclusive` marks a `.=` end.
     Slice {
         object: Box<Expression>,

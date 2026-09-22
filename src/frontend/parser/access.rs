@@ -87,9 +87,7 @@ where
                         matches!(
                             t,
                             Some(Token {
-                                kind: TokenKind::Punctuation(
-                                    Punctuation::ClosingSquareBrace
-                                ),
+                                kind: TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
                                 ..
                             })
                         )

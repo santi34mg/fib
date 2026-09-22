@@ -134,7 +134,8 @@ mod tests {
 
     #[test]
     fn ir_consumer_uses_unsigned_div() {
-        let ir = lower_ir_src("fn main() @uint8 { x: @uint8 = 200;\ny: @uint8 = 3;\nreturn x / y; }");
+        let ir =
+            lower_ir_src("fn main() @uint8 { x: @uint8 = 200;\ny: @uint8 = 3;\nreturn x / y; }");
         assert!(
             ir.contains("udiv"),
             "expected udiv for @uint8 division, got:\n{}",
@@ -144,7 +145,8 @@ mod tests {
 
     #[test]
     fn ir_consumer_uses_unsigned_cmp() {
-        let ir = lower_ir_src("fn main() @bool { x: @uint8 = 200;\ny: @uint8 = 3;\nreturn x > y; }");
+        let ir =
+            lower_ir_src("fn main() @bool { x: @uint8 = 200;\ny: @uint8 = 3;\nreturn x > y; }");
         // Unsigned greater-than lowers to `icmp ugt`.
         assert!(
             ir.contains("ugt"),
