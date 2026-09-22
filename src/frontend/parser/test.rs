@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn test_expression_literal() {
-        let test_string = "1";
+        let test_string = "1;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn test_expression_addition() {
-        let test_string = "1 + 2";
+        let test_string = "1 + 2;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn test_expression_substraction() {
-        let test_string = "1 - 2";
+        let test_string = "1 - 2;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_expression_multiplication() {
-        let test_string = "1 * 2";
+        let test_string = "1 * 2;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_expression_division() {
-        let test_string = "1 / 2";
+        let test_string = "1 / 2;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_expression_order_operations() {
-        let test_string = "2 * 3 + 2";
+        let test_string = "2 * 3 + 2;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn test_return_statement() {
-        let test_string = "fn foo() @int4 { return 42 }";
+        let test_string = "fn foo() @int4 { return 42; }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let DeclarationNode::FunctionDeclaration(f) = d {
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_return_void() {
-        let test_string = "fn foo() { return }";
+        let test_string = "fn foo() { return; }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let DeclarationNode::FunctionDeclaration(f) = d {
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_if_statement() {
-        let test_string = "if true { x := 1 }";
+        let test_string = "if true { x := 1; };";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_if_else_statement() {
-        let test_string = "if false { x := 1 } else { x := 2 }";
+        let test_string = "if false { x := 1; } else { x := 2; };";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn test_for_loop() {
-        let test_string = "for (i: @int4 = 0; i < 10; i += 1) { }";
+        let test_string = "for (i: @int4 = 0; i < 10; i += 1) { };";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn test_break_continue() {
-        let test_string = "for (;;) { break continue }";
+        let test_string = "for (;;) { break; continue; };";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         if let StatementKind::For { body, .. } = stmts[0] {
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_function_declaration_with_params() {
-        let test_string = "fn add(a: @int4, b: @int4) @int4 { return a }";
+        let test_string = "fn add(a: @int4, b: @int4) @int4 { return a; }";
         let ast = get_ast(test_string);
         let func = ast.declarations.iter().find_map(|d| {
             if let DeclarationNode::FunctionDeclaration(f) = d {
@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_function_call_expression() {
-        let test_string = "foo(1, 2, 3)";
+        let test_string = "foo(1, 2, 3);";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         if let StatementKind::ExpressionStatement(Expression {
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_unary_negation() {
-        let test_string = "-5";
+        let test_string = "-5;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn test_unary_logical_not() {
-        let test_string = "!true";
+        let test_string = "!true;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn test_comparison_expression() {
-        let test_string = "a == b";
+        let test_string = "a == b;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(
@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_logical_and_expression() {
-        let test_string = "a && b";
+        let test_string = "a && b;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(
@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_grouping_expression() {
-        let test_string = "(1 + 2) * 3";
+        let test_string = "(1 + 2) * 3;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         // The outer operation must be multiplication with LHS being a grouping
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn test_field_access() {
-        let test_string = "obj.field";
+        let test_string = "obj.field;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_cast_expression() {
-        let test_string = "x as @int8";
+        let test_string = "x as @int8;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(
@@ -666,7 +666,7 @@ mod tests {
 
     #[test]
     fn test_address_of() {
-        let test_string = "x.&";
+        let test_string = "x.&;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(
@@ -680,7 +680,7 @@ mod tests {
 
     #[test]
     fn test_dereference() {
-        let test_string = "x.*";
+        let test_string = "x.*;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(
@@ -694,7 +694,7 @@ mod tests {
 
     #[test]
     fn test_index_access() {
-        let test_string = "arr.[0]";
+        let test_string = "arr.[0];";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(
@@ -861,8 +861,8 @@ mod tests {
 
     #[test]
     fn test_bool_literal_true_false() {
-        let ast_t = get_ast("true");
-        let ast_f = get_ast("false");
+        let ast_t = get_ast("true;");
+        let ast_f = get_ast("false;");
         let stmts_t = module_statements(&ast_t);
         let stmts_f = module_statements(&ast_f);
         assert!(matches!(
@@ -883,7 +883,7 @@ mod tests {
 
     #[test]
     fn test_null_literal_expression() {
-        let ast = get_ast("null");
+        let ast = get_ast("null;");
         let stmts = module_statements(&ast);
         assert!(matches!(
             stmts[0],
@@ -896,7 +896,7 @@ mod tests {
 
     #[test]
     fn test_defer_statement() {
-        let test_string = "defer foo()";
+        let test_string = "defer foo();";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(stmts[0], StatementKind::Defer(_)));
@@ -904,7 +904,7 @@ mod tests {
 
     #[test]
     fn test_multiple_statements() {
-        let test_string = "x := 1\ny := 2\nz := 3";
+        let test_string = "x := 1;\ny := 2;\nz := 3;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 3);
@@ -913,7 +913,7 @@ mod tests {
     #[test]
     fn test_precedence_mul_before_add() {
         // 1 + 2 * 3 should parse as 1 + (2 * 3)
-        let ast = get_ast("1 + 2 * 3");
+        let ast = get_ast("1 + 2 * 3;");
         let stmts = module_statements(&ast);
         if let StatementKind::ExpressionStatement(Expression {
             kind:
@@ -947,7 +947,7 @@ mod tests {
 
     #[test]
     fn test_assignment_statement() {
-        let test_string = "x = 42";
+        let test_string = "x = 42;";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(stmts[0], StatementKind::Assignment { .. }));
@@ -955,7 +955,7 @@ mod tests {
 
     #[test]
     fn test_array_literal() {
-        let test_string = "[1, 2, 3]";
+        let test_string = "[1, 2, 3];";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         if let StatementKind::ExpressionStatement(Expression {
@@ -1044,7 +1044,7 @@ mod tests {
     #[test]
     fn test_binary_levels_are_left_associative() {
         // 8 - 4 - 2 parses as (8 - 4) - 2
-        let ast = get_ast("8 - 4 - 2");
+        let ast = get_ast("8 - 4 - 2;");
         let stmts = module_statements(&ast);
         if let StatementKind::ExpressionStatement(Expression {
             kind:
@@ -1079,7 +1079,7 @@ mod tests {
     #[test]
     fn test_binary_shift_binds_looser_than_additive() {
         // 1 << 2 + 3 parses as 1 << (2 + 3)
-        let ast = get_ast("1 << 2 + 3");
+        let ast = get_ast("1 << 2 + 3;");
         let stmts = module_statements(&ast);
         if let StatementKind::ExpressionStatement(Expression {
             kind:
@@ -1119,7 +1119,7 @@ mod tests {
     #[test]
     fn test_binary_logical_or_loosest() {
         // a && b || c parses as (a && b) || c
-        let ast = get_ast("a && b || c");
+        let ast = get_ast("a && b || c;");
         let stmts = module_statements(&ast);
         if let StatementKind::ExpressionStatement(Expression {
             kind:
@@ -1159,7 +1159,7 @@ mod tests {
     #[test]
     fn test_binary_equality_spans_comparison() {
         // 1 + 2 == 3 parses as (1 + 2) == 3
-        let ast = get_ast("1 + 2 == 3");
+        let ast = get_ast("1 + 2 == 3;");
         let stmts = module_statements(&ast);
         if let StatementKind::ExpressionStatement(Expression {
             kind:
@@ -1195,7 +1195,7 @@ mod tests {
 
     #[test]
     fn test_qualified_access_shape() {
-        let ast = get_ast("x := a::b");
+        let ast = get_ast("x := a::b;");
         let stmts = module_statements(&ast);
         if let StatementKind::VariableDeclaration(decl) = stmts[0] {
             let init = decl.expression.as_ref().expect("initializer");
@@ -1216,7 +1216,7 @@ mod tests {
 
     #[test]
     fn test_builtin_call_shape() {
-        let ast = get_ast("x := @str_len(\"hi\")");
+        let ast = get_ast("x := @str_len(\"hi\");");
         let stmts = module_statements(&ast);
         if let StatementKind::VariableDeclaration(decl) = stmts[0] {
             let init = decl.expression.as_ref().expect("initializer");
@@ -1240,13 +1240,13 @@ mod tests {
 
     #[test]
     fn test_builtin_call_missing_paren_errors() {
-        let err = get_ast_err("x := @str_len");
+        let err = get_ast_err("x := @str_len;");
         assert!(err.contains("expected '('"), "unexpected error: {}", err);
     }
 
     #[test]
     fn test_struct_construct_shape() {
-        let ast = get_ast("x := Point { x: 1, y: 2 }");
+        let ast = get_ast("x := Point { x: 1, y: 2 };");
         let stmts = module_statements(&ast);
         if let StatementKind::VariableDeclaration(decl) = stmts[0] {
             let init = decl.expression.as_ref().expect("initializer");
@@ -1269,7 +1269,7 @@ mod tests {
 
     #[test]
     fn test_enum_variant_construct_shape() {
-        let ast = get_ast("x := Color.Red { v: 1 }");
+        let ast = get_ast("x := Color.Red { v: 1 };");
         let stmts = module_statements(&ast);
         if let StatementKind::VariableDeclaration(decl) = stmts[0] {
             let init = decl.expression.as_ref().expect("initializer");
@@ -1296,7 +1296,7 @@ mod tests {
 
     #[test]
     fn test_switch_full_shape() {
-        let ast = get_ast("fn f(c: @int4) @void { switch (c) { when .R { } when else { } } }");
+        let ast = get_ast("fn f(c: @int4) @void { switch (c) { when .R { } when else { } }; }");
         let stmts = module_statements(&ast);
         if let StatementKind::Switch { subject, arms } = stmts[0] {
             assert!(matches!(

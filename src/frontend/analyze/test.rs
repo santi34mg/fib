@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn test_integer_literal_defaults_to_int4() {
-        let cu = get_typed("fn f() @int4 { return 42 }");
+        let cu = get_typed("fn f() @int4 { return 42; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[0] {
             let expr = ret.first().expect("test expects a return value");
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_float_literal_defaults_to_float8() {
-        let cu = get_typed("fn f() @float8 { return 3.14 }");
+        let cu = get_typed("fn f() @float8 { return 3.14; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[0] {
             let expr = ret.first().expect("test expects a return value");
@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_bool_literal_type() {
-        let cu = get_typed("fn f() @bool { return true }");
+        let cu = get_typed("fn f() @bool { return true; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[0] {
             let expr = ret.first().expect("test expects a return value");
@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_string_literal_type() {
-        let cu = get_typed(r#"fn f() @string { return "hi" }"#);
+        let cu = get_typed(r#"fn f() @string { return "hi"; }"#);
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[0] {
             let expr = ret.first().expect("test expects a return value");
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn test_null_literal_type_is_void() {
-        let cu = get_typed("fn f() { x: @int4 = 1\n return }");
+        let cu = get_typed("fn f() { x: @int4 = 1;\n return; }");
         // Just ensure void return analyzes without error.
         let _ = cu;
     }
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_var_declaration_is_mutable() {
-        let cu = get_typed("fn f() { var @int4 x = 0 }");
+        let cu = get_typed("fn f() { var @int4 x = 0; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_var_declaration_without_init_is_uninitialized() {
-        let cu = get_typed("fn f() { var @int4 x }");
+        let cu = get_typed("fn f() { var @int4 x; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int4));
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_colon_var_declaration_with_type() {
-        let cu = get_typed("fn f() { x: @int4 = 0 } ");
+        let cu = get_typed("fn f() { x: @int4 = 0; } ");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_colon_var_declaration_infers_type() {
-        let cu = get_typed("fn f() { x := 0 } ");
+        let cu = get_typed("fn f() { x := 0; } ");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn test_multi_var_declaration_infers_tuple_types() {
         let cu = get_typed(
-            "fn divmod(a: @int4, b: @int4) (@int4, @int4) { return a / b, a % b }\nfn f() { q, r := divmod(17, 5) }",
+            "fn divmod(a: @int4, b: @int4) (@int4, @int4) { return a / b, a % b; }\nfn f() { q, r := divmod(17, 5); }",
         );
         let f = get_function(&cu, "f");
         if let TypedStatement::MultiBinding { bindings, .. } = &f.body[0] {
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn test_var_bool_without_init_is_uninitialized() {
-        let cu = get_typed("fn f() { var @bool b }");
+        let cu = get_typed("fn f() { var @bool b; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.init.is_none());
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_var_pointer_without_init_is_uninitialized() {
-        let cu = get_typed("fn f() { var *@int4 p }");
+        let cu = get_typed("fn f() { var *@int4 p; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.init.is_none());
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_colon_var_declaration_is_mutable() {
-        let cu = get_typed("fn f() { x: @int4 = 5 }");
+        let cu = get_typed("fn f() { x: @int4 = 5; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
@@ -246,14 +246,14 @@ mod tests {
 
     #[test]
     fn test_function_return_type() {
-        let cu = get_typed("fn add(a: @int4, b: @int4) @int4 { return a }");
+        let cu = get_typed("fn add(a: @int4, b: @int4) @int4 { return a; }");
         let f = get_function(&cu, "add");
         assert_eq!(f.return_type, Ty::Builtin(BuiltinType::Int4));
     }
 
     #[test]
     fn test_function_params_count_and_types() {
-        let cu = get_typed("fn add(a: @int4, b: @int4) @int4 { return a }");
+        let cu = get_typed("fn add(a: @int4, b: @int4) @int4 { return a; }");
         let f = get_function(&cu, "add");
         assert_eq!(f.params.len(), 2);
         assert_eq!(f.params[0].0.value, "a");
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_binary_add_type_is_lhs() {
-        let cu = get_typed("fn f() @int4 { a: @int4 = 1\n b: @int4 = 2\n return a + b }");
+        let cu = get_typed("fn f() @int4 { a: @int4 = 1;\n b: @int4 = 2;\n return a + b; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_binary_sub_type_is_lhs() {
-        let cu = get_typed("fn f() @int4 { a: @int4 = 10\n b: @int4 = 3\n return a - b }");
+        let cu = get_typed("fn f() @int4 { a: @int4 = 10;\n b: @int4 = 3;\n return a - b; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_comparison_result_is_bool() {
-        let cu = get_typed("fn f() @bool { a: @int4 = 1\n b: @int4 = 2\n return a < b }");
+        let cu = get_typed("fn f() @bool { a: @int4 = 1;\n b: @int4 = 2;\n return a < b; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_equality_result_is_bool() {
-        let cu = get_typed("fn f() @bool { a: @int4 = 1\n b: @int4 = 1\n return a == b }");
+        let cu = get_typed("fn f() @bool { a: @int4 = 1;\n b: @int4 = 1;\n return a == b; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_comparison_coerces_right_integer_literal_to_left_type() {
-        let cu = get_typed("fn f() @bool { a: @int4 = 1\n return a as @uint8 != 0 }");
+        let cu = get_typed("fn f() @bool { a: @int4 = 1;\n return a as @uint8 != 0; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[1] {
             let expr = ret.first().expect("test expects a return value");
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_logical_and_result_is_bool() {
-        let cu = get_typed("fn f() @bool { a: @bool = true\n b: @bool = false\n return a && b }");
+        let cu = get_typed("fn f() @bool { a: @bool = true;\n b: @bool = false;\n return a && b; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_logical_or_result_is_bool() {
-        let cu = get_typed("fn f() @bool { a: @bool = true\n b: @bool = false\n return a || b }");
+        let cu = get_typed("fn f() @bool { a: @bool = true;\n b: @bool = false;\n return a || b; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
@@ -385,14 +385,14 @@ mod tests {
 
     #[test]
     fn test_if_stmt_in_hir() {
-        let cu = get_typed("fn f() { if true { } }");
+        let cu = get_typed("fn f() { if true { }; }");
         let f = get_function(&cu, "f");
         assert!(matches!(f.body[0], TypedStatement::If(_)));
     }
 
     #[test]
     fn test_if_else_in_hir() {
-        let cu = get_typed("fn f() { if true { } else { } }");
+        let cu = get_typed("fn f() { if true { } else { }; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::If(typed_if) = &f.body[0] {
             assert!(typed_if.else_branch.is_some());
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_if_condition_type_is_bool() {
-        let cu = get_typed("fn f() { if true { } }");
+        let cu = get_typed("fn f() { if true { }; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::If(typed_if) = &f.body[0] {
             assert_eq!(
@@ -417,14 +417,14 @@ mod tests {
 
     #[test]
     fn test_for_loop_in_hir() {
-        let cu = get_typed("fn f() { for (;;) { break } }");
+        let cu = get_typed("fn f() { for (;;) { break; }; }");
         let f = get_function(&cu, "f");
         assert!(matches!(f.body[0], TypedStatement::For { .. }));
     }
 
     #[test]
     fn test_break_continue_in_hir() {
-        let cu = get_typed("fn f() { for (;;) { break continue } }");
+        let cu = get_typed("fn f() { for (;;) { break; continue; }; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::For { body, .. } = &f.body[0] {
             assert!(matches!(body[0], TypedStatement::Break));
@@ -436,14 +436,14 @@ mod tests {
 
     #[test]
     fn test_defer_in_hir() {
-        let cu = get_typed("extern fn cleanup() @void;\nfn f() { defer cleanup() }");
+        let cu = get_typed("extern fn cleanup() @void;\nfn f() { defer cleanup(); }");
         let f = get_function(&cu, "f");
         assert!(matches!(f.body[0], TypedStatement::Defer(_)));
     }
 
     #[test]
     fn test_return_void_in_hir() {
-        let cu = get_typed("fn f() { return }");
+        let cu = get_typed("fn f() { return; }");
         let f = get_function(&cu, "f");
         assert!(matches!(f.body[0], TypedStatement::Return(None)));
     }
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_identifier_resolves_to_binding_type() {
-        let cu = get_typed("fn f() @int4 { x: @int4 = 5\n return x }");
+        let cu = get_typed("fn f() @int4 { x: @int4 = 5;\n return x; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[1] {
             let expr = ret.first().expect("test expects a return value");
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_undefined_identifier_errors() {
-        let err = get_typed_err("fn f() @int4 { return undefined_var }");
+        let err = get_typed_err("fn f() @int4 { return undefined_var; }");
         assert!(
             err.contains("undefined_var"),
             "error should mention 'undefined_var', got: {}",
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn test_type_mismatch_struct_vs_int_errors() {
         let err =
-            get_typed_err("type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = 5 }");
+            get_typed_err("type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = 5; }");
         assert!(!err.is_empty(), "expected type mismatch error");
     }
 
@@ -498,7 +498,7 @@ mod tests {
 
     #[test]
     fn test_cast_changes_inferred_type() {
-        let cu = get_typed("fn f() @int8 { x: @int4 = 5\n return x as @int8 }");
+        let cu = get_typed("fn f() @int8 { x: @int4 = 5;\n return x as @int8; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[1] {
             let expr = ret.first().expect("test expects a return value");
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn test_function_calling_another_function() {
-        let cu = get_typed("fn helper() @int4 { return 1 }\nfn main() @int4 { return helper() }");
+        let cu = get_typed("fn helper() @int4 { return 1; }\nfn main() @int4 { return helper(); }");
         let main_f = get_function(&cu, "main");
         if let TypedStatement::Return(Some(ret)) = &main_f.body[0] {
             let expr = ret.first().expect("test expects a return value");
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_calling_undefined_function_errors() {
-        let err = get_typed_err("fn f() { ghost() }");
+        let err = get_typed_err("fn f() { ghost(); }");
         assert!(
             err.contains("ghost"),
             "error should mention 'ghost', got: {}",
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_address_of_produces_pointer_type() {
-        let cu = get_typed("fn f() { x: @int4 = 5\n p: *@int4 = x.& }");
+        let cu = get_typed("fn f() { x: @int4 = 5;\n p: *@int4 = x.&; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[1] {
             assert!(matches!(b.ty, Ty::Pointer(_)));
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_assign_stmt_in_hir() {
-        let cu = get_typed("fn f() { var @int4 x = 0\n x = 1 }");
+        let cu = get_typed("fn f() { var @int4 x = 0;\n x = 1; }");
         let f = get_function(&cu, "f");
         assert!(matches!(f.body[1], TypedStatement::Assign { .. }));
     }
@@ -571,9 +571,9 @@ mod tests {
     #[test]
     fn test_builtin_string_calls_infer_types() {
         let cases = [
-            (r#"fn f() { x := @str_len("a") }"#, BuiltinType::UInt8),
-            (r#"fn f() { x := @str_eq("a", "b") }"#, BuiltinType::Boolean),
-            (r#"fn f() { x := @concat("a", "b") }"#, BuiltinType::String),
+            (r#"fn f() { x := @str_len("a"); }"#, BuiltinType::UInt8),
+            (r#"fn f() { x := @str_eq("a", "b"); }"#, BuiltinType::Boolean),
+            (r#"fn f() { x := @concat("a", "b"); }"#, BuiltinType::String),
         ];
         for (src, expected) in cases {
             let cu = get_typed(src);
@@ -590,13 +590,13 @@ mod tests {
 
     #[test]
     fn test_builtin_string_call_rejects_non_string_arg() {
-        let err = get_typed_err("fn f() { x := @str_len(5) }");
+        let err = get_typed_err("fn f() { x := @str_len(5); }");
         assert!(err.contains("@str_len"), "unexpected error: {}", err);
     }
 
     #[test]
     fn test_builtin_string_call_checks_arity() {
-        let err = get_typed_err(r#"fn f() { x := @concat("a") }"#);
+        let err = get_typed_err(r#"fn f() { x := @concat("a"); }"#);
         assert!(err.contains("@concat"), "unexpected error: {}", err);
     }
 
@@ -605,12 +605,12 @@ mod tests {
     #[test]
     fn deref_assign_coerces_numeric_literal() {
         // `1` widens to the pointee type instead of being stored unchecked.
-        get_typed("fn f(p: *@int4) @void { p.* = 1 }");
+        get_typed("fn f(p: *@int4) @void { p.* = 1; }");
     }
 
     #[test]
     fn deref_assign_rejects_type_mismatch() {
-        let err = get_typed_err(r#"fn f(p: *@int4) @void { p.* = "s" }"#);
+        let err = get_typed_err(r#"fn f(p: *@int4) @void { p.* = "s"; }"#);
         assert!(
             err.contains("cannot assign value of type"),
             "unexpected error: {}",
@@ -620,21 +620,21 @@ mod tests {
 
     #[test]
     fn deref_assign_rejects_non_pointer() {
-        let err = get_typed_err("fn f() { x := 1\nx.* = 2 }");
+        let err = get_typed_err("fn f() { x := 1;\nx.* = 2; }");
         assert!(err.contains("non-pointer"), "unexpected error: {}", err);
     }
 
     #[test]
     fn field_assign_coerces_numeric_literal() {
         get_typed(
-            "type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = Point { x: 1, y: 2 }\np.x = 3 }",
+            "type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = Point { x: 1, y: 2 };\np.x = 3; }",
         );
     }
 
     #[test]
     fn field_assign_rejects_type_mismatch() {
         let err = get_typed_err(
-            "type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = Point { x: 1, y: 2 }\np.x = \"s\" }",
+            "type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = Point { x: 1, y: 2 };\np.x = \"s\"; }",
         );
         assert!(
             err.contains("cannot assign value of type"),
@@ -645,31 +645,31 @@ mod tests {
 
     #[test]
     fn index_assign_accepts_int_index_and_coerces_value() {
-        get_typed("fn f() { arr: @int4[2] = [1, 2]\narr.[0] = 3 }");
+        get_typed("fn f() { arr: @int4[2] = [1, 2];\narr.[0] = 3; }");
     }
 
     #[test]
     fn index_assign_rejects_float_index() {
-        let err = get_typed_err("fn f() { arr: @int4[2] = [1, 2]\narr.[1.5] = 3 }");
+        let err = get_typed_err("fn f() { arr: @int4[2] = [1, 2];\narr.[1.5] = 3; }");
         assert!(err.contains("integer index"), "unexpected error: {}", err);
     }
 
     #[test]
     fn index_assign_rejects_value_mismatch() {
-        let err = get_typed_err("fn f() { arr: @int4[2] = [1, 2]\narr.[0] = \"s\" }");
+        let err = get_typed_err("fn f() { arr: @int4[2] = [1, 2];\narr.[0] = \"s\"; }");
         assert!(err.contains("array element"), "unexpected error: {}", err);
     }
 
     #[test]
     fn index_access_rejects_float_index() {
-        let err = get_typed_err("fn f() @int4 { arr: @int4[2] = [1, 2]\nreturn arr.[1.5] }");
+        let err = get_typed_err("fn f() @int4 { arr: @int4[2] = [1, 2];\nreturn arr.[1.5]; }");
         assert!(err.contains("integer index"), "unexpected error: {}", err);
     }
 
     #[test]
     fn array_literal_accepts_numeric_mix() {
         // Mixed-width ints unify via the shared numeric coercion rule.
-        let cu = get_typed("fn f() { x: @int8 = 300\na := [x, 1] }");
+        let cu = get_typed("fn f() { x: @int8 = 300;\na := [x, 1]; }");
         let f = get_function(&cu, "f");
         assert!(
             matches!(
@@ -685,12 +685,12 @@ mod tests {
 
     #[test]
     fn array_literal_accepts_null_tail() {
-        get_typed("fn f() { a := [1, null] }");
+        get_typed("fn f() { a := [1, null]; }");
     }
 
     #[test]
     fn array_literal_rejects_incompatible_mix() {
-        let err = get_typed_err(r#"fn f() { a := [1, "s"] }"#);
+        let err = get_typed_err(r#"fn f() { a := [1, "s"]; }"#);
         assert!(
             err.contains("incompatible type"),
             "unexpected error: {}",
@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn array_binding_coerces_elements_to_declared_type() {
         // Declared `@int8` elements: the `Int4` literal must widen, not relabel.
-        let cu = get_typed("fn f() { a: @int8[1] = [300] }");
+        let cu = get_typed("fn f() { a: @int8[1] = [300]; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert_eq!(
@@ -718,7 +718,7 @@ mod tests {
 
     #[test]
     fn array_binding_rejects_bad_element_type() {
-        let err = get_typed_err(r#"fn f() { a: @int4[1] = ["s"] }"#);
+        let err = get_typed_err(r#"fn f() { a: @int4[1] = ["s"]; }"#);
         assert!(
             err.contains("does not match declared element type"),
             "unexpected error: {}",
@@ -730,7 +730,7 @@ mod tests {
 
     #[test]
     fn analysis_error_carries_statement_line() {
-        let src = "fn f() @int4 {\nreturn 0\nx = 1\n}".to_string();
+        let src = "fn f() @int4 {\nreturn 0;\nx = 1;\n}".to_string();
         let lexer = Lexer::new(&src);
         let tokens: Vec<Token> = lexer.collect();
         let mut parser = Parser::new(tokens.into_iter(), Path::new("test"), src.clone());
@@ -760,7 +760,7 @@ mod tests {
         use crate::frontend::typed_ast::TypedReturn;
         let ret = TypedReturn { values: vec![] };
         assert!(ret.first().is_none());
-        get_typed("fn f() @void { return }");
+        get_typed("fn f() @void { return; }");
     }
 
     // ── 05 testing: negatives, escapes, generics, imports ───────────────────
@@ -768,7 +768,7 @@ mod tests {
     #[test]
     fn test_duplicate_struct_field_errors() {
         let err = get_typed_err(
-            "type P struct { x: @int4, y: @int4 }\nfn f() @void { p: P = P { x: 1, x: 2 } }",
+            "type P struct { x: @int4, y: @int4 }\nfn f() @void { p: P = P { x: 1, x: 2 }; }",
         );
         assert!(err.contains("duplicate field"), "unexpected error: {}", err);
     }
@@ -776,7 +776,7 @@ mod tests {
     #[test]
     fn test_missing_struct_field_errors() {
         let err = get_typed_err(
-            "type P struct { x: @int4, y: @int4 }\nfn f() @void { p: P = P { x: 1 } }",
+            "type P struct { x: @int4, y: @int4 }\nfn f() @void { p: P = P { x: 1 }; }",
         );
         assert!(err.contains("missing field"), "unexpected error: {}", err);
     }
@@ -784,13 +784,13 @@ mod tests {
     #[test]
     fn test_call_arity_mismatch_errors() {
         let err =
-            get_typed_err("fn f(a: @int4) @int4 { return a }\nfn g() @int4 { return f(1, 2) }");
+            get_typed_err("fn f(a: @int4) @int4 { return a; }\nfn g() @int4 { return f(1, 2); }");
         assert!(err.contains("argument"), "unexpected error: {}", err);
     }
 
     #[test]
     fn test_switch_on_non_enum_errors() {
-        let err = get_typed_err("fn f(x: @int4) @void { switch (x) { when .R { } } }");
+        let err = get_typed_err("fn f(x: @int4) @void { switch (x) { when .R { } }; }");
         assert!(err.contains("not an enum"), "unexpected error: {}", err);
     }
 
@@ -798,7 +798,7 @@ mod tests {
     fn test_switch_payload_on_unit_variant_errors() {
         let err = get_typed_err(
             "type T enum { A { v: @int4 }, B }\n\
-             fn f(t: T) @int4 { switch (t) { when .B(x) { return 0 } when else { return 1 } } }",
+             fn f(t: T) @int4 { switch (t) { when .B(x) { return 0; } when else { return 1; } }; }",
         );
         assert!(err.contains("no payload"), "unexpected error: {}", err);
     }
@@ -807,7 +807,7 @@ mod tests {
     fn test_switch_payload_binding_works() {
         let cu = get_typed(
             "type T enum { A { v: @int4 }, B }\n\
-             fn f(t: T) @int4 { switch (t) { when .A(x) { return x.v } when else { return 0 } } }",
+             fn f(t: T) @int4 { switch (t) { when .A(x) { return x.v; } when else { return 0; } }; }",
         );
         // Type declaration + function; the payload binding type-checked.
         get_function(&cu, "f");
@@ -821,13 +821,13 @@ mod tests {
 
     #[test]
     fn test_invalid_string_escape_errors() {
-        let err = get_typed_err("fn f() @string { return \"a\\qb\" }");
+        let err = get_typed_err("fn f() @string { return \"a\\qb\"; }");
         assert!(err.contains("unknown escape"), "unexpected error: {}", err);
     }
 
     #[test]
     fn test_invalid_hex_escape_errors() {
-        let err = get_typed_err("fn f() @string { return \"a\\xZZb\" }");
+        let err = get_typed_err("fn f() @string { return \"a\\xZZb\"; }");
         assert!(
             err.contains("invalid hex escape"),
             "unexpected error: {}",
@@ -838,7 +838,7 @@ mod tests {
     #[test]
     fn test_generic_function_instantiates_per_type() {
         let cu =
-            get_typed("fn id(T: type, x: T) T { return x }\nfn g() @int4 { return id(@int4, 5) }");
+            get_typed("fn id(T: type, x: T) T { return x; }\nfn g() @int4 { return id(@int4, 5); }");
         // `g` plus one monomorphized copy of `id`.
         assert_eq!(cu.declarations.len(), 2);
         let expr = return_expr(&cu, "g");
@@ -886,8 +886,8 @@ mod tests {
     #[test]
     fn test_selective_import_resolves_symbol() {
         let cu = get_typed_with_imports(
-            "import m::{foo}\nfn main() @int4 { return foo() }",
-            &[("m", "fn foo() @int4 { return 7 }")],
+            "import m::{foo}\nfn main() @int4 { return foo(); }",
+            &[("m", "fn foo() @int4 { return 7; }")],
         )
         .expect("selective import should resolve");
         get_function(&cu, "main");
@@ -897,8 +897,8 @@ mod tests {
     #[test]
     fn test_aliased_import_qualifies_access() {
         let cu = get_typed_with_imports(
-            "import m as mm\nfn main() @int4 { return mm::foo() }",
-            &[("m", "fn foo() @int4 { return 7 }")],
+            "import m as mm\nfn main() @int4 { return mm::foo(); }",
+            &[("m", "fn foo() @int4 { return 7; }")],
         )
         .expect("aliased import should resolve");
         get_function(&cu, "main");
@@ -907,8 +907,8 @@ mod tests {
     #[test]
     fn test_selective_import_missing_symbol_errors() {
         let err = get_typed_with_imports(
-            "import m::{nope}\nfn main() @int4 { return 0 }",
-            &[("m", "fn foo() @int4 { return 7 }")],
+            "import m::{nope}\nfn main() @int4 { return 0; }",
+            &[("m", "fn foo() @int4 { return 7; }")],
         )
         .expect_err("expected missing-symbol error")
         .message;
@@ -917,7 +917,7 @@ mod tests {
 
     #[test]
     fn test_unknown_module_errors() {
-        let err = get_typed_with_imports("import nosuch::mod\nfn main() @int4 { return 0 }", &[])
+        let err = get_typed_with_imports("import nosuch::mod\nfn main() @int4 { return 0; }", &[])
             .expect_err("expected unknown-module error")
             .message;
         assert!(err.contains("nosuch::mod"), "unexpected error: {}", err);
@@ -929,28 +929,28 @@ mod tests {
     #[test]
     fn test_return_type_mismatch_errors() {
         // Value type mismatches the declared return type.
-        get_typed_err("fn f() @int4 { return \"s\" }");
+        get_typed_err("fn f() @int4 { return \"s\"; }");
         // Non-void function with a valueless `return`.
-        get_typed_err("fn f() @int4 { return }");
+        get_typed_err("fn f() @int4 { return; }");
         // Void function returning a value.
-        get_typed_err("fn f() @void { return 0 }");
+        get_typed_err("fn f() @void { return 0; }");
     }
 
     #[test]
     fn test_break_outside_loop_errors() {
-        get_typed_err("fn f() @void { break }");
+        get_typed_err("fn f() @void { break; }");
     }
 
     #[test]
     fn test_continue_outside_loop_errors() {
-        get_typed_err("fn f() @void { continue }");
+        get_typed_err("fn f() @void { continue; }");
     }
 
     #[test]
     fn test_break_inside_nested_loop_is_fine() {
         // Loop-depth tracking must accept `break` in a nested loop.
         get_typed(
-            "fn f() @void { for (i: @int4 = 0; i < 10; i = i + 1) { for (j: @int4 = 0; j < 10; j = j + 1) { break } } }",
+            "fn f() @void { for (i: @int4 = 0; i < 10; i = i + 1) { for (j: @int4 = 0; j < 10; j = j + 1) { break; }; }; }",
         );
     }
 
@@ -959,7 +959,7 @@ mod tests {
         // Mutability violation: the payload binding in a `when .A(a)` arm is
         // an immutable binding; assigning to it must be rejected.
         let err = get_typed_err(
-            "type T enum { A { x: @int4 } }\nfn f(t: T) @void { switch (t) { when .A(a) { a = 5 } } }",
+            "type T enum { A { x: @int4 } }\nfn f(t: T) @void { switch (t) { when .A(a) { a = 5; } }; }",
         );
         assert!(
             err.contains("cannot assign to constant"),
@@ -973,7 +973,7 @@ mod tests {
         // Missing a variant and no wildcard arm: the enum switch must be
         // exhaustive.
         let err =
-            get_typed_err("type T enum { A, B }\nfn f(t: T) @void { switch (t) { when .A { } } }");
+            get_typed_err("type T enum { A, B }\nfn f(t: T) @void { switch (t) { when .A { } }; }");
         assert!(
             err.contains("not exhaustive") && err.contains("B"),
             "unexpected error: {}",
@@ -985,7 +985,7 @@ mod tests {
     fn test_switch_wildcard_is_exhaustive() {
         // A wildcard arm satisfies exhaustiveness without naming every variant.
         get_typed(
-            "type T enum { A, B }\nfn f(t: T) @void { switch (t) { when .A { } when else { } } }",
+            "type T enum { A, B }\nfn f(t: T) @void { switch (t) { when .A { } when else { } }; }",
         );
     }
 
@@ -1004,7 +1004,7 @@ mod tests {
 
     #[test]
     fn test_logical_produces_short_circuit() {
-        let cu = get_typed("fn f(a: @bool, b: @bool) @bool { return a && b }");
+        let cu = get_typed("fn f(a: @bool, b: @bool) @bool { return a && b; }");
         let expr = return_expr(&cu, "f");
         assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
         assert!(matches!(
@@ -1015,7 +1015,7 @@ mod tests {
             }
         ));
 
-        let cu = get_typed("fn f(a: @bool, b: @bool) @bool { return a || b }");
+        let cu = get_typed("fn f(a: @bool, b: @bool) @bool { return a || b; }");
         let expr = return_expr(&cu, "f");
         assert!(matches!(
             expr.expression,
@@ -1028,7 +1028,7 @@ mod tests {
 
     #[test]
     fn test_arithmetic_and_comparison_produce_binop() {
-        let cu = get_typed("fn f(a: @int4, b: @int4) @int4 { return a + b * a }");
+        let cu = get_typed("fn f(a: @int4, b: @int4) @int4 { return a + b * a; }");
         let expr = return_expr(&cu, "f");
         if let TypedExprKind::Binary {
             operator,
@@ -1049,7 +1049,7 @@ mod tests {
             panic!("expected Binary, got {:#?}", expr.expression);
         }
 
-        let cu = get_typed("fn f(a: @int4, b: @int4) @bool { return a == b }");
+        let cu = get_typed("fn f(a: @int4, b: @int4) @bool { return a == b; }");
         let expr = return_expr(&cu, "f");
         assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
         assert!(matches!(
@@ -1064,7 +1064,7 @@ mod tests {
     #[test]
     fn test_unary_desugar_uses_binop() {
         // -x desugars to 0 - x
-        let cu = get_typed("fn f(x: @int4) @int4 { return -x }");
+        let cu = get_typed("fn f(x: @int4) @int4 { return -x; }");
         let expr = return_expr(&cu, "f");
         assert!(matches!(
             expr.expression,
@@ -1075,7 +1075,7 @@ mod tests {
         ));
 
         // ~x desugars to x ^ -1
-        let cu = get_typed("fn f(x: @int4) @int4 { return ~x }");
+        let cu = get_typed("fn f(x: @int4) @int4 { return ~x; }");
         let expr = return_expr(&cu, "f");
         assert!(matches!(
             expr.expression,
@@ -1086,7 +1086,7 @@ mod tests {
         ));
 
         // !x desugars through == and still type-checks to bool
-        let cu = get_typed("fn f(x: @bool) @bool { return !x }");
+        let cu = get_typed("fn f(x: @bool) @bool { return !x; }");
         let expr = return_expr(&cu, "f");
         assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
         assert!(matches!(
@@ -1106,7 +1106,7 @@ mod tests {
     #[test]
     fn coercion_unify_field_assign_rejects_bool_for_int() {
         let err = get_typed_err(
-            "type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = Point { x: 1, y: 2 }\np.x = true }",
+            "type Point struct { x: @int4, y: @int4 }\nfn f() { p: Point = Point { x: 1, y: 2 };\np.x = true; }",
         );
         assert!(
             err.contains("cannot assign value of type"),
@@ -1117,7 +1117,7 @@ mod tests {
 
     #[test]
     fn coercion_unify_deref_assign_rejects_bool_for_int() {
-        let err = get_typed_err("fn f(p: *@int4) @void { p.* = true }");
+        let err = get_typed_err("fn f(p: *@int4) @void { p.* = true; }");
         assert!(
             err.contains("cannot assign value of type"),
             "unexpected error: {}",

@@ -25,6 +25,69 @@ where
     }
 
     pub fn parse_statement(&mut self) -> ParseResult<Option<Statement>> {
+        let Some((stmt, line, column)) = self.parse_statement_inner()? else {
+            return Ok(None);
+        };
+
+        // Every statement must end with `;` — including block statements
+        // like `if ... { ... };`, `for (...) { ... };` and `switch ...;`.
+        // The `for` header separators and `)` terminator are handled inside
+        // the `for` arm of `parse_statement_inner`, and `defer`'s single `;`
+        // terminates the whole `defer <stmt>;`.
+        self.expect_semicolon()?;
+        Ok(Some(Statement {
+            kind: stmt,
+            span: crate::diagnostics::Span::new(line, column),
+        }))
+    }
+
+    /// Consume the mandatory trailing `;`, surfacing lexer diagnostics
+    /// (`Error`/`Unknown`) verbatim when they appear where `;` was expected.
+    fn expect_semicolon(&mut self) -> ParseResult<()> {
+        match self.peek() {
+            Some(t) => match t.kind {
+                TokenKind::Punctuation(Punctuation::Semicolon) => {
+                    self.next();
+                    Ok(())
+                }
+                TokenKind::Error(msg) => Err(self.error(&msg, t.line, t.column)),
+                TokenKind::Unknown(c) => Err(self.error(
+                    &format!("unknown character '{}'", c),
+                    t.line,
+                    t.column,
+                )),
+                _ => Err(self.error("expected ';' at end of statement", t.line, t.column)),
+            },
+            None => {
+                let (line, column) = self.last_pos;
+                Err(self.error("expected ';' at end of statement", line, column))
+            }
+        }
+    }
+
+    /// Parse one inner statement (no trailing `;`), skipping comments.
+    /// Errors at EOF. Used for `defer <stmt>`, `else if ...` chains and
+    /// `for` post-operations where the outer `;` / `)` is the terminator.
+    fn parse_statement_inner_some(&mut self) -> ParseResult<(StatementKind, usize, usize)> {
+        loop {
+            match self.parse_statement_inner()? {
+                Some(stmt) => return Ok(stmt),
+                None => {
+                    if self.peek().is_none() {
+                        let (line, column) = self.last_pos;
+                        return Err(self.error("expected a statement", line, column));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Parse a single statement without consuming its trailing `;`.
+    /// Returns `Ok(None)` for comments and EOF so callers can skip/retry.
+    /// `parse_statement` wraps this and enforces the `;`; `defer`, `else if`
+    /// and `for`'s post-operation use it directly because their terminator
+    /// is the outer `;` / `)` rather than an inner `;`.
+    fn parse_statement_inner(&mut self) -> ParseResult<Option<(StatementKind, usize, usize)>> {
         let line = self.peek().map(|t| t.line).unwrap_or(0);
         let column = self.peek().map(|t| t.column).unwrap_or(0);
         let stmt = if let Some(token) = self.peek() {
@@ -56,7 +119,14 @@ where
                                     ..
                                 })
                             ) {
-                                let inner = self.parse_statement_some()?;
+                                // `else if` chains share the outer `;`: parse the
+                                // inner `if` without its own terminator.
+                                let (kind, iline, icolumn) =
+                                    self.parse_statement_inner_some()?;
+                                let inner = Statement {
+                                    kind,
+                                    span: crate::diagnostics::Span::new(iline, icolumn),
+                                };
                                 Some(vec![inner])
                             } else {
                                 let else_stmts = self.parse_body()?;
@@ -80,32 +150,31 @@ where
                 }
                 TokenKind::Keyword(Keyword::Defer) => {
                     self.next(); // consume 'defer'
-                    let inner = self.parse_statement_some()?;
+                    // Single `;` terminates the whole `defer <stmt>;`,
+                    // so the inner statement is parsed without one.
+                    let (kind, iline, icolumn) = self.parse_statement_inner_some()?;
+                    let inner = Statement {
+                        kind,
+                        span: crate::diagnostics::Span::new(iline, icolumn),
+                    };
                     StatementKind::Defer(Box::new(inner))
                 }
                 TokenKind::Keyword(Keyword::Break) => {
                     self.next(); // consume 'break'
-                    if let Some(t) = self.peek()
-                        && matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon))
-                    {
-                        self.next();
-                    }
+                    // Trailing `;` enforced by `parse_statement`.
                     StatementKind::Break
                 }
                 TokenKind::Keyword(Keyword::Continue) => {
                     self.next(); // consume 'continue'
-                    if let Some(t) = self.peek()
-                        && matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon))
-                    {
-                        self.next();
-                    }
+                    // Trailing `;` enforced by `parse_statement`.
                     StatementKind::Continue
                 }
                 TokenKind::Keyword(Keyword::Return) => {
                     self.next(); // consume 'return'
                     // Optionally parse one or more comma-separated expressions after return.
+                    // A bare `return` leaves the `;` for `parse_statement` to enforce,
+                    // so `return }` correctly errors with "expected ';'".
                     if let Some(token) = self.peek() {
-                        // If next token is not a semicolon or block close, parse expression list.
                         match token.kind {
                             TokenKind::Punctuation(Punctuation::Semicolon)
                             | TokenKind::Punctuation(Punctuation::ClosingCurlyBrace) => {
@@ -157,10 +226,22 @@ where
                     }) {
                         Some(_) => None,
                         None => {
-                            let (line, column) = self.last_pos;
-                            let statement = self
-                                .parse_statement()?
-                                .ok_or_else(|| self.error("expected statement", line, column))?;
+                            // Post-operation is terminated by `)`, not `;`,
+                            // so parse without requiring a trailing `;`.
+                            // `for (...; cond; i += 1)` stays valid.
+                            let (kind, pline, pcolumn) =
+                                self.parse_statement_inner_some().map_err(|e| {
+                                    let (line, column) = self.last_pos;
+                                    if e.message == "expected a statement" {
+                                        self.error("expected statement", line, column)
+                                    } else {
+                                        e
+                                    }
+                                })?;
+                            let statement = Statement {
+                                kind,
+                                span: crate::diagnostics::Span::new(pline, pcolumn),
+                            };
                             self.expect_token(
                                 TokenKind::Punctuation(Punctuation::ClosingParenthesis),
                                 "expected ')'",
@@ -220,11 +301,6 @@ where
             return Ok(None);
         };
 
-        // Optionally consume a semicolon if present
-        self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon)));
-        Ok(Some(Statement {
-            kind: stmt,
-            span: crate::diagnostics::Span::new(line, column),
-        }))
+        Ok(Some((stmt, line, column)))
     }
 }

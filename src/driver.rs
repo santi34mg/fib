@@ -1254,7 +1254,7 @@ mod tests {
     fn read_source_prefers_override() {
         let src = read_source(
             Path::new("whatever.fib"),
-            Some("fn main() @int { return 0 }"),
+            Some("fn main() @int { return 0; }"),
         )
         .expect("override");
         assert!(src.contains("main"));
@@ -1262,7 +1262,7 @@ mod tests {
 
     #[test]
     fn frontend_runs_without_files_via_override() {
-        let opts = test_opts("fn main() @int { return 0 }");
+        let opts = test_opts("fn main() @int { return 0; }");
         let frontend = run_frontend(&opts).expect("frontend");
         assert_eq!(frontend.typed_program.declarations.len(), 1);
         assert!(!frontend.tokens.is_empty());
@@ -1270,7 +1270,7 @@ mod tests {
 
     #[test]
     fn frontend_preserves_parse_error_structurally() {
-        let opts = test_opts("fn broken( @int { return 0 }");
+        let opts = test_opts("fn broken( @int { return 0; }");
         let err = run_frontend(&opts).unwrap_err();
         match err {
             DriverError::Parse(pe) => {
@@ -1283,7 +1283,7 @@ mod tests {
 
     #[test]
     fn frontend_reports_analysis_error() {
-        let opts = test_opts("fn main() @int { return undefined_var }");
+        let opts = test_opts("fn main() @int { return undefined_var; }");
         let err = run_frontend(&opts).unwrap_err();
         assert!(matches!(err, DriverError::Analysis(_)));
     }
@@ -1293,7 +1293,7 @@ mod tests {
         // `compile` is the CLI-facing boundary: an analysis error surfaces as
         // a `CompilerError` with the offending source line attached so the
         // caret panel renders, not as the internal `DriverError`.
-        let src = "fn main() @int { return undefined_var }";
+        let src = "fn main() @int { return undefined_var; }";
         let mut opts = test_opts(src);
         opts.check_only = true;
         let err = compile(&opts).unwrap_err();
@@ -1307,7 +1307,7 @@ mod tests {
 
     #[test]
     fn check_project_succeeds_on_valid_source() {
-        let opts = test_opts("fn main() @int { return 0 }");
+        let opts = test_opts("fn main() @int { return 0; }");
         let frontend = check_project(&opts).expect("check");
         assert_eq!(frontend.ast.declarations.len(), 1);
     }
@@ -1317,7 +1317,7 @@ mod tests {
         // Use a module name that cannot exist on disk so the failure is a
         // structured ImportNotFound (not a panic or generic string),
         // regardless of the test's working directory.
-        let opts = test_opts("import nosuch::definitely_missing_xyz\nfn main() @int { return 0 }");
+        let opts = test_opts("import nosuch::definitely_missing_xyz\nfn main() @int { return 0; }");
         let err = run_frontend(&opts).unwrap_err();
         assert!(
             matches!(err, DriverError::ImportNotFound { .. }),
@@ -1330,8 +1330,8 @@ mod tests {
     fn load_module_source_searches_roots_in_order() {
         let dir_a = tempfile::tempdir().expect("tmp a");
         let dir_b = tempfile::tempdir().expect("tmp b");
-        fs::write(dir_a.path().join("mymod.fib"), "fn a() @int { return 1 }").unwrap();
-        fs::write(dir_b.path().join("mymod.fib"), "fn b() @int { return 2 }").unwrap();
+        fs::write(dir_a.path().join("mymod.fib"), "fn a() @int { return 1; }").unwrap();
+        fs::write(dir_b.path().join("mymod.fib"), "fn b() @int { return 2; }").unwrap();
         let roots = vec![dir_a.path().to_path_buf(), dir_b.path().to_path_buf()];
         let (path, src) = load_module_source(&["mymod".to_string()], &roots).expect("load");
         assert_eq!(path, dir_a.path().join("mymod.fib"));
@@ -1342,7 +1342,7 @@ mod tests {
     fn load_module_source_drop_first_segment_fallback() {
         // `import std::io` with `-I <std>` -> `<std>/io.fib`.
         let std_root = tempfile::tempdir().expect("std root");
-        fs::write(std_root.path().join("io.fib"), "fn x() @int { return 1 }").unwrap();
+        fs::write(std_root.path().join("io.fib"), "fn x() @int { return 1; }").unwrap();
         let roots = vec![std_root.path().to_path_buf()];
         let (path, _) = load_module_source(&["std".to_string(), "io".to_string()], &roots)
             .expect("load with fallback");
@@ -1352,7 +1352,7 @@ mod tests {
     #[test]
     fn resolve_imports_missing_module_reports_searched_roots() {
         let ast = {
-            let src = "import nosuch::mod\nfn main() @int { return 0 }";
+            let src = "import nosuch::mod\nfn main() @int { return 0; }";
             let tokens = lex_source(src);
             parse_source(tokens, Path::new("t.fib"), src).expect("parse")
         };
@@ -1367,19 +1367,19 @@ mod tests {
     fn resolve_imports_diamond_is_deduped() {
         // main -> {a, b}, a -> c, b -> c. c's decls must appear once after merge.
         let root = tempfile::tempdir().expect("proj");
-        fs::write(root.path().join("c.fib"), "fn shared() @int { return 1 }").unwrap();
+        fs::write(root.path().join("c.fib"), "fn shared() @int { return 1; }").unwrap();
         fs::write(
             root.path().join("a.fib"),
-            "import c\nfn fa() @int { return c::shared() }",
+            "import c\nfn fa() @int { return c::shared(); }",
         )
         .unwrap();
         fs::write(
             root.path().join("b.fib"),
-            "import c\nfn fb() @int { return c::shared() }",
+            "import c\nfn fb() @int { return c::shared(); }",
         )
         .unwrap();
         let entry_ast = {
-            let src = "import a\nimport b\nfn main() @int { return 0 }";
+            let src = "import a\nimport b\nfn main() @int { return 0; }";
             let tokens = lex_source(src);
             parse_source(tokens, Path::new("main.fib"), src).expect("parse")
         };
@@ -1408,7 +1408,7 @@ mod tests {
         // (a): the single loader resolves the same file `load_module_source`
         // finds and parses it with file context for diagnostics.
         let dir = tempfile::tempdir().expect("tmp");
-        fs::write(dir.path().join("mymod.fib"), "fn f() @int { return 1 }").unwrap();
+        fs::write(dir.path().join("mymod.fib"), "fn f() @int { return 1; }").unwrap();
         let roots = vec![dir.path().to_path_buf()];
         let key = vec!["mymod".to_string()];
         let (src_path, src) = load_module_source(&key, &roots).expect("source");
@@ -1427,9 +1427,9 @@ mod tests {
         let root = tempfile::tempdir().expect("proj");
         let top = root.path().join("top");
         fs::create_dir(&top).expect("mkdir top");
-        fs::write(top.join("m.fib"), "fn shared() @int { return 1 }").unwrap();
+        fs::write(top.join("m.fib"), "fn shared() @int { return 1; }").unwrap();
         let entry_ast = {
-            let src = "import top::m\nimport m\nfn main() @int { return 0 }";
+            let src = "import top::m\nimport m\nfn main() @int { return 0; }";
             let tokens = lex_source(src);
             parse_source(tokens, Path::new("main.fib"), src).expect("parse")
         };
@@ -1483,21 +1483,21 @@ mod tests {
         // - The emitted LLVM IR defines `@shared` exactly once with no
         //   renamed duplicate (`@shared.1`, the ir_lower failure mode).
         let root = tempfile::tempdir().expect("proj");
-        fs::write(root.path().join("c.fib"), "fn shared() @int { return 1 }").unwrap();
+        fs::write(root.path().join("c.fib"), "fn shared() @int { return 1; }").unwrap();
         fs::write(
             root.path().join("a.fib"),
-            "import c\nfn fa() @int { return c::shared() }",
+            "import c\nfn fa() @int { return c::shared(); }",
         )
         .unwrap();
         fs::write(
             root.path().join("b.fib"),
-            "import c\nfn fb() @int { return c::shared() }",
+            "import c\nfn fb() @int { return c::shared(); }",
         )
         .unwrap();
         let main = root.path().join("main.fib");
         fs::write(
             &main,
-            "import a\nimport b\nfn main() @int { return a::fa() + b::fb() }",
+            "import a\nimport b\nfn main() @int { return a::fa() + b::fb(); }",
         )
         .unwrap();
 
@@ -1556,16 +1556,16 @@ mod tests {
         let root = tempfile::tempdir().expect("proj");
         fs::write(
             root.path().join("a.fib"),
-            "import b\nfn fa() @int { return 1 }",
+            "import b\nfn fa() @int { return 1; }",
         )
         .unwrap();
         fs::write(
             root.path().join("b.fib"),
-            "import a\nfn fb() @int { return 1 }",
+            "import a\nfn fb() @int { return 1; }",
         )
         .unwrap();
         let entry_ast = {
-            let src = "import a\nfn main() @int { return 0 }";
+            let src = "import a\nfn main() @int { return 0; }";
             let tokens = lex_source(src);
             parse_source(tokens, Path::new("main.fib"), src).expect("parse")
         };
@@ -1581,9 +1581,9 @@ mod tests {
 
     #[test]
     fn dedupe_local_shadows_imported() {
-        let src = "fn main() @int { return 0 }";
+        let src = "fn main() @int { return 0; }";
         let mk = |name: &str| {
-            let tokens = lex_source(&format!("fn {}() @int {{ return 1 }}", name));
+            let tokens = lex_source(&format!("fn {}() @int {{ return 1; }}", name));
             let ast = parse_source(tokens, Path::new("m.fib"), src).expect("parse");
             let typed = analyze_entry(ast, &HashMap::new()).expect("analyze");
             typed.declarations.into_iter().next().unwrap()
@@ -1671,7 +1671,7 @@ mod tests {
     #[test]
     fn compile_frontend_emits_need_no_backend() {
         for emit in [EmitKind::Lex, EmitKind::Parse, EmitKind::Typed] {
-            let mut opts = test_opts("fn main() @int { return 0 }");
+            let mut opts = test_opts("fn main() @int { return 0; }");
             opts.emit = emit;
             let out = compile(&opts).expect("frontend emit");
             match out {
@@ -1683,7 +1683,7 @@ mod tests {
 
     #[test]
     fn compile_check_only_overrides_emit() {
-        let mut opts = test_opts("fn main() @int { return 0 }");
+        let mut opts = test_opts("fn main() @int { return 0; }");
         opts.emit = EmitKind::Bin;
         opts.check_only = true;
         let out = compile(&opts).expect("check");

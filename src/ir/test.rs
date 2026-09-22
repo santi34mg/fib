@@ -21,7 +21,7 @@ mod tests {
 
     #[test]
     fn ir_straight_line_binding_and_return() {
-        let prog = lower_src("fn main() @int { x := 1\ny := 2\nreturn x + y }")
+        let prog = lower_src("fn main() @int { x := 1;\ny := 2;\nreturn x + y; }")
             .expect("lower straight-line");
         assert_eq!(prog.functions.len(), 1);
         let text = prog.to_string();
@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn ir_if_and_for_emit_labels_and_gotos() {
         let prog = lower_src(
-            "fn main() @int { x := 0\nif x == 0 { x = 1 } else { x = 2 }\nfor (i: @int = 0; i < 10; i = i + 1) { x = x + i }\nreturn x }",
+            "fn main() @int { x := 0;\nif x == 0 { x = 1; } else { x = 2; };\nfor (i: @int = 0; i < 10; i = i + 1) { x = x + i; };\nreturn x; }",
         )
         .expect("lower if+for");
         let text = prog.to_string();
@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn ir_short_circuit_uses_join_temp() {
-        let prog = lower_src("fn main() @bool { a := true\nb := false\nreturn a && b }")
+        let prog = lower_src("fn main() @bool { a := true;\nb := false;\nreturn a && b; }")
             .expect("lower &&");
         let text = prog.to_string();
         // Join pattern: seed copy + rhs copy + merge label.
@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn ir_defer_runs_before_return() {
         let prog =
-            lower_src("fn main() @int { x := 0\ndefer x = 1\nreturn x }").expect("lower defer");
+            lower_src("fn main() @int { x := 0;\ndefer x = 1;\nreturn x; }").expect("lower defer");
         let text = prog.to_string();
         // Deferred store must appear before the return.
         let store_pos = text.find("store ").expect("expected store");
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn ir_break_continue_become_gotos() {
         let prog = lower_src(
-            "fn main() @int { x := 0\nfor (i: @int = 0; i < 10; i = i + 1) { if i == 2 { continue }\nif i == 5 { break }\nx = x + i }\nreturn x }",
+            "fn main() @int { x := 0;\nfor (i: @int = 0; i < 10; i = i + 1) { if i == 2 { continue; };\nif i == 5 { break; };\nx = x + i; };\nreturn x; }",
         )
         .expect("lower break/continue");
         let text = prog.to_string();
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn ir_symbols_survive_shadowing() {
-        let prog = lower_src("fn main() @int { x := 1\nif true { x := 2 }\nreturn x }")
+        let prog = lower_src("fn main() @int { x := 1;\nif true { x := 2; };\nreturn x; }")
             .expect("lower shadowing");
         let func = &prog.functions[0];
         // Two distinct slots for the two `x` bindings.
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn ir_extern_has_no_body() {
-        let prog = lower_src("extern fn puts(s: @string) @int\nfn main() @int { return 0 }")
+        let prog = lower_src("extern fn puts(s: @string) @int\nfn main() @int { return 0; }")
             .expect("lower extern");
         let ext = prog
             .functions
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn ir_switch_plain_enum_lowers_to_dispatch() {
         let prog = lower_src(
-            "type Color enum { Red, Green }\nfn main() @int { c: Color = Color.Red\nswitch (c) { when .Red { return 1 }\nwhen else { return 0 } } }",
+            "type Color enum { Red, Green }\nfn main() @int { c: Color = Color.Red;\nswitch (c) { when .Red { return 1; }\nwhen else { return 0; } }; }",
         )
         .expect("plain-enum switch should lower");
         let text = prog.to_string();
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn ir_switch_with_payload_binding_stays_unsupported() {
         let err = lower_src(
-            "type Token enum { Integer { value: @uint4 }, EOF }\nfn describe(t: Token) @void { switch (t) { when .Integer(i) { return }\nwhen .EOF { return } } }\nfn main() @int { return 0 }",
+            "type Token enum { Integer { value: @uint4 }, EOF }\nfn describe(t: Token) @void { switch (t) { when .Integer(i) { return; }\nwhen .EOF { return; } }; }\nfn main() @int { return 0; }",
         )
         .expect_err("payload binding should fall back");
         assert!(
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn ir_struct_is_explicitly_unsupported() {
         let err = lower_src(
-            "type Point struct { x: @int, y: @int }\nfn main() @int { p := Point { x: 1, y: 2 }\nreturn p.x }",
+            "type Point struct { x: @int, y: @int }\nfn main() @int { p := Point { x: 1, y: 2 };\nreturn p.x; }",
         )
         .expect_err("struct should be phase 2b");
         assert!(
