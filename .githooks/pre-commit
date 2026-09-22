@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Pre-commit gate mirroring the blocking jobs in .github/workflows/ci.yml.
+#
+# Blocking CI steps (advisory jobs audit/deny/coverage are intentionally NOT gated):
+#   fmt job:        cargo fmt --check
+#   frontend job:   cargo check --no-default-features
+#                   cargo test --no-default-features
+#   build_and_test: cargo fmt --check
+#                   cargo check
+#                   cargo clippy --all-targets -- -D warnings
+#                   cargo build
+#                   cargo test
+#                   cargo test --all-features
+#
+# Mirrors ci.yml paths-ignore: docs/**, *.md, LICENSE, .gitignore.
+# If only ignored paths are staged, the gate is skipped (CI would not run).
+set -euo pipefail
+
+# --- Skip logic: only run when non-ignored paths are staged ---
+STAGED=$(git diff --cached --name-only --diff-filter=ACMRT 2>/dev/null || true)
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+NON_IGNORED=$(echo "$STAGED" | grep -v -e '^docs/' -e '\.md$' -e '^LICENSE$' -e '^\.gitignore$' || true)
+if [ -z "$NON_IGNORED" ]; then
+  echo "pre-commit: only CI-ignored paths staged (docs/**. *.md, LICENSE, .gitignore); skipping gate."
+  exit 0
+fi
+
+fail() {
+  echo "pre-commit: FAILED at: $*" >&2
+  echo "pre-commit: commit blocked to match CI. Fix and retry." >&2
+  exit 1
+}
+
+run() {
+  echo "pre-commit: $*"
+  "$@" || fail "$*"
+}
+
+# Fail fast on formatting (cheapest, same as CI ordering).
+run cargo fmt --check
+
+# Frontend gate (no LLVM / no default features).
+run cargo check --no-default-features
+run cargo test --no-default-features
+
+# Full gate (default = llvm feature).
+run cargo check
+run cargo clippy --all-targets -- -D warnings
+run cargo build
+run cargo test
+run cargo test --all-features
+
+echo "pre-commit: all blocking CI checks passed."
