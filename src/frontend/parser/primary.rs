@@ -130,6 +130,13 @@ where
                     span,
                 ))
             }
+            // Comptime properties like `@len` only make sense after a `.`;
+            // a bare `@len` is a parse error.
+            TokenKind::Builtin(Builtin::BuiltinProperty(prop)) => Err(self.error(
+                &format!("builtin property '{}' must follow a '.'", prop),
+                token.line,
+                token.column,
+            )),
             TokenKind::Literal(Literal::Null) => {
                 Ok(Expression::at(ExpressionKind::Literal(Literal::Null), span))
             }

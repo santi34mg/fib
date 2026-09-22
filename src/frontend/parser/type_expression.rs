@@ -82,7 +82,7 @@ where
                 }
             }
         };
-        // Postfix array type: type[size]
+        // Postfix array/slice type: `type[size]` or `type[]`.
         let var_type = if matches!(
             self.peek(),
             Some(Token {
@@ -91,27 +91,44 @@ where
             })
         ) {
             self.next(); // consume '['
-            let size_token = self.expect_next("expected array size")?;
-            let size = if let TokenKind::Literal(Literal::Integer(n)) = size_token.kind {
-                n
+            // `T[]` — a slice (runtime-length view).
+            if matches!(
+                self.peek(),
+                Some(Token {
+                    kind: TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
+                    ..
+                })
+            ) {
+                self.next(); // consume ']'
+                TypeExpression::at(
+                    TypeExpressionKind::Slice {
+                        element_type: Box::new(var_type),
+                    },
+                    span,
+                )
             } else {
-                return Err(self.error(
-                    "expected integer array size",
-                    size_token.line,
-                    size_token.column,
-                ));
-            };
-            self.expect_token(
-                TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
-                "expected ']' after array size",
-            )?;
-            TypeExpression::at(
-                TypeExpressionKind::Array {
-                    element_type: Box::new(var_type),
-                    size,
-                },
-                span,
-            )
+                let size_token = self.expect_next("expected array size")?;
+                let size = if let TokenKind::Literal(Literal::Integer(n)) = size_token.kind {
+                    n
+                } else {
+                    return Err(self.error(
+                        "expected integer array size",
+                        size_token.line,
+                        size_token.column,
+                    ));
+                };
+                self.expect_token(
+                    TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
+                    "expected ']' after array size",
+                )?;
+                TypeExpression::at(
+                    TypeExpressionKind::Array {
+                        element_type: Box::new(var_type),
+                        size,
+                    },
+                    span,
+                )
+            }
         } else {
             var_type
         };

@@ -707,8 +707,147 @@ mod tests {
     }
 
     #[test]
+    fn test_slice_range() {
+        let test_string = "arr.[0..2];";
+        let ast = get_ast(test_string);
+        let stmts = module_statements(&ast);
+        assert!(matches!(
+            stmts[0],
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Slice { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_slice_range_forms() {
+        // (source, has_start, has_end, inclusive)
+        let cases = [
+            ("arr.[0..2];", true, true, false),
+            ("arr.[0.=2];", true, true, true),
+            ("arr.[0..];", true, false, false),
+            ("arr.[..2];", false, true, false),
+            ("arr.[.=2];", false, true, true),
+            ("arr.[..];", false, false, false),
+        ];
+        for (src, want_start, want_end, want_incl) in cases {
+            let ast = get_ast(src);
+            let stmts = module_statements(&ast);
+            match &stmts[0] {
+                StatementKind::ExpressionStatement(Expression {
+                    kind:
+                        ExpressionKind::Slice {
+                            start,
+                            end,
+                            inclusive,
+                            ..
+                        },
+                    ..
+                }) => {
+                    assert_eq!(start.is_some(), want_start, "start for {}", src);
+                    assert_eq!(end.is_some(), want_end, "end for {}", src);
+                    assert_eq!(*inclusive, want_incl, "inclusive for {}", src);
+                }
+                other => panic!("expected Slice for {}, found {:?}", src, other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_slice_inclusive_needs_end() {
+        for src in [
+            "arr.[0.=];",
+            "arr.[.=];",
+            "arr.[];",
+            "arr.[0..=2];",
+            "arr.[..=2];",
+            "arr.[0..=];",
+            "arr.[..=];",
+        ] {
+            let err = crate::frontend::lexer::Lexer::new(src)
+                .collect::<Vec<_>>();
+            let mut parser = crate::frontend::parser::Parser::new(
+                err.into_iter(),
+                std::path::Path::new("test"),
+                src.to_string(),
+            );
+            assert!(
+                parser.parse().is_err(),
+                "expected parse error for {}",
+                src
+            );
+        }
+    }
+
+    #[test]
+    fn test_len_property_after_dot() {
+        let test_string = "arr.@len;";
+        let ast = get_ast(test_string);
+        let stmts = module_statements(&ast);
+        match &stmts[0] {
+            StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::FieldAccess { field, .. },
+                ..
+            }) => assert_eq!(field.value, "@len"),
+            other => panic!("expected FieldAccess, found {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_bare_len_property_errors() {
+        use crate::frontend::lexer::Lexer;
+        use crate::frontend::parser::Parser;
+        use std::path::Path;
+
+        let src = "fn __test() { x := @len; }".to_string();
+        let tokens: Vec<Token> = Lexer::new(&src).collect();
+        let mut parser = Parser::new(tokens.into_iter(), Path::new("test"), src);
+        let err = parser.parse().expect_err("bare '@len' must fail parsing");
+        assert!(
+            err.message.contains("must follow a '.'"),
+            "unexpected error: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_slice_type_expression() {
+        let ast = get_ast("fn f(x: @int4[]) @void {}");
+        let decl = ast.declarations.first().expect("one declaration");
+        match decl {
+            DeclarationNode::FunctionDeclaration(f) => {
+                let param_ty = &f.signature.parameters[0].parameter_type.kind;
+                assert!(
+                    matches!(param_ty, TypeExpressionKind::Slice { .. }),
+                    "expected Slice type, found {:?}",
+                    param_ty
+                );
+            }
+            other => panic!("expected function, found {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_array_type_still_parses_with_size() {
+        let ast = get_ast("fn f(x: @int4[3]) @void {}");
+        let decl = ast.declarations.first().expect("one declaration");
+        match decl {
+            DeclarationNode::FunctionDeclaration(f) => {
+                let param_ty = &f.signature.parameters[0].parameter_type.kind;
+                assert!(
+                    matches!(param_ty, TypeExpressionKind::Array { size: 3, .. }),
+                    "expected Array[3], found {:?}",
+                    param_ty
+                );
+            }
+            other => panic!("expected function, found {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_string_literal_expression() {
-        let test_string = r#""hello""#;
+        let test_string = r#""hello";"#;
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert!(matches!(

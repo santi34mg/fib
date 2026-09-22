@@ -82,6 +82,11 @@ where
     /// Set while parsing an `if` condition so `if done { ... }` treats the
     /// brace as the statement body, not a composite literal.
     no_struct_literal: bool,
+    /// When true, a postfix `.` followed by `=` does not start field access.
+    /// Set while parsing slice bounds so the `.=` alias in `arr.[a.=b]`
+    /// survives as a range separator instead of erroring inside the bound
+    /// expression (a bare `.=` is not a valid expression operator anyway).
+    slice_bound: bool,
 }
 
 impl<'a, I> Parser<'a, I>
@@ -96,6 +101,7 @@ where
             source_lines: source.lines().map(|s| s.to_string()).collect(),
             last_pos: (0, 0),
             no_struct_literal: false,
+            slice_bound: false,
         }
     }
 
