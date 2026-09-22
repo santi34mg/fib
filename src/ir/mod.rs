@@ -275,6 +275,7 @@ pub fn ty_is_unsigned(ty: &Ty) -> bool {
                 | BuiltinType::UInt4
                 | BuiltinType::UInt8
                 | BuiltinType::UInt16
+                | BuiltinType::Usize
         )
     )
 }

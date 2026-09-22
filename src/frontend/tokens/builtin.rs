@@ -4,6 +4,9 @@ use core::fmt;
 pub enum Builtin {
     BuiltinType(BuiltinType),
     BuiltinFunction(BuiltinFunction),
+    /// A comptime property queried on a value, e.g. `arr.@len`. Only valid
+    /// immediately after a `.`; a bare `@len` is a parse error.
+    BuiltinProperty(BuiltinProperty),
 }
 
 impl Builtin {
@@ -16,6 +19,9 @@ impl Builtin {
         }
         if let Some(func) = BuiltinFunction::from_name(name) {
             return Some(Builtin::BuiltinFunction(func));
+        }
+        if let Some(prop) = BuiltinProperty::from_name(name) {
+            return Some(Builtin::BuiltinProperty(prop));
         }
         None
     }
@@ -43,6 +49,9 @@ pub enum BuiltinType {
     Boolean = 16,
     String = 17,
     Never = 18,
+    /// Pointer-width unsigned integer. Maps to `@uint8` (i64) on 64-bit
+    /// targets; the length type returned by `@str_len`, `.len`, and `.@len`.
+    Usize = 19,
 }
 
 impl BuiltinType {
@@ -68,6 +77,7 @@ impl BuiltinType {
             Self::Boolean => "bool",
             Self::String => "string",
             Self::Never => "never",
+            Self::Usize => "usize",
         }
     }
 
@@ -93,6 +103,7 @@ impl BuiltinType {
             "bool" => Self::Boolean,
             "string" => Self::String,
             "never" => Self::Never,
+            "usize" => Self::Usize,
             _ => return None,
         })
     }
@@ -138,6 +149,38 @@ impl BuiltinFunction {
 }
 
 impl fmt::Display for BuiltinFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "@{}", self.name())
+    }
+}
+
+/// Comptime properties queried on values with `.@name`. Unlike builtin types
+/// and functions they must follow a `.`; the lexer still maps the bare name
+/// (`@len`) so the parser can give targeted diagnostics.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BuiltinProperty {
+    /// `arr.@len` — the comptime element count of an array. Returns `@usize`.
+    Len,
+}
+
+impl BuiltinProperty {
+    /// The bare name of this property (without the leading `@`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Len => "len",
+        }
+    }
+
+    /// Resolve a bare property name (without `@`) or `None`.
+    pub fn from_name(name: &str) -> Option<BuiltinProperty> {
+        Some(match name {
+            "len" => Self::Len,
+            _ => return None,
+        })
+    }
+}
+
+impl fmt::Display for BuiltinProperty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "@{}", self.name())
     }

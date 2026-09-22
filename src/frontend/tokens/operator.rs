@@ -33,7 +33,8 @@ pub enum Operator {
     Tilde,     // ~
     Caret,     // ^
 
-    /// Reserved for future range syntax (e.g. `0..n`); not consumed by the parser yet.
+    /// Slice-range separator (`..` in `arr.[a..b]`, `[a..]`, `[..b]`, `[..]`).
+    /// The inclusive end is spelled `.=` (`arr.[a.=b]`, `arr.[.=b]`).
     DoubleDot, // ..
     Ellipsis,       // ...
     ThinRightArrow, // ->
