@@ -51,7 +51,8 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             TypedExprKind::IndexAccess { object, index } => {
                 let idx_val = self.codegen_expr(index)?;
                 let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
-                match &object.inferred_type {
+                let obj_resolved = self.resolve_ty(&object.inferred_type);
+                match &obj_resolved {
                     Ty::Array { .. } => {
                         let arr_ty =
                             map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
@@ -63,6 +64,20 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                                 base_ptr,
                                 &[i32_zero, idx_val.into_int_value()],
                                 "arr_idx_ptr",
+                            )?
+                        };
+                        Ok(gep)
+                    }
+                    Ty::Slice(_) => {
+                        // Slices are `{ ptr, len }` values: load the struct,
+                        // extract the data pointer, then GEP by the index.
+                        let ptr_val = self.slice_data_ptr(object)?;
+                        let gep = unsafe {
+                            ctx.builder.build_gep(
+                                elem_ty,
+                                ptr_val,
+                                &[idx_val.into_int_value()],
+                                "slice_idx_ptr",
                             )?
                         };
                         Ok(gep)
@@ -83,6 +98,264 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             }
             _ => Err("compute_lvalue_ptr: not an lvalue expression".into()),
         }
+    }
+    /// Walk `Identifier` aliases to a concrete type.
+    pub(super) fn resolve_ty(&self, ty: &Ty) -> Ty {
+        let mut current = ty.clone();
+        loop {
+            match &current {
+                Ty::Identifier(id) => match self.scope.lookup(id) {
+                    Some(TypedSymbol::Type(inner)) => current = inner.clone(),
+                    _ => return current,
+                },
+                _ => return current,
+            }
+        }
+    }
+    /// Data pointer of a slice-typed expression (`{ ptr, len }` value).
+    /// Codegens the slice, spills it to a temp alloca, and loads field 0.
+    pub(super) fn slice_data_ptr(
+        &mut self,
+        slice_expr: &TypedExpr,
+    ) -> Result<PointerValue<'ctx>, LowerError> {
+        let ctx = self.ctx;
+        let slice_val = self.codegen_expr(slice_expr)?;
+        let slice_llvm_ty =
+            map_type_to_llvm(&slice_expr.inferred_type, ctx.ctx, self.scope.clone())?;
+        let BasicTypeEnum::StructType(st) = slice_llvm_ty else {
+            return Err("slice_data_ptr: slice type is not a struct".into());
+        };
+        let alloca = ctx.builder.build_alloca(st, "slicetmp")?;
+        ctx.builder.build_store(alloca, slice_val)?;
+        let ptr_gep = ctx.builder.build_struct_gep(st, alloca, 0, "sliceptr")?;
+        let ptr_ty = ctx.ctx.ptr_type(AddressSpace::default());
+        let loaded = ctx.builder.build_load(ptr_ty, ptr_gep, "sliceloadptr")?;
+        Ok(loaded.into_pointer_value())
+    }
+    /// Length of a slice-typed expression: load field 1 of `{ ptr, len }`.
+    fn slice_len_value(
+        &mut self,
+        slice_expr: &TypedExpr,
+    ) -> Result<BasicValueEnum<'ctx>, LowerError> {
+        let ctx = self.ctx;
+        let slice_val = self.codegen_expr(slice_expr)?;
+        let slice_llvm_ty =
+            map_type_to_llvm(&slice_expr.inferred_type, ctx.ctx, self.scope.clone())?;
+        let BasicTypeEnum::StructType(st) = slice_llvm_ty else {
+            return Err("slice_len_value: slice type is not a struct".into());
+        };
+        let alloca = ctx.builder.build_alloca(st, "slicelentmp")?;
+        ctx.builder.build_store(alloca, slice_val)?;
+        let len_gep = ctx.builder.build_struct_gep(st, alloca, 1, "slicelenptr")?;
+        let len_ty = ctx.ctx.i64_type();
+        Ok(ctx.builder.build_load(len_ty, len_gep, "slicelen")?)
+    }
+    /// Build a `{ ptr, len }` slice value from an array-typed expression.
+    fn build_slice_from_array(
+        &mut self,
+        array_expr: &TypedExpr,
+        slice_ty: &Ty,
+    ) -> Result<BasicValueEnum<'ctx>, LowerError> {
+        let ctx = self.ctx;
+        // Resolve the array shape (through aliases) for the element count.
+        let mut arr_ty = array_expr.inferred_type.clone();
+        let size = loop {
+            match &arr_ty {
+                Ty::Array { size, .. } => break *size,
+                Ty::Identifier(id) => match self.scope.lookup(id) {
+                    Some(TypedSymbol::Type(inner)) => arr_ty = inner.clone(),
+                    _ => {
+                        return Err(format!(
+                            "ArrayToSlice: cannot resolve array type for {:?}",
+                            array_expr.inferred_type
+                        )
+                        .into());
+                    }
+                },
+                other => {
+                    return Err(format!("ArrayToSlice: non-array type {:?}", other).into());
+                }
+            }
+        };
+        let arr_llvm_ty = map_type_to_llvm(&array_expr.inferred_type, ctx.ctx, self.scope.clone())?;
+        // Pointer to the first element: reuse the array alloca for
+        // identifiers, otherwise spill the rvalue to a temp.
+        let elem_ptr = if let TypedExprKind::Identifier(name) = &array_expr.expression {
+            if let Some(alloca) = self.vars.get(name) {
+                let i32_zero = ctx.ctx.i32_type().const_int(0, false);
+                unsafe {
+                    ctx.builder.build_gep(
+                        arr_llvm_ty,
+                        *alloca,
+                        &[i32_zero, i32_zero],
+                        "slice_ptr",
+                    )?
+                }
+            } else {
+                let arr_val = self.codegen_expr(array_expr)?;
+                let alloca = ctx.builder.build_alloca(arr_llvm_ty, "arrtotmp")?;
+                ctx.builder.build_store(alloca, arr_val)?;
+                let i32_zero = ctx.ctx.i32_type().const_int(0, false);
+                unsafe {
+                    ctx.builder.build_gep(
+                        arr_llvm_ty,
+                        alloca,
+                        &[i32_zero, i32_zero],
+                        "slice_ptr",
+                    )?
+                }
+            }
+        } else {
+            let arr_val = self.codegen_expr(array_expr)?;
+            let alloca = ctx.builder.build_alloca(arr_llvm_ty, "arrtotmp")?;
+            ctx.builder.build_store(alloca, arr_val)?;
+            let i32_zero = ctx.ctx.i32_type().const_int(0, false);
+            unsafe {
+                ctx.builder
+                    .build_gep(arr_llvm_ty, alloca, &[i32_zero, i32_zero], "slice_ptr")?
+            }
+        };
+        let slice_llvm_ty = map_type_to_llvm(slice_ty, ctx.ctx, self.scope.clone())?;
+        let BasicTypeEnum::StructType(st) = slice_llvm_ty else {
+            return Err("ArrayToSlice: slice type is not a struct".into());
+        };
+        let alloca = ctx.builder.build_alloca(st, "slicetmp")?;
+        let ptr_gep = ctx.builder.build_struct_gep(st, alloca, 0, "sliceptr")?;
+        ctx.builder.build_store(ptr_gep, elem_ptr)?;
+        let len_gep = ctx.builder.build_struct_gep(st, alloca, 1, "slicelenptr")?;
+        ctx.builder
+            .build_store(len_gep, ctx.ctx.i64_type().const_int(size, false))?;
+        Ok(ctx.builder.build_load(st, alloca, "sliceload")?)
+    }
+    /// Build a `{ ptr, len }` slice for the range forms (`[a..b]` → `[a, b)`,
+    /// `[a.=b]` → `[a, b]` (inclusive), `[a..]`/`[..b]`/`[.=b]`/`[..]`
+    /// for open ends). Works on arrays (base = array element 0 + `start`)
+    /// and on slices (base = slice data ptr + `start`);
+    /// `len = eff_end - start` as `i64`, where an omitted start is `0`,
+    /// an omitted end is the object length, and an inclusive end adds one.
+    fn build_slice_range(
+        &mut self,
+        object: &TypedExpr,
+        start: Option<&TypedExpr>,
+        end: Option<&TypedExpr>,
+        inclusive: bool,
+        slice_ty: &Ty,
+    ) -> Result<BasicValueEnum<'ctx>, LowerError> {
+        let ctx = self.ctx;
+        if inclusive && end.is_none() {
+            return Err("Slice: inclusive '.=' requires an end bound".into());
+        }
+        let obj_resolved = self.resolve_ty(&object.inferred_type);
+        // Element LLVM type for the GEP.
+        let elem_ty = match &obj_resolved {
+            Ty::Array { element_type, .. } => *element_type.clone(),
+            Ty::Slice(element_type) => *element_type.clone(),
+            other => {
+                return Err(format!("Slice: non-array/slice type {:?}", other).into());
+            }
+        };
+        let elem_llvm_ty = map_type_to_llvm(&elem_ty, ctx.ctx, self.scope.clone())?;
+        // Base pointer to element 0 of the underlying storage.
+        let base_ptr = match &obj_resolved {
+            Ty::Array { .. } => {
+                let arr_llvm_ty =
+                    map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
+                if let TypedExprKind::Identifier(name) = &object.expression
+                    && let Some(alloca) = self.vars.get(name)
+                {
+                    let i32_zero = ctx.ctx.i32_type().const_int(0, false);
+                    unsafe {
+                        ctx.builder.build_gep(
+                            arr_llvm_ty,
+                            *alloca,
+                            &[i32_zero, i32_zero],
+                            "slice_range_base",
+                        )?
+                    }
+                } else {
+                    let arr_val = self.codegen_expr(object)?;
+                    let alloca = ctx.builder.build_alloca(arr_llvm_ty, "arrtotmp")?;
+                    ctx.builder.build_store(alloca, arr_val)?;
+                    let i32_zero = ctx.ctx.i32_type().const_int(0, false);
+                    unsafe {
+                        ctx.builder.build_gep(
+                            arr_llvm_ty,
+                            alloca,
+                            &[i32_zero, i32_zero],
+                            "slice_range_base",
+                        )?
+                    }
+                }
+            }
+            Ty::Slice(_) => self.slice_data_ptr(object)?,
+            _ => unreachable!("checked above"),
+        };
+        let i64_ty = ctx.ctx.i64_type();
+        // `start`: codegen once (bounds may have side effects); omitted → 0.
+        let (start_gep, start64) = match start {
+            Some(s) => {
+                let v = self.codegen_expr(s)?.into_int_value();
+                let v64 = coerce_int_to_llvm_type(
+                    ctx,
+                    v.as_basic_value_enum(),
+                    i64_ty.into(),
+                    crate::ir::ty_is_unsigned(&s.inferred_type),
+                )?
+                .into_int_value();
+                (v, v64)
+            }
+            None => (
+                ctx.ctx.i32_type().const_int(0, false),
+                i64_ty.const_int(0, false),
+            ),
+        };
+        // Effective exclusive end: omitted → object length; inclusive → end + 1.
+        let end64 = match end {
+            Some(e) => {
+                let v = self.codegen_expr(e)?.into_int_value();
+                let v64 = coerce_int_to_llvm_type(
+                    ctx,
+                    v.as_basic_value_enum(),
+                    i64_ty.into(),
+                    crate::ir::ty_is_unsigned(&e.inferred_type),
+                )?
+                .into_int_value();
+                if inclusive {
+                    ctx.builder.build_int_add(
+                        v64,
+                        i64_ty.const_int(1, false),
+                        "slice_range_incl",
+                    )?
+                } else {
+                    v64
+                }
+            }
+            None => match &obj_resolved {
+                Ty::Array { size, .. } => i64_ty.const_int(*size, false),
+                Ty::Slice(_) => self.slice_len_value(object)?.into_int_value(),
+                _ => unreachable!("checked above"),
+            },
+        };
+        // `ptr = base + start`.
+        let ptr = unsafe {
+            ctx.builder.build_gep(
+                elem_llvm_ty,
+                base_ptr,
+                &[start_gep],
+                "slice_range_ptr",
+            )?
+        };
+        let len = ctx.builder.build_int_sub(end64, start64, "slice_range_len")?;
+        let slice_llvm_ty = map_type_to_llvm(slice_ty, ctx.ctx, self.scope.clone())?;
+        let BasicTypeEnum::StructType(st) = slice_llvm_ty else {
+            return Err("Slice: slice type is not a struct".into());
+        };
+        let alloca = ctx.builder.build_alloca(st, "slicetmp")?;
+        let ptr_gep = ctx.builder.build_struct_gep(st, alloca, 0, "sliceptr")?;
+        ctx.builder.build_store(ptr_gep, ptr)?;
+        let len_gep = ctx.builder.build_struct_gep(st, alloca, 1, "slicelenptr")?;
+        ctx.builder.build_store(len_gep, len)?;
+        Ok(ctx.builder.build_load(st, alloca, "sliceload")?)
     }
     pub(super) fn build_tuple_value(
         &mut self,
@@ -240,16 +513,7 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             if let BasicTypeEnum::IntType(ty) =
                 map_type_to_llvm(&expr.inferred_type, ctx.ctx, SymbolTable::new())?
             {
-                let sign_extend = !matches!(
-                    expr.inferred_type,
-                    Ty::Builtin(
-                        BuiltinType::UInt1
-                        | BuiltinType::UInt2
-                        | BuiltinType::UInt4
-                        | BuiltinType::UInt8
-                        | BuiltinType::UInt16
-                    )
-                );
+                let sign_extend = !crate::ir::ty_is_unsigned(&expr.inferred_type);
                 Ok(ty.const_int(*value, sign_extend).as_basic_value_enum())
             } else {
                 Err(format!(
@@ -322,16 +586,7 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                     | BuiltinType::Float16
                 )
             );
-            let is_unsigned = matches!(
-                left.inferred_type,
-                Ty::Builtin(
-                    BuiltinType::UInt1
-                    | BuiltinType::UInt2
-                    | BuiltinType::UInt4
-                    | BuiltinType::UInt8
-                    | BuiltinType::UInt16
-                )
-            );
+            let is_unsigned = crate::ir::ty_is_unsigned(&left.inferred_type);
             match operator {
                 BinOp::Add => {
                     if is_float {
@@ -615,6 +870,52 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             let loaded = ctx.builder.build_load(field_ty, gep, "fieldload")?;
             Ok(loaded)
         }
+        TypedExprKind::ArrayLen { array } => {
+            // `.@len` (`@usize`): arrays lower to a comptime constant,
+            // slices load the stored runtime length.
+            let resolved = self.resolve_ty(&array.inferred_type);
+            match &resolved {
+                Ty::Array { size, .. } => Ok(ctx
+                    .ctx
+                    .i64_type()
+                    .const_int(*size, false)
+                    .as_basic_value_enum()),
+                Ty::Slice(_) => self.slice_len_value(array),
+                Ty::Identifier(_) => {
+                    // Alias that did not resolve (e.g. unknown): keep the
+                    // old error shape for diagnostics.
+                    return Err(format!(
+                        "codegen_expr: cannot resolve array type for '.@len' on {:?}",
+                        array.inferred_type
+                    )
+                    .into());
+                }
+                other => Err(format!(
+                    "codegen_expr: '.@len' on non-array/slice type {:?}",
+                    other
+                )
+                .into()),
+            }
+        }
+        TypedExprKind::ArrayToSlice { array } => {
+            let slice_ty = expr.inferred_type.clone();
+            self.build_slice_from_array(array, &slice_ty)
+        }
+        TypedExprKind::Slice {
+            object,
+            start,
+            end,
+            inclusive,
+        } => {
+            let slice_ty = expr.inferred_type.clone();
+            self.build_slice_range(
+                object,
+                start.as_deref(),
+                end.as_deref(),
+                *inclusive,
+                &slice_ty,
+            )
+        }
         TypedExprKind::StructConstruct { type_name: _, fields } => {
             // Allocate a struct, fill each field, then load the whole value.
             let struct_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
@@ -755,7 +1056,8 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
         TypedExprKind::IndexAccess { object, index } => {
             let idx_val = self.codegen_expr( index)?;
             let elem_ty = map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
-            match &object.inferred_type {
+            let obj_resolved = self.resolve_ty(&object.inferred_type);
+            match &obj_resolved {
                 Ty::Array { .. } => {
                     let arr_ty = map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
                     // Need a pointer to the array for GEP — store to temp alloca
@@ -772,6 +1074,19 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                         )?
                     };
                     let loaded = ctx.builder.build_load(elem_ty, gep, "arr_idx_load")?;
+                    Ok(loaded)
+                }
+                Ty::Slice(_) => {
+                    let data_ptr = self.slice_data_ptr(object)?;
+                    let gep = unsafe {
+                        ctx.builder.build_gep(
+                            elem_ty,
+                            data_ptr,
+                            &[idx_val.into_int_value()],
+                            "slice_idx_ptr",
+                        )?
+                    };
+                    let loaded = ctx.builder.build_load(elem_ty, gep, "slice_idx_load")?;
                     Ok(loaded)
                 }
                 _ => {

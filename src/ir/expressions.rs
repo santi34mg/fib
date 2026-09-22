@@ -134,6 +134,15 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
         TypedExprKind::FieldAccess { .. } => Err(LowerError::Unsupported(
             "field access (phase 2b: FieldLoad)".to_string(),
         )),
+        TypedExprKind::ArrayLen { .. } => Err(LowerError::Unsupported(
+            "array/slice '@len' property (phase 2b: comptime const / slice len)".to_string(),
+        )),
+        TypedExprKind::ArrayToSlice { .. } => Err(LowerError::Unsupported(
+            "explicit array-to-slice (phase 2b: slice struct)".to_string(),
+        )),
+        TypedExprKind::Slice { .. } => Err(LowerError::Unsupported(
+            "slice range (phase 2b: slice struct)".to_string(),
+        )),
         TypedExprKind::StructConstruct { .. } => Err(LowerError::Unsupported(
             "struct construction (phase 2b: StructConstruct)".to_string(),
         )),

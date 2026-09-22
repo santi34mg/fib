@@ -200,7 +200,9 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             } => {
                 let idx_val = self.codegen_expr(index)?;
                 let val = self.codegen_expr(expr)?;
-                match &object.inferred_type {
+                // Resolve aliases so `type Vec @int4[]` still indexes as a slice.
+                let obj_resolved = self.resolve_ty(&object.inferred_type);
+                match &obj_resolved {
                     Ty::Array { .. } => {
                         let arr_ty =
                             map_type_to_llvm(&object.inferred_type, ctx.ctx, self.scope.clone())?;
@@ -242,8 +244,23 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                         ctx.builder.build_store(gep, val)?;
                         Ok(None)
                     }
+                    Ty::Slice(_) => {
+                        let data_ptr = self.slice_data_ptr(object)?;
+                        let elem_ty =
+                            map_type_to_llvm(&expr.inferred_type, ctx.ctx, self.scope.clone())?;
+                        let gep = unsafe {
+                            ctx.builder.build_gep(
+                                elem_ty,
+                                data_ptr,
+                                &[idx_val.into_int_value()],
+                                "slice_assign_ptr",
+                            )?
+                        };
+                        ctx.builder.build_store(gep, val)?;
+                        Ok(None)
+                    }
                     other => Err(format!(
-                        "codegen_stmt: IndexAssign on non-pointer/array {:?}",
+                        "codegen_stmt: IndexAssign on non-pointer/array/slice {:?}",
                         other
                     )
                     .into()),

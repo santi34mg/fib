@@ -43,7 +43,10 @@ pub(crate) fn typed_type_size_align(
                 BuiltinType::UInt1 | BuiltinType::Int1 | BuiltinType::Never => 1,
                 BuiltinType::UInt2 | BuiltinType::Int2 | BuiltinType::Float2 => 2,
                 BuiltinType::UInt4 | BuiltinType::Int4 | BuiltinType::Float4 => 4,
-                BuiltinType::UInt8 | BuiltinType::Int8 | BuiltinType::Float8 => 8,
+                BuiltinType::UInt8
+                | BuiltinType::Int8
+                | BuiltinType::Float8
+                | BuiltinType::Usize => 8,
                 BuiltinType::UInt16 | BuiltinType::Int16 | BuiltinType::Float16 => 16,
                 BuiltinType::String => 8,
                 BuiltinType::Void => 0,
@@ -54,6 +57,10 @@ pub(crate) fn typed_type_size_align(
         Ty::Array { element_type, size } => {
             let (s, a) = typed_type_size_align(element_type, scope)?;
             Ok((round_up(s, a) * (*size as usize), a))
+        }
+        Ty::Slice(_) => {
+            // Lowered as `{ ptr, i64 len }`.
+            Ok((16, 8))
         }
         Ty::Struct { fields } => {
             struct_layout_size_align(fields.iter().map(|(_, t)| t.as_ref()), scope)
@@ -143,6 +150,7 @@ pub(crate) fn map_type_to_llvm<'ctx>(
                 BuiltinType::UInt4 => BasicTypeEnum::IntType(ctx.i32_type()),
                 BuiltinType::UInt8 => BasicTypeEnum::IntType(ctx.i64_type()),
                 BuiltinType::UInt16 => BasicTypeEnum::IntType(ctx.i128_type()),
+                BuiltinType::Usize => BasicTypeEnum::IntType(ctx.i64_type()),
                 BuiltinType::Int1 => BasicTypeEnum::IntType(ctx.i8_type()),
                 BuiltinType::Int2 => BasicTypeEnum::IntType(ctx.i16_type()),
                 BuiltinType::Int4 => BasicTypeEnum::IntType(ctx.i32_type()),
@@ -210,6 +218,14 @@ pub(crate) fn map_type_to_llvm<'ctx>(
         Ty::Array { element_type, size } => {
             let elem_ty = map_type_to_llvm(element_type, ctx, current_scope)?;
             Ok(elem_ty.array_type(*size as u32).into())
+        }
+        Ty::Slice(_) => {
+            // A slice is a `(ptr, len)` value struct: `{ ptr, i64 }`.
+            // The pointer is opaque, so the element type does not affect
+            // the LLVM shape.
+            let ptr_ty: BasicTypeEnum = ctx.ptr_type(AddressSpace::default()).into();
+            let len_ty: BasicTypeEnum = ctx.i64_type().into();
+            Ok(ctx.struct_type(&[ptr_ty, len_ty], false).into())
         }
         Ty::Function { .. } => {
             // Function pointers are opaque `ptr` in LLVM 16.

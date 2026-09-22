@@ -101,8 +101,32 @@ mod tests {
     }
 
     #[test]
+    fn slice_maps_to_ptr_len_struct() {
+        use crate::backend::lowering::types::typed_type_size_align;
+        let ctx = Context::create();
+        let scope = SymbolTable::new();
+        let ty = Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4)));
+        let llvm_ty = map_type_to_llvm(&ty, &ctx, scope.clone()).expect("slice maps");
+        match llvm_ty {
+            BasicTypeEnum::StructType(st) => {
+                assert_eq!(st.count_fields(), 2, "slice is {{ ptr, len }}");
+            }
+            other => panic!("expected slice struct, got {:?}", other),
+        }
+        let (size, align) = typed_type_size_align(&ty, &scope).expect("slice layout");
+        assert_eq!((size, align), (16, 8));
+        // `@usize` is the 64-bit length type.
+        let usize_ty =
+            map_type_to_llvm(&Ty::Builtin(BuiltinType::Usize), &ctx, scope).expect("usize maps");
+        match usize_ty {
+            BasicTypeEnum::IntType(it) => assert_eq!(it.get_bit_width(), 64),
+            other => panic!("expected i64 for @usize, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn ir_consumer_lowers_straight_line() {
-        let ir = lower_ir_src("fn main() @int { x := 1\ny := 2\nreturn x + y }");
+        let ir = lower_ir_src("fn main() @int { x := 1;\ny := 2;\nreturn x + y; }");
         assert!(ir.contains("define"), "expected define, got:\n{}", ir);
         assert!(ir.contains("add"), "expected add, got:\n{}", ir);
         assert!(ir.contains("ret"), "expected ret, got:\n{}", ir);
