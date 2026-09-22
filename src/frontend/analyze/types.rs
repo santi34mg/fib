@@ -113,6 +113,7 @@ fn map_type_inner(type_expression: TypeExpression) -> Result<Ty, AnalysisError> 
             element_type: Box::new(map_type(*element_type)?),
             size,
         },
+        TypeExpressionKind::Slice { element_type } => Ty::Slice(Box::new(map_type(*element_type)?)),
         TypeExpressionKind::QualifiedIdentifier { module, name } => Ty::QualifiedIdentifier {
             module: module.value.clone(),
             name,

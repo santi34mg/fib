@@ -35,6 +35,9 @@ pub(super) fn mangle_type_expr(te: &TypeExpression) -> String {
         TypeExpressionKind::Array { element_type, size } => {
             format!("arr{}_{}", size, mangle_type_expr(element_type))
         }
+        TypeExpressionKind::Slice { element_type } => {
+            format!("slice_{}", mangle_type_expr(element_type))
+        }
         TypeExpressionKind::Struct { .. } => "struct".to_string(),
         TypeExpressionKind::Enum { .. } => "enum".to_string(),
         TypeExpressionKind::Function { .. } => "fn".to_string(),
@@ -77,6 +80,12 @@ pub(super) fn substitute_type(
             TypeExpressionKind::Array {
                 element_type: Box::new(substitute_type(element_type, subs)),
                 size: *size,
+            },
+            span,
+        ),
+        TypeExpressionKind::Slice { element_type } => TypeExpression::at(
+            TypeExpressionKind::Slice {
+                element_type: Box::new(substitute_type(element_type, subs)),
             },
             span,
         ),

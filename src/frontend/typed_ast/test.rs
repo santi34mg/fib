@@ -134,6 +134,10 @@ mod tests {
             "@int4[8]"
         );
         assert_eq!(
+            Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4))).to_string(),
+            "@int4[]"
+        );
+        assert_eq!(
             Ty::QualifiedIdentifier {
                 module: "m".to_string(),
                 name: id("Point"),

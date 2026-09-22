@@ -62,6 +62,17 @@ pub enum ExpressionKind {
         object: Box<Expression>,
         index: Box<Expression>,
     },
+    /// Slice of an array or slice as `T[]`.
+    /// - `obj.[a..b]` → `[a, b)`, `obj.[a.=b]` → `[a, b]` (inclusive)
+    /// - `obj.[a..]` → `[a, len)`, `obj.[..b]` → `[0, b)`,
+    ///   `obj.[.=b]` → `[0, b]` (inclusive), `obj.[..]` → full range.
+    /// `None` means an omitted bound; `inclusive` marks a `.=` end.
+    Slice {
+        object: Box<Expression>,
+        start: Option<Box<Expression>>,
+        end: Option<Box<Expression>>,
+        inclusive: bool,
+    },
     ArrayLiteral {
         elements: Vec<Expression>,
     },

@@ -172,6 +172,8 @@ pub enum Ty {
         element_type: Box<Ty>,
         size: u64,
     },
+    /// A slice `T[]` — a `(ptr, len)` pair. Lowered to a value struct.
+    Slice(Box<Ty>),
     Function {
         argument_types: Vec<Ty>,
         return_type: Box<Ty>,
@@ -197,6 +199,7 @@ impl fmt::Display for Ty {
             Self::Enum { variants } => write!(f, "enum {{ {:?} }}", variants)?,
             Self::Pointer(inner) => write!(f, "*{}", inner)?,
             Self::Array { element_type, size } => write!(f, "{}[{}]", element_type, size)?,
+            Self::Slice(element_type) => write!(f, "{}[]", element_type)?,
             Self::Function {
                 argument_types,
                 return_type,
@@ -349,6 +352,29 @@ pub enum TypedExprKind {
         object: Box<TypedExpr>,
         field: String,
         field_index: usize,
+    },
+    /// `arr.@len` — the element count (`@usize`).
+    /// For arrays this is a comptime constant; for slices it is a runtime
+    /// load of the stored length. The `array` field holds either shape.
+    ArrayLen {
+        array: Box<TypedExpr>,
+    },
+    /// Explicit `T[N] as T[]` full-range conversion. Lowered by
+    /// materializing the array and building the `{ ptr, len }` value
+    /// struct. Implicit decay is rejected — use `arr.[a..b]` or `as`.
+    ArrayToSlice {
+        array: Box<TypedExpr>,
+    },
+    /// Slice of an array or slice as `T[]` (`[a..b]` → `[a, b)`,
+    /// `[a.=b]` → `[a, b]` (inclusive), `[a..]`/`[..b]`/`[.=b]`/`[..]`
+    /// for open ends). `None` is an omitted bound (`0` / `len`);
+    /// `inclusive` marks a `.=` end. Lowered to
+    /// `{ base_ptr + start, eff_end - start }`.
+    Slice {
+        object: Box<TypedExpr>,
+        start: Option<Box<TypedExpr>>,
+        end: Option<Box<TypedExpr>>,
+        inclusive: bool,
     },
     StructConstruct {
         type_name: String,

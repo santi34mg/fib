@@ -44,6 +44,10 @@ pub enum TypeExpressionKind {
         element_type: Box<TypeExpression>,
         size: u64,
     },
+    /// A slice type `T[]` — a runtime `(ptr, len)` view over element type T.
+    Slice {
+        element_type: Box<TypeExpression>,
+    },
     QualifiedIdentifier {
         module: Identifier,
         name: Identifier,
@@ -77,6 +81,9 @@ impl fmt::Display for TypeExpressionKind {
             }
             TypeExpressionKind::Array { element_type, size } => {
                 write!(f, "{}[{}]", element_type, size)
+            }
+            TypeExpressionKind::Slice { element_type } => {
+                write!(f, "{}[]", element_type)
             }
             TypeExpressionKind::QualifiedIdentifier { module, name } => {
                 write!(f, "{}::{}", module, name)
