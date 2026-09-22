@@ -15,6 +15,15 @@ A name without the `@` is an ordinary identifier — there is no implicit builti
 All three take `@string` arguments; passing any other type, or the wrong number of
 arguments, is a compile-time error.
 
+## Length properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `arr.@len` | `@usize` | Comptime element count of an array `T[N]`. |
+| `slice.@len` | `@usize` | Runtime length stored in a slice `T[]`. |
+
+`@usize` is the pointer-width unsigned length type (64-bit, like `@uint8`).
+
 > **Memory:** `@concat` allocates with `malloc` and does not free anything. The caller
 > owns the returned string and is responsible for freeing it (e.g. `libc::free`).
 

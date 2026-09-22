@@ -37,13 +37,21 @@ These trail the expression they apply to:
 
 - `.&` — address-of (produces a pointer to the operand)
 - `.*` — dereference (loads the pointee)
-- `.[i]` — index into a pointer/array
+- `.[i]` — index into a pointer/array/slice
+- `.[a..b]` — slice `[a, b)` of an array/slice as `T[]`
+- `.[a.=b]` — slice `[a, b]` (inclusive end)
+- `.[a..]` — slice `[a, len)`; `.[..b]` — slice `[0, b)`
+- `.[.=b]` — slice `[0, b]` (inclusive); `.[..]` — full range
 - `.field` — field access on a struct (or via a pointer)
 
 ```fib
 pool.&                  // pointer to pool
 cur.*                   // value pointed to by cur
 arr.[i]                 // element i
+arr.[a..b]              // slice elements a..b-1
+arr.[a.=b]              // slice elements a..b
+arr.[a..]               // elements a..len-1
+arr.[..b]               // elements 0..b-1
 o.inner.value           // chained field access
 ```
 
@@ -64,4 +72,5 @@ i as @uint8
 
 ## Reserved / not-yet-consumed
 
-- `..` (range syntax) is reserved; the parser does not consume it yet.
+- `...` is reserved; the parser does not consume it yet (`..` is the
+  slice-range separator in `arr.[a..b]`).

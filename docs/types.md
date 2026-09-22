@@ -16,6 +16,7 @@ use a byte-size suffix: `@int4` is a 4-byte (32-bit) signed integer, `@uint8` is
 | `@string` | String value |
 | `@int`, `@int2`, `@int4`, `@int8`, `@int16` | Signed integers (1, 2, 4, 8, 16 bytes) |
 | `@uint`, `@uint2`, `@uint4`, `@uint8`, `@uint16` | Unsigned integers (1, 2, 4, 8, 16 bytes) |
+| `@usize` | Pointer-width unsigned integer (64-bit, like `@uint8`); the length type returned by `.@len` |
 | `@float4`, `@float8`, `@float16` | Floating-point numbers (4, 8, 16 bytes) |
 | `@never` | A value that can never be produced (e.g. functions that never return) |
 
@@ -23,6 +24,7 @@ use a byte-size suffix: `@int4` is a 4-byte (32-bit) signed integer, `@uint8` is
 
 - **Pointers**: `*T` (raw pointer to `T`) — see [Pointers and Memory](pointers-memory.md)
 - **Arrays**: `T[N]` (fixed-size array of `N` elements of type `T`) — see [Arrays](arrays.md)
+- **Slices**: `T[]` (runtime `(ptr, len)` view over `T`) — see [Arrays](arrays.md)
 - **Structs**: `struct { ... }` — see [Structs](structs.md)
 - **Enums / tagged unions**: `enum { ... }` — see [Enums](enums.md)
 - **Tuples**: appear in multi-return signatures, e.g. `(@int4, @int4)` — see [Functions](functions.md)
