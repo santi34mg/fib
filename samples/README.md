@@ -26,6 +26,7 @@ resolves). The entry file's own directory is always searched first.
 - `switch_enum.fib` — `switch`/`when` dispatch over a plain enum.
 - `tagged_union.fib` — enum variants with payloads (`Integer`/`Boolean`/`EOF`).
 - `sorting.fib` — generic `insertion_sort(T: type, ...)` over `@int4[8]`.
+- `slices.fib` — slices (`@int4[]`) as `(ptr, len)` views: explicit `arr.[a..b]`, `.@len`, indexing, mutation.
 - `string_builtins.fib` — `@concat`/`@str_len`/`@str_eq` over `@string`.
 - `multiple_returns.fib` — multi-value return (`divmod` → `q, r`).
 - `nested_assign.fib` — nested struct field assignment (`o.inner.value = 42`).

@@ -155,6 +155,14 @@ fn e2e_sorting() {
 }
 
 #[test]
+fn e2e_slices() {
+    check_sample(
+        "slices",
+        concat!("len=4 sum=100 s0=10\n", "after s1=99 arr1=99\n",),
+    );
+}
+
+#[test]
 fn e2e_string_builtins() {
     check_sample("string_builtins", "Hello, fib! (len=11, eq=1)\n");
 }

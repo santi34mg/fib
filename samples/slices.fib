@@ -1,0 +1,22 @@
+// Slices (`T[]`) as `(ptr, len)` views over arrays.
+// Expected output:
+//   len=4 sum=100 s0=10
+//   after s1=99 arr1=99
+import std::libc
+
+fn sum(s: @int4[]) @int4 {
+    total: @int4 = 0;
+    for (i: @int4 = 0; i < s.@len as @int4; i += 1) {
+        total += s.[i];
+    };
+    return total;
+}
+
+fn main() @int4 {
+    arr: @int4[4] = [10, 20, 30, 40];
+    s: @int4[] = arr.[0..4];
+    libc::printf("len=%d sum=%d s0=%d\n", s.@len as @int4, sum(s), s.[0]);
+    s.[1] = 99;
+    libc::printf("after s1=%d arr1=%d\n", s.[1], arr.[1]);
+    return 0;
+}
