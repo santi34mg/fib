@@ -3,9 +3,9 @@ type Path struct {
 }
 
 fn path_from_string(value: @string) Path {
-    return Path { value: value }
+    return Path { value: value };
 }
 
 fn path_as_string(path: Path) @string {
-    return path.value
+    return path.value;
 }

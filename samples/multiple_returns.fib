@@ -4,11 +4,11 @@
 import std::libc
 
 fn divmod(a: @int4, b: @int4) (@int4, @int4) {
-    return a / b, a % b
+    return a / b, a % b;
 }
 
 fn main() @int4 {
-    q, r := divmod(17, 5)
-    libc::printf("q=%d r=%d\n", q, r)
-    return 0
+    q, r := divmod(17, 5);
+    libc::printf("q=%d r=%d\n", q, r);
+    return 0;
 }

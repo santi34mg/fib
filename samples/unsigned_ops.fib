@@ -17,22 +17,22 @@
 import std::libc
 
 fn main() @int4 {
-    a: @uint4 = 4000000000
-    b: @uint4 = 7
-    x: @uint8 = 10000000000000000000
-    y: @uint8 = 3
+    a: @uint4 = 4000000000;
+    b: @uint4 = 7;
+    x: @uint8 = 10000000000000000000;
+    y: @uint8 = 3;
 
-    libc::printf("div32: %u / %u = %u\n", a, b, a / b)
-    libc::printf("rem32: %u %% %u = %u\n", a, b, a % b)
-    libc::printf("div64: %llu / %llu = %llu\n", x, y, x / y)
-    libc::printf("rem64: %llu %% %llu = %llu\n", x, y, x % y)
+    libc::printf("div32: %u / %u = %u\n", a, b, a / b);
+    libc::printf("rem32: %u %% %u = %u\n", a, b, a % b);
+    libc::printf("div64: %llu / %llu = %llu\n", x, y, x / y);
+    libc::printf("rem64: %llu %% %llu = %llu\n", x, y, x % y);
 
-    libc::printf("cmp32: %u > %u = %u\n", a, b, (a > b) as @uint4)
-    libc::printf("cmp32: %u < %u = %u\n", b, a, (b < a) as @uint4)
-    libc::printf("cmp32: %u >= %u = %u\n", a, a, (a >= a) as @uint4)
-    libc::printf("cmp32: %u <= %u = %u\n", b, b, (b <= b) as @uint4)
+    libc::printf("cmp32: %u > %u = %u\n", a, b, (a > b) as @uint4);
+    libc::printf("cmp32: %u < %u = %u\n", b, a, (b < a) as @uint4);
+    libc::printf("cmp32: %u >= %u = %u\n", a, a, (a >= a) as @uint4);
+    libc::printf("cmp32: %u <= %u = %u\n", b, b, (b <= b) as @uint4);
 
-    libc::printf("shr32: %u >> 1 = %u\n", a, a >> 1)
-    libc::printf("shr64: %llu >> 1 = %llu\n", x, x >> 1)
-    return 0
+    libc::printf("shr32: %u >> 1 = %u\n", a, a >> 1);
+    libc::printf("shr64: %llu >> 1 = %llu\n", x, x >> 1);
+    return 0;
 }

@@ -13,15 +13,15 @@ type Token enum {
 
 fn describe(t: Token) @void {
     switch (t) {
-        when .Integer(i) { libc::printf("int=%d\n", i.value) }
-        when .Boolean(b) { libc::printf("bool=%d\n", b.flag as @uint4) }
-        when .EOF { libc::printf("eof\n") }
-    }
+        when .Integer(i) { libc::printf("int=%d\n", i.value); }
+        when .Boolean(b) { libc::printf("bool=%d\n", b.flag as @uint4); }
+        when .EOF { libc::printf("eof\n"); }
+    };
 }
 
 fn main() @int4 {
-    describe(Token.Integer { value: 7 })
-    describe(Token.Boolean { flag: true })
-    describe(Token.EOF)
-    return 0
+    describe(Token.Integer { value: 7 });
+    describe(Token.Boolean { flag: true });
+    describe(Token.EOF);
+    return 0;
 }

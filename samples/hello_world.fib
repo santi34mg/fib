@@ -4,6 +4,6 @@
 import std::libc
 
 fn main() @int4 {
-    libc::printf("Hello, World!\n")
-    return 0
+    libc::printf("Hello, World!\n");
+    return 0;
 }

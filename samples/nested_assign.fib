@@ -12,8 +12,8 @@ type Outer struct {
 }
 
 fn main() @int4 {
-    o: Outer = Outer { inner: Inner { value: 0 } }
-    o.inner.value = 42
-    libc::printf("got %d\n", o.inner.value)
-    return 0
+    o: Outer = Outer { inner: Inner { value: 0 } };
+    o.inner.value = 42;
+    libc::printf("got %d\n", o.inner.value);
+    return 0;
 }
