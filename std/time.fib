@@ -1,0 +1,57 @@
+import std::libc
+
+type Duration struct {
+    nanoseconds: @int8,
+}
+
+type TimeSpec struct {
+    seconds: @int8,
+    nanoseconds: @int8,
+}
+
+type TimeError struct {
+    message: @string,
+}
+
+type ClockId enum {
+    Realtime,
+    Monotonic,
+    ProcessCputime,
+    ThreadCputime,
+}
+
+fn now() @int8 {
+    return libc::time(null) as @int8;
+}
+
+fn clock() @int8 {
+    return libc::clock() as @int8;
+}
+
+fn duration_from_nanos(nanos: @int8) Duration {
+    return Duration { nanoseconds: nanos };
+}
+
+fn duration_from_seconds(seconds: @int8) Duration {
+    return Duration { nanoseconds: seconds * 1000000000 as @int8 };
+}
+
+fn duration_as_nanos(d: Duration) @int8 {
+    return d.nanoseconds;
+}
+
+fn duration_as_seconds(d: Duration) @int8 {
+    return d.nanoseconds / 1000000000 as @int8;
+}
+
+fn sleep(seconds: @uint8) @uint8 {
+    return libc::sleep(seconds);
+}
+
+fn time_diff(start: @int8, end: @int8) Duration {
+    return Duration { nanoseconds: (end - start) * 1000000000 as @int8 };
+}
+
+fn monotonic_ns() @int8 {
+    return libc::clock() as @int8;
+}

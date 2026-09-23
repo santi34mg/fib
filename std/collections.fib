@@ -1,0 +1,164 @@
+import std::memory
+import std::libc
+
+type Vec struct {
+    data: *@void,
+    length: @uint8,
+    capacity: @uint8,
+}
+
+type Slice struct {
+    data: *@void,
+    length: @uint8,
+}
+
+type Stack struct {
+    data: *@void,
+    length: @uint8,
+    capacity: @uint8,
+}
+
+type IntVec struct {
+    data: *@int4,
+    length: @uint8,
+    capacity: @uint8,
+}
+
+fn vec_create(capacity: @uint8) Vec {
+    data: *@void = libc::malloc(capacity);
+    return Vec { data: data, length: 0, capacity: capacity };
+}
+
+fn vec_push(vec: *Vec, value: *@void) @void {
+    if vec.*.length >= vec.*.capacity {
+        new_cap: @uint8 = vec.*.capacity * 2;
+        if new_cap < 4 as @uint8 {
+            new_cap = 4 as @uint8;
+        };
+        new_data: *@void = libc::malloc(new_cap);
+        libc::memcpy(new_data, vec.*.data, vec.*.length);
+        libc::free(vec.*.data);
+        vec.*.data = new_data;
+        vec.*.capacity = new_cap;
+    };
+    libc::memcpy(vec.*.data + vec.*.length, value, 1 as @uint8);
+    vec.*.length = vec.*.length + 1;
+}
+
+fn vec_len(vec: Vec) @uint8 {
+    return vec.length;
+}
+
+fn vec_capacity(vec: Vec) @uint8 {
+    return vec.capacity;
+}
+
+fn slice_create(data: *@void, length: @uint8) Slice {
+    return Slice { data: data, length: length };
+}
+
+fn slice_len(slice: Slice) @uint8 {
+    return slice.length;
+}
+
+fn stack_create(capacity: @uint8) Stack {
+    data: *@void = libc::malloc(capacity);
+    return Stack { data: data, length: 0, capacity: capacity };
+}
+
+fn stack_push(stack: *Stack, value: *@void) @void {
+    if stack.*.length >= stack.*.capacity {
+        new_cap: @uint8 = stack.*.capacity * 2;
+        if new_cap < 4 as @uint8 {
+            new_cap = 4 as @uint8;
+        };
+        new_data: *@void = libc::malloc(new_cap);
+        libc::memcpy(new_data, stack.*.data, stack.*.length);
+        libc::free(stack.*.data);
+        stack.*.data = new_data;
+        stack.*.capacity = new_cap;
+    };
+    libc::memcpy(stack.*.data + stack.*.length, value, 1 as @uint8);
+    stack.*.length = stack.*.length + 1;
+}
+
+fn stack_pop(stack: *Stack) *@void {
+    stack.*.length = stack.*.length - 1;
+    return stack.*.data + stack.*.length;
+}
+
+fn stack_len(stack: Stack) @uint8 {
+    return stack.length;
+}
+
+fn sort_int(arr: *@int4, len: @uint8) @void {
+    i: @uint8 = 1;
+    for (;;) {
+        if i >= len { break; };
+        j: @uint8 = i;
+        for (;;) {
+            if j == 0 as @uint8 { break; };
+            if arr.[j] < arr.[j - 1] {
+                t: @int4 = arr.[j];
+                arr.[j] = arr.[j - 1];
+                arr.[j - 1] = t;
+            } else {
+                break;
+            };
+            j = j - 1;
+        };
+        i = i + 1;
+    };
+}
+
+fn reverse_int(arr: *@int4, len: @uint8) @void {
+    i: @uint8 = 0;
+    j: @uint8 = len - 1;
+    for (;;) {
+        if i >= j { break; };
+        t: @int4 = arr.[i];
+        arr.[i] = arr.[j];
+        arr.[j] = t;
+        i = i + 1;
+        j = j - 1;
+    };
+}
+
+fn fill_int(arr: *@int4, len: @uint8, value: @int4) @void {
+    i: @uint8 = 0;
+    for (;;) {
+        if i >= len { break; };
+        arr.[i] = value;
+        i = i + 1;
+    };
+}
+
+fn min_int(arr: *@int4, len: @uint8) @int4 {
+    result: @int4 = arr.[0];
+    i: @uint8 = 1;
+    for (;;) {
+        if i >= len { break; };
+        if arr.[i] < result {
+            result = arr.[i];
+        };
+        i = i + 1;
+    };
+    return result;
+}
+
+fn max_int(arr: *@int4, len: @uint8) @int4 {
+    result: @int4 = arr.[0];
+    i: @uint8 = 1;
+    for (;;) {
+        if i >= len { break; };
+        if arr.[i] > result {
+            result = arr.[i];
+        };
+        i = i + 1;
+    };
+    return result;
+}
+
+fn copy_int(src: *@int4, dst: *@int4, len: @uint8) @void {
+    libc::memcpy(dst as *@void, src as *@void, len * 4 as @uint8);
+}

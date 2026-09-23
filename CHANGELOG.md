@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Expanded the Fib standard library surface so std modules type-check as import targets.
+
 ## [0.1.0] - 2026-09-18
 
 ### Added

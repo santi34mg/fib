@@ -1,0 +1,109 @@
+import std::libc
+import std::io::fd::{FileDescriptor}
+
+type IpAddress enum {
+    V4 { a: @uint4, b: @uint4, c: @uint4, d: @uint4 },
+    V6 { a: @uint4, b: @uint4, c: @uint4, d: @uint4, e: @uint4, f: @uint4, g: @uint4, h: @uint4 },
+}
+
+type SocketAddress struct {
+    ip: IpAddress,
+    port: @uint4,
+}
+
+type SocketType enum {
+    Stream,
+    Datagram,
+}
+
+type SocketResult struct {
+    is_ok: @bool,
+    fd: @int4,
+    error: @string,
+}
+
+type Socket struct {
+    fd: @int4,
+}
+
+type TcpListener struct {
+    socket: Socket,
+}
+
+type TcpStream struct {
+    socket: Socket,
+}
+
+type UdpSocket struct {
+    socket: Socket,
+}
+
+type DnsEntry struct {
+    hostname: @string,
+    addresses: *IpAddress,
+    count: @uint8,
+}
+
+type SocketError struct {
+    message: @string,
+}
+
+fn ip_v4(a: @uint4, b: @uint4, c: @uint4, d: @uint4) IpAddress {
+    return IpAddress.V4 { a: a, b: b, c: c, d: d };
+}
+
+fn ip_v6(a: @uint4, b: @uint4, c: @uint4, d: @uint4, e: @uint4, f: @uint4, g: @uint4, h: @uint4) IpAddress {
+    return IpAddress.V6 { a: a, b: b, c: c, d: d, e: e, f: f, g: g, h: h };
+}
+
+fn socket_address(ip: IpAddress, port: @uint4) SocketAddress {
+    return SocketAddress { ip: ip, port: port };
+}
+
+fn socket_create() SocketResult {
+    fd: @int4 = libc::socket(1 as @int4, 1 as @int4, 0 as @int4);
+    if fd == -1 as @int4 {
+        return SocketResult { is_ok: false, fd: -1, error: "socket creation failed" };
+    };
+    return SocketResult { is_ok: true, fd: fd, error: "" };
+}
+
+fn socket_bind(socket: *Socket, addr: SocketAddress) @int4 {
+    return 0 as @int4;
+}
+
+fn socket_connect(socket: *Socket, addr: SocketAddress) @int4 {
+    return 0 as @int4;
+}
+
+fn socket_listen(socket: *Socket, backlog: @int4) @int4 {
+    return 0 as @int4;
+}
+
+fn socket_close(socket: *Socket) @void {
+    libc::close(socket.*.fd);
+}
+
+fn socket_send(socket: Socket, data: *@void, size: @uint8) @uint8 {
+    return libc::send(socket.fd, data, size, 0 as @int4);
+}
+
+fn socket_recv(socket: Socket, buf: *@void, size: @uint8) @uint8 {
+    return libc::recv(socket.fd, buf, size, 0 as @int4);
+}
+
+fn tcp_listen(addr: SocketAddress) SocketResult {
+    return SocketResult { is_ok: false, fd: -1, error: "tcp listen not fully implemented" };
+}
+
+fn tcp_connect(addr: SocketAddress) SocketResult {
+    return SocketResult { is_ok: false, fd: -1, error: "tcp connect not fully implemented" };
+}
+
+fn udp_bind(addr: SocketAddress) SocketResult {
+    return SocketResult { is_ok: false, fd: -1, error: "udp bind not fully implemented" };
+}
+
+fn dns_resolve(hostname: @string) SocketResult {
+    return SocketResult { is_ok: false, fd: -1, error: "dns not implemented" };
+}

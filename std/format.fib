@@ -1,0 +1,39 @@
+import std::string
+import std::libc
+
+fn format_int(value: @int4) @string {
+    buf: @string = libc::malloc(20 as @uint8) as @string;
+    libc::sprintf(buf, "%d", value);
+    return buf;
+}
+
+fn format_uint(value: @uint8) @string {
+    buf: @string = libc::malloc(20 as @uint8) as @string;
+    libc::sprintf(buf, "%llu", value as @uint8);
+    return buf;
+}
+
+fn format_float(value: @float8) @string {
+    buf: @string = libc::malloc(32 as @uint8) as @string;
+    libc::sprintf(buf, "%.6f", value);
+    return buf;
+}
+
+fn format_bool(value: @bool) @string {
+    if value {
+        return "true";
+    };
+    return "false";
+}
+
+fn print(value: @string) @void {
+    libc::puts(value);
+}
+
+fn println(value: @string) @void {
+    libc::printf("%s\n", value);
+}
+
+fn print_int(value: @int4) @void {
+    libc::printf("%d\n", value);
+}

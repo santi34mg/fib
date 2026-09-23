@@ -1,0 +1,72 @@
+import std::libc
+import std::string
+
+type ProcessResult struct {
+    is_ok: @bool,
+}
+
+type ProcessStatus struct {
+    exit_code: @int4,
+}
+
+type CommandResult struct {
+    is_ok: @bool,
+}
+
+type FileResult struct {
+    is_ok: @bool,
+}
+
+fn get_pid() @int4 {
+    return libc::getpid();
+}
+
+fn get_ppid() @int4 {
+    return libc::getppid();
+}
+
+fn exit(code: @int4) @void {
+    libc::exit(code);
+}
+
+fn abort_process() @void {
+    libc::abort();
+}
+
+fn getenv(name: @string) *@string {
+    return libc::getenv(name);
+}
+
+fn setenv(name: @string, value: @string) @int4 {
+    return libc::setenv(name, value, 1 as @int4);
+}
+
+fn unsetenv(name: @string) @int4 {
+    return libc::unsetenv(name);
+}
+
+fn system(command: @string) @int4 {
+    return libc::system(command);
+}
+
+fn execve(path: @string, argv: *@string, envp: *@string) @int4 {
+    return libc::execve(path, argv, envp);
+}
+
+fn fork() @int4 {
+    return libc::fork();
+}
+
+fn wait_pid(pid: @int4) @int4 {
+    status: @int4 = 0;
+    libc::waitpid(pid, status.& , 0 as @int4);
+    return status;
+}
+
+fn kill(pid: @int4, sig: @int4) @int4 {
+    return libc::kill(pid, sig);
+}
+
+fn gethostname(buf: @string, len: @uint8) @int4 {
+    return libc::gethostname(buf, len);
+}

@@ -1,0 +1,31 @@
+type Result struct {
+    is_ok: @bool,
+    int_value: @int4,
+    int_error: @int4,
+}
+
+type ResultU8 struct {
+    is_ok: @bool,
+    uint_value: @uint8,
+    int_error: @int4,
+}
+
+fn result_ok_int(value: @int4) Result {
+    return Result { is_ok: true, int_value: value, int_error: 0 };
+}
+
+fn result_err_int(error: @int4) Result {
+    return Result { is_ok: false, int_value: 0, int_error: error };
+}
+
+fn result_is_ok(result: Result) @bool {
+    return result.is_ok;
+}
+
+fn result_is_err(result: Result) @bool {
+    return !result.is_ok;
+}
+
+fn result_int_value(result: Result) @int4 {
+    return result.int_value;
+}

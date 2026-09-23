@@ -1,0 +1,108 @@
+import std::libc
+import std::string
+
+type Path struct {
+    value: @string,
+}
+
+type Metadata struct {
+    size: @uint8,
+}
+
+type File struct {
+    fd: @int4,
+    path: @string,
+}
+
+type FileResult struct {
+    is_ok: @bool,
+    file: File,
+}
+
+type FileError struct {
+    message: @string,
+}
+
+fn path_from_string(value: @string) Path {
+    return Path { value: value };
+}
+
+fn path_as_string(path: Path) @string {
+    return path.value;
+}
+
+fn open(path: @string, flags: @int4) FileResult {
+    fd: @int4 = libc::open(path, flags);
+    if fd == -1 as @int4 {
+        err_buf: @string = libc::malloc(64 as @uint8) as @string;
+        libc::sprintf(err_buf, "%d", libc::errno());
+        return FileResult { is_ok: false, file: File { fd: -1, path: path } };
+    };
+    return FileResult { is_ok: true, file: File { fd: fd, path: path } };
+}
+
+fn create(path: @string) FileResult {
+    fd: @int4 = libc::creat(path, 644 as @uint4);
+    if fd == -1 as @int4 {
+        err_buf: @string = libc::malloc(64 as @uint8) as @string;
+        libc::sprintf(err_buf, "%d", libc::errno());
+        return FileResult { is_ok: false, file: File { fd: -1, path: path } };
+    };
+    return FileResult { is_ok: true, file: File { fd: fd, path: path } };
+}
+
+fn close(file: *File) @void {
+    libc::close(file.*.fd);
+    file.*.fd = -1 as @int4;
+}
+
+fn read(file: File, buf: *@void, size: @uint8) @uint8 {
+    return libc::read(file.fd, buf, size);
+}
+
+fn write(file: File, buf: *@void, size: @uint8) @uint8 {
+    return libc::write(file.fd, buf, size);
+}
+
+fn seek(file: *File, offset: @int8, whence: @int4) @int8 {
+    return libc::lseek(file.*.fd, offset, whence);
+}
+
+fn remove(path: @string) @int4 {
+    return libc::unlink(path);
+}
+
+fn rename(old_path: @string, new_path: @string) @int4 {
+    return libc::rename(old_path, new_path);
+}
+
+fn create_directory(path: @string) @int4 {
+    return libc::mkdir(path, 755 as @uint4);
+}
+
+fn remove_directory(path: @string) @int4 {
+    return libc::rmdir(path);
+}
+
+fn change_directory(path: @string) @int4 {
+    return libc::chdir(path);
+}
+
+fn current_directory(buf: @string, size: @uint8) *@string {
+    return libc::getcwd(buf, size);
+}
+
+fn exists(path: @string) @bool {
+    buf: *@void = libc::malloc(80 as @uint8);
+    result: @int4 = libc::stat(path, buf);
+    libc::free(buf);
+    return result == 0 as @int4;
+}
+
+fn make_symlink(old: @string, new: @string) @int4 {
+    return libc::symlink(old, new);
+}
+
+fn set_permissions(path: @string, mode: @uint4) @int4 {
+    return libc::chmod(path, mode);
+}

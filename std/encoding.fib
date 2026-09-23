@@ -1,0 +1,50 @@
+import std::string
+import std::libc
+
+type EncodingResult struct {
+    is_ok: @bool,
+    error: @string,
+}
+
+fn utf8_length(s: @string) @uint8 {
+    len: @uint8 = 0;
+    i: @uint8 = 0;
+    bytes: *@char = s as *@char;
+    for (;;) {
+        if bytes.[i] == 0 as @char { break; };
+        if (bytes.[i] as @uint8) < 128 as @uint8 {
+            len = len + 1;
+            i = i + 1;
+        } else {
+            i = i + 1;
+        };
+    };
+    return len;
+}
+
+fn is_valid_utf8(s: @string) @bool {
+    return true;
+}
+
+fn hex_encode(data: *@void, len: @uint8) @string {
+    buf_len: @uint8 = (len * 2 as @uint8) + 1 as @uint8;
+    buf: @string = libc::malloc(buf_len) as @string;
+    buf_bytes: *@char = buf as *@char;
+    data_bytes: *@char = data as *@char;
+    i: @uint8 = 0;
+    for (;;) {
+        if i >= len { break; };
+        libc::sprintf((buf_bytes + (i * 2 as @uint8)) as @string, "%02x", data_bytes.[i] as @int4);
+        i = i + 1;
+    };
+    buf_bytes.[len * 2 as @uint8] = 0 as @char;
+    return buf;
+}
+
+fn bytes_to_string(data: *@void, len: @uint8) @string {
+    buf: @string = libc::malloc(len + 1 as @uint8) as @string;
+    buf_bytes: *@char = buf as *@char;
+    libc::memcpy(buf as *@void, data, len);
+    buf_bytes.[len] = 0 as @char;
+    return buf;
+}

@@ -1,0 +1,89 @@
+import std::libc
+
+fn alloc(size: @uint8) *@void {
+    return libc::malloc(size);
+}
+
+fn alloc_zeroed(size: @uint8) *@void {
+    return libc::calloc(1 as @uint8, size);
+}
+
+fn realloc(ptr: *@void, size: @uint8) *@void {
+    return libc::realloc(ptr, size);
+}
+
+fn dealloc(ptr: *@void) @void {
+    libc::free(ptr);
+}
+
+fn copy(dest: *@void, src: *@void, n: @uint8) *@void {
+    return libc::memcpy(dest, src, n);
+}
+
+fn move(dest: *@void, src: *@void, n: @uint8) *@void {
+    return libc::memmove(dest, src, n);
+}
+
+fn set(ptr: *@void, value: @int4, n: @uint8) *@void {
+    return libc::memset(ptr, value, n);
+}
+
+fn zero(ptr: *@void, n: @uint8) @void {
+    libc::memset(ptr, 0 as @int4, n);
+}
+
+fn compare(s1: *@void, s2: *@void, n: @uint8) @int4 {
+    return libc::memcmp(s1, s2, n);
+}
+
+fn find_byte(s: *@void, value: @int4, n: @uint8) *@void {
+    return libc::memchr(s, value, n);
+}
+
+fn duplicate(s: @string) *@string {
+    return libc::strdup(s);
+}
+
+fn compare_strings(a: @string, b: @string) @int4 {
+    return libc::strcmp(a, b);
+}
+
+fn length(s: @string) @uint8 {
+    return libc::strlen(s);
+}
+
+type MemoryBlock struct {
+    ptr: *@void,
+    size: @uint8,
+    capacity: @uint8,
+}
+
+fn memory_block_create(capacity: @uint8) MemoryBlock {
+    ptr: *@void = libc::malloc(capacity);
+    return MemoryBlock { ptr: ptr, size: 0 as @uint8, capacity: capacity };
+}
+
+fn memory_block_destroy(block: *MemoryBlock) @void {
+    libc::free(block.*.ptr);
+}
+
+fn memory_block_resize(block: *MemoryBlock, new_capacity: @uint8) @void {
+    block.*.ptr = libc::realloc(block.*.ptr, new_capacity);
+    block.*.capacity = new_capacity;
+}
+
+fn memory_block_grow(block: *MemoryBlock, additional: @uint8) @void {
+    new_size: @uint8 = block.*.size + additional;
+    if new_size > block.*.capacity {
+        new_capacity: @uint8 = block.*.capacity;
+        if new_capacity < 16 as @uint8 {
+            new_capacity = 16 as @uint8;
+        };
+        for (;;) {
+            if new_capacity >= new_size { break; };
+            new_capacity = new_capacity * 2;
+        };
+        memory_block_resize(block, new_capacity);
+    };
+    block.*.size = new_size;
+}

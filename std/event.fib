@@ -1,0 +1,44 @@
+import std::time
+import std::thread::{Mutex, ConditionVariable, mutex_create, mutex_lock, mutex_unlock, cond_create, cond_wait, cond_signal}
+import std::libc
+
+type EventType enum {
+    Io,
+    Timer,
+    Signal,
+    User,
+}
+
+type EventLoop struct {
+    running: @bool,
+}
+
+type Watcher struct {
+    fd: @int4,
+    events: @int4,
+}
+
+type EventResult struct {
+    is_ok: @bool,
+    error: @string,
+}
+
+fn event_loop_create() EventLoop {
+    return EventLoop { running: true };
+}
+
+fn event_loop_run(loop: *EventLoop) @void {
+    loop.*.running = true;
+}
+
+fn event_loop_stop(loop: *EventLoop) @void {
+    loop.*.running = false;
+}
+
+fn watcher_create(fd: @int4) Watcher {
+    return Watcher { fd: fd, events: 0 };
+}
+
+fn sleep(duration: @uint8) @void {
+    libc::sleep(duration);
+}

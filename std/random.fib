@@ -1,0 +1,33 @@
+import std::libc
+import std::time
+
+type RNG struct {
+    seed: @uint4,
+}
+
+type RandomResult struct {
+    is_ok: @bool,
+    value: @uint4,
+    error: @string,
+}
+
+fn random_create(seed: @uint4) RNG {
+    return RNG { seed: seed };
+}
+
+fn random_u32(rng: *RNG) @uint4 {
+    rng.*.seed = rng.*.seed * 1103515245 + 12345;
+    return (rng.*.seed >> 16) & 0x7FFF;
+}
+
+fn random_int(rng: *RNG, min: @int4, max: @int4) @int4 {
+    return min + (random_u32(rng) as @int4) % (max - min + 1 as @int4);
+}
+
+fn srand(seed: @uint4) @void {
+    libc::srand(seed);
+}
+
+fn rand_u32() @uint4 {
+    return libc::rand() as @uint4;
+}

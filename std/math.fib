@@ -1,0 +1,63 @@
+import std::libc
+
+fn abs_int(x: @int4) @int4 {
+    return libc::abs(x);
+}
+
+fn abs_long(x: @int8) @int8 {
+    return libc::labs(x);
+}
+
+fn sqrt(x: @float8) @float8 {
+    return libc::sqrt(x);
+}
+
+fn sin(x: @float8) @float8 {
+    return libc::sin(x);
+}
+
+fn cos(x: @float8) @float8 {
+    return libc::cos(x);
+}
+
+fn tan(x: @float8) @float8 {
+    return libc::tan(x);
+}
+
+fn pow(base: @float8, exp: @float8) @float8 {
+    return libc::pow(base, exp);
+}
+
+fn exp(x: @float8) @float8 {
+    return libc::exp(x);
+}
+
+fn log(x: @float8) @float8 {
+    return libc::log(x);
+}
+
+fn log10(x: @float8) @float8 {
+    return libc::log10(x);
+}
+
+fn floor(x: @float8) @float8 {
+    return libc::floor(x);
+}
+
+fn ceil(x: @float8) @float8 {
+    return libc::ceil(x);
+}
+
+fn fabs(x: @float8) @float8 {
+    return libc::fabs(x);
+}
+
+fn fmod(x: @float8, y: @float8) @float8 {
+    return libc::fmod(x, y);
+}
+
+type MathResult struct {
+    is_ok: @bool,
+    value: @float8,
+    error: @string,
+}

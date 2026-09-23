@@ -1,0 +1,23 @@
+import std::format
+import std::string
+import std::libc
+
+fn debug_print(s: @string) @void {
+    libc::printf("DEBUG: %s\n", s);
+}
+
+fn debug_assert(condition: @bool, msg: @string) @void {
+    if !condition {
+        libc::printf("ASSERTION FAILED: %s\n", msg);
+        libc::abort();
+    };
+}
+
+fn debug_trace(s: @string) @void {
+    libc::printf("TRACE: %s\n", s);
+}
+
+fn debug_panic(msg: @string) @void {
+    libc::printf("PANIC: %s\n", msg);
+    libc::abort();
+}

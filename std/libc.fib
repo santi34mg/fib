@@ -5,3 +5,153 @@ extern fn memcpy(dest: *@void, src: *@void, n: @uint8) *@void
 extern fn exit(status: @int4) @void
 extern fn strlen(s: @string) @uint8
 extern fn puts(s: @string) @int4
+extern fn realloc(ptr: *@void, size: @uint8) *@void
+extern fn calloc(nmemb: @uint8, size: @uint8) *@void
+extern fn memmove(dest: *@void, src: *@void, n: @uint8) *@void
+extern fn memset(s: *@void, c: @int4, n: @uint8) *@void
+extern fn strcmp(a: @string, b: @string) @int4
+extern fn strncmp(a: @string, b: @string, n: @uint8) @int4
+extern fn strcpy(dest: @string, src: @string) *@string
+extern fn strncpy(dest: @string, src: @string, n: @uint8) *@string
+extern fn strcat(dest: @string, src: @string) *@string
+extern fn strchr(s: @string, c: @int4) *@string
+extern fn strstr(haystack: @string, needle: @string) *@string
+extern fn abort() @void
+extern fn gets(s: @string) *@string
+extern fn fopen(path: @string, mode: @string) *@void
+extern fn fclose(stream: *@void) @int4
+extern fn fread(ptr: *@void, size: @uint8, nmemb: @uint8, stream: *@void) @uint8
+extern fn fwrite(ptr: *@void, size: @uint8, nmemb: @uint8, stream: *@void) @uint8
+extern fn fseek(stream: *@void, offset: @int8, whence: @int4) @int4
+extern fn ftell(stream: *@void) @int8
+extern fn fflush(stream: *@void) @int4
+extern fn remove(path: @string) @int4
+extern fn rename(old_path: @string, new_path: @string) @int4
+extern fn system(command: @string) @int4
+extern fn getenv(name: @string) *@string
+extern fn setenv(name: @string, value: @string, overwrite: @int4) @int4
+extern fn unsetenv(name: @string) @int4
+extern fn time(timer: *@int8) *@int8
+extern fn clock() @int8
+extern fn clock_gettime(clock_id: @int4, tp: *@void) @int4
+extern fn nanosleep(req: *@void, rem: *@void) @int4
+extern fn sleep(seconds: @uint8) @uint8
+extern fn rand() @int4
+extern fn srand(seed: @uint4) @void
+extern fn abs(x: @int4) @int4
+extern fn labs(x: @int8) @int8
+extern fn llabs(x: @int8) @int8
+extern fn qsort(base: *@void, nmemb: @uint8, size: @uint8, cmp: *@void) @void
+extern fn bsearch(base: *@void, key: *@void, nmemb: @uint8, size: @uint8, cmp: *@void) *@void
+extern fn atoi(s: @string) @int4
+extern fn atol(s: @string) @int8
+extern fn atoll(s: @string) @int8
+extern fn strtol(s: @string, endptr: *@string, base: @int4) @int8
+extern fn strtoul(s: @string, endptr: *@string, base: @int4) @uint8
+extern fn mmap(addr: *@void, length: @uint8, prot: @int4, flags: @int4, fd: @int4, offset: @int8) *@void
+extern fn munmap(addr: *@void, length: @uint8) @int4
+extern fn perror(s: @string) @void
+extern fn snprintf(dest: @string, size: @uint8, fmt: @string, ...) @int4
+extern fn sscanf(s: @string, fmt: @string, ...) @int4
+extern fn sprintf(dest: @string, fmt: @string, ...) @int4
+extern fn fprintf(stream: *@void, fmt: @string, ...) @int4
+extern fn assert(condition: @int4) @void
+extern fn __errno_location() *@int4
+extern fn strerror(errnum: @int4) @string
+extern fn isalpha(c: @int4) @int4
+extern fn isdigit(c: @int4) @int4
+extern fn isalnum(c: @int4) @int4
+extern fn isspace(c: @int4) @int4
+extern fn isupper(c: @int4) @int4
+extern fn islower(c: @int4) @int4
+extern fn toupper(c: @int4) @int4
+extern fn tolower(c: @int4) @int4
+extern fn memcmp(s1: *@void, s2: *@void, n: @uint8) @int4
+extern fn memchr(s: *@void, c: @int4, n: @uint8) *@void
+extern fn strdup(s: @string) *@string
+extern fn read(fd: @int4, buf: *@void, count: @uint8) @uint8
+extern fn write(fd: @int4, buf: *@void, count: @uint8) @uint8
+extern fn lseek(fd: @int4, offset: @int8, whence: @int4) @int8
+extern fn close(fd: @int4) @int4
+extern fn getchar() @int4
+extern fn putchar(c: @int4) @int4
+extern fn open(path: @string, flags: @int4, ...) @int4
+extern fn creat(path: @string, mode: @uint4) @int4
+extern fn mkdir(path: @string, mode: @uint4) @int4
+extern fn rmdir(path: @string) @int4
+extern fn chdir(path: @string) @int4
+extern fn getcwd(buf: @string, size: @uint8) *@string
+extern fn opendir(name: @string) *@void
+extern fn readdir(dir: *@void) *@void
+extern fn closedir(dir: *@void) @int4
+extern fn stat(path: @string, buf: *@void) @int4
+extern fn fstat(fd: @int4, buf: *@void) @int4
+extern fn unlink(path: @string) @int4
+extern fn pipe(fds: *@int4) @int4
+extern fn dup(fd: @int4) @int4
+extern fn dup2(fd: @int4, fd2: @int4) @int4
+extern fn fork() @int4
+extern fn execve(path: @string, argv: *@string, envp: *@string) @int4
+extern fn waitpid(pid: @int4, status: *@int4, options: @int4) @int4
+extern fn kill(pid: @int4, sig: @int4) @int4
+extern fn getpid() @int4
+extern fn getppid() @int4
+extern fn umask(mask: @uint4) @uint4
+extern fn chmod(path: @string, mode: @uint4) @int4
+extern fn chown(path: @string, uid: @int4, gid: @int4) @int4
+extern fn symlink(old: @string, new: @string) @int4
+extern fn readlink(path: @string, buf: @string, size: @uint8) @int8
+extern fn access(path: @string, mode: @int4) @int4
+extern fn truncate(path: @string, length: @int8) @int4
+extern fn ftruncate(fd: @int4, length: @int8) @int4
+extern fn fcntl(fd: @int4, cmd: @int4, ...) @int4
+extern fn socket(domain: @int4, sock_type: @int4, protocol: @int4) @int4
+extern fn connect(sockfd: @int4, addr: *@void, addrlen: @uint8) @int4
+extern fn bind(sockfd: @int4, addr: *@void, addrlen: @uint8) @int4
+extern fn listen(sockfd: @int4, backlog: @int4) @int4
+extern fn accept(sockfd: @int4, addr: *@void, addrlen: *@uint8) @int4
+extern fn recv(sockfd: @int4, buf: *@void, len: @uint8, flags: @int4) @uint8
+extern fn send(sockfd: @int4, buf: *@void, len: @uint8, flags: @int4) @uint8
+extern fn gethostname(name: @string, len: @uint8) @int4
+extern fn gethostbyname(name: @string) *@void
+extern fn inet_addr(cp: @string) @uint4
+extern fn inet_ntoa(addr: @uint4) @string
+extern fn gettimeofday(tv: *@void, tz: *@void) @int4
+extern fn pthread_create(thread: *@void, attr: *@void, start_routine: *@void, arg: *@void) @int4
+extern fn pthread_join(thread: *@void, retval: *@void) @int4
+extern fn pthread_mutex_init(mutex: *@void, attr: *@void) @int4
+extern fn pthread_mutex_destroy(mutex: *@void) @int4
+extern fn pthread_mutex_lock(mutex: *@void) @int4
+extern fn pthread_mutex_unlock(mutex: *@void) @int4
+extern fn pthread_cond_init(cond: *@void, attr: *@void) @int4
+extern fn pthread_cond_destroy(cond: *@void) @int4
+extern fn pthread_cond_wait(cond: *@void, mutex: *@void) @int4
+extern fn pthread_cond_signal(cond: *@void) @int4
+extern fn pthread_cond_broadcast(cond: *@void) @int4
+extern fn pthread_self() @void
+extern fn sched_yield() @int4
+extern fn sem_open(name: @string, oflag: @int4, ...) *@void
+extern fn sem_close(sem: *@void) @int4
+extern fn sem_wait(sem: *@void) @int4
+extern fn sem_post(sem: *@void) @int4
+extern fn dlopen(filename: @string, flags: @int4) *@void
+extern fn dlsym(handle: *@void, symbol: @string) *@void
+extern fn dlclose(handle: *@void) @int4
+extern fn dlerror() @string
+extern fn raise(sig: @int4) @int4
+extern fn sqrt(x: @float8) @float8
+extern fn sin(x: @float8) @float8
+extern fn cos(x: @float8) @float8
+extern fn tan(x: @float8) @float8
+extern fn pow(x: @float8, y: @float8) @float8
+extern fn exp(x: @float8) @float8
+extern fn log(x: @float8) @float8
+extern fn log10(x: @float8) @float8
+extern fn floor(x: @float8) @float8
+extern fn ceil(x: @float8) @float8
+extern fn fabs(x: @float8) @float8
+extern fn fmod(x: @float8, y: @float8) @float8
+
+fn errno() @int4 {
+    return __errno_location().*;
+}

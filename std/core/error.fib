@@ -1,4 +1,16 @@
 type Error struct {
-    @string message,
-    @int code,
+    message: @string,
+    code: @int4,
+}
+
+fn error_new(message: @string, code: @int4) Error {
+    return Error { message: message, code: code };
+}
+
+fn error_message(err: Error) @string {
+    return err.message;
+}
+
+fn error_code(err: Error) @int4 {
+    return err.code;
 }

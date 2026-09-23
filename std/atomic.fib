@@ -1,0 +1,127 @@
+import std::libc
+
+type AtomicI4 struct {
+    value: @int4,
+}
+
+type AtomicU8 struct {
+    value: @uint8,
+}
+
+type AtomicBool struct {
+    value: @bool,
+}
+
+type Ordering enum {
+    Relaxed,
+    Acquire,
+    Release,
+    AcqRel,
+    SeqCst,
+}
+
+type AtomicPtr struct {
+    value: *@void,
+}
+
+fn atomic_i4_new(value: @int4) AtomicI4 {
+    return AtomicI4 { value: value };
+}
+
+fn atomic_i4_load(atomic: *AtomicI4) @int4 {
+    return atomic.*.value;
+}
+
+fn atomic_i4_store(atomic: *AtomicI4, value: @int4) @void {
+    atomic.*.value = value;
+}
+
+fn atomic_i4_fetch_add(atomic: *AtomicI4, val: @int4) @int4 {
+    old: @int4 = atomic.*.value;
+    atomic.*.value = old + val;
+    return old;
+}
+
+fn atomic_i4_fetch_sub(atomic: *AtomicI4, val: @int4) @int4 {
+    old: @int4 = atomic.*.value;
+    atomic.*.value = old - val;
+    return old;
+}
+
+fn atomic_i4_compare_and_swap(atomic: *AtomicI4, expected: @int4, desired: @int4) @bool {
+    if atomic.*.value == expected {
+        atomic.*.value = desired;
+        return true;
+    };
+    return false;
+}
+
+fn atomic_i4_swap(atomic: *AtomicI4, val: @int4) @int4 {
+    old: @int4 = atomic.*.value;
+    atomic.*.value = val;
+    return old;
+}
+
+fn atomic_u8_new(value: @uint8) AtomicU8 {
+    return AtomicU8 { value: value };
+}
+
+fn atomic_u8_load(atomic: *AtomicU8) @uint8 {
+    return atomic.*.value;
+}
+
+fn atomic_u8_store(atomic: *AtomicU8, value: @uint8) @void {
+    atomic.*.value = value;
+}
+
+fn atomic_u8_fetch_add(atomic: *AtomicU8, val: @uint8) @uint8 {
+    old: @uint8 = atomic.*.value;
+    atomic.*.value = old + val;
+    return old;
+}
+
+fn atomic_u8_compare_and_swap(atomic: *AtomicU8, expected: @uint8, desired: @uint8) @bool {
+    if atomic.*.value == expected {
+        atomic.*.value = desired;
+        return true;
+    };
+    return false;
+}
+
+fn atomic_bool_new(value: @bool) AtomicBool {
+    return AtomicBool { value: value };
+}
+
+fn atomic_bool_load(atomic: *AtomicBool) @bool {
+    return atomic.*.value;
+}
+
+fn atomic_bool_store(atomic: *AtomicBool, value: @bool) @void {
+    atomic.*.value = value;
+}
+
+fn atomic_bool_compare_and_swap(atomic: *AtomicBool, expected: @bool, desired: @bool) @bool {
+    if atomic.*.value == expected {
+        atomic.*.value = desired;
+        return true;
+    };
+    return false;
+}
+
+fn atomic_ptr_new(value: *@void) AtomicPtr {
+    return AtomicPtr { value: value };
+}
+
+fn atomic_ptr_load(atomic: *AtomicPtr) *@void {
+    return atomic.*.value;
+}
+
+fn atomic_ptr_store(atomic: *AtomicPtr, value: *@void) @void {
+    atomic.*.value = value;
+}
+
+fn atomic_ptr_swap(atomic: *AtomicPtr, value: *@void) *@void {
+    old: *@void = atomic.*.value;
+    atomic.*.value = value;
+    return old;
+}

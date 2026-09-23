@@ -1,0 +1,43 @@
+import std::libc
+
+type Semaphore struct {
+    count: @int4,
+    mutex_ptr: *@void,
+    cond_ptr: *@void,
+}
+
+fn semaphore_create(count: @int4) Semaphore {
+    mutex_ptr: *@void = libc::malloc(40 as @uint8);
+    libc::pthread_mutex_init(mutex_ptr, null);
+    cond_ptr: *@void = libc::malloc(40 as @uint8);
+    libc::pthread_cond_init(cond_ptr, null);
+    return Semaphore { count: count, mutex_ptr: mutex_ptr, cond_ptr: cond_ptr };
+}
+
+fn semaphore_wait(sem: *Semaphore) @void {
+    libc::pthread_mutex_lock(sem.*.mutex_ptr);
+    for (;;) {
+        if sem.*.count > 0 as @int4 { break; };
+        libc::pthread_cond_wait(sem.*.cond_ptr, sem.*.mutex_ptr);
+    };
+    sem.*.count = sem.*.count - 1;
+    libc::pthread_mutex_unlock(sem.*.mutex_ptr);
+}
+
+fn semaphore_post(sem: *Semaphore) @void {
+    libc::pthread_mutex_lock(sem.*.mutex_ptr);
+    sem.*.count = sem.*.count + 1;
+    libc::pthread_cond_signal(sem.*.cond_ptr);
+    libc::pthread_mutex_unlock(sem.*.mutex_ptr);
+}
+
+fn semaphore_try_wait(sem: *Semaphore) @bool {
+    libc::pthread_mutex_lock(sem.*.mutex_ptr);
+    if sem.*.count > 0 as @int4 {
+        sem.*.count = sem.*.count - 1;
+        libc::pthread_mutex_unlock(sem.*.mutex_ptr);
+        return true;
+    };
+    libc::pthread_mutex_unlock(sem.*.mutex_ptr);
+    return false;
+}

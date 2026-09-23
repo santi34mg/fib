@@ -1,0 +1,61 @@
+import std::libc
+
+type Thread struct {
+    handle: *@void,
+}
+
+type Mutex struct {
+    ptr: *@void,
+}
+
+type ConditionVariable struct {
+    ptr: *@void,
+}
+
+fn mutex_create() Mutex {
+    ptr: *@void = libc::malloc(40 as @uint8);
+    libc::pthread_mutex_init(ptr, null);
+    return Mutex { ptr: ptr };
+}
+
+fn mutex_destroy(mutex: *Mutex) @void {
+    libc::pthread_mutex_destroy(mutex.*.ptr);
+    libc::free(mutex.*.ptr);
+    mutex.*.ptr = null;
+}
+
+fn mutex_lock(mutex: *Mutex) @int4 {
+    return libc::pthread_mutex_lock(mutex.*.ptr);
+}
+
+fn mutex_unlock(mutex: *Mutex) @int4 {
+    return libc::pthread_mutex_unlock(mutex.*.ptr);
+}
+
+fn cond_create() ConditionVariable {
+    ptr: *@void = libc::malloc(48 as @uint8);
+    libc::pthread_cond_init(ptr, null);
+    return ConditionVariable { ptr: ptr };
+}
+
+fn cond_destroy(cond: *ConditionVariable) @void {
+    libc::pthread_cond_destroy(cond.*.ptr);
+    libc::free(cond.*.ptr);
+    cond.*.ptr = null;
+}
+
+fn cond_wait(cond: *ConditionVariable, mutex: *Mutex) @int4 {
+    return libc::pthread_cond_wait(cond.*.ptr, mutex.*.ptr);
+}
+
+fn cond_signal(cond: *ConditionVariable) @int4 {
+    return libc::pthread_cond_signal(cond.*.ptr);
+}
+
+fn cond_broadcast(cond: *ConditionVariable) @int4 {
+    return libc::pthread_cond_broadcast(cond.*.ptr);
+}
+
+fn yield_now() @int4 {
+    return libc::sched_yield();
+}

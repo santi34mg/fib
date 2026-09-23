@@ -1,0 +1,72 @@
+import std::string
+import std::encoding
+import std::libc
+
+type JsonValue enum {
+    Null,
+    Bool { value: @bool },
+    Number { value: @float8 },
+    String { value: @string },
+}
+
+type JsonError struct {
+    message: @string,
+    line: @uint8,
+}
+
+fn json_string(s: @string) @string {
+    s_len: @uint8 = libc::strlen(s);
+    result_len: @uint8 = (s_len * 2 as @uint8) + 3 as @uint8;
+    result: @string = libc::malloc(result_len) as @string;
+    src: *@char = s as *@char;
+    out: *@char = result as *@char;
+    out.[0] = '"' as @char;
+    i: @uint8 = 0;
+    for (;;) {
+        if i >= s_len { break; };
+        c: @char = src.[i];
+        if c == '"' as @char {
+            out.[(i * 2 as @uint8) + 1 as @uint8] = '\\' as @char;
+            out.[(i * 2 as @uint8) + 2 as @uint8] = '"' as @char;
+        } else {
+            out.[(i * 2 as @uint8) + 1 as @uint8] = c;
+        };
+        i = i + 1;
+    };
+    out.[(s_len * 2 as @uint8) + 1 as @uint8] = '"' as @char;
+    out.[(s_len * 2 as @uint8) + 2 as @uint8] = 0 as @char;
+    return result;
+}
+
+fn json_number(value: @float8) @string {
+    buf: @string = libc::malloc(32 as @uint8) as @string;
+    libc::sprintf(buf, "%f", value);
+    return buf;
+}
+
+fn json_bool(value: @bool) @string {
+    if value {
+        return "true";
+    };
+    return "false";
+}
+
+fn json_null() @string {
+    return "null";
+}
+
+fn parse_json(s: @string) JsonValue {
+    return JsonValue.Null;
+}
+
+type BinaryWriter struct {
+    data: *@void,
+    length: @uint8,
+    capacity: @uint8,
+}
+
+type BinaryReader struct {
+    data: *@void,
+    length: @uint8,
+    position: @uint8,
+}

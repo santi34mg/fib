@@ -1,0 +1,85 @@
+import std::libc
+import std::memory
+
+fn length(s: @string) @uint8 {
+    return libc::strlen(s);
+}
+
+fn is_empty(s: @string) @bool {
+    return libc::strlen(s) == 0 as @uint8;
+}
+
+fn compare(a: @string, b: @string) @int4 {
+    return libc::strcmp(a, b);
+}
+
+fn equals(a: @string, b: @string) @bool {
+    return libc::strcmp(a, b) == 0 as @int4;
+}
+
+fn concat(a: @string, b: @string) @string {
+    return @concat(a, b);
+}
+
+fn find(a: @string, needle: @string) @int4 {
+    result: *@string = libc::strstr(a, needle);
+    if result == null {
+        return -1 as @int4;
+    };
+    offset: @uint8 = (result as @uint8) - (a as @uint8);
+    return offset as @int4;
+}
+
+fn find_char(a: @string, c: @int4) *@string {
+    return libc::strchr(a, c);
+}
+
+fn to_upper(s: @string) @string {
+    len: @uint8 = libc::strlen(s);
+    result: @string = libc::malloc(len + 1 as @uint8) as @string;
+    libc::strcpy(result, s);
+    ptr: *@char = result as *@char;
+    i: @uint8 = 0 as @uint8;
+    for (;;) {
+        if i >= len { break; };
+        ptr.* = libc::toupper(ptr.* as @int4) as @char;
+        ptr = ptr + 1;
+        i = i + 1 as @uint8;
+    };
+    ptr.* = 0 as @char;
+    return result;
+}
+
+fn to_lower(s: @string) @string {
+    len: @uint8 = libc::strlen(s);
+    result: @string = libc::malloc(len + 1 as @uint8) as @string;
+    libc::strcpy(result, s);
+    ptr: *@char = result as *@char;
+    i: @uint8 = 0 as @uint8;
+    for (;;) {
+        if i >= len { break; };
+        ptr.* = libc::tolower(ptr.* as @int4) as @char;
+        ptr = ptr + 1;
+        i = i + 1 as @uint8;
+    };
+    ptr.* = 0 as @char;
+    return result;
+}
+
+fn is_alpha(c: @int4) @bool {
+    return libc::isalpha(c) != 0 as @int4;
+}
+
+fn is_digit(c: @int4) @bool {
+    return libc::isdigit(c) != 0 as @int4;
+}
+
+fn parse_int(s: @string) @int4 {
+    return libc::atoi(s);
+}
+
+fn format_int(value: @int4) @string {
+    buf: @string = libc::malloc(20 as @uint8) as @string;
+    libc::sprintf(buf, "%d", value);
+    return buf;
+}

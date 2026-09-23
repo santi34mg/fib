@@ -1,0 +1,21 @@
+type Option struct {
+    is_some: @bool,
+    int_value: @int4,
+    uint_value: @uint8,
+}
+
+fn option_none() Option {
+    return Option { is_some: false, int_value: 0, uint_value: 0 };
+}
+
+fn option_some_int(value: @int4) Option {
+    return Option { is_some: true, int_value: value, uint_value: 0 };
+}
+
+fn option_is_some(opt: Option) @bool {
+    return opt.is_some;
+}
+
+fn option_is_none(opt: Option) @bool {
+    return !opt.is_some;
+}

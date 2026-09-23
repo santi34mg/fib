@@ -1,0 +1,29 @@
+import std::libc
+import std::string
+
+type FfiLibrary struct {
+    handle: *@void,
+}
+
+type FfiResult struct {
+    is_ok: @bool,
+    symbol: *@void,
+    error: @string,
+}
+
+fn dlopen(path: @string) FfiLibrary {
+    handle: *@void = libc::dlopen(path, 1 as @int4);
+    return FfiLibrary { handle: handle };
+}
+
+fn dlclose(lib: FfiLibrary) @void {
+    libc::dlclose(lib.handle);
+}
+
+fn dlsym(lib: FfiLibrary, symbol: @string) *@void {
+    return libc::dlsym(lib.handle, symbol);
+}
+
+fn dlerror() @string {
+    return libc::dlerror();
+}

@@ -1,2 +1,150 @@
+import std::libc
+import std::memory
+
 type FileDescriptor struct {
+    fd: @int4,
+    is_open: @bool,
+}
+
+type SeekOrigin enum {
+    Set,
+    Cur,
+    End,
+}
+
+type IoResult struct {
+    is_ok: @bool,
+    value: @int4,
+    error: @string,
+}
+
+fn fd_create(fd: @int4) FileDescriptor {
+    return FileDescriptor { fd: fd, is_open: true };
+}
+
+fn fd_close(fd: *FileDescriptor) @void {
+    if fd.*.is_open {
+        libc::close(fd.*.fd);
+        fd.*.is_open = false;
+    };
+}
+
+fn fd_read(fd: FileDescriptor, buf: *@void, size: @uint8) @uint8 {
+    return libc::read(fd.fd, buf, size);
+}
+
+fn fd_write(fd: FileDescriptor, buf: *@void, size: @uint8) @uint8 {
+    return libc::write(fd.fd, buf, size);
+}
+
+fn fd_seek(fd: *FileDescriptor, offset: @int8, whence: @int4) @int8 {
+    result: @int8 = libc::lseek(fd.*.fd, offset, whence);
+    return result;
+}
+
+fn fd_get_errno() @int4 {
+    return libc::errno();
+}
+
+fn fd_strerror(errnum: @int4) @string {
+    return libc::strerror(errnum);
+}
+
+fn stdin() FileDescriptor {
+    return FileDescriptor { fd: 0 as @int4, is_open: true };
+}
+
+fn stdout() FileDescriptor {
+    return FileDescriptor { fd: 1 as @int4, is_open: true };
+}
+
+fn stderr() FileDescriptor {
+    return FileDescriptor { fd: 2 as @int4, is_open: true };
+}
+
+type Buffer struct {
+    data: *@void,
+    length: @uint8,
+    capacity: @uint8,
+}
+
+fn buffer_create(capacity: @uint8) Buffer {
+    data: *@void = libc::malloc(capacity);
+    return Buffer { data: data, length: 0 as @uint8, capacity: capacity };
+}
+
+fn buffer_destroy(buf: *Buffer) @void {
+    libc::free(buf.*.data);
+}
+
+fn buffer_write(buf: *Buffer, src: *@void, size: @uint8) @void {
+    new_len: @uint8 = buf.*.length + size;
+    if new_len > buf.*.capacity {
+        new_cap: @uint8 = buf.*.capacity;
+        if new_cap < 16 as @uint8 {
+            new_cap = 16 as @uint8;
+        };
+        for (;;) {
+            if new_cap >= new_len { break; };
+            new_cap = new_cap * 2;
+        };
+        buf.*.data = libc::realloc(buf.*.data, new_cap);
+        buf.*.capacity = new_cap;
+    };
+    libc::memcpy(buf.*.data + buf.*.length, src, size);
+    buf.*.length = new_len;
+}
+
+fn buffer_read(buf: Buffer, offset: @uint8, size: @uint8) *@void {
+    return buf.data + offset;
+}
+
+fn buffer_length(buf: Buffer) @uint8 {
+    return buf.length;
+}
+
+fn buffer_data(buf: Buffer) *@void {
+    return buf.data;
+}
+
+fn buffer_to_string(buf: Buffer) @string {
+    result: @string = libc::malloc(buf.length + 1 as @uint8) as @string;
+    result_bytes: *@char = result as *@char;
+    libc::memcpy(result as *@void, buf.data, buf.length);
+    result_bytes.[buf.length] = 0 as @char;
+    return result;
+}
+
+type BufferedReader struct {
+    fd: FileDescriptor,
+    buffer: Buffer,
+}
+
+fn buffered_reader_create(fd: FileDescriptor, capacity: @uint8) BufferedReader {
+    return BufferedReader { fd: fd, buffer: buffer_create(capacity) };
+}
+
+fn buffered_reader_destroy(reader: *BufferedReader) @void {
+    buffer_destroy(reader.*.buffer.&);
+}
+
+type BufferedWriter struct {
+    fd: FileDescriptor,
+    buffer: Buffer,
+}
+
+fn buffered_writer_create(fd: FileDescriptor, capacity: @uint8) BufferedWriter {
+    return BufferedWriter { fd: fd, buffer: buffer_create(capacity) };
+}
+
+fn buffered_writer_flush(writer: *BufferedWriter) @void {
+    if writer.*.buffer.length > 0 as @uint8 {
+        libc::write(writer.*.fd.fd, writer.*.buffer.data, writer.*.buffer.length);
+        writer.*.buffer.length = 0 as @uint8;
+    };
+}
+
+fn buffered_writer_destroy(writer: *BufferedWriter) @void {
+    buffered_writer_flush(writer);
+    buffer_destroy(writer.*.buffer.&);
 }
