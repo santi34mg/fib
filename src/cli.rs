@@ -49,7 +49,7 @@ pub struct Args {
     #[arg(long = "llvm-out", value_name = "FILE")]
     pub llvm_out: Option<PathBuf>,
 
-    /// C compiler used for linking. Defaults to `$CC`, else `clang-17`, else
+    /// C compiler used for linking. Defaults to `$CC`, else `clang-21`, else
     /// `clang`.
     #[arg(long = "cc", value_name = "CC")]
     pub cc: Option<PathBuf>,

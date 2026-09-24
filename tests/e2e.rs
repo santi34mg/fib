@@ -8,7 +8,7 @@
 //! share output paths.
 //!
 //! Requires the `llvm` feature plus a C compiler (`--cc`/`$CC`, else
-//! `clang-17`/`clang`); the file is empty without `llvm`.
+//! `clang-21`/`clang`); the file is empty without `llvm`.
 
 #![cfg(feature = "llvm")]
 

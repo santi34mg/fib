@@ -99,7 +99,7 @@ pub struct CompilationOptions {
     pub emit_llvm: bool,
     /// Explicit `.ll` output path (implies keeping it).
     pub llvm_out: Option<PathBuf>,
-    /// C compiler used for linking. Defaults to `$CC`, else `clang-17`, else
+    /// C compiler used for linking. Defaults to `$CC`, else `clang-21`, else
     /// `clang`.
     pub cc: Option<PathBuf>,
     /// Optimization level passed to clang as `-O<level>`.
@@ -1009,7 +1009,7 @@ fn validate_opt_level(level: &str) -> Result<String, DriverError> {
     }
 }
 
-/// Candidate C compilers in priority order: `--cc` > `$CC` > `clang-17` >
+/// Candidate C compilers in priority order: `--cc` > `$CC` > `clang-21` >
 /// `clang`.
 pub fn cc_candidates(explicit: Option<&Path>) -> Vec<PathBuf> {
     if let Some(cc) = explicit {
@@ -1023,11 +1023,11 @@ pub fn cc_candidates(explicit: Option<&Path>) -> Vec<PathBuf> {
         let prog = env_cc.split_whitespace().next().unwrap_or("clang");
         return vec![PathBuf::from(prog)];
     }
-    vec![PathBuf::from("clang-17"), PathBuf::from("clang")]
+    vec![PathBuf::from("clang-21"), PathBuf::from("clang")]
 }
 
 /// Link LLVM IR into a native binary via clang. Reports `stdout`/`stderr`
-/// separately (see audit 03 §2) and falls back from `clang-17` to `clang`
+/// separately (see audit 03 §2) and falls back from `clang-21` to `clang`
 /// when no explicit `--cc`/`$CC` is set.
 pub fn link_llvm_ir(
     ll_path: &Path,
@@ -1670,12 +1670,12 @@ mod tests {
         // Explicit --cc wins over everything.
         let cands = cc_candidates(Some(Path::new("/opt/clang")));
         assert_eq!(cands, vec![PathBuf::from("/opt/clang")]);
-        // Default falls back clang-17 -> clang.
+        // Default falls back clang-21 -> clang.
         unsafe { std::env::remove_var("CC") };
         let cands = cc_candidates(None);
         assert_eq!(
             cands,
-            vec![PathBuf::from("clang-17"), PathBuf::from("clang")]
+            vec![PathBuf::from("clang-21"), PathBuf::from("clang")]
         );
     }
 
