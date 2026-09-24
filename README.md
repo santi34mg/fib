@@ -17,7 +17,7 @@ The second is a custom backend made for specialized builds.
 ### Prerequisites
 
 - **Rust toolchain** (stable): install via [rustup](https://rustup.rs)
-- **clang**: must be on `$PATH` in case of using the LLVM backend (`clang-17` is preferred when installed; otherwise unversioned `clang` is used).
+- **clang 21**: must be on `$PATH` when using the LLVM backend (`clang-21` is preferred; otherwise unversioned `clang` is used).
 
 ### Building from source
 
@@ -47,7 +47,7 @@ Useful flags (see `cargo run -- --help` for the full list):
 - `--check` — frontend only (lex + parse + analyze), no LLVM/clang needed.
 - `--emit=lex|parse|typed|llvm|bin` — stop after a stage.
 - `--emit-llvm` / `--llvm-out <FILE>` — keep the intermediate `.ll`.
-- `--cc <CC>` — C compiler for linking (defaults to `$CC`, else `clang-17`, else `clang`).
+- `--cc <CC>` — C compiler for linking (defaults to `$CC`, else `clang-21`, else `clang`).
 - `-O <LEVEL>` — optimization level passed to clang as `-O<LEVEL>`.
 - `--release` — skip debug runtime bounds checks on `arr.[i]` / `arr.[a..b]`
   (by default every index/slice traps to stderr + abort on OOB; constant
@@ -55,9 +55,9 @@ Useful flags (see `cargo run -- --help` for the full list):
 
 ### Troubleshooting
 
-- `clang-17: not found` / linker errors: install a C compiler and ensure it
-  is on `$PATH`. Any recent `clang` works (`clang-17` is just preferred when
-  present); or point at yours explicitly: `cargo run -- samples/hello_world.fib -I=std --cc clang`.
+- `clang-21: not found` / linker errors: install Clang 21 and ensure it is on
+  `$PATH`, or point at a compatible compiler explicitly:
+  `cargo run -- samples/hello_world.fib -I=std --cc clang`.
 - Building the compiler itself needs LLVM 21 (CI installs it via
   `ZhongRuoyu/setup-llvm@v0`). Frontend-only work (`--check`,
   `--emit=lex|parse|typed`, `cargo check --no-default-features`) needs

@@ -22,3 +22,8 @@ Fib is a systems programming language designed for performance, clarity, and dev
 
 For working programs that exercise these features end-to-end, see the [`samples/`](../samples) directory.
 Each sample carries an `Expected output:` header comment — the same strings `tests/e2e.rs` asserts on.
+
+Compiler contributors and automated agents should start with the
+[`implementation/`](implementation/README.md) tree. It mirrors the repository
+layout and records pipeline ownership, implementation invariants, known risks,
+and prioritized improvements.

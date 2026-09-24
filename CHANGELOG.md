@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Expanded the Fib standard library surface so std modules type-check as import targets.
 
+### Fixed
+- Prefer Clang 21 when linking LLVM 21 IR, avoiding CI failures when an
+  incompatible `clang-17` is also installed.
+
 ## [0.1.0] - 2026-09-18
 
 ### Added

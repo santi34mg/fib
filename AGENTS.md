@@ -19,7 +19,7 @@ Pre-push gate (CI order): `cargo fmt --check` → `cargo check` → `cargo clipp
 
 - `cargo run -- samples/hello_world.fib -I=std` → binary at `out/<stem>` (`out/` git-ignored, `*.ll` ignored); `-o` overrides, `--emit-llvm`/`--llvm-out <FILE>` keeps IR.
 - `-I`/`--include-path` is repeatable; entry file's dir is always searched first. `import std::libc` with `-I std` resolves via the drop-first-segment fallback (`<root>/libc.fib`) — keep `-I=std`, do not "fix" the two-way search in `module_candidate_paths`.
-- Linker: `--cc` > `$CC` > `clang-17` > `clang`. `-O 0|1|2|3|s|z`, `--release` skips debug OOB traps on `arr.[i]`/`arr.[a..b]` (constant OOB is always a compile error). `--check` overrides `--emit`; `lex|parse|typed` never touch LLVM/clang.
+- Linker: `--cc` > `$CC` > `clang-21` > `clang`. `-O 0|1|2|3|s|z`, `--release` skips debug OOB traps on `arr.[i]`/`arr.[a..b]` (constant OOB is always a compile error). `--check` overrides `--emit`; `lex|parse|typed` never touch LLVM/clang.
 
 ## Architecture notes
 
