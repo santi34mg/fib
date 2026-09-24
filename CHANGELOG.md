@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded the Fib standard library surface so std modules type-check as import targets.
 
 ### Fixed
+- Add the missing `cargo-deny` license policy, declare the package's MIT
+  license, and run the dependency policy check from the pre-commit hook.
 - Prefer Clang 21 when linking LLVM 21 IR, avoiding CI failures when an
   incompatible `clang-17` is also installed.
 

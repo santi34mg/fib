@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Pre-commit gate mirroring the blocking jobs in .github/workflows/ci.yml.
 #
-# Blocking CI steps (advisory jobs audit/deny/coverage are intentionally NOT gated):
+# Blocking CI steps plus the dependency policy check (audit/coverage are not gated):
 #   fmt job:        cargo fmt --check
+#   deny job:       cargo deny check
 #   frontend job:   cargo check --no-default-features
 #                   cargo test --no-default-features
 #   build_and_test: cargo fmt --check
@@ -41,6 +42,9 @@ run() {
 
 # Fail fast on formatting (cheapest, same as CI ordering).
 run cargo fmt --check
+
+# Verify dependency licenses, bans, advisories, and sources.
+run cargo deny check
 
 # Frontend gate (no LLVM / no default features).
 run cargo check --no-default-features
