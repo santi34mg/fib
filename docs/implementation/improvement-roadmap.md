@@ -111,8 +111,6 @@ return-expression evaluation timing, then enforce one model in analysis.
 - Set target triple and data layout; derive pointer, `usize`, slice, aggregate,
   and tagged-union layout from target data.
 - Implement C default argument promotions for variadic extern calls.
-- Add native linker options for library paths, libraries, arguments, target,
-  and sysroot. Preserve a configured `$CC` command rather than its first word.
 - Unify `compile_project` and `check_project` under one public diagnostic type.
 - Reduce accidental public API exposure from `pub mod` declarations.
 - Categorize lexical, name, type, toolchain, and configuration diagnostics
@@ -121,8 +119,31 @@ return-expression evaluation timing, then enforce one model in analysis.
   are established.
 - Decode string escapes exactly once and add integer-literal range checking.
 
+### Native C library linking and libX11
+
+- Design and implement an untagged `union` type with explicit C-compatible
+  layout; keep it distinct from Fib's tagged enums. Define field access safety,
+  initialization rules, size/alignment from target data, and by-value versus
+  pointer FFI behavior, then verify layouts against equivalent C unions.
+- Add native linker options for libraries, library paths, raw arguments, target,
+  and sysroot. Preserve a configured `$CC` command rather than its first word.
+- Add repeatable `-l`/`--link-lib` and `-L`/`--library-path` CLI and library API
+  options, and pass them to clang after the LLVM input.
+- Add a platform-specific `std::x11` module with ABI-accurate `extern fn`
+  declarations and opaque pointer/integer handle types.
+- Add a compile-and-run X11 sample where a display server is available, with a
+  compile/link-only CI policy otherwise.
+- Use C shims for header macros, unions such as `XEvent`, callbacks, and other
+  interfaces Fib cannot represent safely yet; do not assume Fib aggregates have
+  C layout.
+- Add linker diagnostics and tests covering a missing library, custom library
+  search paths, and successful `-lX11` linkage.
+
 ## P3: Coverage, Performance, and Ergonomics
 
+- Resolve the apparent conflict between `--release` and `-O`: decide whether
+  release mode should select an optimization level, reject a separately supplied
+  level, or be renamed to describe its current bounds-check-only behavior.
 - Auto-discover samples and require each to declare exact-output, compile-only,
   or expected-failure policy.
 - Convert `tests/probe_tmp.rs` into asserting diagnostics regressions.
