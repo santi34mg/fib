@@ -88,6 +88,8 @@ pub struct CompilationOptions {
     /// Extra directories searched when resolving imports, in addition to the
     /// entry file's directory.
     pub include_paths: Vec<PathBuf>,
+    /// Additional library to link
+    pub link_lib: Vec<String>,
     /// Output binary path for `--emit=bin`. Defaults to `out/<stem>`.
     /// When `--emit=llvm`, this (if set) is the `.ll` output path.
     pub output: Option<PathBuf>,
@@ -117,6 +119,7 @@ impl CompilationOptions {
             project_path,
             source_override: None,
             include_paths: Vec::new(),
+            link_lib: Vec::new(),
             output: None,
             emit: EmitKind::Bin,
             check_only: false,
@@ -1033,6 +1036,7 @@ pub fn link_llvm_ir(
     ll_path: &Path,
     bin_path: &Path,
     cc: Option<&Path>,
+    link_libs: Vec<&str>,
     opt_level: Option<&str>,
 ) -> Result<(), DriverError> {
     let opt_flag = opt_level
@@ -1057,6 +1061,11 @@ pub fn link_llvm_ir(
         cmd.arg(ll_path).arg("-o").arg(bin_path);
         if let Some(flag) = &opt_flag {
             cmd.arg(flag);
+        }
+        if !link_libs.is_empty() {
+            link_libs.iter().for_each(|&lib| {
+                cmd.arg(format!("-l{}", lib));
+            });
         }
         match cmd.output() {
             Err(e) if e.kind() == io::ErrorKind::NotFound && i + 1 < candidates.len() => {
@@ -1189,6 +1198,7 @@ fn compile_inner(opts: &CompilationOptions) -> Result<CompileOutput, DriverError
                             &llvm_path,
                             &binary,
                             opts.cc.as_deref(),
+                            opts.link_lib.iter().map(String::as_str).collect(),
                             opts.opt_level.as_deref(),
                         )?;
                         Ok(CompileOutput::Binary {
@@ -1211,6 +1221,7 @@ fn compile_inner(opts: &CompilationOptions) -> Result<CompileOutput, DriverError
                             &tmp_path,
                             &binary,
                             opts.cc.as_deref(),
+                            opts.link_lib.iter().map(String::as_str).collect(),
                             opts.opt_level.as_deref(),
                         );
                         // `tmp` deletes the file on drop; keep it alive until
@@ -1243,6 +1254,7 @@ mod tests {
             project_path: PathBuf::from("test.fib"),
             source_override: Some(source.to_string()),
             include_paths: Vec::new(),
+            link_lib: Vec::new(),
             output: None,
             emit: EmitKind::Bin,
             check_only: false,
@@ -1685,8 +1697,32 @@ mod tests {
         let ll = dir.path().join("t.ll");
         let bin = dir.path().join("t");
         fs::write(&ll, "ir").unwrap();
-        let err = link_llvm_ir(&ll, &bin, None, Some("fast")).unwrap_err();
+        let err = link_llvm_ir(&ll, &bin, None, Vec::new(), Some("fast")).unwrap_err();
         assert!(matches!(err, DriverError::InvalidOptLevel(_)));
+    }
+
+    #[test]
+    fn link_lib_is_passed_to_cc_and_links_external_library() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let ll = dir.path().join("sqrt.ll");
+        let bin = dir.path().join("sqrt");
+        fs::write(
+            &ll,
+            "declare double @sqrt(double)\n\
+             define i32 @main() {\n\
+             entry:\n\
+               %value = call double @sqrt(double 9.000000e+00)\n\
+               %result = fptosi double %value to i32\n\
+               ret i32 %result\n\
+             }\n",
+        )
+        .unwrap();
+
+        link_llvm_ir(&ll, &bin, None, vec!["m"], None).expect("link with libm");
+        let output = std::process::Command::new(&bin)
+            .output()
+            .expect("run linked binary");
+        assert_eq!(output.status.code(), Some(3));
     }
 
     #[test]

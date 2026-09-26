@@ -26,6 +26,10 @@ pub struct Args {
     #[arg(short = 'I', long = "include-path", value_name = "DIR")]
     pub include_path: Vec<PathBuf>,
 
+    /// Additional library to link (repeatable)
+    #[arg(short = 'l', long = "link-lib", value_name = "LIB")]
+    pub link_lib: Vec<String>,
+
     /// Output binary path (for `--emit=bin`) or `.ll` path (for `--emit=llvm`).
     /// Defaults to `out/<stem>` / `out/<stem>.ll`.
     #[arg(short = 'o', long = "output", value_name = "FILE")]
@@ -73,6 +77,7 @@ impl From<Args> for CompilationOptions {
             project_path: args.file,
             source_override: None,
             include_paths: args.include_path,
+            link_lib: args.link_lib,
             output: args.output,
             emit: args.emit,
             check_only: args.check,
