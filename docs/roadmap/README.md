@@ -195,6 +195,46 @@ The analyzer must reject invalid source before either backend runs.
 - [ ] Add forced-route differential tests for constructs supported by both
       routes.
 
+### Flat IR Feature Parity
+
+- [ ] Maintain a feature matrix that records importer, verifier, LLVM consumer,
+      and execution-test support for every typed expression and statement kind.
+- [ ] Add a compiler option used by tests to require flat-IR lowering and report
+      `Unsupported` instead of falling back to direct lowering.
+- [ ] Carry nominal type definitions and the type metadata needed by the LLVM
+      consumer in `IrProgram`.
+- [ ] Implement struct construction, field loads, and field stores through the
+      flat-IR importer and LLVM consumer.
+- [ ] Implement tuple construction, extraction, assignment, argument passing,
+      and returns through flat IR.
+- [ ] Implement array literals, indexed loads, indexed stores, and array
+      argument and return values through flat IR.
+- [ ] Represent lvalue paths explicitly so nested field, index, and dereference
+      assignments do not depend on source-expression shapes.
+- [ ] Implement address-of, pointer loads and stores, permitted pointer
+      operations, and pointer/null comparisons through flat IR.
+- [ ] Represent slices explicitly and implement slicing, indexed access, and
+      slice argument and return values through flat IR.
+- [ ] Carry the bounds-check policy into flat IR and match direct-route behavior
+      for constant and dynamic array and slice bounds.
+- [ ] Implement enum payload construction, payload extraction, and switch-arm
+      payload bindings through flat IR.
+- [ ] Implement multi-value calls and returns with the same ABI in both routes.
+- [ ] Implement every runtime builtin through flat IR or reject it explicitly
+      during flat-IR import.
+- [ ] Implement module constants and constant references after their
+      initialization and visibility semantics are defined.
+- [ ] Implement qualified value and call references after canonical declaration
+      identity is available in Phase 3.
+- [ ] Add forced-flat execution tests for each completed feature-matrix row and
+      differential tests against direct lowering while that route remains.
+- [ ] Make every maintained sample compile and run with forced flat-IR lowering.
+- [ ] Remove broad automatic fallback once all supported language constructs
+      have flat-IR coverage; retain only an explicit temporary compatibility
+      mode if downstream users still require it.
+- [ ] Delete the direct typed-AST-to-LLVM route after the compatibility window
+      and make flat IR the sole production LLVM input.
+
 ## Phase 3: Add Canonical Package and Symbol Identity
 
 ### Package Namespaces
@@ -248,6 +288,8 @@ The analyzer must reject invalid source before either backend runs.
 
 ### Parser Hardening
 
+- [ ] Verify type syntax and migrate slices from `T[]` to `[]T` and arrays from
+      `T[N]` to `[N]T`, updating the parser, documentation, and regression tests.
 - [ ] Add one reusable delimited-list parser.
 - [ ] Reject EOF before every required closing delimiter.
 - [ ] Use the shared parser for arrays, tuples, arguments, and parameters.
