@@ -37,7 +37,7 @@ backends. The direct typed-AST route currently supports more language features.
 - [`samples/`](samples/README.md): executable language coverage
 - [`std/`](std/README.md): standard-library status and safety concerns
 - [`.github/workflows/`](.github/workflows/ci.md): CI contract
-- [`improvement-roadmap.md`](improvement-roadmap.md): prioritized language and compiler work
+- [`roadmap/README.md`](docs/roadmap/README.md): prioritized language and compiler work
 
 ## Reading Rules
 
@@ -70,7 +70,7 @@ quickly. Links point to files and name the relevant functions or types.
    stubs or platform-sensitive FFI as if they were complete.
 
 Start correctness changes with the P0 section of the
-[`improvement roadmap`](improvement-roadmap.md).
+[`improvement roadmap`](docs/roadmap/README.md).
 
 ## Updating This Tree
 
