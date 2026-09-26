@@ -1,0 +1,17 @@
+{
+  "name": "fib-lsp",
+  "version": "0.1.0",
+  "description": "A small language server providing semantic highlighting for Fib",
+  "type": "module",
+  "bin": {
+    "fib-lsp": "./src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
