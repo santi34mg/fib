@@ -74,7 +74,8 @@ return                 // bare return (void)
 
 ## `defer`
 
-Schedule a statement to run when the enclosing function exits. Useful for cleanup paired with allocation.
+Schedule a statement to run when the enclosing function exits. 
+Useful for cleanup paired with allocation.
 
 ```fib
 fn main() @int4 {
@@ -85,6 +86,6 @@ fn main() @int4 {
 }
 ```
 
-## `switch` / `when`
+## `switch`
 
 Pattern matching on enums and tagged unions — see [Switch](switch.md).
