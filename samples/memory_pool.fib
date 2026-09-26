@@ -48,7 +48,8 @@ fn main() @int4 {
         pool.block_size as @int4,
         pool.capacity as @int4);
 
-    for (i: @int4 = 0; i < 8; i += 1) {
+    i: @int4 = 0;
+    while (i < 8) {
         block: *@void = pool_alloc(pool.&);
         if block == null {
             libc::printf("Alloc %d failed: pool exhausted\n", i);
@@ -57,6 +58,7 @@ fn main() @int4 {
         val: *@int4 = block as *@int4;
         val.* = (i + 1) * 7;
         libc::printf("Block %d: wrote %d\n", i, val.*);
+        i += 1;
     };
 
     libc::printf("Used: %d / %d\n", pool.used as @int4, pool.capacity as @int4);

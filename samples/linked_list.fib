@@ -18,7 +18,7 @@ fn push(head: *Node, val: @int4) *Node {
 fn list_length(head: *Node) @int4 {
     count: @int4 = 0;
     cur: *Node = head;
-    for (;;) {
+    while (true) {
         if cur == null {
             break;
         };
@@ -30,7 +30,7 @@ fn list_length(head: *Node) @int4 {
 
 fn print_list(head: *Node) @void {
     cur: *Node = head;
-    for (;;) {
+    while (true) {
         if cur == null {
             break;
         };
@@ -42,7 +42,7 @@ fn print_list(head: *Node) @void {
 
 fn free_list(head: *Node) @void {
     cur: *Node = head;
-    for (;;) {
+    while (true) {
         if cur == null {
             break;
         };

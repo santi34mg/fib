@@ -6,8 +6,10 @@ import std::libc
 
 fn sum(s: @int4[]) @int4 {
     total: @int4 = 0;
-    for (i: @int4 = 0; i < s.@len as @int4; i += 1) {
+    i: @int4 = 0;
+    while (i < s.@len as @int4) {
         total += s.[i];
+        i += 1;
     };
     return total;
 }

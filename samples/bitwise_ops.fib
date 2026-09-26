@@ -21,7 +21,7 @@ fn pack_ipv4(a: @uint4, b: @uint4, c: @uint4, d: @uint4) @uint4 {
 fn popcount(x: @uint4) @uint4 {
     count: @uint4 = 0;
     v: @uint4 = x;
-    for (;v != 0 as @uint4;) {
+    while (v != 0 as @uint4) {
         count = count + (v & 1);
         v = v >> 1;
     };
