@@ -493,6 +493,51 @@ The analyzer must reject invalid source before either backend runs.
 - [ ] Add `rust-version` metadata matching the repository's MSRV policy.
 - [ ] Move test-only dependencies to development dependencies where possible.
 
+### LSP Frontend Integration
+
+Begin this work only after canonical declaration identity in Phase 3 and source
+information and diagnostics in Phase 4 are stable.
+
+- [ ] Replace the JavaScript analysis path with a Rust `fib-lsp` crate that
+      depends on `fibc` with default features disabled.
+- [ ] Define one frontend document-analysis API that accepts a URI, source
+      snapshot, include roots, and a cancellation token without invoking LLVM.
+- [ ] Introduce a source-provider abstraction for entry files and imports.
+- [ ] Make the source provider prefer versioned open-document snapshots and
+      fall back to disk for unopened files.
+- [ ] Key parsed and analyzed module caches by stable source ID, document
+      version, and dependency versions.
+- [ ] Invalidate cached dependants when an imported document changes.
+- [ ] Return diagnostics for every source involved in an analysis with its
+      canonical URI, byte range, severity, category, and optional remedy.
+- [ ] Add parser synchronization and recovery at declaration and statement
+      boundaries so one edit can produce multiple useful diagnostics.
+- [ ] Continue name and type analysis on recoverable partial AST nodes without
+      manufacturing valid types for erroneous expressions.
+- [ ] Add tested conversion utilities between compiler byte ranges and LSP
+      zero-based UTF-16 positions, including non-ASCII and multiline input.
+- [ ] Retain complete ranges and stable node IDs for declarations, bindings,
+      identifiers, expressions, and type expressions through semantic analysis.
+- [ ] Build a per-document semantic index mapping source ranges to resolved
+      declaration IDs and inferred types.
+- [ ] Generate semantic tokens from compiler tokens and the semantic index
+      instead of the heuristic scanner in `lsp/src/highlight.js`.
+- [ ] Implement compiler-backed hover, completion, go-to-definition, references,
+      and rename only after the semantic index is stable.
+- [ ] Run frontend work off the protocol thread, debounce rapid edits, cancel
+      obsolete analyses, and publish results only for the matching document
+      version.
+- [ ] Clear diagnostics on document close and when a newer successful analysis
+      no longer reports an earlier error.
+- [ ] Add protocol tests for unsaved entry files, unsaved imports, transitive
+      imports, stale-result suppression, cancellation, and diagnostic clearing.
+- [ ] Add Unicode protocol tests proving diagnostic and semantic-token ranges
+      use UTF-16 units expected by LSP clients.
+- [ ] Add an editor smoke test that starts `fib-lsp` without LLVM installed and
+      checks diagnostics plus semantic tokens for a small project.
+- [ ] Document installation, workspace-root discovery, include-path settings,
+      supported capabilities, and current recovery limitations.
+
 ### Later Tooling
 
 - [ ] Add a package manifest format.
