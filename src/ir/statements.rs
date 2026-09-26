@@ -179,16 +179,8 @@ pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Resu
             b.emit(Instruction::LabelDef(merge_label));
             Ok(())
         }
-        TypedStatement::For {
-            init,
-            cond,
-            post,
-            body,
-        } => {
+        TypedStatement::While { cond, body } => {
             b.enter_scope();
-            if let Some(init_stmt) = init {
-                lower_stmt(b, init_stmt)?;
-            }
             let cond_label = b.fresh_label();
             let body_label = b.fresh_label();
             let post_label = b.fresh_label();
@@ -227,9 +219,6 @@ pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Resu
             b.exit_scope();
             b.loops.pop();
             b.emit(Instruction::LabelDef(post_label));
-            if let Some(post_stmt) = post {
-                lower_stmt(b, post_stmt)?;
-            }
             b.emit(Instruction::Goto { target: cond_label });
             b.emit(Instruction::LabelDef(after_label));
             b.exit_scope();

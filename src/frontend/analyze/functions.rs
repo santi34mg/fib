@@ -197,15 +197,7 @@ fn validate_return_types(
                     validate_return_types(else_branch, return_type, scope)?;
                 }
             }
-            TypedStatement::For {
-                init, post, body, ..
-            } => {
-                if let Some(init) = init {
-                    validate_return_types(std::slice::from_ref(init.as_ref()), return_type, scope)?;
-                }
-                if let Some(post) = post {
-                    validate_return_types(std::slice::from_ref(post.as_ref()), return_type, scope)?;
-                }
+            TypedStatement::While { body, .. } => {
                 validate_return_types(body, return_type, scope)?;
             }
             TypedStatement::Defer(inner) => {

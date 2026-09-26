@@ -187,72 +187,24 @@ where
                     }
                 }
                 TokenKind::Identifier(_) => self.parse_identifier_statement()?,
-                TokenKind::Keyword(Keyword::For) => {
-                    self.next(); // consume 'for'
+                TokenKind::Keyword(Keyword::While) => {
+                    self.next(); // consume 'while'
                     self.expect_token(
                         TokenKind::Punctuation(Punctuation::OpeningParenthesis),
-                        "expected '(' after for keyword",
+                        "expected '(' after while keyword",
                     )?;
-                    let initializer = match self.consume_if(|t| {
-                        matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon))
-                    }) {
-                        Some(_) => None,
-                        None => {
-                            let statement = self.parse_statement_some()?;
-                            Some(Box::new(statement))
-                        }
-                    };
                     let condition = match self.consume_if(|t| {
                         matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon))
                     }) {
                         Some(_) => None,
-                        None => {
-                            let expression = self.parse_expression()?;
-                            self.expect_token(
-                                TokenKind::Punctuation(Punctuation::Semicolon),
-                                "expected semicolon after condition expression",
-                            )?;
-                            Some(expression)
-                        }
+                        None => Some(self.parse_expression()?),
                     };
-                    let post_operation = match self.consume_if(|t| {
-                        matches!(
-                            t.kind,
-                            TokenKind::Punctuation(Punctuation::ClosingParenthesis)
-                        )
-                    }) {
-                        Some(_) => None,
-                        None => {
-                            // Post-operation is terminated by `)`, not `;`,
-                            // so parse without requiring a trailing `;`.
-                            // `for (...; cond; i += 1)` stays valid.
-                            let (kind, pline, pcolumn) =
-                                self.parse_statement_inner_some().map_err(|e| {
-                                    let (line, column) = self.last_pos;
-                                    if e.message == "expected a statement" {
-                                        self.error("expected statement", line, column)
-                                    } else {
-                                        e
-                                    }
-                                })?;
-                            let statement = Statement {
-                                kind,
-                                span: crate::diagnostics::Span::new(pline, pcolumn),
-                            };
-                            self.expect_token(
-                                TokenKind::Punctuation(Punctuation::ClosingParenthesis),
-                                "expected ')'",
-                            )?;
-                            Some(Box::new(statement))
-                        }
-                    };
+                    self.expect_token(
+                        TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+                        "expected ')' after condition",
+                    )?;
                     let body = self.parse_body()?;
-                    StatementKind::For {
-                        initializer,
-                        condition,
-                        post_operation,
-                        body,
-                    }
+                    StatementKind::While { condition, body }
                 }
                 TokenKind::Literal(_)
                 | TokenKind::Builtin(_)

@@ -229,20 +229,9 @@ pub(super) fn substitute_in_stmt(stmt: &mut StatementKind, subs: &HashMap<String
                 }
             }
         }
-        StatementKind::For {
-            initializer,
-            condition,
-            post_operation,
-            body,
-        } => {
-            if let Some(init) = initializer {
-                substitute_in_stmt(&mut init.kind, subs);
-            }
+        StatementKind::While { condition, body } => {
             if let Some(cond) = condition {
                 substitute_in_expr(cond, subs);
-            }
-            if let Some(post) = post_operation {
-                substitute_in_stmt(&mut post.kind, subs);
             }
             for s in body {
                 substitute_in_stmt(&mut s.kind, subs);

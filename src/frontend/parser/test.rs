@@ -448,20 +448,20 @@ mod tests {
     }
 
     #[test]
-    fn test_for_loop() {
-        let test_string = "for (i: @int4 = 0; i < 10; i += 1) { };";
+    fn test_while_loop() {
+        let test_string = "i := 0; while (i < 10) { i += 1; };";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
-        assert_eq!(stmts.len(), 1);
-        assert!(matches!(stmts[0], StatementKind::For { .. }));
+        assert_eq!(stmts.len(), 2);
+        assert!(matches!(stmts[1], StatementKind::While { .. }));
     }
 
     #[test]
     fn test_break_continue() {
-        let test_string = "for (;;) { break; continue; };";
+        let test_string = "while (true) { break; continue; };";
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
-        if let StatementKind::For { body, .. } = stmts[0] {
+        if let StatementKind::While { body, .. } = stmts[0] {
             assert!(matches!(body[0].kind, StatementKind::Break));
             assert!(matches!(body[1].kind, StatementKind::Continue));
         } else {

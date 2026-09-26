@@ -158,7 +158,16 @@ mod tests {
     #[test]
     fn ir_consumer_lowers_if_and_loop() {
         let ir = lower_ir_src(
-            "fn main() @int { x := 0;\nif x == 0 { x = 1; } else { x = 2; };\nfor (i: @int = 0; i < 10; i = i + 1) { x = x + i; };\nreturn x; }",
+            "fn main() @int {
+    x := 0;
+    if x == 0 { x = 1; } else { x = 2; };
+    i: @int = 0;
+    while (i < 10) { 
+        x = x + i; 
+        i = i + 1; 
+    };
+    return x; 
+}",
         );
         assert!(ir.contains("br i1"), "expected cond br, got:\n{}", ir);
         assert!(ir.contains("ret"), "expected ret, got:\n{}", ir);

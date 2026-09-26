@@ -375,13 +375,8 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                 ctx.builder.position_at_end(merge_bb);
                 Ok(None)
             }
-            TypedStatement::For {
-                init,
-                cond,
-                post,
-                body,
-            } => {
-                self.emit_loop(init, cond, post, body)?;
+            TypedStatement::While { cond, body } => {
+                self.emit_loop(cond, body)?;
                 Ok(None)
             }
             TypedStatement::Break => {
@@ -599,32 +594,24 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
         Ok(())
     }
 
-    /// Emit a `for` statement: init runs outside the loop context, then the
-    /// condition/body/post blocks, keeping `break`/`continue` and the
+    /// Emit a `while` statement:
+    /// condition/body blocks, keeping `break`/`continue` and the
     /// deferred frames consistent with any enclosing loop.
     fn emit_loop(
         &mut self,
-        init: &Option<Box<TypedStatement>>,
         cond: &Option<TypedExpr>,
-        post: &Option<Box<TypedStatement>>,
         body: &[TypedStatement],
     ) -> Result<(), LowerError> {
         let ctx = self.ctx;
-        if let Some(i) = init {
-            self.codegen_stmt(i)?;
-        }
-
         let func = self.parent_function("for")?;
 
         let cond_bb = ctx.ctx.append_basic_block(func, "forcond");
         let body_bb = ctx.ctx.append_basic_block(func, "forbody");
-        let post_bb = ctx.ctx.append_basic_block(func, "forpost");
         let after_bb = ctx.ctx.append_basic_block(func, "afterloop");
 
-        let continue_target = if post.is_some() { post_bb } else { cond_bb };
         let for_loop_ctx = LoopContext {
             break_bb: after_bb,
-            continue_bb: continue_target,
+            continue_bb: cond_bb,
             deferred_depth: self.deferred_stack.len(),
         };
         let prev_loop = self.enter_loop(for_loop_ctx);
@@ -640,13 +627,10 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             ctx.builder.build_unconditional_branch(body_bb)?;
         }
 
-        self.emit_sequence_with_fallthrough(body_bb, "for body end", "loop body", body, post_bb)?;
+        self.emit_sequence_with_fallthrough(body_bb, "while body end", "loop body", body, cond_bb)?;
 
         // post runs with the enclosing deferred frame, not a fresh one
-        ctx.builder.position_at_end(post_bb);
-        if let Some(p) = post {
-            self.codegen_stmt(p)?;
-        }
+        ctx.builder.position_at_end(cond_bb);
         if self
             .insert_block("for post end")?
             .get_terminator()

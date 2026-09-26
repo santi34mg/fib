@@ -3,7 +3,7 @@ pub enum Keyword {
     Var,
     If,
     Else,
-    For,
+    While,
     Break,
     Continue,
     Return,

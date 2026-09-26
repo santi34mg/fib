@@ -40,9 +40,18 @@ mod tests {
     }
 
     #[test]
-    fn ir_if_and_for_emit_labels_and_gotos() {
+    fn ir_if_and_while_emit_labels_and_gotos() {
         let prog = lower_src(
-            "fn main() @int { x := 0;\nif x == 0 { x = 1; } else { x = 2; };\nfor (i: @int = 0; i < 10; i = i + 1) { x = x + i; };\nreturn x; }",
+            "fn main() @int {
+    x := 0;
+    if x == 0 { x = 1; } else { x = 2; };
+    i: @int = 0;
+    while (i < 10) { 
+        x = x + i; 
+        i = i + 1; 
+    };
+    return x; 
+}",
         )
         .expect("lower if+for");
         let text = prog.to_string();
@@ -79,7 +88,17 @@ mod tests {
     #[test]
     fn ir_break_continue_become_gotos() {
         let prog = lower_src(
-            "fn main() @int { x := 0;\nfor (i: @int = 0; i < 10; i = i + 1) { if i == 2 { continue; };\nif i == 5 { break; };\nx = x + i; };\nreturn x; }",
+            "fn main() @int { 
+    x := 0;
+    i := 0;
+    while (i < 10) { 
+        if i == 2 { continue; };
+        if i == 5 { break; };
+        x = x + i; 
+        i += 1;
+    };
+    return x; 
+}",
         )
         .expect("lower break/continue");
         let text = prog.to_string();

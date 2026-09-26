@@ -418,17 +418,17 @@ mod tests {
     }
 
     #[test]
-    fn test_for_loop_in_hir() {
-        let cu = get_typed("fn f() { for (;;) { break; }; }");
+    fn test_while_loop_in_hir() {
+        let cu = get_typed("fn f() { while (true) { break; }; }");
         let f = get_function(&cu, "f");
-        assert!(matches!(f.body[0], TypedStatement::For { .. }));
+        assert!(matches!(f.body[0], TypedStatement::While { .. }));
     }
 
     #[test]
     fn test_break_continue_in_hir() {
-        let cu = get_typed("fn f() { for (;;) { break; continue; }; }");
+        let cu = get_typed("fn f() { while (true) { break; continue; }; }");
         let f = get_function(&cu, "f");
-        if let TypedStatement::For { body, .. } = &f.body[0] {
+        if let TypedStatement::While { body, .. } = &f.body[0] {
             assert!(matches!(body[0], TypedStatement::Break));
             assert!(matches!(body[1], TypedStatement::Continue));
         } else {
@@ -956,7 +956,17 @@ mod tests {
     fn test_break_inside_nested_loop_is_fine() {
         // Loop-depth tracking must accept `break` in a nested loop.
         get_typed(
-            "fn f() @void { for (i: @int4 = 0; i < 10; i = i + 1) { for (j: @int4 = 0; j < 10; j = j + 1) { break; }; }; }",
+            "fn f() @void {
+    i := 0;
+    while (i < 10) { 
+        j := 0;
+        while (j < 10) { 
+            break; 
+        };
+        j += 1;
+    i += 1;
+    }; 
+}",
         );
     }
 

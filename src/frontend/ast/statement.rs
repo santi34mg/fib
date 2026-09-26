@@ -48,10 +48,8 @@ pub enum StatementKind {
         then_branch: Vec<Statement>,
         else_branch: Option<Vec<Statement>>,
     },
-    For {
-        initializer: Option<Box<Statement>>,
+    While {
         condition: Option<Expression>,
-        post_operation: Option<Box<Statement>>,
         body: Vec<Statement>,
     },
     Break,

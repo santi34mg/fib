@@ -113,9 +113,9 @@ mod tests {
 
     #[test]
     fn test_for_keyword() {
-        let test_string = "for";
+        let test_string = "while";
         let lexer = Lexer::new(test_string);
-        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::For)))
+        lexer.for_each(|t| assert_eq!(t.kind, TokenKind::Keyword(Keyword::While)))
     }
 
     #[test]
@@ -152,7 +152,7 @@ mod tests {
             ("var", TokenKind::Keyword(Keyword::Var)),
             ("if", TokenKind::Keyword(Keyword::If)),
             ("else", TokenKind::Keyword(Keyword::Else)),
-            ("for", TokenKind::Keyword(Keyword::For)),
+            ("while", TokenKind::Keyword(Keyword::While)),
             ("break", TokenKind::Keyword(Keyword::Break)),
             ("continue", TokenKind::Keyword(Keyword::Continue)),
             ("return", TokenKind::Keyword(Keyword::Return)),

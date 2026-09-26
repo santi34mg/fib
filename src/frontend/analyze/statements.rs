@@ -217,35 +217,12 @@ pub(super) fn stmt_to_typed_inner(
                 else_branch: else_h,
             }))
         }
-        StatementKind::For {
-            initializer,
-            condition,
-            post_operation: increment,
-            body,
-        } => {
+        StatementKind::While { condition, body } => {
             // The loop header and body share one block scope (the init
             // binding is visible to cond/post/body) that doesn't leak out.
             current_scope.enter_scope(ScopeKind::Block);
-            let init_h = match initializer {
-                Some(b) => Some(Box::new(stmt_to_typed_at(
-                    *b,
-                    current_scope,
-                    generic_cache,
-                    loop_depth,
-                )?)),
-                None => None,
-            };
             let cond_h = match condition {
                 Some(e) => Some(expr_to_typed(e, current_scope, generic_cache)?),
-                None => None,
-            };
-            let post_h = match increment {
-                Some(b) => Some(Box::new(stmt_to_typed_at(
-                    *b,
-                    current_scope,
-                    generic_cache,
-                    loop_depth,
-                )?)),
                 None => None,
             };
             let mut body_h = Vec::new();
@@ -258,10 +235,8 @@ pub(super) fn stmt_to_typed_inner(
                 )?);
             }
             current_scope.exit_scope();
-            Ok(TypedStatement::For {
-                init: init_h,
+            Ok(TypedStatement::While {
                 cond: cond_h,
-                post: post_h,
                 body: body_h,
             })
         }

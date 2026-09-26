@@ -456,10 +456,8 @@ pub enum TypedStatement {
     Expr(TypedExpr),
     Return(Option<TypedReturn>),
     If(TypedIf),
-    For {
-        init: Option<Box<TypedStatement>>,
+    While {
         cond: Option<TypedExpr>,
-        post: Option<Box<TypedStatement>>,
         body: Vec<TypedStatement>,
     },
     Break,
