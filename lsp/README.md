@@ -63,6 +63,36 @@ An editor must have a grammar or basic language entry for `.fib` files before
 it can attach any language server. Semantic-token-capable clients then use the
 server's highlighting without a TextMate or tree-sitter grammar.
 
+### Visual Studio Code
+
+Unlike Neovim and Helix, VS Code has no built-in way to attach an LSP server
+by configuration alone, so a minimal extension lives at
+[`editors/vscode`](editors/vscode). It registers the `fib` language for
+`.fib` files and spawns `../../src/server.js` over stdio via
+`vscode-languageclient`.
+
+To use it from a checkout:
+
+```sh
+cd /path/to/fib-lsp/editors/vscode
+npm install
+```
+
+Then either:
+
+- Open `editors/vscode` in VS Code and press `F5` to launch an Extension
+  Development Host with it loaded, or
+- Package and install it permanently:
+
+  ```sh
+  npx @vscode/vsce package
+  code --install-extension fib-lsp-vscode-0.1.0.vsix
+  ```
+
+If `fib-lsp` isn't at `../../src/server.js` relative to the extension (e.g.
+you installed it globally), set `fib.lsp.path` in your VS Code settings to
+the absolute path of `server.js` or the `fib-lsp` binary.
+
 ## Development
 
 ```sh
