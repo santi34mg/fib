@@ -15,6 +15,43 @@ roadmap.
 7. Replace the experimental libc-based standard library.
 8. Add higher-level tooling after language semantics stabilize.
 
+## Language Surface Redesign
+
+A designed, dependency-ordered series covering the built-in sigil, generics,
+array syntax, strings, overloading, and interfaces. Each document carries its
+own design decisions, work items, tests, and risks. They subsume parts of
+Phase 3, Phase 4, Phase 7, and Phase 9, noted inline below.
+
+| # | Document | Depends on |
+|---|---|---|
+| 00 | [Canonical cross-module linkage names](00-cross-module-linkage.md) | — |
+| 01 | [Remove the `@` sigil from builtins](01-builtin-sigil.md) | — |
+| 02 | [Generic functions with `[T]`](02-generic-functions.md) | 01 |
+| 03 | [Prefix array and slice syntax](03-prefix-array-syntax.md) | 02 |
+| 04 | [Generic data types](04-generic-types.md) | 03 |
+| 05 | [Remove the `string` type](05-remove-string.md) | 04 |
+| 06 | [Function overloading](06-function-overloading.md) | 00 |
+| 07 | [Interfaces, `self`, and constraints](07-interfaces.md) | 04, 06 |
+
+Two of the dependencies exist to remove parsing ambiguity rather than to add
+capability: 02 deletes types from expression position, which is what makes 03's
+prefix syntax unambiguous; 03 frees the postfix `[`, which is what lets 04 read
+`Vector[int4]` without lookahead.
+
+### Decisions locked by that series
+
+- Spell built-in types without `@` (`int4`); spell the comptime property `.len`.
+- Delete the three built-in functions; they are all expressible in Fib.
+- Declare type parameters as `[T]`; require explicit type arguments at every
+  call and use site.
+- Write array and slice types prefix: `[N]T` and `[]T`.
+- Delete `string`. Type a string literal as `[N]char`, add a `c"..."` literal
+  typed `*char` for the C boundary, and make `Vec[char]` the owning type.
+- Resolve overloads on parameter types and return type.
+- Declare conformance with a trailing `impl Interface` on the type declaration,
+  satisfied by free functions; `self` is valid in parameters and return type.
+- Check generic constraints per instantiation, not against the abstract body.
+
 ## Locked Language Decisions
 
 These decisions constrain implementation and are not open roadmap questions.
@@ -253,6 +290,13 @@ The analyzer must reject invalid source before either backend runs.
 
 ### Declaration Identity and Linkage
 
+Partly delivered by [00 — Canonical cross-module linkage
+names](00-cross-module-linkage.md) and [06 — Function
+overloading](06-function-overloading.md), which introduce the canonical symbol,
+remove unqualified-name deduplication, and diagnose collisions. Those two
+documents deliberately leave import resolution alone so the `ModuleId` work
+below stays free to reshape it.
+
 - [ ] Assign each declaration an identity containing its defining `ModuleId`.
 - [ ] Carry declaration identity through module exports and typed declarations.
 - [ ] Carry declaration identity through typed calls and flat IR.
@@ -290,6 +334,11 @@ The analyzer must reject invalid source before either backend runs.
 
 - [ ] Verify type syntax and migrate slices from `T[]` to `[]T` and arrays from
       `T[N]` to `[N]T`, updating the parser, documentation, and regression tests.
+      Designed in [03 — Prefix array and slice syntax](03-prefix-array-syntax.md).
+- [ ] Retire the legacy `for` loop in favour of `while`: 17 `for (;;)` loops
+      remain across 8 `std` files, and `docs/control-flow.md`, `docs/arrays.md`,
+      and `docs/generics.md` still document `for` — including a three-clause
+      `for (i = 1; i < n; i += 1)` form the parser rejects outright.
 - [ ] Add one reusable delimited-list parser.
 - [ ] Reject EOF before every required closing delimiter.
 - [ ] Use the shared parser for arrays, tuples, arguments, and parameters.
@@ -368,6 +417,9 @@ The analyzer must reject invalid source before either backend runs.
 
 ## Phase 7: Add Generic Data Types
 
+Designed in [04 — Generic data types](04-generic-types.md), with the function
+half in [02 — Generic functions with `[T]`](02-generic-functions.md).
+
 - [ ] Define syntax for generic type declarations.
 - [ ] Represent generic type parameters in the AST and typed AST.
 - [ ] Add generic struct instantiation.
@@ -399,8 +451,13 @@ The analyzer must reject invalid source before either backend runs.
 
 ## Phase 9: Add Interfaces and Static Dispatch
 
+Designed in [07 — Interfaces, `self`, and constraints](07-interfaces.md), which
+replaces `impl Interface for Type` with a trailing `impl` clause on the type
+declaration and defers receivers and method-call syntax. Conformance lookup
+requires [06 — Function overloading](06-function-overloading.md).
+
 - [ ] Define interface declaration syntax.
-- [ ] Define `impl Interface for Type` syntax.
+- [ ] Define the trailing `impl Interface` clause on type declarations.
 - [ ] Define receiver syntax and mutability.
 - [ ] Represent interfaces and implementations in the AST and typed AST.
 - [ ] Add interface conformance checking.
