@@ -16,7 +16,7 @@ mod tests {
     fn binding(name: &str) -> TypedSymbol {
         TypedSymbol::Binding(TypedBinding {
             name: id(name),
-            ty: Ty::Builtin(BuiltinType::Int4),
+            ty: Ty::Builtin(BuiltinType::Int32),
             init: None,
             mutable: true,
         })
@@ -55,7 +55,7 @@ mod tests {
         let found = st.lookup(&id("x")).expect("outer binding");
         assert!(matches!(
             found,
-            TypedSymbol::Binding(b) if b.ty == Ty::Builtin(BuiltinType::Int4)
+            TypedSymbol::Binding(b) if b.ty == Ty::Builtin(BuiltinType::Int32)
         ));
     }
 
@@ -120,22 +120,22 @@ mod tests {
 
     #[test]
     fn ty_display_renders_common_shapes() {
-        assert_eq!(Ty::Builtin(BuiltinType::Int4).to_string(), "@int4");
+        assert_eq!(Ty::Builtin(BuiltinType::Int32).to_string(), "@int32");
         assert_eq!(
-            Ty::Pointer(Box::new(Ty::Builtin(BuiltinType::Int4))).to_string(),
-            "*@int4"
+            Ty::Pointer(Box::new(Ty::Builtin(BuiltinType::Int32))).to_string(),
+            "*@int32"
         );
         assert_eq!(
             Ty::Array {
-                element_type: Box::new(Ty::Builtin(BuiltinType::Int4)),
+                element_type: Box::new(Ty::Builtin(BuiltinType::Int32)),
                 size: 8,
             }
             .to_string(),
-            "@int4[8]"
+            "@int32[8]"
         );
         assert_eq!(
-            Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4))).to_string(),
-            "@int4[]"
+            Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int32))).to_string(),
+            "@int32[]"
         );
         assert_eq!(
             Ty::QualifiedIdentifier {

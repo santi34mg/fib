@@ -768,10 +768,10 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
             let is_float = matches!(
                 left.inferred_type,
                 Ty::Builtin(
-                    BuiltinType::Float2
-                    | BuiltinType::Float4
-                    | BuiltinType::Float8
-                    | BuiltinType::Float16
+                    BuiltinType::Float16
+                    | BuiltinType::Float32
+                    | BuiltinType::Float64
+                    | BuiltinType::Float128
                 )
             );
             let is_unsigned = crate::ir::ty_is_unsigned(&left.inferred_type);
@@ -1145,11 +1145,11 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                         let signed = matches!(
                             inner.inferred_type,
                             Ty::Builtin(
-                                BuiltinType::Int1
-                                | BuiltinType::Int2
-                                | BuiltinType::Int4
-                                | BuiltinType::Int8
+                                BuiltinType::Int8
                                 | BuiltinType::Int16
+                                | BuiltinType::Int32
+                                | BuiltinType::Int64
+                                | BuiltinType::Int128
                             )
                         );
                         if signed {
@@ -1178,11 +1178,11 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                     let signed = matches!(
                         inner.inferred_type,
                         Ty::Builtin(
-                            BuiltinType::Int1
-                            | BuiltinType::Int2
-                            | BuiltinType::Int4
-                            | BuiltinType::Int8
+                            BuiltinType::Int8
                             | BuiltinType::Int16
+                            | BuiltinType::Int32
+                            | BuiltinType::Int64
+                            | BuiltinType::Int128
                         )
                     );
                     if signed {
@@ -1196,11 +1196,11 @@ impl<'ctx, 'r> FunctionLowering<'ctx, 'r> {
                     let signed = matches!(
                         target_type,
                         Ty::Builtin(
-                            BuiltinType::Int1
-                            | BuiltinType::Int2
-                            | BuiltinType::Int4
-                            | BuiltinType::Int8
+                            BuiltinType::Int8
                             | BuiltinType::Int16
+                            | BuiltinType::Int32
+                            | BuiltinType::Int64
+                            | BuiltinType::Int128
                         )
                     );
                     if signed {

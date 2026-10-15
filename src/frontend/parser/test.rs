@@ -465,7 +465,7 @@ mod tests {
             assert!(matches!(body[0].kind, StatementKind::Break));
             assert!(matches!(body[1].kind, StatementKind::Continue));
         } else {
-            panic!("expected For statement");
+            panic!("expected While statement");
         }
     }
 

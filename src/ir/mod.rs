@@ -270,11 +270,11 @@ pub fn ty_is_unsigned(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Builtin(
-            BuiltinType::UInt1
-                | BuiltinType::UInt2
-                | BuiltinType::UInt4
-                | BuiltinType::UInt8
+            BuiltinType::UInt8
                 | BuiltinType::UInt16
+                | BuiltinType::UInt32
+                | BuiltinType::UInt64
+                | BuiltinType::UInt128
                 | BuiltinType::Usize
         )
     )
@@ -285,7 +285,10 @@ pub fn ty_is_float(ty: &Ty) -> bool {
     matches!(
         ty,
         Ty::Builtin(
-            BuiltinType::Float2 | BuiltinType::Float4 | BuiltinType::Float8 | BuiltinType::Float16
+            BuiltinType::Float16
+                | BuiltinType::Float32
+                | BuiltinType::Float64
+                | BuiltinType::Float128
         )
     )
 }
