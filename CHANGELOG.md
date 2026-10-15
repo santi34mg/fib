@@ -7,14 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-14
+
 ### Added
-- Expanded the Fib standard library surface so std modules type-check as import targets.
+- Slice types (`T[]`), explicit array views and sub-slicing, inclusive and
+  exclusive ranges, indexed reads and writes, and slice arguments and returns.
+- `@usize` and the `.@len` property for arrays and slices.
+- Compile-time diagnostics for constant out-of-bounds array indices and invalid
+  slice ranges, plus default runtime bounds checks that print an error and abort.
+- `--release` to disable runtime bounds checks while retaining compile-time
+  checks. Raw pointer indexing remains unchecked.
+- Repeatable `-l` / `--link-lib` options and library API support for native
+  library linkage.
+- Expanded experimental standard library modules and libc bindings.
+- A JavaScript language server providing semantic highlighting and a VS Code
+  extension to launch it.
+- Slice and bounds-check regression tests and a pre-commit validation gate.
+
+### Changed
+- **Breaking:** statements now require trailing semicolons, including block
+  statements such as `if`, `while`, and `switch`.
+- **Breaking:** replaced C-style `for` loops with `while (condition)` loops;
+  initialization and updates must be written as separate statements.
+- Updated maintained samples to use mandatory semicolons and `while` loops.
 
 ### Fixed
-- Add the missing `cargo-deny` license policy, declare the package's MIT
-  license, and run the dependency policy check from the pre-commit hook.
-- Prefer Clang 21 when linking LLVM 21 IR, avoiding CI failures when an
-  incompatible `clang-17` is also installed.
+- Added the missing `cargo-deny` license policy and package MIT license metadata,
+  and included dependency policy checks in the pre-commit hook.
+- Prefer Clang 21 when linking LLVM 21 IR, avoiding failures when an incompatible
+  `clang-17` is also installed.
+
+### Known limitations
+- Fourteen of the 25 standard library modules fail frontend import checks due
+  to remaining uses of removed `for` syntax, directly or through dependencies.
+  Some documentation examples also retain the old syntax.
+- The standard library remains experimental: some networking operations are
+  placeholders, atomic APIs use ordinary loads/stores, and pthread storage
+  sizes are platform-specific assumptions.
+- The language server protocol test hangs; highlighting tests pass.
+- Semantic validation, IR verification, target-aware layout, ownership, and
+  complete flat-IR feature support remain ongoing work.
 
 ## [0.1.0] - 2026-09-18
 
@@ -88,5 +120,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropped the self-hosted compiler effort (`compiler.fib`, 518 lines) to
   focus on the Rust/LLVM compiler.
 
-[Unreleased]: https://github.com/santi34mg/fib/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/santi34mg/fib/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/santi34mg/fib/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/santi34mg/fib/releases/tag/v0.1.0

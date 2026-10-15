@@ -2,7 +2,7 @@
   "name": "fib-lsp-vscode",
   "displayName": "Fib Language Support",
   "description": "Semantic syntax highlighting for Fib, backed by fib-lsp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "engines": {
