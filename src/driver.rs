@@ -1159,10 +1159,10 @@ fn compile_inner(opts: &CompilationOptions) -> Result<CompileOutput, DriverError
         // Still run the frontend first so syntax/type errors are reported
         // rather than masking them behind LlvmUnavailable.
         let _ = run_frontend(opts)?;
-        return Err(DriverError::LlvmUnavailable(match emit {
+        Err(DriverError::LlvmUnavailable(match emit {
             EmitKind::Llvm => "--emit=llvm",
             _ => "linking a binary",
-        }));
+        }))
     }
 
     #[cfg(feature = "llvm")]
