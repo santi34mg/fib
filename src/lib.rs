@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod builder_object;
 pub mod cli;
 pub mod diagnostics;
 pub mod driver;

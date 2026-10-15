@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- An opt-in `BuilderObject` constructor backed by the existing compiler driver; build-file execution remains inactive.
+
 ## [0.1.1] - 2026-10-14
 
 ### Added
