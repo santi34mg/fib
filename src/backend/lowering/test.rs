@@ -78,13 +78,13 @@ mod tests {
         let ctx = Context::create();
         let scope = SymbolTable::new();
         let cases = [
-            (BuiltinType::UInt1, 8u32),
-            (BuiltinType::UInt2, 16),
-            (BuiltinType::UInt4, 32),
-            (BuiltinType::UInt8, 64),
-            (BuiltinType::UInt16, 128),
-            (BuiltinType::Int1, 8),
-            (BuiltinType::Int8, 64),
+            (BuiltinType::UInt8, 8u32),
+            (BuiltinType::UInt16, 16),
+            (BuiltinType::UInt32, 32),
+            (BuiltinType::UInt64, 64),
+            (BuiltinType::UInt128, 128),
+            (BuiltinType::Int8, 8),
+            (BuiltinType::Int64, 64),
         ];
         for (bt, bits) in cases {
             let llvm_ty =
@@ -105,7 +105,7 @@ mod tests {
         use crate::backend::lowering::types::typed_type_size_align;
         let ctx = Context::create();
         let scope = SymbolTable::new();
-        let ty = Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4)));
+        let ty = Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int32)));
         let llvm_ty = map_type_to_llvm(&ty, &ctx, scope.clone()).expect("slice maps");
         match llvm_ty {
             BasicTypeEnum::StructType(st) => {
@@ -214,7 +214,7 @@ mod tests {
         let mut fl =
             FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new(), false);
         let expr = TypedExpr {
-            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            inferred_type: Ty::Builtin(BuiltinType::Int32),
             expression: TypedExprKind::Identifier(Identifier {
                 value: "undeclared".to_string(),
             }),
@@ -285,7 +285,7 @@ mod tests {
         let mut fl =
             FunctionLowering::new(&cctx, function, HashMap::new(), SymbolTable::new(), false);
         let expr = TypedExpr {
-            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            inferred_type: Ty::Builtin(BuiltinType::Int32),
             expression: TypedExprKind::LiteralInt { value: 1 },
         };
         let err = fl
@@ -323,13 +323,13 @@ mod tests {
         );
         let scope = SymbolTable::new();
         let object = TypedExpr {
-            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            inferred_type: Ty::Builtin(BuiltinType::Int32),
             expression: TypedExprKind::Identifier(Identifier {
                 value: "s".to_string(),
             }),
         };
         let expr = TypedExpr {
-            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            inferred_type: Ty::Builtin(BuiltinType::Int32),
             expression: TypedExprKind::FieldAccess {
                 object: Box::new(object),
                 field: "x".to_string(),
@@ -366,7 +366,7 @@ mod tests {
         let i32_ty = ctx.i32_type();
         let tuple_ty = ctx.struct_type(&[i32_ty.into(), i32_ty.into()], false);
         let expr = TypedExpr {
-            inferred_type: Ty::Builtin(BuiltinType::Int4),
+            inferred_type: Ty::Builtin(BuiltinType::Int32),
             expression: TypedExprKind::LiteralInt { value: 1 },
         };
         // Two fields but only one value: the arity check fires before any

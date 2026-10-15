@@ -405,13 +405,25 @@ mod tests {
         );
 
         // `@name` resolves to a builtin type.
-        let toks: Vec<_> = Lexer::new("@int @string").collect();
+        let toks: Vec<_> = Lexer::new("@int @uint @int4 @uint8 @string").collect();
         assert_eq!(
             toks[0].kind,
-            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int1))
+            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int32))
         );
         assert_eq!(
             toks[1].kind,
+            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt32))
+        );
+        assert_eq!(
+            toks[2].kind,
+            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int32))
+        );
+        assert_eq!(
+            toks[3].kind,
+            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::UInt64))
+        );
+        assert_eq!(
+            toks[4].kind,
             TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::String))
         );
 

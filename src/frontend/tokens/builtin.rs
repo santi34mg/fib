@@ -10,12 +10,10 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    /// Map a bare builtin name (without the leading `@`) to a builtin token.
-    /// This is the single source of truth for which identifiers are builtins;
-    /// the lexer consults it after consuming an `@`.
+    /// Map legacy `@`-prefixed builtin names after the old lexer consumes `@`.
     #[deprecated(since = "0.1.2")]
     pub fn from_name(name: &str) -> Option<Builtin> {
-        if let Some(ty) = BuiltinType::from_name(name) {
+        if let Some(ty) = BuiltinType::from_legacy_name(name) {
             return Some(Builtin::BuiltinType(ty));
         }
         if let Some(func) = BuiltinFunction::from_name(name) {
@@ -32,48 +30,48 @@ impl Builtin {
 #[repr(u32)]
 pub enum BuiltinType {
     Void = 0,
-    UInt1 = 1,
-    UInt2 = 2,
-    UInt4 = 3,
-    UInt8 = 4,
-    UInt16 = 5,
-    Int1 = 6,
-    Int2 = 7,
-    Int4 = 8,
-    Int8 = 9,
-    Int16 = 10,
-    Float2 = 11,
-    Float4 = 12,
-    Float8 = 13,
-    Float16 = 14,
+    UInt8 = 1,
+    UInt16 = 2,
+    UInt32 = 3,
+    UInt64 = 4,
+    UInt128 = 5,
+    Int8 = 6,
+    Int16 = 7,
+    Int32 = 8,
+    Int64 = 9,
+    Int128 = 10,
+    Float16 = 11,
+    Float32 = 12,
+    Float64 = 13,
+    Float128 = 14,
     Char = 15,
     Boolean = 16,
     String = 17,
     Never = 18,
-    /// Pointer-width unsigned integer. Maps to `@uint8` (i64) on 64-bit
+    /// Pointer-width unsigned integer. Maps to `uint64` (i64) on 64-bit
     /// targets; the length type returned by `@str_len`, `.len`, and `.@len`.
     Usize = 19,
 }
 
 impl BuiltinType {
-    /// The bare name of this type (without the leading `@`).
+    /// The canonical bit-width name of this type (without the legacy `@` prefix).
     pub fn name(&self) -> &'static str {
         match self {
             Self::Void => "void",
-            Self::UInt1 => "uint",
-            Self::UInt2 => "uint2",
-            Self::UInt4 => "uint4",
             Self::UInt8 => "uint8",
             Self::UInt16 => "uint16",
-            Self::Int1 => "int",
-            Self::Int2 => "int2",
-            Self::Int4 => "int4",
+            Self::UInt32 => "uint32",
+            Self::UInt64 => "uint64",
+            Self::UInt128 => "uint128",
             Self::Int8 => "int8",
             Self::Int16 => "int16",
-            Self::Float2 => "float2",
-            Self::Float4 => "float4",
-            Self::Float8 => "float8",
+            Self::Int32 => "int32",
+            Self::Int64 => "int64",
+            Self::Int128 => "int128",
             Self::Float16 => "float16",
+            Self::Float32 => "float32",
+            Self::Float64 => "float64",
+            Self::Float128 => "float128",
             Self::Char => "char",
             Self::Boolean => "bool",
             Self::String => "string",
@@ -82,24 +80,49 @@ impl BuiltinType {
         }
     }
 
-    /// Resolve a bare type name (without `@`) to a `BuiltinType`.
+    /// Resolve a canonical bit-width type name or its default-width alias.
     pub fn from_name(name: &str) -> Option<BuiltinType> {
         Some(match name {
             "void" => Self::Void,
-            "uint" => Self::UInt1,
-            "uint2" => Self::UInt2,
-            "uint4" => Self::UInt4,
+            "uint" | "uint32" => Self::UInt32,
             "uint8" => Self::UInt8,
             "uint16" => Self::UInt16,
-            "int" => Self::Int1,
-            "int2" => Self::Int2,
-            "int4" => Self::Int4,
+            "uint64" => Self::UInt64,
+            "uint128" => Self::UInt128,
+            "int" | "int32" => Self::Int32,
             "int8" => Self::Int8,
             "int16" => Self::Int16,
-            "float2" => Self::Float2,
-            "float4" => Self::Float4,
-            "float8" => Self::Float8,
+            "int64" => Self::Int64,
+            "int128" => Self::Int128,
             "float16" => Self::Float16,
+            "float32" => Self::Float32,
+            "float64" => Self::Float64,
+            "float128" => Self::Float128,
+            "char" => Self::Char,
+            "bool" => Self::Boolean,
+            "string" => Self::String,
+            "never" => Self::Never,
+            "usize" => Self::Usize,
+            _ => return None,
+        })
+    }
+
+    /// Resolve byte-width spellings accepted by the production lexer until migration.
+    pub(crate) fn from_legacy_name(name: &str) -> Option<BuiltinType> {
+        Some(match name {
+            "void" => Self::Void,
+            "uint" | "uint4" => Self::UInt32,
+            "uint2" => Self::UInt16,
+            "uint8" => Self::UInt64,
+            "uint16" => Self::UInt128,
+            "int" | "int4" => Self::Int32,
+            "int2" => Self::Int16,
+            "int8" => Self::Int64,
+            "int16" => Self::Int128,
+            "float2" => Self::Float16,
+            "float4" => Self::Float32,
+            "float8" => Self::Float64,
+            "float16" => Self::Float128,
             "char" => Self::Char,
             "bool" => Self::Boolean,
             "string" => Self::String,

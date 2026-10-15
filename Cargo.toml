@@ -9,6 +9,7 @@ default = ["llvm"]
 llvm = ["inkwell"]
 
 [dependencies]
+anyhow = "1.0.103"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9.8"
 clap = { version = "4.5.60", features = ["derive"]}
