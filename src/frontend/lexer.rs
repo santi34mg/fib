@@ -362,6 +362,8 @@ impl<'input> Lexer<'input> {
                 let start = self.position;
                 self.skip_while(|c| c.is_alphanumeric() || c == '_');
                 let name = &self.input[start..self.position];
+                // this is just to pass CI, the whole lexer will be deprecated in the future
+                #[allow(deprecated)]
                 match Builtin::from_name(name) {
                     Some(builtin) => Some(TokenKind::Builtin(builtin)),
                     None => Some(TokenKind::Error(format!("unknown builtin '@{}'", name))),

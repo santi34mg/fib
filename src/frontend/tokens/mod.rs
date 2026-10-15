@@ -1,6 +1,7 @@
 pub mod builtin;
 pub mod keyword;
 pub mod literal;
+pub mod name;
 pub mod operator;
 pub mod punctuation;
 pub mod token;
