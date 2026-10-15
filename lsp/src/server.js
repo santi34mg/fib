@@ -34,7 +34,7 @@ function handle(message) {
             full: true,
           },
         },
-        serverInfo: { name: "fib-lsp", version: "0.1.0" },
+        serverInfo: { name: "fib-lsp", version: "0.1.1" },
       });
       break;
     case "initialized":
