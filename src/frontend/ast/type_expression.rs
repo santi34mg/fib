@@ -1,9 +1,10 @@
 use std::fmt;
 
 use crate::diagnostics::Span;
+use crate::frontend::ast::qualified_name::QualifiedName;
+use crate::frontend::tokens::name::Name;
 use crate::frontend::{
-    ast::{enum_variant::EnumVariant, field::Field},
-    identifier::Identifier,
+    ast::{enum_variant::EnumVariant, structl_field::StructField},
     tokens::builtin::BuiltinType,
 };
 
@@ -23,7 +24,6 @@ impl TypeExpression {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpressionKind {
     Builtin(BuiltinType),
-    Identifier(Identifier),
     Function {
         argument_types: Vec<TypeExpression>,
         return_type: Box<TypeExpression>,
@@ -35,7 +35,7 @@ pub enum TypeExpressionKind {
         pointed_type: Box<TypeExpression>,
     },
     Struct {
-        fields: Vec<Field>,
+        fields: Vec<StructField>,
     },
     Enum {
         variants: Vec<EnumVariant>,
@@ -48,22 +48,15 @@ pub enum TypeExpressionKind {
     Slice {
         element_type: Box<TypeExpression>,
     },
-    QualifiedIdentifier {
-        module: Identifier,
-        name: Identifier,
-    },
+    UnqualifiedName(Name),
+    QualifiedName(QualifiedName),
     /// The `type` keyword used as a type annotation — indicates this binding holds a compile-time type value.
     TypeKeyword,
 }
 impl fmt::Display for TypeExpressionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TypeExpressionKind::Builtin(builtin_type) => {
-                write!(f, "{}", builtin_type)
-            }
-            TypeExpressionKind::Identifier(identifier) => {
-                write!(f, "{}", identifier)
-            }
+            TypeExpressionKind::Builtin(builtin_type) => f.write_str(builtin_type.name()),
             TypeExpressionKind::Function {
                 argument_types,
                 return_type,
@@ -85,14 +78,23 @@ impl fmt::Display for TypeExpressionKind {
             TypeExpressionKind::Slice { element_type } => {
                 write!(f, "{}[]", element_type)
             }
-            TypeExpressionKind::QualifiedIdentifier { module, name } => {
-                write!(f, "{}::{}", module, name)
+            TypeExpressionKind::QualifiedName(QualifiedName { segments }) => {
+                if let Some((last, rest)) = segments.split_last() {
+                    for sym in rest {
+                        write!(f, "{}::", sym)?
+                    }
+                    write!(f, "{}", last)?
+                }
+                Ok(())
             }
             TypeExpressionKind::TypeKeyword => {
                 write!(f, "type")
             }
             TypeExpressionKind::Pointer { pointed_type } => {
                 write!(f, "*{}", *pointed_type)
+            }
+            TypeExpressionKind::UnqualifiedName(name) => {
+                write!(f, "{}", name)
             }
         }
     }

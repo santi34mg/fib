@@ -1,10 +1,13 @@
+use crate::diagnostics::Span;
 use crate::frontend::{
     ast::{
-        function_body::FunctionBody, function_declaration::FunctionDeclaration,
-        function_parameter::FunctionParameter, function_signature::FunctionSignature,
+        function_body::FunctionBody,
+        function_declaration::FunctionDeclaration,
+        function_parameter::FunctionParameter,
+        function_signature::FunctionSignature,
+        type_expression::{TypeExpression, TypeExpressionKind},
     },
-    parser::ParseResult,
-    tokens::{Keyword, Operator, Punctuation, Token, TokenKind},
+    tokens::{Keyword, Operator, Punctuation, Token, TokenKind, builtin::BuiltinType},
 };
 
 use super::Parser;
@@ -13,7 +16,7 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_function_declaration(&mut self) -> ParseResult<FunctionDeclaration> {
+    pub fn parse_function_declaration(&mut self) -> anyhow::Result<FunctionDeclaration> {
         // Check for optional 'extern' prefix
         let is_extern = if matches!(
             self.peek(),
@@ -28,13 +31,16 @@ where
             false
         };
 
-        self.expect_token(
+        let fn_kw_token = self.expect_token(
             TokenKind::Keyword(Keyword::Function),
             "parse_function_declaration: expected 'fn' keyword",
         )?;
+        let mut line: usize = fn_kw_token.line;
+        let mut column: usize = fn_kw_token.column;
 
         // Function name
-        let name = self.expect_identifier("parse_function_declaration: expected function name")?;
+        let identifier =
+            self.expect_unqualified_name("parse_function_declaration: expected function name")?;
 
         // Parameters
         self.expect_token(
@@ -59,16 +65,17 @@ where
                     break;
                 }
                 _ => {
-                    let argument_name = self
-                        .expect_identifier("parse_function_declaration: expected parameter name")?;
+                    let argument_name = self.expect_unqualified_name(
+                        "parse_function_declaration: expected parameter name",
+                    )?;
 
                     self.expect_token(
                         TokenKind::Punctuation(Punctuation::Colon),
                         "expected ':' after parameter name",
                     )?;
 
-                    let line = token.line;
-                    let column = token.column;
+                    line = token.line;
+                    column = token.column;
 
                     let argument_type = match self.parse_type_expression()? {
                         Some(type_id) => type_id,
@@ -91,7 +98,23 @@ where
         }
 
         // Return type
-        let return_type = self.parse_type_expression()?;
+        let return_type = if matches!(
+            self.peek(),
+            Some(Token {
+                kind: TokenKind::Punctuation(
+                    Punctuation::OpeningCurlyBrace | Punctuation::Semicolon
+                ),
+                ..
+            })
+        ) {
+            TypeExpression::at(
+                TypeExpressionKind::Builtin(BuiltinType::Void),
+                Span::new(line, column),
+            )
+        } else {
+            self.parse_type_expression()?
+                .ok_or_else(|| self.error("expected a type expression", line, column))?
+        };
 
         // Function body: extern functions use ';' or have no body; regular functions use '{...}'
         let body = if let Some(token) = self.peek() {
@@ -112,9 +135,10 @@ where
 
         Ok(FunctionDeclaration {
             signature: FunctionSignature {
-                name,
+                funcition_name_symbol: identifier,
                 parameters: args,
                 return_type,
+                generic_parameters: Vec::new(),
             },
             body,
             is_extern,

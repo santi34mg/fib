@@ -1,13 +1,16 @@
-use crate::frontend::{ast::expression::Expression, parser::ParseResult, tokens::Operator};
+use crate::frontend::{
+    ast::expression::Expression,
+    tokens::{Operator, Token},
+};
 
 use super::Parser;
 
 impl<'a, I> Parser<'a, I>
 where
-    I: Iterator<Item = crate::frontend::tokens::Token>,
+    I: Iterator<Item = Token>,
 {
     /// Parse equality and comparison expressions (==, !=, >, <, >=, <=)
-    pub fn parse_equality(&mut self) -> ParseResult<Expression> {
+    pub fn parse_equality(&mut self) -> anyhow::Result<Expression> {
         self.parse_binary(
             &[Operator::DoubleEquals, Operator::Different],
             Self::parse_comparison,

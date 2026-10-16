@@ -1,7 +1,7 @@
 use crate::diagnostics::Span;
+use crate::frontend::ast::unary_expression::UnaryExpression;
 use crate::frontend::{
     ast::expression::{Expression, ExpressionKind},
-    parser::ParseResult,
     tokens::{Operator, Token, TokenKind},
 };
 
@@ -11,7 +11,7 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_unary(&mut self) -> ParseResult<Expression> {
+    pub fn parse_unary(&mut self) -> anyhow::Result<Expression> {
         if let Some(token) = self.peek() {
             match &token.kind {
                 TokenKind::Operator(Operator::LogicalNot) => {
@@ -19,10 +19,10 @@ where
                     let span = Span::new(token.line, token.column);
                     let expr = self.parse_unary()?;
                     Ok(Expression::at(
-                        ExpressionKind::Unary {
+                        ExpressionKind::UnaryExpression(UnaryExpression {
                             operator: Operator::LogicalNot,
                             expression: Box::new(expr),
-                        },
+                        }),
                         span,
                     ))
                 }
@@ -31,10 +31,10 @@ where
                     let span = Span::new(token.line, token.column);
                     let expr = self.parse_unary()?;
                     Ok(Expression::at(
-                        ExpressionKind::Unary {
+                        ExpressionKind::UnaryExpression(UnaryExpression {
                             operator: Operator::Minus,
                             expression: Box::new(expr),
-                        },
+                        }),
                         span,
                     ))
                 }
@@ -43,10 +43,10 @@ where
                     let span = Span::new(token.line, token.column);
                     let expr = self.parse_unary()?;
                     Ok(Expression::at(
-                        ExpressionKind::Unary {
+                        ExpressionKind::UnaryExpression(UnaryExpression {
                             operator: Operator::Tilde,
                             expression: Box::new(expr),
-                        },
+                        }),
                         span,
                     ))
                 }

@@ -1,6 +1,5 @@
 use crate::frontend::{
     ast::expression::{Expression, ExpressionKind},
-    parser::ParseResult,
     tokens::{Keyword, Token, TokenKind},
 };
 
@@ -10,7 +9,7 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_cast(&mut self) -> ParseResult<Expression> {
+    pub fn parse_cast(&mut self) -> anyhow::Result<Expression> {
         let mut expr = self.parse_shift()?;
         while self
             .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::As)))

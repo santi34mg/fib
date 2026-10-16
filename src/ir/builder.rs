@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use super::{BasicBlock, Instruction, IrFunction, Label, SymbolId, Temp};
-use crate::frontend::typed_ast::{Ty, TypedStatement};
+use super::{BasicBlock, Instruction, Label, NameId, Temp};
+use crate::frontend::typed_ast::{ty::Ty, typed_statement::TypedStatement};
 // ---------------------------------------------------------------------------
 // Builder
 // ---------------------------------------------------------------------------
@@ -12,30 +12,28 @@ pub(super) struct LoopTarget {
     pub(super) deferred_depth: usize,
 }
 
-pub(super) struct FunctionBuilder {
-    pub(super) name: String,
-    pub(super) params: Vec<(SymbolId, String, Ty)>,
-    pub(super) return_ty: Ty,
-    pub(super) is_extern: bool,
-    pub(super) is_variadic: bool,
+pub(super) struct BasicBlockBuilder<'i, 't> {
+    pub(super) params: Vec<(NameId, &'t str, Ty<'t>)>,
+    pub(super) return_ty: Option<Ty<'t>>,
+    pub(super) is_extern: Option<bool>,
+    pub(super) is_variadic: Option<bool>,
     pub(super) next_temp: u32,
     pub(super) next_label: u32,
-    pub(super) next_sym: u32,
-    pub(super) symbols: Vec<(SymbolId, String, Ty)>,
-    pub(super) scopes: Vec<HashMap<String, SymbolId>>,
-    pub(super) instrs: Vec<Instruction>,
-    pub(super) deferred: Vec<Vec<TypedStatement>>,
+    pub(super) next_sym: u64,
+    pub(super) symbols: Vec<(NameId, &'t str, Ty<'t>)>,
+    pub(super) scopes: Vec<HashMap<&'t str, NameId>>,
+    pub(super) instrs: Vec<Instruction<'i>>,
+    pub(super) deferred: Vec<Vec<TypedStatement<'t>>>,
     pub(super) loops: Vec<LoopTarget>,
 }
 
-impl FunctionBuilder {
-    pub(super) fn new(name: String, return_ty: Ty, is_extern: bool, is_variadic: bool) -> Self {
+impl<'i, 't> BasicBlockBuilder<'i, 't> {
+    pub(super) fn new() -> Self {
         Self {
-            name,
             params: Vec::new(),
-            return_ty,
-            is_extern,
-            is_variadic,
+            return_ty: None,
+            is_extern: None,
+            is_variadic: None,
             next_temp: 0,
             next_label: 0,
             next_sym: 0,
@@ -59,8 +57,8 @@ impl FunctionBuilder {
         l
     }
 
-    pub(super) fn fresh_symbol(&mut self, name: String, ty: Ty) -> SymbolId {
-        let s = SymbolId(self.next_sym);
+    pub(super) fn fresh_symbol(&mut self, name: String, ty: Ty) -> NameId {
+        let s = NameId(self.next_sym);
         self.next_sym += 1;
         self.symbols.push((s, name.clone(), ty));
         // The builder always carries at least the outer frame; degrade
@@ -75,7 +73,7 @@ impl FunctionBuilder {
         s
     }
 
-    pub(super) fn lookup(&self, name: &str) -> Option<SymbolId> {
+    pub(super) fn lookup(&self, name: &str) -> Option<NameId> {
         self.scopes
             .iter()
             .rev()
@@ -90,7 +88,7 @@ impl FunctionBuilder {
         self.scopes.pop();
     }
 
-    pub(super) fn emit(&mut self, instr: Instruction) {
+    pub(super) fn emit(&mut self, instr: Instruction<'i>) {
         self.instrs.push(instr);
     }
 
@@ -98,21 +96,24 @@ impl FunctionBuilder {
         !self.instrs.is_empty()
     }
 
-    pub(super) fn finish(mut self) -> IrFunction {
-        // Split flat instruction stream into basic blocks at LabelDefs AND
-        // terminators (Goto/IfGoto/Return/Unreachable). Each terminator ends
-        // its block so the LLVM consumer gets a 1:1 block mapping where
-        // IfGoto's false edge is "next block". Implicit labels use fresh ids
-        // from the same counter (never colliding with explicit labels).
-        fn is_terminator(instr: &Instruction) -> bool {
-            matches!(
-                instr,
-                Instruction::Goto { .. }
-                    | Instruction::IfGoto { .. }
-                    | Instruction::Return { .. }
-                    | Instruction::Unreachable
-            )
-        }
+    // Split flat instruction stream into basic blocks at LabelDefs AND
+    // terminators (Goto/IfGoto/Return/Unreachable). Each terminator ends
+    // its block so the LLVM consumer gets a 1:1 block mapping where
+    // IfGoto's false edge is "next block". Implicit labels use fresh ids
+    // from the same counter (never colliding with explicit labels).
+    fn is_terminator(instr: &Instruction) -> bool {
+        matches!(
+            instr,
+            Instruction::Goto { .. }
+                | Instruction::IfGoto { .. }
+                | Instruction::Return { .. }
+                | Instruction::Unreachable
+        )
+    }
+
+    pub(super) fn finish(mut self) -> Vec<BasicBlock<'i>> {
+        // TODO: this does work that is probably not needed
+
         let mut blocks: Vec<BasicBlock> = Vec::new();
         let mut cur_label: Option<Label> = None;
         let mut cur_instrs: Vec<Instruction> = Vec::new();
@@ -136,7 +137,7 @@ impl FunctionBuilder {
                     cur_label = Some(Label(self.next_label));
                     self.next_label += 1;
                 }
-                let term = is_terminator(&instr);
+                let term = Self::is_terminator(&instr);
                 cur_instrs.push(instr);
                 if term {
                     let label = cur_label.take().unwrap_or_else(|| {
@@ -163,15 +164,6 @@ impl FunctionBuilder {
                 instrs: cur_instrs,
             });
         }
-        IrFunction {
-            name: self.name,
-            params: self.params,
-            return_ty: self.return_ty,
-            is_extern: self.is_extern,
-            is_variadic: self.is_variadic,
-            temps: self.next_temp,
-            symbols: self.symbols,
-            blocks,
-        }
+        blocks
     }
 }

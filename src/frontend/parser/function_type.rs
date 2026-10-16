@@ -1,7 +1,6 @@
 use crate::diagnostics::Span;
 use crate::frontend::{
     ast::type_expression::{TypeExpression, TypeExpressionKind},
-    parser::ParseResult,
     tokens::{Operator, Punctuation, Token, TokenKind},
 };
 
@@ -10,7 +9,7 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_function_type(&mut self, type_token: &Token) -> ParseResult<TypeExpression> {
+    pub fn parse_function_type(&mut self, type_token: &Token) -> anyhow::Result<TypeExpression> {
         self.expect_token(
             TokenKind::Punctuation(Punctuation::OpeningParenthesis),
             "expected '('",

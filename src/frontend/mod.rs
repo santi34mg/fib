@@ -1,10 +1,9 @@
-pub mod analyze;
+pub mod analyzer;
 pub mod ast;
 pub mod identifier;
-pub mod lexer;
-pub mod next_ast;
-pub mod next_parser;
 pub mod parser;
+pub mod scope;
+pub mod scope_kind;
+pub mod symbol_table;
 pub mod tokenizer;
 pub mod tokens;
-pub mod typed_ast;

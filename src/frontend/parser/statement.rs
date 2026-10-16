@@ -1,6 +1,12 @@
+use anyhow::bail;
+
 use crate::frontend::{
-    ast::statement::{Statement, StatementKind},
-    parser::ParseResult,
+    ast::{
+        binary_expression::BinaryExpression,
+        expression::{Expression, ExpressionKind},
+        statement::{Statement, StatementKind},
+        variable_declaration::VariableDeclaration,
+    },
     tokens::{Keyword, Operator, Punctuation, Token, TokenKind},
 };
 
@@ -9,9 +15,9 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_statement_some(&mut self) -> ParseResult<Statement> {
+    pub fn parse_statement(&mut self) -> anyhow::Result<Statement> {
         loop {
-            match self.parse_statement()? {
+            match self.parse_statement_opt()? {
                 Some(statement) => return Ok(statement),
                 None => {
                     // A comment was consumed; keep trying or error at EOF
@@ -24,7 +30,7 @@ where
         }
     }
 
-    pub fn parse_statement(&mut self) -> ParseResult<Option<Statement>> {
+    pub fn parse_statement_opt(&mut self) -> anyhow::Result<Option<Statement>> {
         let Some((stmt, line, column)) = self.parse_statement_inner()? else {
             return Ok(None);
         };
@@ -41,7 +47,7 @@ where
 
     /// Consume the mandatory trailing `;`, surfacing lexer diagnostics
     /// (`Error`/`Unknown`) verbatim when they appear where `;` was expected.
-    fn expect_semicolon(&mut self) -> ParseResult<()> {
+    fn expect_semicolon(&mut self) -> anyhow::Result<()> {
         match self.peek() {
             Some(t) => match t.kind {
                 TokenKind::Punctuation(Punctuation::Semicolon) => {
@@ -64,7 +70,7 @@ where
     /// Parse one inner statement (no trailing `;`), skipping comments.
     /// Errors at EOF. Used for `defer <stmt>` and `else if ...` chains
     /// where the outer statement owns the terminator.
-    fn parse_statement_inner_some(&mut self) -> ParseResult<(StatementKind, usize, usize)> {
+    fn parse_statement_inner_some(&mut self) -> anyhow::Result<(StatementKind, usize, usize)> {
         loop {
             match self.parse_statement_inner()? {
                 Some(stmt) => return Ok(stmt),
@@ -82,7 +88,7 @@ where
     /// Returns `Ok(None)` for comments and EOF so callers can skip/retry.
     /// `parse_statement` wraps this and enforces the `;`; `defer` and
     /// `else if` use it directly because the outer statement owns the `;`.
-    fn parse_statement_inner(&mut self) -> ParseResult<Option<(StatementKind, usize, usize)>> {
+    fn parse_statement_inner(&mut self) -> anyhow::Result<Option<(StatementKind, usize, usize)>> {
         let line = self.peek().map(|t| t.line).unwrap_or(0);
         let column = self.peek().map(|t| t.column).unwrap_or(0);
         let stmt = if let Some(token) = self.peek() {
@@ -138,10 +144,7 @@ where
                         else_branch,
                     }
                 }
-                TokenKind::Keyword(Keyword::Var) => {
-                    let stmt = self.parse_variable_declaration()?;
-                    StatementKind::VariableDeclaration(stmt)
-                }
+                TokenKind::Keyword(Keyword::Const) => self.parse_variable_declaration()?,
                 TokenKind::Keyword(Keyword::Defer) => {
                     self.next(); // consume 'defer'
                     // Single `;` terminates the whole `defer <stmt>;`,
@@ -183,18 +186,115 @@ where
                         StatementKind::Return(None)
                     }
                 }
-                TokenKind::Identifier(_) => self.parse_identifier_statement()?,
+                TokenKind::Name(_)
+                    if matches!(
+                        self.peek_second(),
+                        Some(Token {
+                            kind: TokenKind::Punctuation(Punctuation::Colon | Punctuation::Comma),
+                            ..
+                        })
+                    ) =>
+                {
+                    self.parse_variable_declaration()?
+                }
+                TokenKind::Name(_) => {
+                    let expr = self.parse_binary(
+                        &[
+                            Operator::Assign,
+                            Operator::Def,
+                            Operator::PlusAssign,
+                            Operator::MinusAssign,
+                            Operator::StarAssign,
+                            Operator::SlashAssign,
+                            Operator::PercentAssign,
+                        ],
+                        Self::parse_expression,
+                    )?;
+                    if let ExpressionKind::BinaryExpresison(bexpr) = &expr.kind
+                        && matches!(
+                            bexpr.operator,
+                            Operator::Def
+                                | Operator::Assign
+                                | Operator::PlusAssign
+                                | Operator::MinusAssign
+                                | Operator::StarAssign
+                                | Operator::SlashAssign
+                                | Operator::PercentAssign
+                        )
+                    {
+                        let ExpressionKind::BinaryExpresison(bexpr) = expr.kind else {
+                            unreachable!()
+                        };
+                        match bexpr.operator {
+                            Operator::Def => {
+                                if let ExpressionKind::UnqualifiedName(name) = bexpr.left.kind {
+                                    StatementKind::VariableDeclaration(VariableDeclaration {
+                                        name,
+                                        ty: None,
+                                        expression: Some(*bexpr.right),
+                                        is_const: false,
+                                    })
+                                } else {
+                                    bail!("expected a name on left hand side of :=")
+                                }
+                            }
+                            Operator::Assign => StatementKind::Assignment {
+                                left: *bexpr.left,
+                                right: *bexpr.right,
+                            },
+                            Operator::PlusAssign
+                            | Operator::MinusAssign
+                            | Operator::StarAssign
+                            | Operator::SlashAssign
+                            | Operator::PercentAssign => {
+                                let operator = match bexpr.operator {
+                                    Operator::PlusAssign => Operator::Plus,
+                                    Operator::MinusAssign => Operator::Minus,
+                                    Operator::StarAssign => Operator::Star,
+                                    Operator::SlashAssign => Operator::Slash,
+                                    Operator::PercentAssign => Operator::Percent,
+                                    _ => unreachable!(),
+                                };
+                                let left = *bexpr.left;
+                                if !matches!(&left.kind, ExpressionKind::UnqualifiedName(_)) {
+                                    return Err(self.error(
+                                        "compound assignment requires a variable name",
+                                        line,
+                                        column,
+                                    ));
+                                }
+                                let right = Expression::at(
+                                    ExpressionKind::BinaryExpresison(BinaryExpression {
+                                        left: Box::new(left.clone()),
+                                        operator,
+                                        right: bexpr.right,
+                                    }),
+                                    left.span,
+                                );
+                                StatementKind::Assignment { left, right }
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        StatementKind::ExpressionStatement(expr)
+                    }
+                }
                 TokenKind::Keyword(Keyword::While) => {
                     self.next(); // consume 'while'
                     self.expect_token(
                         TokenKind::Punctuation(Punctuation::OpeningParenthesis),
                         "expected '(' after while keyword",
                     )?;
-                    let condition = match self.consume_if(|t| {
-                        matches!(t.kind, TokenKind::Punctuation(Punctuation::Semicolon))
-                    }) {
-                        Some(_) => None,
-                        None => Some(self.parse_expression()?),
+                    let condition = if matches!(
+                        self.peek(),
+                        Some(Token {
+                            kind: TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+                            ..
+                        })
+                    ) {
+                        None
+                    } else {
+                        Some(self.parse_expression()?)
                     };
                     self.expect_token(
                         TokenKind::Punctuation(Punctuation::ClosingParenthesis),
@@ -218,7 +318,7 @@ where
                     self.parse_switch_statement()?
                 }
                 TokenKind::Keyword(Keyword::Else)
-                | TokenKind::Name(_)
+                | TokenKind::Identifier(_)
                 | TokenKind::Operator(_)
                 | TokenKind::Punctuation(_)
                 | TokenKind::Keyword(_) => {

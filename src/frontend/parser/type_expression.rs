@@ -1,7 +1,6 @@
 use crate::diagnostics::Span;
 use crate::frontend::{
     ast::type_expression::{TypeExpression, TypeExpressionKind},
-    parser::ParseResult,
     tokens::{Keyword, Literal, Operator, Punctuation, Token, TokenKind, builtin::Builtin},
 };
 
@@ -10,9 +9,10 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    /// Parses a type annotation, which can be a user-defined type (type identifier), or complex type (struct, variant or function).
-    /// Returns `Ok(Some(TypeIdentifier))` if a type is successfully parsed, `Ok(None)` if the next token is not a type, or `Err` if there's a syntax error while parsing a type.
-    pub fn parse_type_expression(&mut self) -> ParseResult<Option<TypeExpression>> {
+    // FIXME: there is something smelly about Ok(None) at the end
+    /// Parses a type annotation, which can be a user-defined type (type identifier),
+    /// or complex type (struct, variant or function).
+    pub fn parse_type_expression(&mut self) -> anyhow::Result<Option<TypeExpression>> {
         let type_token = if let Some(t) = self.peek() {
             t
         } else {
@@ -42,26 +42,10 @@ where
                 self.next(); // consume '('
                 self.parse_tuple_type_expression(&type_token)?
             }
-            TokenKind::Identifier(module) => {
-                self.next();
-                // Check for `::` — qualified type: module::TypeName
-                if matches!(
-                    self.peek(),
-                    Some(Token {
-                        kind: TokenKind::Punctuation(Punctuation::DoubleColon),
-                        ..
-                    })
-                ) {
-                    self.next(); // consume `::`
-                    let name = self.expect_identifier("expected type name after '::'")?;
-                    TypeExpression::at(
-                        TypeExpressionKind::QualifiedIdentifier { module, name },
-                        span,
-                    )
-                } else {
-                    TypeExpression::at(TypeExpressionKind::Identifier(module), span)
-                }
-            }
+            TokenKind::Name(_) => TypeExpression::at(
+                TypeExpressionKind::QualifiedName(self.parse_qualified_name()?),
+                span,
+            ),
             _ => {
                 // Surface lexer diagnostics instead of silently reporting
                 // "not a type" downstream; anything else is not a type.

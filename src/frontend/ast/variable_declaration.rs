@@ -1,25 +1,23 @@
 use crate::frontend::{
     ast::{expression::Expression, type_expression::TypeExpression},
-    identifier::Identifier,
+    tokens::name::Name,
 };
 
 #[derive(Debug, Clone)]
 pub struct VariableDeclaration {
-    pub identifier: Identifier,
-    pub constant_type: Option<TypeExpression>,
+    pub name: Name,
+    pub ty: Option<TypeExpression>,
     pub expression: Option<Expression>,
+    pub is_const: bool,
 }
 
 impl VariableDeclaration {
-    pub fn new(
-        identifier: Identifier,
-        constant_type: Option<TypeExpression>,
-        expression: Option<Expression>,
-    ) -> Self {
+    pub fn new(name: Name, ty: Option<TypeExpression>, expression: Option<Expression>) -> Self {
         Self {
-            identifier,
-            constant_type,
+            name,
+            ty,
             expression,
+            is_const: false,
         }
     }
 }

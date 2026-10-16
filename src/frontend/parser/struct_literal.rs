@@ -1,11 +1,11 @@
 use crate::diagnostics::Span;
+use crate::frontend::ast::qualified_name::QualifiedName;
+use crate::frontend::ast::structl_field::StructField;
 use crate::frontend::{
     ast::{
         expression::{Expression, ExpressionKind},
         type_expression::{TypeExpression, TypeExpressionKind},
     },
-    identifier::Identifier,
-    parser::ParseResult,
     tokens::{Punctuation, Token, TokenKind},
 };
 
@@ -14,7 +14,7 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_struct_literal(&mut self, type_token: &Token) -> ParseResult<TypeExpression> {
+    pub fn parse_struct_literal(&mut self, type_token: &Token) -> anyhow::Result<TypeExpression> {
         // consume 'struct' keyword
         match self.next() {
             Some(first_token) => match first_token.kind {
@@ -46,10 +46,8 @@ where
     /// `context` names the construct for errors (`"struct construction"`,
     /// `"variant payload"`). Like the original loops, a missing `}` at EOF
     /// is tolerated: the trailing `next()` result is discarded.
-    pub fn parse_brace_fields(
-        &mut self,
-        context: &str,
-    ) -> ParseResult<Vec<(Identifier, Expression)>> {
+    // TODO: test this function
+    pub fn parse_brace_fields(&mut self, context: &str) -> anyhow::Result<Vec<StructField>> {
         let mut fields = Vec::new();
         while !matches!(
             self.peek(),
@@ -58,13 +56,17 @@ where
                 ..
             }) | None
         ) {
-            let fname = self.expect_identifier(&format!("expected field name in {}", context))?;
+            let field_name =
+                self.expect_unqualified_name(&format!("expected field name in {}", context))?;
             self.expect_token(
                 TokenKind::Punctuation(Punctuation::Colon),
                 &format!("expected ':' after field name in {}", context),
             )?;
-            let val = self.allow_struct_literals(|p| p.parse_expression())?;
-            fields.push((fname, val));
+            let expression = self.allow_struct_literals(|p| p.parse_expression())?;
+            fields.push(StructField {
+                field_name,
+                expression,
+            });
             // optional comma
             self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
         }
@@ -76,12 +78,15 @@ where
     /// Assumes `{` was already consumed; `span` is the type name's position.
     pub fn parse_struct_construct(
         &mut self,
-        type_name: Identifier,
+        struct_name: QualifiedName,
         span: Span,
-    ) -> ParseResult<Expression> {
+    ) -> anyhow::Result<Expression> {
         let fields = self.parse_brace_fields("struct construction")?;
         Ok(Expression::at(
-            ExpressionKind::StructConstruct { type_name, fields },
+            ExpressionKind::StructConstruct {
+                struct_name,
+                fields,
+            },
             span,
         ))
     }

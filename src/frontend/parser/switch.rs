@@ -1,6 +1,5 @@
 use crate::frontend::{
     ast::{pattern::Pattern, statement::StatementKind, switch::SwitchArm},
-    parser::ParseResult,
     tokens::{Keyword, Punctuation, Token, TokenKind},
 };
 
@@ -9,7 +8,7 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_switch_statement(&mut self) -> ParseResult<StatementKind> {
+    pub fn parse_switch_statement(&mut self) -> anyhow::Result<StatementKind> {
         // 'switch' already consumed by caller.
         self.expect_token(
             TokenKind::Punctuation(Punctuation::OpeningParenthesis),
@@ -44,7 +43,7 @@ where
                     ..
                 }) => {
                     self.next(); // consume '.'
-                    let name = self.expect_identifier("expected variant name after '.'")?;
+                    let name = self.expect_unqualified_name("expected variant name after '.'")?;
                     // Optional `(binding)` for variants carrying a payload.
                     let binding = if matches!(
                         self.peek(),
@@ -54,7 +53,7 @@ where
                         })
                     ) {
                         self.next(); // consume '('
-                        let b = self.expect_identifier("expected binding name in pattern")?;
+                        let b = self.expect_unqualified_name("expected binding name in pattern")?;
                         self.expect_token(
                             TokenKind::Punctuation(Punctuation::ClosingParenthesis),
                             "expected ')' after pattern binding",

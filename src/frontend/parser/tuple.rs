@@ -1,7 +1,6 @@
 use crate::diagnostics::Span;
 use crate::frontend::{
     ast::type_expression::{TypeExpression, TypeExpressionKind},
-    parser::ParseResult,
     tokens::{Punctuation, Token, TokenKind},
 };
 
@@ -13,7 +12,7 @@ where
     pub fn parse_tuple_type_expression(
         &mut self,
         type_token: &Token,
-    ) -> ParseResult<TypeExpression> {
+    ) -> anyhow::Result<TypeExpression> {
         let mut elements = Vec::new();
         while let Some(t) = self.peek() {
             if matches!(

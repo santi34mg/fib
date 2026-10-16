@@ -8,13 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- An opt-in `BuilderObject` constructor backed by the existing compiler driver; build-file execution remains inactive.
+- An unfinished `BuilderObject` build-file pipeline with build stages; compilation and interpretation of build files, object emission, and linking are not yet implemented end-to-end.
 - Split tokenizer and new token shapes for the upcoming parser migration; the current compiler still uses the existing lexer.
-- Opt-in statement-only parser and AST modules for the new syntax, including bit-width builtin type names, per-binding types and `const` in multi-variable declarations, and qualified-access module aliases instead of import declarations; the compiler continues to use the established parser and analyzer.
+- Opt-in statement-only parser and AST modules for the new syntax, including bit-width builtin type names, per-binding types and `const` in multi-variable declarations, and qualified-access module aliases instead of import declarations.
+- Opt-in lexical name resolution for the new AST, with scoped declaration IDs and diagnostics for unknown or duplicate names. Module-qualified imports and type checking remain future work.
+- Preserved the unfinished symbol-table and IR rewrite sources from `refactor/modules-and-generic-functions`; the IR interpreter is now exported but remains unimplemented.
 
 ### Changed
 - Builtin numeric type variants and displayed names use bit widths (`Int32`, `int32`); bare `int` and `uint` now denote 32-bit types. The production lexer still accepts legacy numbered `@int4`-style source spellings until the parser migration.
 - The opt-in parser uses postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of the established compiler's dotted access forms.
+- Replaced the legacy driver, CLI, and library entry points with the unfinished build-file pipeline from `refactor/modules-and-generic-functions`. `build`, `run`, and `test` do not work yet, and this branch does not currently compile: the driver still expects an analyzer and IR output that are not wired up.
+- Extracted the existing flat IR instruction definitions into their own module without changing lowering behavior.
 
 ### Fixed
 - The tokenizer now rejects an unescaped quote in a character literal, so `'''` (and the bare forms `''` and `'''''`) no longer parse as a valid character literal; a literal quote must be written as an escape (`'\''`).

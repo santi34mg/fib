@@ -1,17 +1,17 @@
-use crate::frontend::{ast::expression::Expression, parser::ParseResult};
+use crate::frontend::{ast::expression::Expression, tokens::Token};
 
 use super::Parser;
 
 impl<'a, I> Parser<'a, I>
 where
-    I: Iterator<Item = crate::frontend::tokens::Token>,
+    I: Iterator<Item = Token>,
 {
     /// Parse `(arg, ...)` argument lists shared by builtin calls
     /// (`@concat(a, b)`) and postfix calls (`f(a, b)`).
     /// Assumes `(` was already consumed; consumes the closing `)`.
     /// `close_what` completes the error message (`"builtin function
     /// arguments"`, `"function call arguments"`).
-    pub fn parse_call_arguments(&mut self, close_what: &str) -> ParseResult<Vec<Expression>> {
+    pub fn parse_call_arguments(&mut self, close_what: &str) -> anyhow::Result<Vec<Expression>> {
         use crate::frontend::tokens::{Punctuation, TokenKind};
 
         let mut args = Vec::new();

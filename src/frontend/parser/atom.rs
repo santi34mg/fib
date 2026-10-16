@@ -1,4 +1,4 @@
-use crate::frontend::{ast::expression::Expression, parser::ParseResult, tokens::Token};
+use crate::frontend::{ast::expression::Expression, tokens::Token};
 
 use super::Parser;
 
@@ -9,7 +9,7 @@ where
     /// Parse an atomic expression: a primary followed by any postfix
     /// operators. See [`Parser::parse_primary`] and
     /// [`Parser::parse_postfix`] for the two halves.
-    pub fn parse_atom(&mut self) -> ParseResult<Expression> {
+    pub fn parse_atom(&mut self) -> anyhow::Result<Expression> {
         let expr = self.parse_primary()?;
         self.parse_postfix(expr)
     }

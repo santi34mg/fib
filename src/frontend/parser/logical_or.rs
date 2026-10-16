@@ -1,12 +1,15 @@
-use crate::frontend::{ast::expression::Expression, parser::ParseResult, tokens::Operator};
+use crate::frontend::{
+    ast::expression::Expression,
+    tokens::{Operator, Token},
+};
 
 use super::Parser;
 
 impl<'a, I> Parser<'a, I>
 where
-    I: Iterator<Item = crate::frontend::tokens::Token>,
+    I: Iterator<Item = Token>,
 {
-    pub fn parse_logical_or(&mut self) -> ParseResult<Expression> {
+    pub fn parse_logical_or(&mut self) -> anyhow::Result<Expression> {
         self.parse_binary(&[Operator::LogicalOr], Self::parse_logical_and)
     }
 }

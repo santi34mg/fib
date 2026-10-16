@@ -4,19 +4,19 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::{IrProgram, lower_typed_program};
-    use crate::frontend::lexer::Lexer;
+    use super::super::{Ir, lower_typed_ast};
+    use crate::frontend::analyzer::analyze;
     use crate::frontend::parser::Parser;
+    use crate::frontend::tokenizer::Tokenizer;
     use std::path::PathBuf;
 
-    fn lower_src(src: &str) -> Result<IrProgram, String> {
-        let tokens: Vec<_> = Lexer::new(src).collect();
+    fn lower_src(src: &str) -> Result<Ir, String> {
+        let tokens: Vec<_> = Tokenizer::new(src).collect();
         let path = PathBuf::from("test.fib");
         let mut parser = Parser::new(tokens.into_iter(), &path, src.to_string());
         let ast = parser.parse().map_err(|e| e.to_string())?;
-        let typed = crate::frontend::analyze::analyze(ast, &Default::default())
-            .map_err(|e| e.to_string())?;
-        lower_typed_program(typed).map_err(|e| e.to_string())
+        let typed = analyze(&ast, &Default::default()).map_err(|e| e.to_string())?;
+        lower_typed_ast(typed).map_err(|e| e.to_string())
     }
 
     #[test]
@@ -46,11 +46,11 @@ mod tests {
     x := 0;
     if x == 0 { x = 1; } else { x = 2; };
     i: @int = 0;
-    while (i < 10) { 
-        x = x + i; 
-        i = i + 1; 
+    while (i < 10) {
+        x = x + i;
+        i = i + 1;
     };
-    return x; 
+    return x;
 }",
         )
         .expect("lower if+for");
@@ -88,16 +88,16 @@ mod tests {
     #[test]
     fn ir_break_continue_become_gotos() {
         let prog = lower_src(
-            "fn main() @int { 
+            "fn main() @int {
     x := 0;
     i := 0;
-    while (i < 10) { 
+    while (i < 10) {
         if i == 2 { continue; };
         if i == 5 { break; };
-        x = x + i; 
+        x = x + i;
         i += 1;
     };
-    return x; 
+    return x;
 }",
         )
         .expect("lower break/continue");
