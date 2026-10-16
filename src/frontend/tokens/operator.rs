@@ -15,6 +15,7 @@ pub enum Operator {
     RightShift, // >>
 
     Assign,       // =
+    Def,          // :=
     DoubleEquals, // ==
     Different,    // !=
 
@@ -36,6 +37,9 @@ pub enum Operator {
     /// Slice-range separator (`..` in `arr.[a..b]`, `[a..]`, `[..b]`, `[..]`).
     /// The inclusive end is spelled `.=` (`arr.[a.=b]`, `arr.[.=b]`).
     DoubleDot, // ..
+    DotEq,          // .=
     Ellipsis,       // ...
     ThinRightArrow, // ->
+    AddressOf,      // .&
+    Dereference,    // .*
 }

@@ -2,6 +2,7 @@ use crate::frontend::identifier::Identifier;
 use crate::frontend::tokens::builtin::Builtin;
 use crate::frontend::tokens::keyword::Keyword;
 use crate::frontend::tokens::literal::Literal;
+use crate::frontend::tokens::name::Name;
 use crate::frontend::tokens::operator::Operator;
 use crate::frontend::tokens::punctuation::Punctuation;
 
@@ -9,6 +10,7 @@ use crate::frontend::tokens::punctuation::Punctuation;
 pub enum TokenKind {
     // The identifier token contains the name of the identifier as a string
     Identifier(Identifier),
+    Name(Name),
     Builtin(Builtin),
     Literal(Literal),
     Keyword(Keyword),

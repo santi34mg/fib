@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - An opt-in `BuilderObject` constructor backed by the existing compiler driver; build-file execution remains inactive.
+- Split tokenizer and new token shapes for the upcoming parser migration; the current compiler still uses the existing lexer.
 
 ## [0.1.1] - 2026-10-14
 

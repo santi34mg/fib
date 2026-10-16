@@ -13,6 +13,7 @@ impl Builtin {
     /// Map a bare builtin name (without the leading `@`) to a builtin token.
     /// This is the single source of truth for which identifiers are builtins;
     /// the lexer consults it after consuming an `@`.
+    #[deprecated(since = "0.1.2")]
     pub fn from_name(name: &str) -> Option<Builtin> {
         if let Some(ty) = BuiltinType::from_name(name) {
             return Some(Builtin::BuiltinType(ty));

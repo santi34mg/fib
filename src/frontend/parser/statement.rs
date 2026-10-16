@@ -221,6 +221,7 @@ where
                     self.parse_switch_statement()?
                 }
                 TokenKind::Keyword(Keyword::Else)
+                | TokenKind::Name(_)
                 | TokenKind::Operator(_)
                 | TokenKind::Punctuation(_)
                 | TokenKind::Keyword(_) => {
