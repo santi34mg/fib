@@ -1,7 +1,6 @@
 use crate::diagnostics::Span;
 use crate::frontend::{
     ast::type_expression::{TypeExpression, TypeExpressionKind},
-    parser::ParseResult,
     tokens::{Operator, Token, TokenKind},
 };
 
@@ -10,7 +9,7 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_pointer_type(&mut self, next_token: Token) -> ParseResult<TypeExpression> {
+    pub fn parse_pointer_type(&mut self, next_token: Token) -> anyhow::Result<TypeExpression> {
         let pointed_type = match self.parse_type_expression()? {
             Some(type_id) => type_id,
             None => {
@@ -25,7 +24,7 @@ where
         ))
     }
 
-    pub fn parse_pointer(&mut self) -> ParseResult<TypeExpression> {
+    pub fn parse_pointer(&mut self) -> anyhow::Result<TypeExpression> {
         let next_token = self.expect_token(
             TokenKind::Operator(Operator::Ampersand),
             "expected AMPERSAND (&) after token",

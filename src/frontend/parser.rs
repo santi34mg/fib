@@ -2,45 +2,12 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::Path;
 
-use crate::frontend::ast::{Ast, declaration::DeclarationNode};
-use crate::frontend::identifier::Identifier;
-use crate::frontend::tokens::{Keyword, Token, TokenKind};
-
-mod access;
-mod additive;
-mod assignment;
-mod atom;
-mod binary;
-mod bitwise_and;
-mod bitwise_or;
-mod bitwise_xor;
-mod body;
-mod call;
-mod cast;
-mod comparison;
-mod enum_literal;
-mod equality;
-mod expression;
-mod function_declaration;
-mod function_type;
-mod identifier_statement;
-mod import_declaration;
-mod logical_and;
-mod logical_or;
-mod pointer;
-mod primary;
-mod shift;
-mod statement;
-mod struct_literal;
-mod switch;
-mod term;
-mod test;
-mod tuple;
-mod type_declaration;
-mod type_expression;
-mod type_fields;
-mod unary;
-mod variable_declaration;
+use crate::frontend::ast::Ast;
+use crate::frontend::ast::statement::{Statement, StatementKind};
+use crate::frontend::tokens::Keyword;
+use crate::frontend::tokens::builtin::{Builtin, BuiltinFunction};
+use crate::frontend::tokens::name::Name;
+use crate::frontend::tokens::{Punctuation, Token, TokenKind};
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
@@ -82,42 +49,41 @@ where
     /// Set while parsing an `if` condition so `if done { ... }` treats the
     /// brace as the statement body, not a composite literal.
     no_struct_literal: bool,
-    /// When true, a postfix `.` followed by `=` does not start field access.
-    /// Set while parsing slice bounds so the `.=` alias in `arr.[a.=b]`
-    /// survives as a range separator instead of erroring inside the bound
-    /// expression (a bare `.=` is not a valid expression operator anyway).
-    slice_bound: bool,
 }
 
 impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn new(tokens: I, filename: &'a Path, source: String) -> Self {
+    pub fn new(tokens: I, filename: &'a Path) -> Self {
+        let source = std::fs::read_to_string(filename).unwrap_or_default();
+        Self::with_source(tokens, filename, &source)
+    }
+
+    pub fn with_source(tokens: I, filename: &'a Path, source: &str) -> Self {
         Self {
             tokens,
             lookahead: VecDeque::new(),
             filename,
-            source_lines: source.lines().map(|s| s.to_string()).collect(),
+            source_lines: source.lines().map(str::to_owned).collect(),
             last_pos: (0, 0),
             no_struct_literal: false,
-            slice_bound: false,
         }
     }
 
-    fn error(&self, message: &str, line: usize, column: usize) -> ParseError {
-        let source_line = self
-            .source_lines
-            .get(line.saturating_sub(1))
-            .cloned()
-            .unwrap_or_default();
+    fn error(&self, message: &str, line: usize, column: usize) -> anyhow::Error {
         ParseError {
             filename: self.filename.into(),
-            message: message.to_string(),
+            message: message.to_owned(),
             line,
             column,
-            source_line,
+            source_line: self
+                .source_lines
+                .get(line.saturating_sub(1))
+                .cloned()
+                .unwrap_or_default(),
         }
+        .into()
     }
 
     /// Fill the lookahead buffer with up to `n` tokens, skipping comments.
@@ -125,6 +91,45 @@ where
         while self.lookahead.len() < n {
             match self.tokens.next() {
                 Some(t) if matches!(t.kind, TokenKind::Comment) => continue,
+                Some(mut t) if matches!(t.kind, TokenKind::Punctuation(Punctuation::At)) => {
+                    t.kind = match self.tokens.next() {
+                        Some(next) => {
+                            let name = match next.kind {
+                                TokenKind::Name(name) => Some(name.name),
+                                TokenKind::Builtin(Builtin::BuiltinType(_)) => {
+                                    t.kind = TokenKind::Error(
+                                        "types do not use '@'; remove '@' before the type"
+                                            .to_owned(),
+                                    );
+                                    None
+                                }
+                                TokenKind::Builtin(builtin) => {
+                                    t.kind = TokenKind::Builtin(builtin);
+                                    None
+                                }
+                                _ => None,
+                            };
+                            if let Some(name) = name {
+                                BuiltinFunction::from_name(&name)
+                                    .map(Builtin::BuiltinFunction)
+                                    .map(TokenKind::Builtin)
+                                    .unwrap_or_else(|| {
+                                        if name == "len" {
+                                            TokenKind::Error(
+                                                "use '.len' instead of '@len'".to_owned(),
+                                            )
+                                        } else {
+                                            TokenKind::Error(format!("unknown builtin '@{}'", name))
+                                        }
+                                    })
+                            } else {
+                                t.kind
+                            }
+                        }
+                        None => TokenKind::Error("expected builtin name after '@'".to_owned()),
+                    };
+                    self.lookahead.push_back(t);
+                }
                 Some(t) => self.lookahead.push_back(t),
                 None => break,
             }
@@ -141,6 +146,11 @@ where
         self.lookahead.get(1).cloned()
     }
 
+    fn peek_n(&mut self, n: usize) -> Option<Token> {
+        self.fill_lookahead(n);
+        self.lookahead.get(n - 1).cloned()
+    }
+
     fn next(&mut self) -> Option<Token> {
         self.fill_lookahead(1);
         let token = self.lookahead.pop_front();
@@ -151,7 +161,7 @@ where
     }
 
     /// Consume and return the next token, or error if none.
-    fn expect_next(&mut self, msg: &str) -> ParseResult<Token> {
+    fn expect_next(&mut self, msg: &str) -> anyhow::Result<Token> {
         let (line, column) = self.last_pos;
         self.next().ok_or_else(|| self.error(msg, line, column))
     }
@@ -161,8 +171,8 @@ where
     /// unambiguous again).
     fn allow_struct_literals<T>(
         &mut self,
-        f: impl FnOnce(&mut Self) -> ParseResult<T>,
-    ) -> ParseResult<T> {
+        f: impl FnOnce(&mut Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
         let saved = std::mem::replace(&mut self.no_struct_literal, false);
         let result = f(self);
         self.no_struct_literal = saved;
@@ -170,7 +180,7 @@ where
     }
 
     /// Consume and check the next token matches the token kind provided, or error.
-    fn expect_token(&mut self, token_kind: TokenKind, msg: &str) -> ParseResult<Token> {
+    fn expect_token(&mut self, token_kind: TokenKind, msg: &str) -> anyhow::Result<Token> {
         let token = self.expect_next(msg)?;
         if token.kind == token_kind {
             Ok(token)
@@ -180,10 +190,10 @@ where
     }
 
     /// Consume the next token if it is any identifier, returning it. Errors otherwise.
-    fn expect_identifier(&mut self, msg: &str) -> ParseResult<Identifier> {
+    fn expect_unqualified_name(&mut self, msg: &str) -> anyhow::Result<Name> {
         let token = self.expect_next(msg)?;
         match token.kind {
-            TokenKind::Identifier(id) => Ok(id),
+            TokenKind::Name(name) => Ok(name),
             _ => Err(self.error(msg, token.line, token.column)),
         }
     }
@@ -201,44 +211,69 @@ where
         None
     }
 
-    pub fn parse(&mut self) -> ParseResult<Ast> {
-        let mut declarations: Vec<DeclarationNode> = Vec::new();
+    pub fn parse(&mut self) -> anyhow::Result<Ast> {
+        let mut statements: Vec<Statement> = Vec::new();
 
         while let Some(token) = self.peek() {
-            match &token.kind {
-                TokenKind::Comment => {
-                    self.next();
-                    continue;
-                }
-                TokenKind::Keyword(Keyword::Import) => {
-                    let import = self.parse_import_declaration()?;
-                    declarations.push(DeclarationNode::ImportDeclaration(import));
-                }
-                TokenKind::Keyword(Keyword::Function) => {
-                    let func = self.parse_function_declaration()?;
-                    declarations.push(DeclarationNode::FunctionDeclaration(func));
-                }
-                TokenKind::Keyword(Keyword::Extern) => {
-                    let func = self.parse_function_declaration()?;
-                    declarations.push(DeclarationNode::FunctionDeclaration(func));
+            let span = crate::diagnostics::Span::new(token.line, token.column);
+            match token.kind {
+                TokenKind::Keyword(Keyword::Function | Keyword::Extern) => {
+                    let function = self.parse_function_declaration()?;
+                    statements.push(Statement {
+                        kind: StatementKind::FunctionDeclaration(function),
+                        span,
+                    });
                 }
                 TokenKind::Keyword(Keyword::Type) => {
                     let ty = self.parse_type_declaration()?;
-                    declarations.push(DeclarationNode::TypeDeclaration(ty))
+                    statements.push(Statement {
+                        kind: StatementKind::TypeDeclaration(ty),
+                        span,
+                    });
                 }
-                _ => {
-                    return Err(self.error(
-                        "expected 'import', 'fn', 'extern' or 'type'",
-                        token.line,
-                        token.column,
-                    ));
+
+                TokenKind::Comment => {
+                    self.next();
                 }
+                _ => statements.push(self.parse_statement()?),
             }
         }
 
-        let mut ast = Ast::new();
-        ast.declarations = declarations;
-
-        Ok(ast)
+        Ok(Ast::from(statements))
     }
 }
+
+mod access;
+mod additive;
+mod atom;
+mod binary;
+mod bitwise_and;
+mod bitwise_or;
+mod bitwise_xor;
+mod body;
+mod call;
+mod cast;
+mod comparison;
+mod enum_literal;
+mod equality;
+mod expression;
+mod function_declaration;
+mod function_type;
+
+mod logical_and;
+mod logical_or;
+mod pointer;
+mod primary;
+mod qualified_name;
+mod shift;
+mod statement;
+mod struct_literal;
+mod switch;
+mod term;
+mod test;
+mod tuple;
+mod type_declaration;
+mod type_expression;
+mod type_fields;
+mod unary;
+mod variable_declaration;

@@ -1,4 +1,4 @@
-use crate::frontend::identifier::Identifier;
+use crate::frontend::tokens::name::Name;
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
@@ -6,8 +6,8 @@ pub enum Pattern {
     /// When `binding` is `Some`, a payload-carrying variant binds the payload
     /// fields under that local name (accessible as a struct).
     EnumVariant {
-        variant: Identifier,
-        binding: Option<Identifier>,
+        variant: Name,
+        binding: Option<Name>,
     },
     Wildcard,
 }

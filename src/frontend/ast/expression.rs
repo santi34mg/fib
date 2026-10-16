@@ -1,14 +1,18 @@
 use crate::diagnostics::Span;
+use crate::frontend::ast::binary_expression::BinaryExpression;
+use crate::frontend::ast::qualified_name::QualifiedName;
+use crate::frontend::ast::structl_field::StructField;
+use crate::frontend::ast::unary_expression::UnaryExpression;
 use crate::frontend::{
     ast::type_expression::TypeExpression,
-    identifier::Identifier,
-    tokens::{Literal, Operator, builtin::BuiltinFunction},
+    tokens::name::Name,
+    tokens::{Literal, builtin::BuiltinFunction},
 };
 
 /// An expression together with the source position it starts on. The
 /// analyzer records these spans so type errors can point at the exact
 /// offending sub-expression.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Expression {
     pub kind: ExpressionKind,
     pub span: Span,
@@ -20,39 +24,36 @@ impl Expression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExpressionKind {
-    Binary {
-        left: Box<Expression>,
-        operator: Operator,
-        right: Box<Expression>,
-    },
-    Unary {
-        operator: Operator,
-        expression: Box<Expression>,
-    },
+    /// Binary expressions like `1 + 1`
+    BinaryExpresison(BinaryExpression),
+    /// Unary expressions like `!true`
+    UnaryExpression(UnaryExpression),
+    /// Literals like `123`, `true`, `"abc"`
     Literal(Literal),
-    // The identifier expression contains the name of the identifier as a string
-    Identifier(Identifier),
-    Grouping(Box<Expression>),
+    /// A call is any expression that has `callee(args)`, this can be an enum construction, a function or method call
     Call {
         callee: Box<Expression>,
         args: Vec<Expression>,
     },
+    UnqualifiedName(Name),
+    QualifiedName(QualifiedName),
+    // FIXME: this should probably be integrated with normal calls
     /// A call to a builtin function, e.g. `@concat(a, b)`.
-    BuiltinCall {
+    CallToBuiltin {
         builtin: BuiltinFunction,
         args: Vec<Expression>,
     },
-    FieldAccess {
-        object: Box<Expression>,
-        field: Identifier,
+    /// Access to an expression's inner constructs. This can work for (`my_struct.my_field`)
+    ExprAcess {
+        expr: Box<Expression>,
+        accesed_name: Name,
     },
-    AddressOf(Box<Expression>),
-    Dereference(Box<Expression>),
+    /// Construction of a struct
     StructConstruct {
-        type_name: Identifier,
-        fields: Vec<(Identifier, Expression)>,
+        struct_name: QualifiedName,
+        fields: Vec<StructField>,
     },
     Cast {
         expr: Box<Expression>,
@@ -68,7 +69,7 @@ pub enum ExpressionKind {
     ///   `obj.[.=b]` → `[0, b]` (inclusive), `obj.[..]` → full range.
     ///
     /// `None` means an omitted bound; `inclusive` marks a `.=` end.
-    Slice {
+    SliceLiteral {
         object: Box<Expression>,
         start: Option<Box<Expression>>,
         end: Option<Box<Expression>>,
@@ -77,17 +78,12 @@ pub enum ExpressionKind {
     ArrayLiteral {
         elements: Vec<Expression>,
     },
+    //
     QualifiedAccess {
-        module: Identifier,
-        member: Identifier,
+        segments: Vec<Name>,
     },
     /// A compile-time type value used in expression position (e.g., as a generic argument).
     TypeValue(TypeExpression),
-    /// `Type.Variant { field: val, ... }` — construct an enum variant carrying
-    /// a payload. For payload-less variants, use a plain `FieldAccess` instead.
-    EnumVariantConstruct {
-        type_name: Identifier,
-        variant: Identifier,
-        fields: Vec<(Identifier, Expression)>,
-    },
+    /// The void expression simply means do nothing
+    VoidExpression,
 }

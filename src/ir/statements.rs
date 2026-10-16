@@ -1,26 +1,25 @@
-use super::builder::{FunctionBuilder, LoopTarget};
-use super::expressions::lower_expr;
-use super::{Instruction, IrFunction, LowerError, Operand, SymbolId, UnOp};
-use crate::frontend::typed_ast::{Ty, TypedExpr, TypedExprKind, TypedStatement};
+use anyhow::bail;
 
-pub(super) fn lower_function(
-    f: &crate::frontend::typed_ast::TypedFunction,
-) -> Result<IrFunction, LowerError> {
-    let mut b = FunctionBuilder::new(
-        f.name.value.clone(),
-        f.return_type.clone(),
-        f.is_extern,
-        f.is_variadic,
-    );
+use super::builder::{BasicBlockBuilder, LoopTarget};
+use super::expressions::lower_expr;
+use super::{Instruction, Operand, NameId, UnOp};
+use crate::frontend::tokens::builtin::BuiltinType;
+use crate::frontend::typed_ast::ty::Ty;
+use crate::frontend::typed_ast::typed_statement::TypedStatement;
+use crate::frontend::typed_ast::{TypedExpr, TypedExpressionKind, TypedFunction};
+use crate::ir;
+
+pub(super) fn lower_function(f: TypedFunction) -> anyhow::Result<Vec<ir::BasicBlock>> {
+    let mut b = BasicBlockBuilder::new();
     // Params are allocas like locals so `Store`/`Load` stay uniform.
     // Extern functions get no body: record params but emit nothing.
     for (name, ty) in &f.params {
-        let sym = b.fresh_symbol(name.value.clone(), ty.clone());
-        b.params.push((sym, name.value.clone(), ty.clone()));
+        let sym = b.fresh_symbol(name.raw_str.clone(), ty.clone());
+        b.params.push((sym, name.raw_str.clone(), ty.clone()));
         if !f.is_extern {
             b.emit(Instruction::Alloca {
                 sym,
-                name: name.value.clone(),
+                name: &name.raw_str,
                 ty: ty.clone(),
             });
         }
@@ -71,9 +70,9 @@ pub(super) fn lower_function(
 }
 
 pub(super) fn lower_deferred_from(
-    b: &mut FunctionBuilder,
+    b: &mut BasicBlockBuilder,
     from_depth: usize,
-) -> Result<(), LowerError> {
+) -> anyhow::Result<()> {
     // Clone the frames above `from_depth` so we can recursively lower them
     // while the stack is borrowed immutably.
     let frames: Vec<Vec<TypedStatement>> = b.deferred[from_depth..].to_vec();
@@ -89,18 +88,16 @@ pub(super) fn lower_deferred_from(
 // Statements
 // ---------------------------------------------------------------------------
 
-pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Result<(), LowerError> {
+pub(super) fn lower_stmt(b: &mut BasicBlockBuilder, stmt: &TypedStatement) -> anyhow::Result<()> {
     match stmt {
         TypedStatement::Binding(binding) => {
             if matches!(binding.ty, Ty::Type) {
-                return Err(LowerError::Unsupported(
-                    "comptime `type` binding in runtime code".to_string(),
-                ));
+                bail!("comptime `type` binding in runtime code")
             }
-            let sym = b.fresh_symbol(binding.name.value.clone(), binding.ty.clone());
+            let sym = b.fresh_symbol(binding.symbol.name.clone(), binding.ty.clone());
             b.emit(Instruction::Alloca {
                 sym,
-                name: binding.name.value.clone(),
+                name: binding.symbol.name.clone(),
                 ty: binding.ty.clone(),
             });
             if let Some(init) = &binding.init {
@@ -109,10 +106,10 @@ pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Resu
             }
             Ok(())
         }
-        TypedStatement::Assign { name, expr } => {
-            let sym = b.lookup(&name.value).ok_or_else(|| {
-                LowerError::Unsupported(format!("assign to unknown variable '{}'", name))
-            })?;
+        TypedStatement::Assign { symbol, expr } => {
+            let sym = b
+                .lookup(&symbol.name).co
+                ntext(format!("assign to unknown variable '{}'", symbol))?;
             let v = lower_expr(b, expr)?;
             b.emit(Instruction::Store { dst: sym, src: v });
             Ok(())
@@ -148,9 +145,7 @@ pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Resu
                 dst: ntmp,
                 op: UnOp::Not,
                 src: cond,
-                ty: crate::frontend::typed_ast::Ty::Builtin(
-                    crate::frontend::tokens::builtin::BuiltinType::Boolean,
-                ),
+                ty: Ty::Builtin(BuiltinType::Boolean),
             });
             b.emit(Instruction::IfGoto {
                 cond: Operand::Temp(ntmp),
@@ -193,9 +188,7 @@ pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Resu
                     dst: ntmp,
                     op: UnOp::Not,
                     src: cv,
-                    ty: crate::frontend::typed_ast::Ty::Builtin(
-                        crate::frontend::tokens::builtin::BuiltinType::Boolean,
-                    ),
+                    ty: Ty::Builtin(BuiltinType::Boolean),
                 });
                 b.emit(Instruction::IfGoto {
                     cond: Operand::Temp(ntmp),
@@ -225,20 +218,14 @@ pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Resu
             Ok(())
         }
         TypedStatement::Break => {
-            let target = b
-                .loops
-                .last()
-                .ok_or_else(|| LowerError::Unsupported("`break` outside loop".to_string()))?;
+            let target = b.loops.last().context("`break` outside loop")?;
             let (lbl, depth) = (target.break_label, target.deferred_depth);
             lower_deferred_from(b, depth)?;
             b.emit(Instruction::Goto { target: lbl });
             Ok(())
         }
         TypedStatement::Continue => {
-            let target = b
-                .loops
-                .last()
-                .ok_or_else(|| LowerError::Unsupported("`continue` outside loop".to_string()))?;
+            let target = b.loops.last().context("`continue` outside loop")?;
             let (lbl, depth) = (target.continue_label, target.deferred_depth);
             lower_deferred_from(b, depth)?;
             b.emit(Instruction::Goto { target: lbl });
@@ -265,13 +252,12 @@ pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Resu
             // place. Nested bases (`a.b.c = …`) stay `Unsupported` so the
             // driver falls back to the direct path.
             let base_sym = match &object.expression {
-                TypedExprKind::Identifier(name) => b.lookup(&name.value).ok_or_else(|| {
-                    LowerError::Unsupported(format!("field-assign base unknown '{}'", name))
-                })?,
+                TypedExpressionKind::Identifier(name) => {
+                    b.lookup(&name.raw_str)
+                        .context("field-assign base unknown '{}'")?;
+                }
                 _ => {
-                    return Err(LowerError::Unsupported(
-                        "field-assign of non-identifier base (fallback)".to_string(),
-                    ));
+                    bail!("field-assign of non-identifier base (fallback)".to_string(),)
                 }
             };
             let val = lower_expr(b, expr)?;
@@ -303,42 +289,41 @@ pub(super) fn lower_stmt(b: &mut FunctionBuilder, stmt: &TypedStatement) -> Resu
 }
 
 fn lower_lvalue_store(
-    b: &mut FunctionBuilder,
+    b: &mut BasicBlockBuilder,
     target: &TypedExpr,
     value: Operand,
-) -> Result<(), LowerError> {
+) -> anyhow::Result<()> {
     match &target.expression {
-        TypedExprKind::Identifier(name) => {
-            let sym = b.lookup(&name.value).ok_or_else(|| {
-                LowerError::Unsupported(format!("assign to unknown variable '{}'", name))
-            })?;
+        TypedExpressionKind::Identifier(name) => {
+            let sym = b
+                .lookup(&name.raw_str)
+                .context("assign to unknown variable '{}'")?;
             b.emit(Instruction::Store {
                 dst: sym,
                 src: value,
             });
             Ok(())
         }
-        TypedExprKind::Deref(inner) => {
+        TypedExpressionKind::Deref(inner) => {
             // `*p = v`: lower the pointer, then store through it. The inner
             // pointer expr is usually an identifier (already supported).
             let ptr = lower_expr(b, inner)?;
             b.emit(Instruction::StorePtr { ptr, src: value });
             Ok(())
         }
-        TypedExprKind::FieldAccess {
+        TypedExpressionKind::FieldAccess {
             object,
             field_index,
             ..
         } => {
             // Only `ident.field = v` for now; nested chains fall back.
             let base_sym = match &object.expression {
-                TypedExprKind::Identifier(name) => b.lookup(&name.value).ok_or_else(|| {
-                    LowerError::Unsupported(format!("field-assign base unknown '{}'", name))
-                })?,
+                TypedExpressionKind::Identifier(name) => {
+                    b.lookup(&name.raw_str)
+                        .context("field-assign base unknown '{}'")?;
+                }
                 _ => {
-                    return Err(LowerError::Unsupported(
-                        "multi-assign field target of non-identifier base (fallback)".to_string(),
-                    ));
+                    bail!("multi-assign field target of non-identifier base (fallback)")
                 }
             };
             let ptr_tmp = b.fresh_temp();
@@ -353,29 +338,27 @@ fn lower_lvalue_store(
             });
             Ok(())
         }
-        TypedExprKind::IndexAccess { object, index } => {
+        TypedExpressionKind::IndexAccess { object, index } => {
             lower_index_store_operand(b, object, index, value)
         }
-        _ => Err(LowerError::Unsupported(
-            "multi-assign to non-place target (fallback)".to_string(),
-        )),
+        _ => bail!("multi-assign to non-place target (fallback)"),
     }
 }
 
 fn lower_index_store_operand(
-    b: &mut FunctionBuilder,
+    b: &mut BasicBlockBuilder,
     object: &TypedExpr,
     index: &TypedExpr,
     value: Operand,
-) -> Result<(), LowerError> {
+) -> anyhow::Result<()> {
     let index_op = lower_expr(b, index)?;
     // Array-typed identifier: address-of the slot; pointer-typed: load it.
     // Anything else falls back to the direct path.
     match &object.expression {
-        TypedExprKind::Identifier(name) => {
-            let sym: SymbolId = b.lookup(&name.value).ok_or_else(|| {
-                LowerError::Unsupported(format!("index-assign base unknown '{}'", name))
-            })?;
+        TypedExpressionKind::Identifier(name) => {
+            let sym: NameId = b
+                .lookup(&name.raw_str)
+                .context("index-assign base unknown '{}'")?;
             match &object.inferred_type {
                 Ty::Array { .. } => {
                     let ptr_tmp = b.fresh_temp();
@@ -399,32 +382,28 @@ fn lower_index_store_operand(
                     });
                     Ok(())
                 }
-                _ => Err(LowerError::Unsupported(
-                    "index-assign on non-array/non-pointer (fallback)".to_string(),
-                )),
+                _ => bail!("index-assign on non-array/non-pointer (fallback)"),
             }
         }
-        _ => Err(LowerError::Unsupported(
-            "index-assign of non-identifier base (fallback)".to_string(),
-        )),
+        _ => bail!("index-assign of non-identifier base (fallback)"),
     }
 }
 
 fn lower_index_assign(
-    b: &mut FunctionBuilder,
+    b: &mut BasicBlockBuilder,
     object: &TypedExpr,
     index: &TypedExpr,
     expr: &TypedExpr,
-) -> Result<(), LowerError> {
+) -> anyhow::Result<()> {
     let val = lower_expr(b, expr)?;
     lower_index_store_operand(b, object, index, val)
 }
 
 fn lower_multi_assign(
-    b: &mut FunctionBuilder,
+    b: &mut BasicBlockBuilder,
     targets: &[TypedExpr],
     values: &[TypedExpr],
-) -> Result<(), LowerError> {
+) -> anyhow::Result<()> {
     // Tuple unpack: `a, b = f()` where `f` returns a tuple.
     if values.len() == 1 && matches!(values[0].inferred_type, Ty::Tuple { .. }) {
         let tuple_op = lower_expr(b, &values[0])?;
@@ -441,11 +420,11 @@ fn lower_multi_assign(
         return Ok(());
     }
     if targets.len() != values.len() {
-        return Err(LowerError::Unsupported(format!(
+        bail!(
             "multi-assign arity {} vs {} (fallback)",
             targets.len(),
             values.len()
-        )));
+        )
     }
     let mut lowered = Vec::with_capacity(values.len());
     for v in values {
@@ -458,22 +437,20 @@ fn lower_multi_assign(
 }
 
 fn lower_multi_binding(
-    b: &mut FunctionBuilder,
+    b: &mut BasicBlockBuilder,
     bindings: &[crate::frontend::typed_ast::TypedBinding],
     values: &[TypedExpr],
-) -> Result<(), LowerError> {
+) -> anyhow::Result<()> {
     if values.len() == 1 && matches!(values[0].inferred_type, Ty::Tuple { .. }) {
         let tuple_op = lower_expr(b, &values[0])?;
         for (i, binding) in bindings.iter().enumerate() {
             if matches!(binding.ty, Ty::Type) {
-                return Err(LowerError::Unsupported(
-                    "comptime `type` binding in runtime code".to_string(),
-                ));
+                bail!("comptime `type` binding in runtime code")
             }
-            let sym = b.fresh_symbol(binding.name.value.clone(), binding.ty.clone());
+            let sym = b.fresh_symbol(binding.symbol.raw_str.clone(), binding.ty.clone());
             b.emit(Instruction::Alloca {
                 sym,
-                name: binding.name.value.clone(),
+                name: binding.symbol.raw_str.clone(),
                 ty: binding.ty.clone(),
             });
             let dst = b.fresh_temp();
@@ -491,11 +468,11 @@ fn lower_multi_binding(
         return Ok(());
     }
     if bindings.len() != values.len() {
-        return Err(LowerError::Unsupported(format!(
+        bail!(
             "multi-binding arity {} vs {} (fallback)",
             bindings.len(),
             values.len()
-        )));
+        )
     }
     let mut lowered = Vec::with_capacity(values.len());
     for v in values {
@@ -503,14 +480,12 @@ fn lower_multi_binding(
     }
     for (binding, val) in bindings.iter().zip(lowered) {
         if matches!(binding.ty, Ty::Type) {
-            return Err(LowerError::Unsupported(
-                "comptime `type` binding in runtime code".to_string(),
-            ));
+            bail!("comptime `type` binding in runtime code")
         }
-        let sym = b.fresh_symbol(binding.name.value.clone(), binding.ty.clone());
+        let sym = b.fresh_symbol(binding.symbol.raw_str.clone(), binding.ty.clone());
         b.emit(Instruction::Alloca {
             sym,
-            name: binding.name.value.clone(),
+            name: binding.symbol.raw_str.clone(),
             ty: binding.ty.clone(),
         });
         b.emit(Instruction::Store { dst: sym, src: val });
@@ -519,10 +494,10 @@ fn lower_multi_binding(
 }
 
 fn lower_switch(
-    b: &mut FunctionBuilder,
+    b: &mut BasicBlockBuilder,
     subject: &TypedExpr,
     arms: &[crate::frontend::typed_ast::TypedSwitchArm],
-) -> Result<(), LowerError> {
+) -> anyhow::Result<()> {
     use crate::frontend::typed_ast::TypedPattern;
     // Plain enums only: any payload binding needs the direct path.
     for arm in arms {
@@ -530,9 +505,7 @@ fn lower_switch(
             binding: Some(_), ..
         } = &arm.pattern
         {
-            return Err(LowerError::Unsupported(
-                "switch arm with payload binding (fallback)".to_string(),
-            ));
+            bail!("switch arm with payload binding (fallback)")
         }
     }
     let subj = lower_expr(b, subject)?;

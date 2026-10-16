@@ -1,10 +1,13 @@
 use crate::frontend::{
-    ast::expression::{Expression, ExpressionKind},
-    parser::ParseResult,
-    tokens::Token,
+    ast::{
+        binary_expression::BinaryExpression,
+        expression::{Expression, ExpressionKind},
+    },
+    tokens::{Operator, Token},
 };
 
 use super::Parser;
+use crate::frontend::tokens::TokenKind;
 
 impl<'a, I> Parser<'a, I>
 where
@@ -19,11 +22,9 @@ where
     /// right-hand side propagates the operand parser's error.
     pub fn parse_binary(
         &mut self,
-        ops: &[crate::frontend::tokens::Operator],
-        operand: fn(&mut Self) -> ParseResult<Expression>,
-    ) -> ParseResult<Expression> {
-        use crate::frontend::tokens::TokenKind;
-
+        ops: &[Operator],
+        operand: fn(&mut Self) -> anyhow::Result<Expression>,
+    ) -> anyhow::Result<Expression> {
         let mut expr = operand(self)?;
         while let Some(token) = self.peek() {
             match &token.kind {
@@ -33,11 +34,11 @@ where
                     let right = Box::new(operand(self)?);
                     let span = expr.span;
                     expr = Expression::at(
-                        ExpressionKind::Binary {
+                        ExpressionKind::BinaryExpresison(BinaryExpression {
                             left: Box::new(expr),
                             operator: op,
                             right,
-                        },
+                        }),
                         span,
                     );
                 }

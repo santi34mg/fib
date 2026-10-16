@@ -1,7 +1,7 @@
-use crate::frontend::{ast::type_expression::TypeExpression, identifier::Identifier};
+use crate::frontend::{ast::type_expression::TypeExpression, tokens::name::Name};
 
 #[derive(Debug, Clone)]
 pub struct TypeDeclaration {
-    pub name: Identifier,
+    pub identifier: Name,
     pub expression: TypeExpression,
 }

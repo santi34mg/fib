@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{BinOp, Instruction, IrFunction, IrProgram, Label, Operand, SymbolId, Temp, UnOp};
+use super::{BinOp, Instruction, Ir, Label, Name, Operand,d, Temp, UnOp};
 // ---------------------------------------------------------------------------
 // Pretty printing (used by tests and `--emit=ir` later)
 // ---------------------------------------------------------------------------
@@ -17,13 +17,13 @@ impl fmt::Display for Label {
     }
 }
 
-impl fmt::Display for SymbolId {
+impl fmt::Display for NameId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "%s{}", self.0)
     }
 }
 
-impl fmt::Display for Operand {
+impl<'t> fmt::Display for Operand<'t> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Temp(t) => write!(f, "{}", t),
@@ -61,7 +61,7 @@ impl fmt::Display for BinOp {
     }
 }
 
-impl fmt::Display for Instruction {
+impl<'i> fmt::Display for Instruction<'i> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Alloca { sym, name, ty } => write!(f, "{} = alloca {} : {}", sym, name, ty),
@@ -211,41 +211,13 @@ impl fmt::Display for Instruction {
     }
 }
 
-impl fmt::Display for IrFunction {
+impl<'ir> fmt::Display for Ir<'ir> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let params = self
-            .params
-            .iter()
-            .map(|(s, n, t)| format!("{} {}: {}", s, n, t))
-            .collect::<Vec<_>>()
-            .join(", ");
-        writeln!(f, "fn {}({}) -> {} {{", self.name, params, self.return_ty)?;
-        for (s, n, t) in &self.symbols {
-            writeln!(f, "  ; sym {} {} : {}", s, n, t)?;
-        }
-        for block in &self.blocks {
-            writeln!(f, "  {}:", block.label)?;
-            for instr in &block.instrs {
-                // Skip duplicate label defs (already printed as block header)
-                if let Instruction::LabelDef(l) = instr
-                    && *l == block.label
-                {
-                    continue;
-                }
-                writeln!(f, "    {}", instr)?;
+        for block in self.blocks.iter() {
+            writeln!(f, "{}", block.label)?;
+            for instr in block.instrs {
+                writeln!(f, "{}", instr)?;
             }
-        }
-        writeln!(f, "}}")
-    }
-}
-
-impl fmt::Display for IrProgram {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for c in &self.consts {
-            writeln!(f, "const {} : {} = {}", c.name, c.ty, c.init)?;
-        }
-        for func in &self.functions {
-            writeln!(f, "{}", func)?;
         }
         Ok(())
     }

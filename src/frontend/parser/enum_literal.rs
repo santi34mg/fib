@@ -4,7 +4,6 @@ use crate::frontend::{
         enum_variant::EnumVariant,
         type_expression::{TypeExpression, TypeExpressionKind},
     },
-    parser::ParseResult,
     tokens::{Punctuation, Token, TokenKind},
 };
 
@@ -13,7 +12,7 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_enum_literal(&mut self, type_token: &Token) -> ParseResult<TypeExpression> {
+    pub fn parse_enum_literal(&mut self, type_token: &Token) -> anyhow::Result<TypeExpression> {
         // 'enum' already consumed.
         let first = self.expect_token(
             TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
@@ -29,7 +28,7 @@ where
                 self.next();
                 break;
             }
-            let name = self.expect_identifier("expected variant name")?;
+            let name = self.expect_unqualified_name("expected variant name")?;
             // Optional payload: `Variant { field-list }`
             let payload = if matches!(
                 self.peek(),

@@ -1,34 +1,36 @@
-use super::{Instruction, LowerError, Operand, UnOp};
-use crate::frontend::typed_ast::{LogicalOp, Ty, TypedExpr, TypedExprKind};
+use anyhow::{Context, bail};
 
-use super::builder::FunctionBuilder;
+use super::{Instruction, Operand, UnOp};
+use crate::frontend::typed_ast::{LogicalOp, TypedExpr, TypedExpressionKind, ty::Ty};
+use crate::frontend::tokens::builtin::BuiltinType;
+
+use super::builder::BasicBlockBuilder;
 
 // ---------------------------------------------------------------------------
 // Expressions (each returns the Operand holding its value)
 // ---------------------------------------------------------------------------
 
-pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Operand, LowerError> {
+pub(super) fn lower_expr<'t>(b: &mut BasicBlockBuilder, expr: &TypedExpr) -> anyhow::Result<Operand<'t>> {
     match &expr.expression {
-        TypedExprKind::LiteralInt { value } => Ok(Operand::ConstInt {
+        TypedExpressionKind::LiteralInt { value } => Ok(Operand::ConstInt {
             value: *value,
             ty: expr.inferred_type.clone(),
         }),
-        TypedExprKind::LiteralFloat { value } => Ok(Operand::ConstFloat {
+        TypedExpressionKind::LiteralFloat { value } => Ok(Operand::ConstFloat {
             value: *value,
             ty: expr.inferred_type.clone(),
         }),
-        TypedExprKind::LiteralBool(v) => Ok(Operand::ConstBool(*v)),
-        TypedExprKind::LiteralString { value } => Ok(Operand::StringLit(value.clone())),
-        TypedExprKind::Null => Ok(Operand::Null),
-        TypedExprKind::Identifier(name) => {
+        TypedExpressionKind::LiteralBool(v) => Ok(Operand::ConstBool(*v)),
+        TypedExpressionKind::LiteralString { value } => Ok(Operand::StringLit(value.clone())),
+        TypedExpressionKind::Null => Ok(Operand::Null),
+        TypedExpressionKind::Identifier(name) => {
             let sym = b
-                .lookup(&name.value)
-                .ok_or_else(|| LowerError::Unsupported(format!("unknown variable '{}'", name)))?;
+                .lookup(&name.raw_str).context(format!("unknown variable '{}'", name))?;
             let dst = b.fresh_temp();
             b.emit(Instruction::Load { dst, src: sym });
             Ok(Operand::Temp(dst))
         }
-        TypedExprKind::Binary {
+        TypedExpressionKind::Binary {
             left,
             operator,
             right,
@@ -53,12 +55,12 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
             Ok(Operand::Temp(dst))
         }
         // Short-circuit && / || via explicit control flow + join temp.
-        TypedExprKind::ShortCircuit {
+        TypedExpressionKind::ShortCircuit {
             left,
             operator,
             right,
         } => lower_short_circuit(b, expr, left, *operator, right),
-        TypedExprKind::Call { callee, args } => {
+        TypedExpressionKind::Call { callee, args } => {
             let mut operands = Vec::with_capacity(args.len());
             for a in args {
                 operands.push(lower_expr(b, a)?);
@@ -70,14 +72,14 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
             let ret = dst.map(Operand::Temp);
             b.emit(Instruction::Call {
                 dst,
-                callee: callee.value.clone(),
+                callee: callee.raw_str.clone(),
                 args: operands,
                 ret_ty: expr.inferred_type.clone(),
                 is_variadic: false,
             });
             Ok(ret.unwrap_or(Operand::ConstBool(false)))
         }
-        TypedExprKind::BuiltinCall { builtin, args } => {
+        TypedExpressionKind::BuiltinCall { builtin, args } => {
             let mut operands = Vec::with_capacity(args.len());
             for a in args {
                 operands.push(lower_expr(b, a)?);
@@ -92,7 +94,7 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
             });
             Ok(ret)
         }
-        TypedExprKind::Cast {
+        TypedExpressionKind::Cast {
             expr: inner,
             target_type,
         } => {
@@ -106,22 +108,18 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
             });
             Ok(Operand::Temp(dst))
         }
-        TypedExprKind::AddressOf(inner) => {
+        TypedExpressionKind::AddressOf(inner) => {
             // Only `&x` for a named place is modeled in the core slice.
-            if let TypedExprKind::Identifier(name) = &inner.expression {
-                let sym = b.lookup(&name.value).ok_or_else(|| {
-                    LowerError::Unsupported(format!("address-of unknown '{}'", name))
-                })?;
+            if let TypedExpressionKind::Identifier(name) = &inner.expression {
+                let sym = b.lookup(&name.raw_str).context(format!("address-of unknown '{}'", name))?;
                 let dst = b.fresh_temp();
                 b.emit(Instruction::AddrOf { dst, src: sym });
                 Ok(Operand::Temp(dst))
             } else {
-                Err(LowerError::Unsupported(
-                    "address-of non-identifier (phase 2b: general lvalues)".to_string(),
-                ))
+                bail!("address-of non-identifier (phase 2b: general lvalues)")
             }
         }
-        TypedExprKind::Deref(inner) => {
+        TypedExpressionKind::Deref(inner) => {
             let ptr = lower_expr(b, inner)?;
             let dst = b.fresh_temp();
             b.emit(Instruction::LoadPtr {
@@ -131,35 +129,21 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
             });
             Ok(Operand::Temp(dst))
         }
-        TypedExprKind::FieldAccess { .. } => Err(LowerError::Unsupported(
-            "field access (phase 2b: FieldLoad)".to_string(),
-        )),
-        TypedExprKind::ArrayLen { .. } => Err(LowerError::Unsupported(
-            "array/slice '@len' property (phase 2b: comptime const / slice len)".to_string(),
-        )),
-        TypedExprKind::ArrayToSlice { .. } => Err(LowerError::Unsupported(
-            "explicit array-to-slice (phase 2b: slice struct)".to_string(),
-        )),
-        TypedExprKind::Slice { .. } => Err(LowerError::Unsupported(
-            "slice range (phase 2b: slice struct)".to_string(),
-        )),
-        TypedExprKind::StructConstruct { .. } => Err(LowerError::Unsupported(
-            "struct construction (phase 2b: StructConstruct)".to_string(),
-        )),
-        TypedExprKind::IndexAccess { .. } => Err(LowerError::Unsupported(
-            "index access (phase 2b: IndexLoad)".to_string(),
-        )),
-        TypedExprKind::ArrayLiteral { .. } => Err(LowerError::Unsupported(
-            "array literal (phase 2b: ArrayLiteral)".to_string(),
-        )),
-        TypedExprKind::QualifiedAccess { module, name } => Err(LowerError::Unsupported(format!(
-            "qualified access {}::{} (phase 2b: module mangling)",
-            module, name
-        ))),
-        TypedExprKind::ComptimeType(_) => Err(LowerError::Unsupported(
-            "comptime type value in runtime code".to_string(),
-        )),
-        TypedExprKind::EnumLiteral { discriminant, .. } => {
+        TypedExpressionKind::FieldAccess { .. } => bail!("field access (phase 2b: FieldLoad)"),
+        TypedExpressionKind::ArrayLen { .. } => bail!("array/slice '@len' property (phase 2b: comptime const / slice len)"),
+        TypedExpressionKind::ArrayToSlice { .. } => bail!("explicit array-to-slice (phase 2b: slice struct)"),
+        TypedExpressionKind::Slice { .. } => bail!("slice range (phase 2b: slice struct)"),
+        TypedExpressionKind::StructConstruct { .. } => bail!("struct construction (phase 2b: StructConstruct)"),
+        TypedExpressionKind::IndexAccess { .. } => bail!("index access (phase 2b: IndexLoad)"),
+        TypedExpressionKind::ArrayLiteral { .. } => bail!("array literal (phase 2b: ArrayLiteral)"),
+        TypedExpressionKind::QualifiedAccess { module, name } => {
+            bail!(
+                "qualified access {}::{} (phase 2b: module mangling)",
+                module, name
+            )
+        }
+        TypedExpressionKind::ComptimeType(_) => bail!("comptime type value in runtime code"),
+        TypedExpressionKind::EnumLiteral { discriminant, .. } => {
             let dst = b.fresh_temp();
             b.emit(Instruction::EnumLiteral {
                 dst,
@@ -168,7 +152,7 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
             });
             Ok(Operand::Temp(dst))
         }
-        TypedExprKind::EnumVariantConstruct {
+        TypedExpressionKind::EnumVariantConstruct {
             discriminant,
             fields,
             ..
@@ -189,14 +173,13 @@ pub(super) fn lower_expr(b: &mut FunctionBuilder, expr: &TypedExpr) -> Result<Op
     }
 }
 
-pub(super) fn lower_short_circuit(
-    b: &mut FunctionBuilder,
+pub(super) fn lower_short_circuit<'t>(
+    b: &mut BasicBlockBuilder,
     _expr: &TypedExpr,
     left: &TypedExpr,
     op: LogicalOp,
     right: &TypedExpr,
-) -> Result<Operand, LowerError> {
-    use crate::frontend::tokens::builtin::BuiltinType;
+) -> anyhow::Result<Operand<'t>> {
     let bool_ty = Ty::Builtin(BuiltinType::Boolean);
     let l = lower_expr(b, left)?;
     let result = b.fresh_temp();

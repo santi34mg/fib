@@ -1,7 +1,8 @@
 use crate::diagnostics::Span;
-use crate::frontend::{
-    ast::{expression::Expression, switch::SwitchArm, variable_declaration::VariableDeclaration},
-    identifier::Identifier,
+use crate::frontend::ast::function_declaration::FunctionDeclaration;
+use crate::frontend::ast::type_declaration::TypeDeclaration;
+use crate::frontend::ast::{
+    expression::Expression, switch::SwitchArm, variable_declaration::VariableDeclaration,
 };
 
 /// A statement together with the source position it starts on, used to point
@@ -14,16 +15,13 @@ pub struct Statement {
 
 #[derive(Debug, Clone)]
 pub enum StatementKind {
+    FunctionDeclaration(FunctionDeclaration),
+    TypeDeclaration(TypeDeclaration),
     VariableDeclaration(VariableDeclaration),
     ExpressionStatement(Expression),
     Assignment {
-        identifier: Identifier,
-        expr: Expression,
-    },
-    FieldAssign {
-        object: Expression,
-        field: Identifier,
-        expr: Expression,
+        left: Expression,
+        right: Expression,
     },
     DerefAssign {
         pointer: Expression,
@@ -40,7 +38,8 @@ pub enum StatementKind {
         values: Vec<Expression>,
     },
     MultiVariableDeclaration {
-        identifiers: Vec<Identifier>,
+        bindings: Vec<VariableDeclaration>,
+        /// Empty when all bindings are typed and no initializer was provided.
         values: Vec<Expression>,
     },
     If {

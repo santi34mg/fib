@@ -1,6 +1,5 @@
 use crate::frontend::{
-    ast::variable_declaration::VariableDeclaration,
-    parser::ParseResult,
+    ast::{statement::StatementKind, variable_declaration::VariableDeclaration},
     tokens::{Keyword, Operator, Punctuation, Token, TokenKind},
 };
 
@@ -10,75 +9,110 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    /// Parses the legacy variable declaration syntax: `var <type> <name> = <init>[;]`.
-    pub fn parse_variable_declaration(&mut self) -> ParseResult<VariableDeclaration> {
-        let var_token = self.expect_token(
-            TokenKind::Keyword(Keyword::Var),
-            "parse_variable_declaration: expected 'var' keyword",
-        )?;
-
-        let var_type = self.parse_type_expression()?;
-
-        let ident = if let TokenKind::Identifier(ident) = self
-            .expect_next("parse_variable_declaration: expected identifier")?
-            .kind
-        {
-            ident
-        } else {
-            return Err(self.error("expected identifier", var_token.line, var_token.column));
-        };
-
-        let expr =
-            match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
-                Some(_) => Some(self.parse_expression()?),
-                None => None,
-            };
-
-        Ok(VariableDeclaration::new(ident, var_type, expr))
-    }
-
-    /// Parses the colon-based variable declaration syntax:
-    /// - `name: type = init` for an explicit type annotation
-    /// - `name := init` for an inferred type
-    ///
-    /// The initializer is optional for explicit typed declarations; `name: type`
-    /// declares an uninitialized binding that must be assigned before use.
-    pub fn parse_colon_variable_declaration(&mut self) -> ParseResult<VariableDeclaration> {
-        let ident_token = self.expect_next("expected identifier")?;
-        let ident_line = ident_token.line;
-        let ident_column = ident_token.column;
-        let ident = match ident_token.kind {
-            TokenKind::Identifier(ident) => ident,
-            _ => return Err(self.error("expected identifier", ident_line, ident_column)),
-        };
-
-        self.expect_token(
-            TokenKind::Punctuation(Punctuation::Colon),
-            "expected ':' after variable name",
-        )?;
-
-        if self
-            .consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign)))
+    /// Parse a declaration's left-hand side once per binding, including its
+    /// own `const` qualifier and optional type. The final `:=` is split into
+    /// `:` and `=` tokens by the tokenizer.
+    fn parse_declaration_binding(&mut self) -> anyhow::Result<(VariableDeclaration, bool)> {
+        let is_const = self
+            .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Const)))
+            .is_some();
+        let name = self.expect_unqualified_name("expected variable name")?;
+        let mut inferred = false;
+        let ty = if self
+            .consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Colon)))
             .is_some()
         {
-            let expr = self.parse_expression()?;
-            return Ok(VariableDeclaration::new(ident, None, Some(expr)));
+            if matches!(
+                self.peek(),
+                Some(Token {
+                    kind: TokenKind::Operator(Operator::Assign),
+                    ..
+                })
+            ) {
+                inferred = true;
+                None
+            } else {
+                Some(self.parse_type_expression()?.ok_or_else(|| {
+                    let (line, column) = self
+                        .peek()
+                        .map(|token| (token.line, token.column))
+                        .unwrap_or(self.last_pos);
+                    self.error("expected type after ':'", line, column)
+                })?)
+            }
+        } else {
+            None
+        };
+        let mut binding = VariableDeclaration::new(name, ty, None);
+        binding.is_const = is_const;
+        Ok((binding, inferred))
+    }
+
+    /// Parse the same binding repeatedly while commas follow, then parse the
+    /// shared initializer. Constness and type belong to each binding, not to
+    /// the entire declaration statement.
+    pub fn parse_variable_declaration(&mut self) -> anyhow::Result<StatementKind> {
+        let (first, mut inferred) = self.parse_declaration_binding()?;
+        let mut bindings = vec![first];
+        while self
+            .consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)))
+            .is_some()
+        {
+            if inferred {
+                let (line, column) = self.last_pos;
+                return Err(self.error("expected initializer after ':='", line, column));
+            }
+            let (binding, next_inferred) = self.parse_declaration_binding()?;
+            bindings.push(binding);
+            inferred = next_inferred;
         }
 
-        let var_type = self.parse_type_expression()?.ok_or_else(|| {
+        let last = bindings.last().expect("at least one binding was parsed");
+        if !inferred && last.ty.is_none() {
             let (line, column) = self
                 .peek()
                 .map(|token| (token.line, token.column))
-                .unwrap_or((ident_line, ident_column));
-            self.error("expected type after ':'", line, column)
-        })?;
-
-        let expr =
-            match self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Assign))) {
-                Some(_) => Some(self.parse_expression()?),
-                None => None,
+                .unwrap_or(self.last_pos);
+            return Err(self.error("expected ':' after variable name", line, column));
+        }
+        if !inferred
+            && matches!(
+                self.peek(),
+                Some(Token {
+                    kind: TokenKind::Punctuation(Punctuation::Semicolon),
+                    ..
+                })
+            )
+        {
+            if bindings.iter().any(|binding| binding.ty.is_none()) {
+                let (line, column) = self.last_pos;
+                return Err(self.error(
+                    "without an initializer, each binding needs its own type; add a type to every binding or use ':=' with an initializer",
+                    line,
+                    column,
+                ));
+            }
+            return if bindings.len() == 1 {
+                Ok(StatementKind::VariableDeclaration(bindings.remove(0)))
+            } else {
+                Ok(StatementKind::MultiVariableDeclaration {
+                    bindings,
+                    values: Vec::new(),
+                })
             };
+        }
 
-        Ok(VariableDeclaration::new(ident, Some(var_type), expr))
+        self.expect_token(
+            TokenKind::Operator(Operator::Assign),
+            "expected '=' after type",
+        )?;
+        if bindings.len() == 1 {
+            let mut binding = bindings.remove(0);
+            binding.expression = Some(self.parse_expression()?);
+            Ok(StatementKind::VariableDeclaration(binding))
+        } else {
+            let values = self.parse_expression_list()?;
+            Ok(StatementKind::MultiVariableDeclaration { bindings, values })
+        }
     }
 }

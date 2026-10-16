@@ -7,3 +7,9 @@ pub struct FunctionDeclaration {
     pub is_extern: bool,
     pub is_variadic: bool,
 }
+
+impl FunctionDeclaration {
+    pub fn is_generic(&self) -> bool {
+        !self.signature.generic_parameters.is_empty()
+    }
+}

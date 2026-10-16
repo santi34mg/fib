@@ -1,11 +1,13 @@
+use anyhow::bail;
+
 use crate::diagnostics::Span;
+use crate::frontend::ast::qualified_name::QualifiedName;
 use crate::frontend::{
     ast::{
         expression::{Expression, ExpressionKind},
         type_expression::{TypeExpression, TypeExpressionKind},
     },
-    parser::ParseResult,
-    tokens::{Literal, Punctuation, Token, TokenKind, builtin::Builtin},
+    tokens::{Punctuation, Token, TokenKind, builtin::Builtin},
 };
 
 use super::Parser;
@@ -14,38 +16,59 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    /// Parse a primary expression: literals, identifiers (including
-    /// `module::member` and `Type { ... }`), array literals, grouping,
-    /// builtin type values, builtin calls, and `null`.
+    /// In a condition, braces after a name may be either struct fields or the
+    /// statement body. Fields begin with `name:` and have no top-level `;`.
+    fn brace_starts_struct_fields(&mut self) -> bool {
+        if !matches!(
+            self.peek_n(2),
+            Some(Token {
+                kind: TokenKind::Name(_),
+                ..
+            })
+        ) || !matches!(
+            self.peek_n(3),
+            Some(Token {
+                kind: TokenKind::Punctuation(Punctuation::Colon),
+                ..
+            })
+        ) {
+            return false;
+        }
+
+        let mut depth = 0;
+        let mut n = 1;
+        while let Some(token) = self.peek_n(n) {
+            match token.kind {
+                TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => depth += 1,
+                TokenKind::Punctuation(Punctuation::ClosingCurlyBrace) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return true;
+                    }
+                }
+                TokenKind::Punctuation(Punctuation::Semicolon) if depth == 1 => return false,
+                _ => {}
+            }
+            n += 1;
+        }
+        false
+    }
+
+    /// Parse a primary expression: literals, identifiers (including qualified names),
+    /// array literals, grouping, builtin type values, builtin calls, and `null`.
     /// Postfix operators (calls, field access, ...) are handled by
     /// [`Parser::parse_postfix`].
-    pub fn parse_primary(&mut self) -> ParseResult<Expression> {
+    pub fn parse_primary(&mut self) -> anyhow::Result<Expression> {
         let token = self.expect_next("parse_atom: expected a token, found none")?;
         let span = Span::new(token.line, token.column);
         match token.kind {
-            TokenKind::Literal(Literal::Integer(integer_literal)) => Ok(Expression::at(
-                ExpressionKind::Literal(Literal::Integer(integer_literal)),
-                span,
-            )),
-            TokenKind::Literal(Literal::Float(float_literal)) => Ok(Expression::at(
-                ExpressionKind::Literal(Literal::Float(float_literal)),
-                span,
-            )),
-            TokenKind::Literal(Literal::Boolean(boolean_literal)) => Ok(Expression::at(
-                ExpressionKind::Literal(Literal::Boolean(boolean_literal)),
-                span,
-            )),
-            TokenKind::Literal(Literal::Character(char_literal)) => Ok(Expression::at(
-                ExpressionKind::Literal(Literal::Character(char_literal)),
-                span,
-            )),
-            TokenKind::Literal(Literal::String(s)) => Ok(Expression::at(
-                ExpressionKind::Literal(Literal::String(s)),
-                span,
-            )),
-            TokenKind::Identifier(id) => {
+            TokenKind::Literal(literal) => {
+                Ok(Expression::at(ExpressionKind::Literal(literal), span))
+            }
+            TokenKind::Name(name) => {
                 // Check if next token is `::` — qualified access: module::member
-                if matches!(
+                let mut segments = vec![name];
+                while matches!(
                     self.peek(),
                     Some(Token {
                         kind: TokenKind::Punctuation(Punctuation::DoubleColon),
@@ -53,25 +76,26 @@ where
                     })
                 ) {
                     self.next(); // consume `::`
-                    let member = self.expect_identifier("expected member name after '::'")?;
-                    Ok(Expression::at(
-                        ExpressionKind::QualifiedAccess { module: id, member },
-                        span,
-                    ))
-                // Check if next token is '{' — struct construction: TypeName { field: val, ... }
-                } else if !self.no_struct_literal
-                    && matches!(
-                        self.peek(),
-                        Some(Token {
-                            kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
-                            ..
-                        })
-                    )
+                    segments.push(self.expect_unqualified_name("expected name after '::'")?);
+                }
+                if let Some(Token {
+                    kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
+                    ..
+                }) = self.peek()
+                    && (!self.no_struct_literal || self.brace_starts_struct_fields())
                 {
                     self.next(); // consume '{'
-                    self.parse_struct_construct(id, span)
+                    self.parse_struct_construct(QualifiedName { segments }, span) // this one consumes '}', TODO: test that
+                } else if segments.len() == 1 {
+                    Ok(Expression::at(
+                        ExpressionKind::UnqualifiedName(segments.remove(0)),
+                        span,
+                    ))
                 } else {
-                    Ok(Expression::at(ExpressionKind::Identifier(id), span))
+                    Ok(Expression::at(
+                        ExpressionKind::QualifiedAccess { segments },
+                        span,
+                    ))
                 }
             }
             TokenKind::Punctuation(Punctuation::OpeningSquareBrace) => {
@@ -103,10 +127,7 @@ where
                     TokenKind::Punctuation(Punctuation::ClosingParenthesis),
                     "parse_atom: expected ')'",
                 )?;
-                Ok(Expression::at(
-                    ExpressionKind::Grouping(Box::new(inner_expr)),
-                    span,
-                ))
+                Ok(inner_expr)
             }
             // A builtin type token in expression position — produces a comptime type value.
             // This allows passing builtin types as generic arguments: `identity(sint32, 42)`
@@ -126,34 +147,17 @@ where
                 )?;
                 let args = self.parse_call_arguments("builtin function arguments")?;
                 Ok(Expression::at(
-                    ExpressionKind::BuiltinCall { builtin: bf, args },
+                    ExpressionKind::CallToBuiltin { builtin: bf, args },
                     span,
                 ))
             }
-            // Comptime properties like `@len` only make sense after a `.`;
-            // a bare `@len` is a parse error.
-            TokenKind::Builtin(Builtin::BuiltinProperty(prop)) => Err(self.error(
-                &format!("builtin property '{}' must follow a '.'", prop),
-                token.line,
-                token.column,
-            )),
-            TokenKind::Literal(Literal::Null) => {
-                Ok(Expression::at(ExpressionKind::Literal(Literal::Null), span))
-            }
+
             // Surface lexer diagnostics verbatim (e.g. unterminated
             // strings, unknown `@builtins`) instead of a generic
             // "expected an atom" message.
             TokenKind::Error(msg) => Err(self.error(&msg, token.line, token.column)),
-            TokenKind::Unknown(c) => Err(self.error(
-                &format!("unknown character '{}'", c),
-                token.line,
-                token.column,
-            )),
-            _ => Err(self.error(
-                &format!("parse_atom: expected an atom, found {:?}", token.kind),
-                token.line,
-                token.column,
-            )),
+            TokenKind::Unknown(c) => bail!("unknown character '{}'", c),
+            _ => bail!("parse_atom: expected an atom, found {:?}", token.kind),
         }
     }
 }

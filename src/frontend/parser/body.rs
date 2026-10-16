@@ -1,6 +1,5 @@
 use crate::frontend::{
     ast::statement::Statement,
-    parser::ParseResult,
     tokens::{Punctuation, Token, TokenKind},
 };
 
@@ -11,7 +10,7 @@ where
     I: Iterator<Item = Token>,
 {
     /// Parse a block body: expects '{' then parses statements until matching '}'.
-    pub fn parse_body(&mut self) -> ParseResult<Vec<Statement>> {
+    pub fn parse_body(&mut self) -> anyhow::Result<Vec<Statement>> {
         self.expect_token(
             TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
             "parse_body: expected '{'",
@@ -35,7 +34,7 @@ where
                 }
                 _ => {}
             }
-            if let Some(stmt) = self.parse_statement()? {
+            if let Some(stmt) = self.parse_statement_opt()? {
                 stmts.push(stmt);
             }
         }

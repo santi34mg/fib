@@ -1,59 +1,114 @@
 use std::path::PathBuf;
 
-use crate::diagnostics::CompilerError;
-use crate::driver::{self, CompilationOptions, CompileOutput};
+use anyhow::bail;
 
-/// Configures a compilation without selecting the unfinished build-file pipeline.
-///
-/// For now this is an opt-in entry point over the existing driver. The CLI and
-/// library APIs continue to use `CompilationOptions` directly.
-#[derive(Debug, Clone)]
+use crate::{
+    driver::{self, compiler_output::CompilationOutput, run_pipeline},
+    ir_interpreter,
+};
+
+const BUILD_FILE_NAME: &'static str = "build.fib";
+
+/// BuilderObject uses the builder pattern to create an object that
+/// guides the build process of the project.
 pub struct BuilderObject {
-    options: CompilationOptions,
+    /// True if the build configuration is done
+    pub build_stage: BuildStage,
+    /// Main file that orchestrates the compilation process
+    // note that PathBuf is owning
+    build_file: Option<PathBuf>,
+    /// Modules defined in the build file
+    modules: Vec<PathBuf>,
+    /// Optimization level passed to clang as `-O<level>`.
+    /// Accepted: `0`, `1`, `2`, `3`, `s`, `z`.
+    opt_level: Option<String>,
+    /// Release mode (`--release`): skip debug runtime bounds checks.
+    /// When false (default, debug) every `arr.[i]` / `arr.[a..b]` lowers to
+    /// an explicit OOB check that reports to stderr and aborts.
+    release: bool,
 }
 
 impl BuilderObject {
-    pub fn new(project_path: impl Into<PathBuf>) -> Self {
+    pub fn new() -> Self {
         Self {
-            options: CompilationOptions::new(project_path.into()),
+            build_stage: BuildStage::Configuration,
+            build_file: None,
+            modules: Vec::new(),
+            // doesn't mean 0, just not asigned
+            opt_level: None,
+            // debug mode by default
+            release: false,
         }
     }
 
-    /// Configure the same options accepted by the current compiler driver.
-    pub fn options_mut(&mut self) -> &mut CompilationOptions {
-        &mut self.options
+    pub fn add_build_file(&mut self) -> anyhow::Result<&mut Self> {
+        let pwd = std::env::current_dir()?;
+        let read_dir = std::fs::read_dir(pwd)?;
+        for file in read_dir {
+            let file = file?;
+            let path = file.path();
+            if *path == *BUILD_FILE_NAME {
+                self.build_file = Some(path);
+            }
+        }
+        self.build_stage = BuildStage::BuildFileCompilation;
+        Ok(self)
     }
 
-    pub fn build(&self) -> Result<CompileOutput, Box<CompilerError>> {
-        driver::compile(&self.options)
+    /// `compile_build_file` compiles the build file into IR and interprets it,
+    /// leaving the BuilderObject ready to build
+    pub fn compile_and_interpret_build_file(&mut self) -> anyhow::Result<&mut Self> {
+        if let Some(p) = self.build_file.clone() {
+            match driver::run_pipeline(&p, &self)? {
+                CompilationOutput::Ir(ir) => {
+                    // TODO: here we need to interpret the IR
+                    //
+                    // the reason we can't simply iterate over ir as a flat list
+                    // is that comp time instructions might be within control flow
+                    // so we need an interpreter to follow the build instructions
+                    // correctly.
+                    // so exciting :)
+                    self.modules = ir_interpreter::interpret_ir(ir, self)?;
+                    self.build_stage = BuildStage::IndividualIrCompilation;
+                }
+                _ => {
+                    // if this ever happens we made some sort of mistake
+                    bail!("build file compilation emmited ir or binary")
+                }
+            };
+            Ok(self)
+        } else {
+            bail!("no build file has been added");
+        }
+    }
+
+    /// `build` is a sink for the builder pattern, turns a `BuilderObject`
+    /// into a project.
+    /// Can return any of the `CompileOutputs` (Frontend, IR, Binary).
+    pub fn build<'a>(&mut self) -> anyhow::Result<CompilationOutput<'a>> {
+        let BuildStage::IndividualIrCompilation = self.build_stage else {
+            bail!("builder is not ready yet")
+        };
+        for path in self.modules.iter() {
+            if let CompilationOutput::ObjectFile(obj) = run_pipeline(&path, &self)? {
+                std::fs::write(path.with_extension("obj"), obj);
+            } else {
+                unreachable!()
+            }
+        }
+        self.build_stage = BuildStage::Linking;
+        // TODO: linking
+        todo!()
+    }
+
+    pub fn run(self) -> anyhow::Result<()> {
+        todo!()
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::driver::EmitKind;
-
-    #[test]
-    fn builds_with_existing_frontend_pipeline() {
-        let mut builder = BuilderObject::new("test.fib");
-        builder.options_mut().source_override = Some("fn main() @int { return 0; }".into());
-        builder.options_mut().check_only = true;
-
-        let CompileOutput::Frontend { emit, frontend } = builder.build().expect("compile") else {
-            panic!("expected frontend output");
-        };
-        assert_eq!(emit, EmitKind::Typed);
-        assert_eq!(frontend.typed_program.declarations.len(), 1);
-    }
-
-    #[test]
-    fn preserves_driver_diagnostics() {
-        let mut builder = BuilderObject::new("test.fib");
-        builder.options_mut().source_override = Some("fn main() @int { return missing; }".into());
-        builder.options_mut().check_only = true;
-
-        let error = builder.build().expect_err("expected analysis error");
-        assert!(error.to_string().contains("missing"));
-    }
+pub enum BuildStage {
+    Configuration,
+    BuildFileCompilation,
+    IndividualIrCompilation,
+    Linking,
 }
