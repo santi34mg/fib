@@ -762,21 +762,21 @@ pub(super) fn build_ir_cast<'ctx, 'r>(
     let src_signed = matches!(
         from,
         Ty::Builtin(
-            BuiltinType::Int1
-                | BuiltinType::Int2
-                | BuiltinType::Int4
-                | BuiltinType::Int8
+            BuiltinType::Int8
                 | BuiltinType::Int16
+                | BuiltinType::Int32
+                | BuiltinType::Int64
+                | BuiltinType::Int128
         )
     );
     let tgt_signed = matches!(
         target,
         Ty::Builtin(
-            BuiltinType::Int1
-                | BuiltinType::Int2
-                | BuiltinType::Int4
-                | BuiltinType::Int8
+            BuiltinType::Int8
                 | BuiltinType::Int16
+                | BuiltinType::Int32
+                | BuiltinType::Int64
+                | BuiltinType::Int128
         )
     );
     match (src, dst_ty) {

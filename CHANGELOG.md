@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - An opt-in `BuilderObject` constructor backed by the existing compiler driver; build-file execution remains inactive.
 - Split tokenizer and new token shapes for the upcoming parser migration; the current compiler still uses the existing lexer.
+- Opt-in statement-only parser and AST modules for the new syntax, including bit-width builtin type names, per-binding types and `const` in multi-variable declarations, and qualified-access module aliases instead of import declarations; the compiler continues to use the established parser and analyzer.
+
+### Changed
+- Builtin numeric type variants and displayed names use bit widths (`Int32`, `int32`); bare `int` and `uint` now denote 32-bit types. The production lexer still accepts legacy numbered `@int4`-style source spellings until the parser migration.
+- The opt-in parser uses postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of the established compiler's dotted access forms.
 
 ## [0.1.1] - 2026-10-14
 

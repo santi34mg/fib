@@ -8,7 +8,7 @@ mod tests {
 
     #[test]
     fn test_comment() {
-        let test_string = String::from("// This is a comment\nvar x = 5;");
+        let test_string = String::from("// This is a comment\nconst x := 5;");
         let expected = [
             TokenKind::Comment,
             TokenKind::Keyword(Keyword::Const),
@@ -16,6 +16,7 @@ mod tests {
                 name: "x".to_string(),
                 id: 1,
             }),
+            TokenKind::Punctuation(Punctuation::Colon),
             TokenKind::Operator(Operator::Assign),
             TokenKind::Literal(Literal::Integer(5)),
             TokenKind::Punctuation(Punctuation::Semicolon),
@@ -150,7 +151,7 @@ mod tests {
     #[test]
     fn test_all_keywords() {
         let cases = [
-            ("var", TokenKind::Keyword(Keyword::Const)),
+            ("const", TokenKind::Keyword(Keyword::Const)),
             ("if", TokenKind::Keyword(Keyword::If)),
             ("else", TokenKind::Keyword(Keyword::Else)),
             ("while", TokenKind::Keyword(Keyword::While)),
@@ -166,7 +167,6 @@ mod tests {
             ("when", TokenKind::Keyword(Keyword::When)),
             ("extern", TokenKind::Keyword(Keyword::Extern)),
             ("defer", TokenKind::Keyword(Keyword::Defer)),
-            ("import", TokenKind::Keyword(Keyword::Import)),
             ("as", TokenKind::Keyword(Keyword::As)),
         ];
         for (src, expected) in cases {
@@ -259,8 +259,8 @@ mod tests {
 
     #[test]
     fn test_identifier_not_keyword() {
-        // These start with keyword prefixes but are identifiers
-        let test_string = "forloop constant variable";
+        // Keyword prefixes and former keywords are identifiers.
+        let test_string = "forloop constant variable var import";
         let tokens: Vec<_> = Tokenizer::new(test_string).collect();
         for tok in &tokens {
             assert!(
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn test_multiline_comment_skipped() {
         // Comments appear as Comment tokens, not discarded
-        let test_string = "// comment\nvar";
+        let test_string = "// comment\nconst";
         let tokens: Vec<_> = Tokenizer::new(test_string).collect();
         assert!(
             tokens
@@ -397,8 +397,8 @@ mod tests {
     fn test_builtins() {
         use crate::frontend::tokens::builtin::{Builtin, BuiltinFunction, BuiltinType};
 
-        // Bare type names are now plain identifiers.
-        let toks: Vec<_> = Tokenizer::new("int string bool").collect();
+        // Bare builtin type names are recognized without an `@` prefix.
+        let toks: Vec<_> = Tokenizer::new("int8 string bool").collect();
         assert!(
             toks.iter()
                 .all(|t| matches!(t.kind, TokenKind::Builtin(Builtin::BuiltinType(_)))),
@@ -407,15 +407,63 @@ mod tests {
         );
 
         // resolves to a builtin type.
-        let toks: Vec<_> = Tokenizer::new("int string").collect();
+        let toks: Vec<_> = Tokenizer::new("int8 string").collect();
         assert_eq!(
             toks[0].kind,
-            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int1))
+            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int8))
         );
         assert_eq!(
             toks[1].kind,
             TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::String))
         );
+
+        for (spelling, expected) in [
+            ("uint8", BuiltinType::UInt8),
+            ("uint16", BuiltinType::UInt16),
+            ("uint32", BuiltinType::UInt32),
+            ("uint64", BuiltinType::UInt64),
+            ("uint128", BuiltinType::UInt128),
+            ("int8", BuiltinType::Int8),
+            ("int16", BuiltinType::Int16),
+            ("int32", BuiltinType::Int32),
+            ("int64", BuiltinType::Int64),
+            ("int128", BuiltinType::Int128),
+            ("float16", BuiltinType::Float16),
+            ("float32", BuiltinType::Float32),
+            ("float64", BuiltinType::Float64),
+            ("float128", BuiltinType::Float128),
+            ("void", BuiltinType::Void),
+            ("char", BuiltinType::Char),
+            ("bool", BuiltinType::Boolean),
+            ("string", BuiltinType::String),
+            ("never", BuiltinType::Never),
+            ("usize", BuiltinType::Usize),
+        ] {
+            assert_eq!(
+                BuiltinType::from_name(expected.name()),
+                Some(expected.clone())
+            );
+            let tokens: Vec<_> = Tokenizer::new(spelling).collect();
+            assert_eq!(tokens.len(), 1, "{spelling}");
+            assert_eq!(
+                tokens[0].kind,
+                TokenKind::Builtin(Builtin::BuiltinType(expected)),
+                "{spelling}"
+            );
+        }
+        for (alias, ty) in [("int", BuiltinType::Int32), ("uint", BuiltinType::UInt32)] {
+            let tokens: Vec<_> = Tokenizer::new(alias).collect();
+            assert_eq!(tokens[0].kind, TokenKind::Builtin(Builtin::BuiltinType(ty)));
+        }
+        for old_spelling in [
+            "int2", "int4", "uint2", "uint4", "float2", "float4", "float8",
+        ] {
+            let tokens: Vec<_> = Tokenizer::new(old_spelling).collect();
+            assert!(
+                matches!(tokens[0].kind, TokenKind::Name(_)),
+                "{old_spelling}"
+            );
+        }
 
         // resolves to a builtin function.
         let toks: Vec<_> = Tokenizer::new("concat str_len str_eq").collect();

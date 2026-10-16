@@ -1,0 +1,35 @@
+use crate::diagnostics::Span;
+use crate::frontend::{
+    next_ast::type_expression::{TypeExpression, TypeExpressionKind},
+    tokens::{Operator, Token, TokenKind},
+};
+
+use super::Parser;
+impl<'a, I> Parser<'a, I>
+where
+    I: Iterator<Item = Token>,
+{
+    pub fn parse_pointer_type(&mut self, next_token: Token) -> anyhow::Result<TypeExpression> {
+        let pointed_type = match self.parse_type_expression()? {
+            Some(type_id) => type_id,
+            None => {
+                return Err(self.error("expected type", next_token.line, next_token.column));
+            }
+        };
+        Ok(TypeExpression::at(
+            TypeExpressionKind::Pointer {
+                pointed_type: Box::new(pointed_type),
+            },
+            Span::new(next_token.line, next_token.column),
+        ))
+    }
+
+    pub fn parse_pointer(&mut self) -> anyhow::Result<TypeExpression> {
+        let next_token = self.expect_token(
+            TokenKind::Operator(Operator::Ampersand),
+            "expected AMPERSAND (&) after token",
+        )?;
+        // `expect_token` already verified the token, so no re-check needed.
+        self.parse_pointer_type(next_token)
+    }
+}

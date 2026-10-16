@@ -40,14 +40,14 @@ pub(crate) fn typed_type_size_align(
         Ty::Builtin(b) => {
             let s = match b {
                 BuiltinType::Boolean | BuiltinType::Char => 1,
-                BuiltinType::UInt1 | BuiltinType::Int1 | BuiltinType::Never => 1,
-                BuiltinType::UInt2 | BuiltinType::Int2 | BuiltinType::Float2 => 2,
-                BuiltinType::UInt4 | BuiltinType::Int4 | BuiltinType::Float4 => 4,
-                BuiltinType::UInt8
-                | BuiltinType::Int8
-                | BuiltinType::Float8
+                BuiltinType::UInt8 | BuiltinType::Int8 | BuiltinType::Never => 1,
+                BuiltinType::UInt16 | BuiltinType::Int16 | BuiltinType::Float16 => 2,
+                BuiltinType::UInt32 | BuiltinType::Int32 | BuiltinType::Float32 => 4,
+                BuiltinType::UInt64
+                | BuiltinType::Int64
+                | BuiltinType::Float64
                 | BuiltinType::Usize => 8,
-                BuiltinType::UInt16 | BuiltinType::Int16 | BuiltinType::Float16 => 16,
+                BuiltinType::UInt128 | BuiltinType::Int128 | BuiltinType::Float128 => 16,
                 BuiltinType::String => 8,
                 BuiltinType::Void => 0,
             };
@@ -145,21 +145,21 @@ pub(crate) fn map_type_to_llvm<'ctx>(
                 // Unsigned maps to the same `iN` as signed: signedness is
                 // opcode-level (`UDiv`/`ULT`/`zext`/`lshr`). See
                 // `crate::ir::ty_is_unsigned` at use sites.
-                BuiltinType::UInt1 => BasicTypeEnum::IntType(ctx.i8_type()),
-                BuiltinType::UInt2 => BasicTypeEnum::IntType(ctx.i16_type()),
-                BuiltinType::UInt4 => BasicTypeEnum::IntType(ctx.i32_type()),
-                BuiltinType::UInt8 => BasicTypeEnum::IntType(ctx.i64_type()),
-                BuiltinType::UInt16 => BasicTypeEnum::IntType(ctx.i128_type()),
+                BuiltinType::UInt8 => BasicTypeEnum::IntType(ctx.i8_type()),
+                BuiltinType::UInt16 => BasicTypeEnum::IntType(ctx.i16_type()),
+                BuiltinType::UInt32 => BasicTypeEnum::IntType(ctx.i32_type()),
+                BuiltinType::UInt64 => BasicTypeEnum::IntType(ctx.i64_type()),
+                BuiltinType::UInt128 => BasicTypeEnum::IntType(ctx.i128_type()),
                 BuiltinType::Usize => BasicTypeEnum::IntType(ctx.i64_type()),
-                BuiltinType::Int1 => BasicTypeEnum::IntType(ctx.i8_type()),
-                BuiltinType::Int2 => BasicTypeEnum::IntType(ctx.i16_type()),
-                BuiltinType::Int4 => BasicTypeEnum::IntType(ctx.i32_type()),
-                BuiltinType::Int8 => BasicTypeEnum::IntType(ctx.i64_type()),
-                BuiltinType::Int16 => BasicTypeEnum::IntType(ctx.i128_type()),
-                BuiltinType::Float2 => BasicTypeEnum::FloatType(ctx.f16_type()),
-                BuiltinType::Float4 => BasicTypeEnum::FloatType(ctx.f32_type()),
-                BuiltinType::Float8 => BasicTypeEnum::FloatType(ctx.f64_type()),
-                BuiltinType::Float16 => BasicTypeEnum::FloatType(ctx.f128_type()),
+                BuiltinType::Int8 => BasicTypeEnum::IntType(ctx.i8_type()),
+                BuiltinType::Int16 => BasicTypeEnum::IntType(ctx.i16_type()),
+                BuiltinType::Int32 => BasicTypeEnum::IntType(ctx.i32_type()),
+                BuiltinType::Int64 => BasicTypeEnum::IntType(ctx.i64_type()),
+                BuiltinType::Int128 => BasicTypeEnum::IntType(ctx.i128_type()),
+                BuiltinType::Float16 => BasicTypeEnum::FloatType(ctx.f16_type()),
+                BuiltinType::Float32 => BasicTypeEnum::FloatType(ctx.f32_type()),
+                BuiltinType::Float64 => BasicTypeEnum::FloatType(ctx.f64_type()),
+                BuiltinType::Float128 => BasicTypeEnum::FloatType(ctx.f128_type()),
                 BuiltinType::String => {
                     BasicTypeEnum::PointerType(ctx.ptr_type(AddressSpace::default()))
                 }

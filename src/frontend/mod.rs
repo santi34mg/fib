@@ -2,6 +2,8 @@ pub mod analyze;
 pub mod ast;
 pub mod identifier;
 pub mod lexer;
+pub mod next_ast;
+pub mod next_parser;
 pub mod parser;
 pub mod tokenizer;
 pub mod tokens;

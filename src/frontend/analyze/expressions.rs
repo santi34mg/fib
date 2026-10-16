@@ -16,16 +16,16 @@ use super::types::{map_type, resolve_struct_fields, resolve_type_alias};
 pub(super) fn is_integer_builtin(builtin: &BuiltinType) -> bool {
     matches!(
         builtin,
-        BuiltinType::Int1
-            | BuiltinType::Int2
-            | BuiltinType::Int4
-            | BuiltinType::Int8
+        BuiltinType::Int8
             | BuiltinType::Int16
-            | BuiltinType::UInt1
-            | BuiltinType::UInt2
-            | BuiltinType::UInt4
+            | BuiltinType::Int32
+            | BuiltinType::Int64
+            | BuiltinType::Int128
             | BuiltinType::UInt8
             | BuiltinType::UInt16
+            | BuiltinType::UInt32
+            | BuiltinType::UInt64
+            | BuiltinType::UInt128
             | BuiltinType::Usize
             | BuiltinType::Char
     )
@@ -34,7 +34,7 @@ pub(super) fn is_integer_builtin(builtin: &BuiltinType) -> bool {
 pub(super) fn is_float_builtin(builtin: &BuiltinType) -> bool {
     matches!(
         builtin,
-        BuiltinType::Float2 | BuiltinType::Float4 | BuiltinType::Float8 | BuiltinType::Float16
+        BuiltinType::Float16 | BuiltinType::Float32 | BuiltinType::Float64 | BuiltinType::Float128
     )
 }
 
@@ -63,16 +63,16 @@ pub(super) fn require_integer_index(ty: &Ty, what: &str) -> Result<(), AnalysisE
 fn int_type_info(ty: &Ty) -> Option<(u32, bool)> {
     match ty {
         Ty::Builtin(b) => match b {
-            BuiltinType::Int1 => Some((8, false)),
-            BuiltinType::Int2 => Some((16, false)),
-            BuiltinType::Int4 => Some((32, false)),
-            BuiltinType::Int8 => Some((64, false)),
-            BuiltinType::Int16 => Some((128, false)),
-            BuiltinType::UInt1 => Some((8, true)),
-            BuiltinType::UInt2 => Some((16, true)),
-            BuiltinType::UInt4 => Some((32, true)),
-            BuiltinType::UInt8 => Some((64, true)),
-            BuiltinType::UInt16 => Some((128, true)),
+            BuiltinType::Int8 => Some((8, false)),
+            BuiltinType::Int16 => Some((16, false)),
+            BuiltinType::Int32 => Some((32, false)),
+            BuiltinType::Int64 => Some((64, false)),
+            BuiltinType::Int128 => Some((128, false)),
+            BuiltinType::UInt8 => Some((8, true)),
+            BuiltinType::UInt16 => Some((16, true)),
+            BuiltinType::UInt32 => Some((32, true)),
+            BuiltinType::UInt64 => Some((64, true)),
+            BuiltinType::UInt128 => Some((128, true)),
             BuiltinType::Usize => Some((64, true)),
             BuiltinType::Char => Some((8, true)),
             _ => None,
@@ -466,7 +466,7 @@ fn expr_to_typed_inner(
         PExprKind::Literal(Literal::Integer(value)) => {
             // Default to Int32 (i32); explicit type annotations coerce as needed.
             Ok(TypedExpr {
-                inferred_type: Ty::Builtin(BuiltinType::Int4),
+                inferred_type: Ty::Builtin(BuiltinType::Int32),
                 expression: TypedExprKind::LiteralInt { value },
             })
         }
@@ -475,7 +475,7 @@ fn expr_to_typed_inner(
             expression: TypedExprKind::LiteralBool(b),
         }),
         PExprKind::Literal(Literal::Float(f)) => Ok(TypedExpr {
-            inferred_type: Ty::Builtin(BuiltinType::Float8),
+            inferred_type: Ty::Builtin(BuiltinType::Float64),
             expression: TypedExprKind::LiteralFloat { value: f },
         }),
         PExprKind::Literal(Literal::Character(c)) => Ok(TypedExpr {
@@ -499,7 +499,7 @@ fn expr_to_typed_inner(
             // Every string builtin takes `@string` arguments; only the arity and
             // return type differ.
             let (arity, ret) = match builtin {
-                BuiltinFunction::StrLen => (1usize, Ty::Builtin(BuiltinType::UInt8)),
+                BuiltinFunction::StrLen => (1usize, Ty::Builtin(BuiltinType::UInt64)),
                 BuiltinFunction::Concat => (2, Ty::Builtin(BuiltinType::String)),
                 BuiltinFunction::StrEq => (2, Ty::Builtin(BuiltinType::Boolean)),
             };

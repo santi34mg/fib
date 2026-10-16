@@ -48,12 +48,12 @@ mod tests {
     // ── Literals & type inference ─────────────────────────────────────────────
 
     #[test]
-    fn test_integer_literal_defaults_to_int4() {
+    fn test_integer_literal_defaults_to_int32() {
         let cu = get_typed("fn f() @int4 { return 42; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[0] {
             let expr = ret.first().expect("test expects a return value");
-            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int32));
             assert!(matches!(
                 expr.expression,
                 TypedExprKind::LiteralInt { value: 42 }
@@ -64,12 +64,12 @@ mod tests {
     }
 
     #[test]
-    fn test_float_literal_defaults_to_float8() {
+    fn test_float_literal_defaults_to_float64() {
         let cu = get_typed("fn f() @float8 { return 3.14; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[0] {
             let expr = ret.first().expect("test expects a return value");
-            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Float8));
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Float64));
         } else {
             panic!("expected Return");
         }
@@ -124,7 +124,7 @@ mod tests {
             })
             .expect("expected TypedType");
         assert_eq!(binding.name.value, "Num");
-        assert_eq!(binding.ty, Ty::Builtin(BuiltinType::Int4));
+        assert_eq!(binding.ty, Ty::Builtin(BuiltinType::Int32));
     }
 
     #[test]
@@ -141,7 +141,7 @@ mod tests {
                 }
             })
             .expect("expected TypedType");
-        assert_eq!(binding.ty, Ty::Builtin(BuiltinType::Float8));
+        assert_eq!(binding.ty, Ty::Builtin(BuiltinType::Float64));
     }
 
     #[test]
@@ -150,7 +150,7 @@ mod tests {
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
-            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int32));
         } else {
             panic!("expected Binding statement");
         }
@@ -161,7 +161,7 @@ mod tests {
         let cu = get_typed("fn f() { var @int4 x; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
-            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int32));
             assert!(b.init.is_none());
         } else {
             panic!("expected Binding");
@@ -174,7 +174,7 @@ mod tests {
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
-            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int32));
         } else {
             panic!("expected Binding statement");
         }
@@ -186,7 +186,7 @@ mod tests {
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert!(b.mutable);
-            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(b.ty, Ty::Builtin(BuiltinType::Int32));
         } else {
             panic!("expected Binding statement");
         }
@@ -201,9 +201,9 @@ mod tests {
         if let TypedStatement::MultiBinding { bindings, .. } = &f.body[0] {
             assert_eq!(bindings.len(), 2);
             assert_eq!(bindings[0].name.value, "q");
-            assert_eq!(bindings[0].ty, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(bindings[0].ty, Ty::Builtin(BuiltinType::Int32));
             assert_eq!(bindings[1].name.value, "r");
-            assert_eq!(bindings[1].ty, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(bindings[1].ty, Ty::Builtin(BuiltinType::Int32));
         } else {
             panic!("expected MultiBinding statement");
         }
@@ -248,7 +248,7 @@ mod tests {
     fn test_function_return_type() {
         let cu = get_typed("fn add(a: @int4, b: @int4) @int4 { return a; }");
         let f = get_function(&cu, "add");
-        assert_eq!(f.return_type, Ty::Builtin(BuiltinType::Int4));
+        assert_eq!(f.return_type, Ty::Builtin(BuiltinType::Int32));
     }
 
     #[test]
@@ -257,7 +257,7 @@ mod tests {
         let f = get_function(&cu, "add");
         assert_eq!(f.params.len(), 2);
         assert_eq!(f.params[0].0.value, "a");
-        assert_eq!(f.params[0].1, Ty::Builtin(BuiltinType::Int4));
+        assert_eq!(f.params[0].1, Ty::Builtin(BuiltinType::Int32));
         assert_eq!(f.params[1].0.value, "b");
     }
 
@@ -298,7 +298,7 @@ mod tests {
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
-            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int32));
         } else {
             panic!("expected Return");
         }
@@ -310,7 +310,7 @@ mod tests {
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[2] {
             let expr = ret.first().expect("test expects a return value");
-            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int32));
         } else {
             panic!("expected Return");
         }
@@ -348,7 +348,7 @@ mod tests {
             let expr = ret.first().expect("test expects a return value");
             assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Boolean));
             if let TypedExprKind::Binary { right, .. } = &expr.expression {
-                assert_eq!(right.inferred_type, Ty::Builtin(BuiltinType::UInt8));
+                assert_eq!(right.inferred_type, Ty::Builtin(BuiltinType::UInt64));
             } else {
                 panic!("expected Binary expression");
             }
@@ -458,7 +458,7 @@ mod tests {
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[1] {
             let expr = ret.first().expect("test expects a return value");
-            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int32));
             assert!(matches!(expr.expression, TypedExprKind::Identifier(_)));
         } else {
             panic!("expected Return");
@@ -504,7 +504,7 @@ mod tests {
         let f = get_function(&cu, "f");
         if let TypedStatement::Return(Some(ret)) = &f.body[1] {
             let expr = ret.first().expect("test expects a return value");
-            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int8));
+            assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int64));
             assert!(matches!(expr.expression, TypedExprKind::Cast { .. }));
         } else {
             panic!("expected Return with cast");
@@ -573,7 +573,7 @@ mod tests {
     #[test]
     fn test_builtin_string_calls_infer_types() {
         let cases = [
-            (r#"fn f() { x := @str_len("a"); }"#, BuiltinType::UInt8),
+            (r#"fn f() { x := @str_len("a"); }"#, BuiltinType::UInt64),
             (
                 r#"fn f() { x := @str_eq("a", "b"); }"#,
                 BuiltinType::Boolean,
@@ -705,14 +705,14 @@ mod tests {
 
     #[test]
     fn array_binding_coerces_elements_to_declared_type() {
-        // Declared `@int8` elements: the `Int4` literal must widen, not relabel.
+        // Declared `@int8` elements: the `Int32` literal must widen, not relabel.
         let cu = get_typed("fn f() { a: @int8[1] = [300]; }");
         let f = get_function(&cu, "f");
         if let TypedStatement::Binding(b) = &f.body[0] {
             assert_eq!(
                 b.ty,
                 Ty::Array {
-                    element_type: Box::new(Ty::Builtin(BuiltinType::Int8)),
+                    element_type: Box::new(Ty::Builtin(BuiltinType::Int64)),
                     size: 1
                 }
             );
@@ -848,7 +848,7 @@ mod tests {
         // `g` plus one monomorphized copy of `id`.
         assert_eq!(cu.declarations.len(), 2);
         let expr = return_expr(&cu, "g");
-        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int32));
     }
 
     use crate::frontend::{identifier::Identifier, typed_ast::TypedModule};
@@ -958,14 +958,14 @@ mod tests {
         get_typed(
             "fn f() @void {
     i := 0;
-    while (i < 10) { 
+    while (i < 10) {
         j := 0;
-        while (j < 10) { 
-            break; 
+        while (j < 10) {
+            break;
         };
         j += 1;
     i += 1;
-    }; 
+    };
 }",
         );
     }
@@ -1202,7 +1202,7 @@ mod tests {
         let f = get_function(&cu, "f");
         assert_eq!(
             f.params[0].1,
-            Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4)))
+            Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int32)))
         );
     }
 
@@ -1218,7 +1218,7 @@ mod tests {
     fn test_slice_index_returns_element() {
         let cu = get_typed("fn f(s: @int4[]) @int4 { return s.[0]; }");
         let expr = return_expr(&cu, "f");
-        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int4));
+        assert_eq!(expr.inferred_type, Ty::Builtin(BuiltinType::Int32));
         assert!(matches!(expr.expression, TypedExprKind::IndexAccess { .. }));
     }
 
@@ -1234,7 +1234,7 @@ mod tests {
         let f = get_function(&cu, "f");
         match &f.body[1] {
             TypedStatement::Binding(b) => {
-                assert_eq!(b.ty, Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4))));
+                assert_eq!(b.ty, Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int32))));
                 assert!(
                     matches!(
                         b.init,
@@ -1335,7 +1335,7 @@ mod tests {
         let f = get_function(&cu, "f");
         match &f.body[0] {
             TypedStatement::Binding(b) => {
-                assert_eq!(b.ty, Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4))));
+                assert_eq!(b.ty, Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int32))));
                 assert!(matches!(
                     b.init.as_ref().expect("init").expression,
                     TypedExprKind::Slice { .. }
@@ -1392,7 +1392,7 @@ mod tests {
             };
             assert_eq!(
                 binding.ty,
-                Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int4))),
+                Ty::Slice(Box::new(Ty::Builtin(BuiltinType::Int32))),
                 "slice type for {}",
                 src
             );

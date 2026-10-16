@@ -30,10 +30,8 @@ where
         };
 
         // Every statement must end with `;` — including block statements
-        // like `if ... { ... };`, `for (...) { ... };` and `switch ...;`.
-        // The `for` header separators and `)` terminator are handled inside
-        // the `for` arm of `parse_statement_inner`, and `defer`'s single `;`
-        // terminates the whole `defer <stmt>;`.
+        // like `if ... { ... };`, `while (...) { ... };` and `switch ...;`.
+        // `defer`'s single `;` terminates the whole `defer <stmt>;`.
         self.expect_semicolon()?;
         Ok(Some(Statement {
             kind: stmt,
@@ -64,8 +62,8 @@ where
     }
 
     /// Parse one inner statement (no trailing `;`), skipping comments.
-    /// Errors at EOF. Used for `defer <stmt>`, `else if ...` chains and
-    /// `for` post-operations where the outer `;` / `)` is the terminator.
+    /// Errors at EOF. Used for `defer <stmt>` and `else if ...` chains
+    /// where the outer statement owns the terminator.
     fn parse_statement_inner_some(&mut self) -> ParseResult<(StatementKind, usize, usize)> {
         loop {
             match self.parse_statement_inner()? {
@@ -82,9 +80,8 @@ where
 
     /// Parse a single statement without consuming its trailing `;`.
     /// Returns `Ok(None)` for comments and EOF so callers can skip/retry.
-    /// `parse_statement` wraps this and enforces the `;`; `defer`, `else if`
-    /// and `for`'s post-operation use it directly because their terminator
-    /// is the outer `;` / `)` rather than an inner `;`.
+    /// `parse_statement` wraps this and enforces the `;`; `defer` and
+    /// `else if` use it directly because the outer statement owns the `;`.
     fn parse_statement_inner(&mut self) -> ParseResult<Option<(StatementKind, usize, usize)>> {
         let line = self.peek().map(|t| t.line).unwrap_or(0);
         let column = self.peek().map(|t| t.column).unwrap_or(0);
