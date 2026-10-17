@@ -1,174 +1,252 @@
-// ---------------------------------------------------------------------------
-// Tests: the IR contract (pretty-print + error cases)
-// ---------------------------------------------------------------------------
+//! Structural contract tests only: no frontend/lowering integration tests.
 
-#[cfg(test)]
-mod tests {
-    use super::super::{Ir, lower_typed_ast};
-    use crate::frontend::analyzer::analyze;
-    use crate::frontend::parser::Parser;
-    use crate::frontend::tokenizer::Tokenizer;
-    use std::path::PathBuf;
+use super::*;
 
-    fn lower_src(src: &str) -> Result<Ir, String> {
-        let tokens: Vec<_> = Tokenizer::new(src).collect();
-        let path = PathBuf::from("test.fib");
-        let mut parser = Parser::new(tokens.into_iter(), &path, src.to_string());
-        let ast = parser.parse().map_err(|e| e.to_string())?;
-        let typed = analyze(&ast, &Default::default()).map_err(|e| e.to_string())?;
-        lower_typed_ast(typed).map_err(|e| e.to_string())
+fn signature() -> Signature {
+    Signature {
+        params: vec![TypeId(0)],
+        results: vec![TypeId(0)],
+        variadic: false,
+        calling_convention: CallingConvention::Fib,
     }
+}
 
-    #[test]
-    fn ir_straight_line_binding_and_return() {
-        let prog = lower_src("fn main() @int { x := 1;\ny := 2;\nreturn x + y; }")
-            .expect("lower straight-line");
-        assert_eq!(prog.functions.len(), 1);
-        let text = prog.to_string();
-        assert!(
-            text.contains("alloca x"),
-            "expected alloca x, got:\n{}",
-            text
-        );
-        assert!(
-            text.contains("alloca y"),
-            "expected alloca y, got:\n{}",
-            text
-        );
-        assert!(text.contains("add"), "expected add, got:\n{}", text);
-        assert!(text.contains("return"), "expected return, got:\n{}", text);
+/// Hand-authored graph: one definition and one external declaration. This is
+/// data for API tests, not an SSA construction algorithm or validity proof.
+fn sample_ir() -> Ir {
+    Ir {
+        types: vec![
+            IrType::Integer {
+                width: IntegerWidth::Bits(32),
+                signed: true,
+            },
+            IrType::Bool,
+            IrType::Pointer { pointee: TypeId(0) },
+        ],
+        functions: vec![
+            Function {
+                name: "example".into(),
+                signature: signature(),
+                linkage: Linkage::Internal,
+                body: FunctionBody::Definition {
+                    entry: BlockId(0),
+                    blocks: vec![BlockId(0), BlockId(1)],
+                    stack_slots: vec![],
+                },
+            },
+            Function {
+                name: "external".into(),
+                signature: Signature {
+                    calling_convention: CallingConvention::C,
+                    ..signature()
+                },
+                linkage: Linkage::External,
+                body: FunctionBody::Declaration,
+            },
+        ],
+        constants: vec![Constant {
+            ty: TypeId(1),
+            kind: ConstantKind::Bool(true),
+        }],
+        values: vec![
+            Value {
+                owner: FunctionId(0),
+                ty: TypeId(0),
+                definition: ValueDefinition::BlockParameter {
+                    block: BlockId(0),
+                    index: 0,
+                },
+            },
+            Value {
+                owner: FunctionId(0),
+                ty: TypeId(0),
+                definition: ValueDefinition::BlockParameter {
+                    block: BlockId(1),
+                    index: 0,
+                },
+            },
+            Value {
+                owner: FunctionId(0),
+                ty: TypeId(0),
+                definition: ValueDefinition::InstructionResult {
+                    block: BlockId(1),
+                    instruction: 0,
+                    result: 0,
+                },
+            },
+        ],
+        blocks: vec![
+            BasicBlock {
+                owner: FunctionId(0),
+                params: vec![ValueId(0)],
+                instructions: vec![],
+                terminator: Terminator::Branch {
+                    condition: Operand::Constant(ConstantId(0)),
+                    then_edge: Edge {
+                        target: BlockId(1),
+                        args: vec![Operand::Value(ValueId(0))],
+                    },
+                    else_edge: Edge {
+                        target: BlockId(1),
+                        args: vec![Operand::Value(ValueId(0))],
+                    },
+                },
+            },
+            BasicBlock {
+                owner: FunctionId(0),
+                params: vec![ValueId(1)],
+                instructions: vec![Instruction {
+                    results: vec![ValueId(2)],
+                    kind: InstructionKind::Call {
+                        callee: FunctionId(1),
+                        args: vec![Operand::Value(ValueId(1))],
+                    },
+                }],
+                terminator: Terminator::Return {
+                    values: vec![Operand::Value(ValueId(2))],
+                },
+            },
+        ],
+        ..Ir::new()
     }
+}
 
-    #[test]
-    fn ir_if_and_while_emit_labels_and_gotos() {
-        let prog = lower_src(
-            "fn main() @int {
-    x := 0;
-    if x == 0 { x = 1; } else { x = 2; };
-    i: @int = 0;
-    while (i < 10) {
-        x = x + i;
-        i = i + 1;
+#[test]
+fn arena_accessors_preserve_identity_ownership_and_types() {
+    let ir = sample_ir();
+    assert!(!ir.is_empty());
+    assert_eq!(ir.block(BlockId(1)).unwrap().owner, FunctionId(0));
+    assert_eq!(ir.value(ValueId(2)).unwrap().owner, FunctionId(0));
+    assert_eq!(ir.operand_type(Operand::Value(ValueId(2))), Some(TypeId(0)));
+    assert_eq!(
+        ir.operand_type(Operand::Constant(ConstantId(0))),
+        Some(TypeId(1))
+    );
+    assert!(matches!(
+        ir.ty(TypeId(0)),
+        Some(IrType::Integer { signed: true, .. })
+    ));
+    assert!(ir.function(FunctionId(99)).is_none());
+    assert!(ir.global(GlobalId(99)).is_none());
+    assert!(ir.ty(TypeId(99)).is_none());
+    assert!(ir.constant(ConstantId(99)).is_none());
+    assert!(ir.block(BlockId(99)).is_none());
+    assert!(ir.value(ValueId(99)).is_none());
+    assert!(ir.stack_slot(StackSlotId(99)).is_none());
+    assert_eq!(ir.operand_type(Operand::Value(ValueId(99))), None);
+}
+
+#[test]
+fn declarations_retain_signatures_without_blocks() {
+    let mut ir = Ir::new();
+    assert!(ir.is_empty());
+    ir.functions.push(sample_ir().functions.remove(1));
+    assert!(!ir.is_empty());
+    assert!(ir.blocks.is_empty());
+    let function = ir.function(FunctionId(0)).unwrap();
+    assert!(matches!(function.body, FunctionBody::Declaration));
+    assert_eq!(function.signature.params, vec![TypeId(0)]);
+    assert_eq!(function.signature.results, vec![TypeId(0)]);
+    assert_eq!(function.signature.calling_convention, CallingConvention::C);
+}
+
+#[test]
+fn control_flow_carries_arguments_on_both_edges() {
+    let ir = sample_ir();
+    let Terminator::Branch {
+        then_edge,
+        else_edge,
+        ..
+    } = &ir.blocks[0].terminator
+    else {
+        panic!("expected explicit branch");
     };
-    return x;
-}",
-        )
-        .expect("lower if+for");
-        let text = prog.to_string();
-        assert!(text.contains("if "), "expected IfGoto, got:\n{}", text);
-        assert!(text.contains("goto "), "expected Goto, got:\n{}", text);
-        assert!(text.contains("return"), "expected return, got:\n{}", text);
-    }
+    assert_eq!(then_edge.target, BlockId(1));
+    assert_eq!(else_edge.target, BlockId(1));
+    assert_eq!(then_edge.args, vec![Operand::Value(ValueId(0))]);
+    assert_eq!(else_edge.args, then_edge.args);
+    assert_eq!(ir.blocks[1].params, vec![ValueId(1)]);
+    assert_eq!(ir.blocks[1].instructions[0].results, vec![ValueId(2)]);
+}
 
-    #[test]
-    fn ir_short_circuit_uses_join_temp() {
-        let prog = lower_src("fn main() @bool { a := true;\nb := false;\nreturn a && b; }")
-            .expect("lower &&");
-        let text = prog.to_string();
-        // Join pattern: seed copy + rhs copy + merge label.
-        assert!(text.contains("copy"), "expected join copy, got:\n{}", text);
-        assert!(text.contains("if "), "expected IfGoto, got:\n{}", text);
-    }
-
-    #[test]
-    fn ir_defer_runs_before_return() {
-        let prog =
-            lower_src("fn main() @int { x := 0;\ndefer x = 1;\nreturn x; }").expect("lower defer");
-        let text = prog.to_string();
-        // Deferred store must appear before the return.
-        let store_pos = text.find("store ").expect("expected store");
-        let ret_pos = text.find("return").expect("expected return");
-        assert!(
-            store_pos < ret_pos,
-            "defer store should precede return:\n{}",
-            text
-        );
-    }
-
-    #[test]
-    fn ir_break_continue_become_gotos() {
-        let prog = lower_src(
-            "fn main() @int {
-    x := 0;
-    i := 0;
-    while (i < 10) {
-        if i == 2 { continue; };
-        if i == 5 { break; };
-        x = x + i;
-        i += 1;
+#[test]
+fn storage_and_ssa_values_are_distinct() {
+    let slot = StackSlot {
+        owner: FunctionId(0),
+        ty: TypeId(0),
+        debug_name: Some("local".into()),
     };
-    return x;
-}",
-        )
-        .expect("lower break/continue");
-        let text = prog.to_string();
-        assert!(text.contains("goto "), "expected goto lowering:\n{}", text);
-    }
+    let address = Instruction {
+        results: vec![ValueId(0)],
+        kind: InstructionKind::StackAddress(StackSlotId(0)),
+    };
+    let store = Instruction {
+        results: vec![],
+        kind: InstructionKind::Store {
+            address: Address(Operand::Value(ValueId(0))),
+            value: Operand::Constant(ConstantId(0)),
+        },
+    };
+    let load = Instruction {
+        results: vec![ValueId(1)],
+        kind: InstructionKind::Load {
+            address: Address(Operand::Value(ValueId(0))),
+        },
+    };
+    assert_eq!(slot.owner, FunctionId(0));
+    assert!(matches!(
+        address.kind,
+        InstructionKind::StackAddress(StackSlotId(0))
+    ));
+    assert!(store.results.is_empty());
+    assert_ne!(address.results, load.results);
+}
 
-    #[test]
-    fn ir_symbols_survive_shadowing() {
-        let prog = lower_src("fn main() @int { x := 1;\nif true { x := 2; };\nreturn x; }")
-            .expect("lower shadowing");
-        let func = &prog.functions[0];
-        // Two distinct slots for the two `x` bindings.
-        assert!(
-            func.symbols.iter().filter(|(_, n, _)| n == "x").count() == 2,
-            "expected 2 symbols for shadowed x, got {:?}",
-            func.symbols
-        );
-    }
+#[test]
+fn unfinished_apis_error_even_on_empty_ir_without_mutation() {
+    let mut ir = Ir::new();
+    assert_eq!(
+        verify_ir(&ir),
+        Err(IrError::NotImplemented {
+            operation: "verify_ir"
+        })
+    );
+    assert_eq!(
+        verify_ir(&sample_ir()),
+        Err(IrError::NotImplemented {
+            operation: "verify_ir"
+        })
+    );
+    let error = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap_err();
+    assert_eq!(
+        error,
+        IrError::NotImplemented {
+            operation: "FunctionBuilder::new"
+        }
+    );
+    assert!(error.to_string().contains("not implemented"));
+    assert!(ir.is_empty());
+}
 
-    #[test]
-    fn ir_extern_has_no_body() {
-        let prog = lower_src("extern fn puts(s: @string) @int\nfn main() @int { return 0; }")
-            .expect("lower extern");
-        let ext = prog
-            .functions
-            .iter()
-            .find(|f| f.name == "puts")
-            .expect("extern fn present");
-        assert!(ext.is_extern);
-        assert!(ext.blocks.iter().all(|b| b.instrs.is_empty()));
-    }
-
-    #[test]
-    fn ir_switch_plain_enum_lowers_to_dispatch() {
-        let prog = lower_src(
-            "type Color enum { Red, Green }\nfn main() @int { c: Color = Color.Red;\nswitch (c) { when .Red { return 1; }\nwhen else { return 0; } }; }",
-        )
-        .expect("plain-enum switch should lower");
-        let text = prog.to_string();
-        assert!(
-            text.contains("switch"),
-            "expected SwitchDispatch, got:\n{}",
-            text
-        );
-        assert!(text.contains("return"), "expected return, got:\n{}", text);
-    }
-
-    #[test]
-    fn ir_switch_with_payload_binding_stays_unsupported() {
-        let err = lower_src(
-            "type Token enum { Integer { value: @uint4 }, EOF }\nfn describe(t: Token) @void { switch (t) { when .Integer(i) { return; }\nwhen .EOF { return; } }; }\nfn main() @int { return 0; }",
-        )
-        .expect_err("payload binding should fall back");
-        assert!(
-            err.contains("payload") || err.contains("fallback"),
-            "unexpected error: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn ir_struct_is_explicitly_unsupported() {
-        let err = lower_src(
-            "type Point struct { x: @int, y: @int }\nfn main() @int { p := Point { x: 1, y: 2 };\nreturn p.x; }",
-        )
-        .expect_err("struct should be phase 2b");
-        assert!(
-            err.contains("struct") || err.contains("field"),
-            "unexpected error: {}",
-            err
-        );
-    }
+#[test]
+fn display_is_diagnostic_and_does_not_require_valid_references() {
+    let text = sample_ir().to_string();
+    assert!(text.contains("unverified"));
+    assert!(text.contains("Declaration"));
+    assert!(text.contains("bb1 (owner fn0"));
+    assert!(text.contains("Branch"));
+    assert!(text.contains("Return"));
+    assert_eq!(Operand::Value(ValueId(3)).to_string(), "%v3");
+    assert_eq!(Operand::Constant(ConstantId(3)).to_string(), "const3");
+    let mut invalid = Ir::new();
+    invalid.values.push(Value {
+        owner: FunctionId(99),
+        ty: TypeId(99),
+        definition: ValueDefinition::BlockParameter {
+            block: BlockId(99),
+            index: 0,
+        },
+    });
+    assert!(invalid.to_string().contains("99"));
+    assert!(verify_ir(&invalid).is_err());
 }

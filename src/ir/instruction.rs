@@ -1,147 +1,123 @@
-use crate::{
-    frontend::{
-        tokens::{builtin::BuiltinFunction, name::Name},
-        typed_ast::{bin_op::BinOp, ty::Ty},
-    },
-    ir::{Label, Operand, Temp, UnOp},
-};
+//! Non-terminating operations. Results define fresh SSA values, never places.
+
+use super::{Address, ConstantId, FunctionId, GlobalId, Operand, StackSlotId, ValueId};
 
 #[derive(Debug, Clone)]
-pub enum Instruction {
-    /// Allocate a named slot. Emitted once per `Binding` (including params).
-    Alloca {
-        sym: Name,
-        name: String,
-        ty: Ty,
-    },
-    Store {
-        dst: Name,
-        src: Operand,
-    },
-    Load {
-        dst: Temp,
-        src: Name,
-    },
-    Copy {
-        dst: Temp,
-        src: Operand,
-    },
+pub struct Instruction {
+    /// Most operations have one result; Store has none and Call follows its
+    /// callee signature. Types/definition locations live in `Ir::values`.
+    pub results: Vec<ValueId>,
+    pub kind: InstructionKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum InstructionKind {
+    Constant(ConstantId),
+    /// Arithmetic/bitwise operands have the same type; comparisons return Bool.
+    /// Signedness and float semantics come from the operand types, not the
+    /// result type (which may be Bool).
     Binary {
-        dst: Temp,
-        op: BinOp,
+        op: BinaryOp,
         lhs: Operand,
         rhs: Operand,
-        /// Operand type (left's) for opcode selection: float vs int and
-        /// signed vs unsigned (`SDiv` vs `UDiv`, `SLT` vs `ULT`, ...).
-        /// For comparisons the result temp holds `@bool`.
-        ty: Ty,
     },
     Unary {
-        dst: Temp,
-        op: UnOp,
-        src: Operand,
-        ty: Ty,
+        op: UnaryOp,
+        operand: Operand,
     },
-    AddrOf {
-        dst: Temp,
-        src: Name,
-    },
-    LoadPtr {
-        dst: Temp,
-        ptr: Operand,
-        ty: Ty,
-    },
-    StorePtr {
-        ptr: Operand,
-        src: Operand,
-    },
+    /// Source type comes from the operand; destination from the result value.
     Cast {
-        dst: Temp,
-        src: Operand,
-        from: Ty,
-        target: Ty,
+        kind: CastKind,
+        operand: Operand,
     },
+    /// Canonical function identity; the declaration owns the full signature.
     Call {
-        dst: Option<Temp>,
-        callee: String,
+        callee: FunctionId,
         args: Vec<Operand>,
-        ret_ty: Ty,
-        is_variadic: bool,
     },
-    BuiltinCall {
-        dst: Option<Temp>,
-        builtin: BuiltinFunction,
-        args: Vec<Operand>,
-        ret_ty: Ty,
+    StackAddress(StackSlotId),
+    GlobalAddress(GlobalId),
+    Load {
+        address: Address,
     },
-    // --- aggregates / enums (design-locked, lowering lands in phase 2b) ---
-    StructConstruct {
-        dst: Temp,
-        type_name: String,
-        fields: Vec<(String, Operand)>,
-        ty: Ty,
+    Store {
+        address: Address,
+        value: Operand,
     },
-    FieldLoad {
-        dst: Temp,
-        base: Operand,
-        field_index: usize,
-        ty: Ty,
+    /// Aggregate operations manipulate immutable values, not memory.
+    Aggregate {
+        elements: Vec<Operand>,
     },
-    FieldStore {
-        base: Operand,
-        field_index: usize,
-        src: Operand,
+    ExtractField {
+        aggregate: Operand,
+        field: usize,
     },
-    ArrayLiteral {
-        dst: Temp,
-        elems: Vec<Operand>,
-        ty: Ty,
+    InsertField {
+        aggregate: Operand,
+        field: usize,
+        value: Operand,
     },
-    IndexLoad {
-        dst: Temp,
-        base: Operand,
+    ExtractElement {
+        aggregate: Operand,
         index: Operand,
-        ty: Ty,
     },
-    IndexStore {
-        base: Operand,
+    /// Projection produces a pointer value; it does not read storage.
+    FieldAddress {
+        base: Address,
+        field: usize,
+    },
+    /// Base points to an element; index is an element offset, not bytes.
+    /// Bounds checks must be explicit control flow, never a hidden load/store.
+    ElementAddress {
+        base: Address,
         index: Operand,
-        src: Operand,
     },
-    EnumLiteral {
-        dst: Temp,
-        discriminant: u32,
-        ty: Ty,
+    Enum {
+        variant: usize,
+        fields: Vec<Operand>,
     },
-    EnumConstruct {
-        dst: Temp,
-        discriminant: u32,
-        payload: Vec<(String, Operand)>,
-        ty: Ty,
+    /// Result must be an integer capable of representing every discriminant.
+    EnumTag {
+        value: Operand,
     },
-    SwitchDispatch {
-        subject: Operand,
-        /// (discriminant, target) pairs; backend emits `switch` on the tag.
-        cases: Vec<(u32, Label)>,
-        default: Label,
+    /// The caller must first establish that the selected variant is active.
+    EnumField {
+        value: Operand,
+        variant: usize,
+        field: usize,
     },
-    TupleExtract {
-        dst: Temp,
-        src: Operand,
-        index: usize,
-        ty: Ty,
-    },
-    // --- control flow (flat only) ---
-    IfGoto {
-        cond: Operand,
-        target: Label,
-    },
-    Goto {
-        target: Label,
-    },
-    LabelDef(Label),
-    Return {
-        values: Vec<Operand>,
-    },
-    Unreachable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Shl,
+    Shr,
+    And,
+    Or,
+    Xor,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Neg,
+    Not,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CastKind {
+    Numeric,
+    Bitcast,
+    PointerToInteger,
+    IntegerToPointer,
 }
