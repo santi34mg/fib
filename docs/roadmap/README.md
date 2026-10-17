@@ -1,651 +1,209 @@
-# Fib Roadmap
-
-This document tracks outstanding language, compiler, tooling, and standard
-library work. Completed work belongs in `CHANGELOG.md` and is removed from this
-roadmap.
-
-## Ordering Constraints
-
-1. Restore semantic and lowering soundness.
-2. Add canonical package, module, and declaration identity.
-3. Add target-aware ABI and layout support.
-4. Add generic data types.
-5. Add ownership, borrowing, and deterministic destruction.
-6. Add interfaces and static dispatch.
-7. Replace the experimental libc-based standard library.
-8. Add higher-level tooling after language semantics stabilize.
-
-## Language Surface Redesign
-
-A designed, dependency-ordered series covering the built-in sigil, generics,
-array syntax, strings, overloading, and interfaces. Each document carries its
-own design decisions, work items, tests, and risks. They subsume parts of
-Phase 3, Phase 4, Phase 7, and Phase 9, noted inline below.
-
-| # | Document | Depends on |
-|---|---|---|
-| 00 | [Canonical cross-module linkage names](00-cross-module-linkage.md) | — |
-| 01 | [Remove the `@` sigil from builtins](01-builtin-sigil.md) | — |
-| 02 | [Generic functions with `[T]`](02-generic-functions.md) | 01 |
-| 03 | [Prefix array and slice syntax](03-prefix-array-syntax.md) | 02 |
-| 04 | [Generic data types](04-generic-types.md) | 03 |
-| 05 | [Remove the `string` type](05-remove-string.md) | 04 |
-| 06 | [Function overloading](06-function-overloading.md) | 00 |
-| 07 | [Interfaces, `self`, and constraints](07-interfaces.md) | 04, 06 |
-
-Two of the dependencies exist to remove parsing ambiguity rather than to add
-capability: 02 deletes types from expression position, which is what makes 03's
-prefix syntax unambiguous; 03 frees the postfix `[`, which is what lets 04 read
-`Vector[int4]` without lookahead.
-
-### Decisions locked by that series
-
-- Spell built-in types without `@` (`int4`); spell the comptime property `.len`.
-- Delete the three built-in functions; they are all expressible in Fib.
-- Declare type parameters as `[T]`; require explicit type arguments at every
-  call and use site.
-- Write array and slice types prefix: `[N]T` and `[]T`.
-- Delete `string`. Type a string literal as `[N]char`, add a `c"..."` literal
-  typed `*char` for the C boundary, and make `Vec[char]` the owning type.
-- Resolve overloads on parameter types and return type.
-- Declare conformance with a trailing `impl Interface` on the type declaration,
-  satisfied by free functions; `self` is valid in parameters and return type.
-- Check generic constraints per instantiation, not against the abstract body.
-
-## Locked Language Decisions
-
-These decisions constrain implementation and are not open roadmap questions.
-
-### Numeric Behavior
-
-- Allow implicit conversions only to a wider type of the same numeric family
-  and signedness.
-- Reject implicit signed/unsigned and integer/floating-point conversions.
-- Make explicit integer narrowing keep the low-order bits.
-- Make explicit equal-width signed/unsigned casts reinterpret the bit pattern.
-- Make explicit integer/floating-point casts perform numeric conversion rather
-  than bit reinterpretation.
-- Make integer arithmetic wrap, including overflow during negation and signed
-  division.
-- Trap on runtime division or remainder by zero.
-- Reject division or remainder by zero when known at compile time.
-- Trap when converting NaN, infinity, or an out-of-range float to an integer.
-- Permit lossy integer-to-float conversion without trapping.
-- Provide explicit checked builtins for operations whose default can trap.
-
-### `null` and `@never`
-
-- Restrict `null` assignment and comparison to pointer types.
-- Type unconstrained `null` as `*@void`.
-- Restrict `@never` to function return types.
-- Require an `@never` function to have no reachable return.
-
-### Separators
-
-- Require commas between list elements and allow one trailing comma.
-- Require semicolons after statements.
-- Keep newlines semantically insignificant.
-
-### `defer`
-
-- Give each deferred statement to its innermost lexical block.
-- Run deferred statements in reverse declaration order.
-- Run deferred statements when their scope exits through fallthrough, return,
-  break, or continue.
-- Evaluate a return expression before running deferred statements.
-- Resolve values used by deferred work when that work starts.
-- Reject `defer` inside `defer` and `return` inside `defer`.
-- Permit `if`, `while`, and `switch` inside `defer`.
-
-## Unresolved Language Decisions
-
-The planned file-namespace, binding, visibility, and function-pointer decisions
-are recorded in [Planned Name Resolution](../name-resolution.md). Earlier
-import-specific Phase 3 work items below need reconciliation with that design
-before implementation.
-
-Resolve each item in maintained language documentation and tests before
-implementing work that depends on it.
-
-- [ ] Define integer-literal contextual typing and range behavior.
-- [ ] Define shift-count behavior and division overflow edge cases.
-- [ ] Define the names and contracts of checked arithmetic and conversion
-      builtins.
-- [ ] Define string ownership, lifetime, mutability, and representation.
-- [ ] Define embedded-NUL and FFI string ownership behavior.
-- [ ] Define how standard library APIs report allocation failure.
-- [ ] Define module visibility, re-export, ambiguity, and collision policies.
-- [ ] Define duplicate declaration and foreign-symbol policies.
-- [ ] Specify remaining name-collision cases beyond the function-local and sibling-block rules in [Planned Name Resolution](../name-resolution.md).
-- [ ] Define slice ownership, aliasing, mutation, and escape rules.
-- [ ] Define NaN, signed-zero, infinity, and optimization behavior.
-- [ ] Define untagged C-union syntax and safety.
-- [ ] Define the syntax and ABI of plain function-pointer values and callbacks; captured closures are not planned.
-- [ ] Define module-constant initialization, evaluation, mutability, and
-      visibility.
-- [ ] Define release-mode and bounds-check option semantics.
-
-## Phase 0: Quarantine Unsafe Standard Library APIs
-
-- [ ] Add a machine-readable status for every `std` module: usable, stub,
-      unsafe, or platform-specific.
-- [ ] Describe the experimental status and module classifications in
-      `std/README.md`.
-- [ ] Remove success-returning no-op networking functions.
-- [ ] Remove or rename APIs described as atomic that use ordinary loads and
-      stores.
-- [ ] Fix growable-buffer overflow and allocation-failure handling.
-- [ ] Preserve the original allocation when reallocation fails.
-- [ ] Remove hard-coded pthread object sizes.
-- [ ] Correct signed FFI return types for `read`, `write`, `send`, and `recv`.
-- [ ] Add a frontend-check test for every `.fib` standard library module.
-- [ ] Add runtime tests only for modules classified as safe.
-
-## Phase 1: Complete Semantic Validation
-
-The analyzer must reject invalid source before either backend runs.
-
-### Numeric and Operator Rules
-
-- [ ] Implement one implicit-conversion matrix for operators, assignments,
-      arguments, and returns.
-- [ ] Restrict implicit coercion to the locked widening rules.
-- [ ] Implement an explicit-cast legality matrix for integers, floats, pointers,
-      enums, and aggregates.
-- [ ] Check integer literal ranges after contextual typing.
-- [ ] Diagnose compile-time division and remainder by zero.
-- [ ] Implement wrapping integer arithmetic consistently in both backends.
-- [ ] Implement trapping float-to-integer conversion consistently in both
-      backends.
-- [ ] Add checked builtins only after documenting each builtin's behavior.
-- [ ] Require `if` conditions to be `@bool`.
-- [ ] Require loop conditions to be `@bool`.
-- [ ] Restrict bitwise and shift operators to integers.
-- [ ] Define the permitted pointer arithmetic operations.
-- [ ] Reject all pointer operations outside the permitted set.
-- [ ] Define legal equality operands, including pointer/null comparisons.
-
-### `null`, `@never`, and Control Flow
-
-- [ ] Type unconstrained `null` as `*@void` instead of `@never`.
-- [ ] Restrict null assignment and comparison to pointer-like types.
-- [ ] Stop coercing `null` to arbitrary target types.
-- [ ] Restrict `@never` to function return positions.
-- [ ] Prove that an `@never` function cannot return normally.
-- [ ] Prove that every reachable path in a non-void function returns a value.
-- [ ] Decide whether unreachable statements are errors or permitted.
-- [ ] Enforce the chosen unreachable-statement policy.
-
-### Assignment and Initialization
-
-- [ ] Validate mutability for every multi-assignment target.
-- [ ] Validate type compatibility for every multi-assignment target and value.
-- [ ] Reject undeclared identifiers in multi-assignment targets.
-- [ ] Validate mutability through nested fields and indexed lvalues.
-- [ ] Track definite initialization across branches, loops, switches, break,
-      continue, and return.
-- [ ] Reject every read of a possibly uninitialized local.
-
-### Enums, Generics, and Runtime Types
-
-- [ ] Reject payload enum variants used without their payload constructor.
-- [ ] Diagnose duplicate switch variants.
-- [ ] Diagnose duplicate wildcard switch arms.
-- [ ] Enforce exact total arity for generic function calls.
-- [ ] Enforce compile-time generic argument arity and kinds.
-- [ ] Enforce runtime argument arity after removing compile-time arguments.
-- [ ] Resolve every qualified and unqualified type name during analysis.
-- [ ] Detect type-alias cycles.
-- [ ] Detect infinitely sized recursive value types.
-- [ ] Prove that every runtime type has finite layout before lowering.
-- [ ] Add one negative analyzer test for every semantic rule above.
-
-## Phase 2: Verify IR and Repair Lowering
-
-### Flat IR Verification
-
-- [ ] Verify that labels are unique and defined.
-- [ ] Verify that every block has exactly one terminator.
-- [ ] Verify that no instruction follows a terminator.
-- [ ] Verify that each temporary has one definition.
-- [ ] Verify that temporary definitions dominate every use.
-- [ ] Verify operand and instruction types.
-- [ ] Verify call and return signatures.
-- [ ] Run the verifier before consuming flat IR.
-
-### LLVM Verification and Fallback
-
-- [ ] Verify LLVM modules produced by the flat-IR route.
-- [ ] Verify LLVM modules produced by the direct route.
-- [ ] Report verifier failures as internal compiler errors.
-- [ ] Introduce an explicit `Unsupported` result for flat-IR lowering.
-- [ ] Fall back to direct lowering only after an `Unsupported` result.
-- [ ] Preserve flat-IR consumer and LLVM failures instead of silently falling
-      back.
-- [ ] Add tests proving malformed IR cannot trigger fallback.
-
-### Lowering Correctness
-
-- [ ] Replace flat-IR short-circuit temporary reassignment with a PHI, block
-      parameter, or addressable slot.
-- [ ] Reject unsupported pointer operations before LLVM value conversion.
-- [ ] Track direct-backend locals by resolved binding identity.
-- [ ] Restore direct-backend bindings when each lexical scope exits.
-- [ ] Predeclare every function signature before lowering any body in both
-      routes.
-- [ ] Stop emitting ordinary statements after a block terminator.
-- [ ] Add forced-route differential tests for constructs supported by both
-      routes.
-
-### Flat IR Feature Parity
-
-- [ ] Maintain a feature matrix that records importer, verifier, LLVM consumer,
-      and execution-test support for every typed expression and statement kind.
-- [ ] Add a compiler option used by tests to require flat-IR lowering and report
-      `Unsupported` instead of falling back to direct lowering.
-- [ ] Carry nominal type definitions and the type metadata needed by the LLVM
-      consumer in `IrProgram`.
-- [ ] Implement struct construction, field loads, and field stores through the
-      flat-IR importer and LLVM consumer.
-- [ ] Implement tuple construction, extraction, assignment, argument passing,
-      and returns through flat IR.
-- [ ] Implement array literals, indexed loads, indexed stores, and array
-      argument and return values through flat IR.
-- [ ] Represent lvalue paths explicitly so nested field, index, and dereference
-      assignments do not depend on source-expression shapes.
-- [ ] Implement address-of, pointer loads and stores, permitted pointer
-      operations, and pointer/null comparisons through flat IR.
-- [ ] Represent slices explicitly and implement slicing, indexed access, and
-      slice argument and return values through flat IR.
-- [ ] Carry the bounds-check policy into flat IR and match direct-route behavior
-      for constant and dynamic array and slice bounds.
-- [ ] Implement enum payload construction, payload extraction, and switch-arm
-      payload bindings through flat IR.
-- [ ] Implement multi-value calls and returns with the same ABI in both routes.
-- [ ] Implement every runtime builtin through flat IR or reject it explicitly
-      during flat-IR import.
-- [ ] Implement module constants and constant references after their
-      initialization and visibility semantics are defined.
-- [ ] Implement qualified value and call references after canonical declaration
-      identity is available in Phase 3.
-- [ ] Add forced-flat execution tests for each completed feature-matrix row and
-      differential tests against direct lowering while that route remains.
-- [ ] Make every maintained sample compile and run with forced flat-IR lowering.
-- [ ] Remove broad automatic fallback once all supported language constructs
-      have flat-IR coverage; retain only an explicit temporary compatibility
-      mode if downstream users still require it.
-- [ ] Delete the direct typed-AST-to-LLVM route after the compatibility window
-      and make flat IR the sole production LLVM input.
-
-## Phase 3: Add Canonical Package and Symbol Identity
-
-### Package Namespaces
-
-- [ ] Define a canonical `ModuleId` independent of import aliases.
-- [ ] Represent qualified names as arbitrary path-segment sequences.
-- [ ] Change expression type references from `{ module, member }` to qualified
-      paths.
-- [ ] Change value references from `{ module, member }` to qualified paths.
-- [ ] Make `import std` load a package namespace instead of `std.fib`.
-- [ ] Resolve child modules directly from package-relative physical paths.
-- [ ] Remove the drop-first-segment import fallback after installed package
-      discovery replaces `-I=std`.
-- [ ] Add tests for deeply qualified values, calls, types, enum variants, and
-      constructors.
-
-### Declaration Identity and Linkage
-
-Partly delivered by [00 — Canonical cross-module linkage
-names](00-cross-module-linkage.md) and [06 — Function
-overloading](06-function-overloading.md), which introduce the canonical symbol,
-remove unqualified-name deduplication, and diagnose collisions. Those two
-documents deliberately leave import resolution alone so the `ModuleId` work
-below stays free to reshape it.
-
-- [ ] Assign each declaration an identity containing its defining `ModuleId`.
-- [ ] Carry declaration identity through module exports and typed declarations.
-- [ ] Carry declaration identity through typed calls and flat IR.
-- [ ] Carry declaration identity through both LLVM lowering routes.
-- [ ] Generate stable fully qualified linkage names for non-extern functions.
-- [ ] Preserve declared foreign symbols for extern functions.
-- [ ] Remove unqualified-name deduplication from `dedupe_declarations`.
-- [ ] Diagnose declaration collisions instead of using last-write-wins.
-- [ ] Add link-and-run tests for direct imports and aliases.
-- [ ] Add link-and-run tests for selective and diamond imports.
-- [ ] Add link-and-run tests for equal local names in different modules.
-
-### Visibility
-
-- [ ] Define declaration visibility syntax.
-- [ ] Define module visibility syntax.
-- [ ] Make imports non-re-exporting by default.
-- [ ] Diagnose access to private modules and declarations.
-- [ ] Make `std::sys` private.
-- [ ] Add tests proving imports do not implicitly re-export declarations.
-
-## Phase 4: Make Frontend Stages and Diagnostics Reliable
-
-### Real Stage Emits
-
-- [ ] Add a load-and-lex entry point that performs no parsing.
-- [ ] Add a parse entry point that performs no import resolution or analysis.
-- [ ] Make `--emit=lex` stop after lexing.
-- [ ] Make `--emit=parse` stop after parsing.
-- [ ] Add a test where lexing succeeds and parsing fails.
-- [ ] Add a test where parsing succeeds and import resolution fails.
-- [ ] Add a test where parsing succeeds and analysis fails.
-
-### Parser Hardening
-
-- [ ] Verify type syntax and migrate slices from `T[]` to `[]T` and arrays from
-      `T[N]` to `[N]T`, updating the parser, documentation, and regression tests.
-      Designed in [03 — Prefix array and slice syntax](03-prefix-array-syntax.md).
-- [ ] Retire the legacy `for` loop in favour of `while`: 17 `for (;;)` loops
-      remain across 8 `std` files, and `docs/control-flow.md`, `docs/arrays.md`,
-      and `docs/generics.md` still document `for` — including a three-clause
-      `for (i = 1; i < n; i += 1)` form the parser rejects outright.
-- [ ] Add one reusable delimited-list parser.
-- [ ] Reject EOF before every required closing delimiter.
-- [ ] Use the shared parser for arrays, tuples, arguments, and parameters.
-- [ ] Use the shared parser for imports, fields, structs, and enums.
-- [ ] Require commas between list elements.
-- [ ] Allow one trailing comma consistently.
-- [ ] Add a truncated-input regression test for every delimiter kind.
-
-### Duplicate Declarations and Bindings
-
-- [ ] Diagnose duplicate top-level declarations.
-- [ ] Diagnose duplicate type aliases.
-- [ ] Diagnose duplicate parameters.
-- [ ] Diagnose duplicate declared struct fields.
-- [ ] Diagnose duplicate enum variants and payload fields.
-- [ ] Diagnose duplicate bindings in one lexical scope.
-- [ ] Enforce and test the selected nested-scope shadowing behavior.
-- [ ] Enforce and test the selected duplicate foreign-symbol policy.
-
-### Determinism
-
-- [ ] Stop deriving imported declaration order from `HashMap::values()`.
-- [ ] Preserve source and topological module order or sort by canonical identity.
-- [ ] Add repeated-build tests for stable typed output.
-- [ ] Add repeated-build tests for stable LLVM IR while excluding intentional
-      path metadata.
-
-### Source Information and Diagnostics
-
-- [ ] Add stable source IDs.
-- [ ] Replace point-only spans with byte ranges.
-- [ ] Retain every imported module's source text during resolution.
-- [ ] Preserve source ranges through typed AST and flat IR.
-- [ ] Attach imported-module ranges to analyzer diagnostics.
-- [ ] Attach source ranges to backend diagnostics.
-- [ ] Return one public diagnostic type from `compile_project` and
-      `check_project`.
-- [ ] Categorize lexical, name, type, configuration, backend, and toolchain
-      errors accurately.
-- [ ] Preserve underlying error sources in public diagnostics.
-- [ ] Reduce accidental public API exposure from internal `pub mod`
-      declarations.
-- [ ] Add machine-readable diagnostics after categories and ranges stabilize.
-- [ ] Decode string escapes exactly once.
-
-## Phase 5: Implement the Locked `defer` Model
-
-- [ ] Reject nested `defer` statements during analysis.
-- [ ] Reject `return` inside deferred statements during analysis.
-- [ ] Define whether `break` and `continue` are allowed inside deferred
-      statements.
-- [ ] Evaluate return expressions before emitting deferred work.
-- [ ] Run deferred statements in reverse declaration order.
-- [ ] Run lexical-block defers on normal fallthrough.
-- [ ] Run exited-scope defers on return.
-- [ ] Run exited-scope defers on break and continue.
-- [ ] Preserve outer deferred frames across nested loops and switches.
-- [ ] Make flat and direct lowering produce equivalent `defer` behavior.
-- [ ] Add execution tests for fallthrough, return, break, and continue.
-- [ ] Add execution tests for nesting and return-expression side effects.
-- [ ] Update `docs/control-flow.md` to document lexical scope.
-
-## Phase 6: Add Target-Aware ABI and Layout
-
-- [ ] Add a target triple to compilation options and the CLI.
-- [ ] Set the LLVM target triple on every module.
-- [ ] Set the LLVM data layout on every module.
-- [ ] Derive pointer width and `@usize` from target data.
-- [ ] Derive slice layout from target data.
-- [ ] Derive struct and tuple size and alignment from target data.
-- [ ] Derive tagged-enum payload size and alignment from target data.
-- [ ] Remove hard-coded 64-bit pointer and alignment assumptions.
-- [ ] Add layout tests against LLVM target data.
-- [ ] Implement C default argument promotions for variadic extern calls.
-- [ ] Add ABI tests for promoted integer and floating variadic arguments.
-
-## Phase 7: Add Generic Data Types
-
-Designed in [04 — Generic data types](04-generic-types.md), with the function
-half in [02 — Generic functions with `[T]`](02-generic-functions.md).
-
-- [ ] Define syntax for generic type declarations.
-- [ ] Represent generic type parameters in the AST and typed AST.
-- [ ] Add generic struct instantiation.
-- [ ] Add generic enum instantiation.
-- [ ] Substitute type parameters recursively through fields and variants.
-- [ ] Cache monomorphized data types by defining module and concrete arguments.
-- [ ] Include the fully qualified defining module in monomorphized names.
-- [ ] Detect recursive or infinitely sized generic instantiations.
-- [ ] Add cross-module tests for `Result<T, E>`.
-- [ ] Add cross-module tests for `Option<T>` and `Buffer<T>`.
-
-## Phase 8: Add Ownership and Deterministic Destruction
-
-- [ ] Define which types are copyable and which are move-only.
-- [ ] Add automatic moves for owned values.
-- [ ] Reject use after move.
-- [ ] Add immutable borrows.
-- [ ] Add mutable borrows.
-- [ ] Reject conflicting borrows.
-- [ ] Define returned-view lifetime validation.
-- [ ] Implement the selected slice ownership and escape rules.
-- [ ] Reject returning or storing slices of expired local storage.
-- [ ] Add deterministic destructors.
-- [ ] Add an explicit destruction-suppression escape hatch.
-- [ ] Define destructor behavior for return, loops, switch, and `defer`.
-- [ ] Make `File`, `String`, `BytesMut`, and writers move-only.
-- [ ] Add negative move, borrow, and use-after-move tests.
-- [ ] Add execution tests for destruction on every control-flow exit.
-
-## Phase 9: Add Interfaces and Static Dispatch
-
-Designed in [07 — Interfaces, `self`, and constraints](07-interfaces.md), which
-replaces `impl Interface for Type` with a trailing `impl` clause on the type
-declaration and defers receivers and method-call syntax. Conformance lookup
-requires [06 — Function overloading](06-function-overloading.md).
-
-- [ ] Define interface declaration syntax.
-- [ ] Define the trailing `impl Interface` clause on type declarations.
-- [ ] Define receiver syntax and mutability.
-- [ ] Represent interfaces and implementations in the AST and typed AST.
-- [ ] Add interface conformance checking.
-- [ ] Add generic constraints.
-- [ ] Add compile-time method lookup and static dispatch.
-- [ ] Generate qualified method symbols.
-- [ ] Diagnose missing, duplicate, and mismatched methods.
-- [ ] Defer dynamic interface objects until static dispatch is complete.
-
-## Phase 10: Replace the libc-Based Standard Library
-
-### Foundation Types
-
-- [ ] Add `std::result::Result<T, E>`.
-- [ ] Add `std::option::Option<T>`.
-- [ ] Add owned immutable `Bytes`.
-- [ ] Add owned growable `BytesMut`.
-- [ ] Add owned UTF-8 `String` and borrowed `Str`.
-- [ ] Add borrowed byte slices.
-- [ ] Add borrowed `Path` and owned `PathBuf`.
-- [ ] Make Unix paths byte-based and reject embedded NUL.
-- [ ] Make conversion from Unix paths to UTF-8 strings fallible.
-
-### Private Unix Layer
-
-- [ ] Add private `std::sys::unix` modules.
-- [ ] Declare only native calls used by public implementations.
-- [ ] Translate `errno` immediately into public errors.
-- [ ] Centralize retry-on-interruption behavior.
-- [ ] Hide file descriptors and native constants from public types.
-- [ ] Add C shims for `stat`, macros, and ABI-sensitive structures.
-- [ ] Keep platform-specific details out of public types.
-
-### Files and I/O
-
-- [ ] Add move-only `File` and `OpenOptions` types.
-- [ ] Add `Metadata`, `Permissions`, `DirEntry`, and `ReadDir` types.
-- [ ] Add filesystem open, create, remove, and rename operations.
-- [ ] Add metadata, canonicalization, and directory operations.
-- [ ] Add `Reader`, `Writer`, and `Seek` interfaces.
-- [ ] Implement `Reader`, `Writer`, and `Seek` for `File`.
-- [ ] Add `read_exact`, `read_to_end`, `write_all`, and `copy`.
-- [ ] Add reusable buffering primitives.
-- [ ] Add `read(path)` returning owned bytes.
-- [ ] Add `read_text(path)` with UTF-8 validation.
-- [ ] Add safe `stdin`, `stdout`, and `stderr` APIs.
-- [ ] Handle partial I/O, interruption, EOF, allocation failure, and flushing.
-- [ ] Close files automatically on every control-flow exit.
-- [ ] Test empty, short, and multi-buffer file reads.
-- [ ] Test partial writes, interruption, EOF, and allocation failures.
-- [ ] Test binary data, non-UTF-8 paths, and invalid UTF-8 text.
-- [ ] Test temporary-directory operations and automatic file closure.
-
-### Formatting and Migration
-
-- [ ] Add formatting into `Writer`.
-- [ ] Add an executable sample for each major standard library abstraction.
-- [ ] Migrate every sample away from `std::libc`.
-- [ ] Migrate every documentation example away from `std::libc`.
-- [ ] Delete `std/libc.fib` in the same breaking change.
-- [ ] Delete or replace the current incomplete standard library modules.
-- [ ] Document the removal of `std::libc` in `CHANGELOG.md`.
-
-### Later Modules
-
-- [ ] Add process APIs.
-- [ ] Add time APIs.
-- [ ] Add stateful random generators.
-- [ ] Add networking APIs.
-- [ ] Add threads, mutexes, conditions, and real atomic operations.
-
-## Phase 11: Add Native Libraries, C Unions, and X11
-
-### Remaining Linker Support
-
-- [ ] Add repeatable `-L`/`--library-path` CLI and library options.
-- [ ] Add raw linker argument options.
-- [ ] Add target and sysroot linker options.
-- [ ] Preserve a configured `$CC` command and all of its arguments.
-- [ ] Add a missing-library diagnostic test.
-- [ ] Add a custom-library-search-path test.
-- [ ] Add successful native-library linkage tests through the public API.
-
-### C-Compatible Unions
-
-- [ ] Implement the selected untagged `union` syntax.
-- [ ] Enforce the selected initialization and active-field rules.
-- [ ] Enforce the selected field-read and field-write safety rules.
-- [ ] Enforce the selected by-value and pointer FFI restrictions.
-- [ ] Derive union size and alignment from target data.
-- [ ] Verify Fib union layouts against equivalent C unions.
-- [ ] Keep untagged C unions distinct from tagged Fib enums.
-
-### X11
-
-- [ ] Add platform gating for `std::x11`.
-- [ ] Add ABI-accurate extern declarations and opaque handle types.
-- [ ] Add C shims for macros, callbacks, and `XEvent`.
-- [ ] Add an X11 compile-and-link sample.
-- [ ] Run the sample where a display server is available.
-- [ ] Use compile/link-only CI where no display server is available.
-
-## Phase 12: Improve Coverage, Performance, and Tooling
-
-### Release Mode
-
-- [ ] Separate optimization level from bounds-check policy in the public API.
-- [ ] Add CLI conflict and default tests.
-- [ ] Update README and CLI help.
-
-### Tests
-
-- [ ] Auto-discover `samples/*.fib`.
-- [ ] Require each sample to declare exact-output, compile-only, or
-      expected-failure policy.
-- [ ] Convert `tests/probe_tmp.rs` output probes into assertions.
-- [ ] Add lexer and parser no-panic fuzzing.
-- [ ] Add randomized module-cycle tests.
-- [ ] Add randomized type-cycle tests.
-
-### Lowering Performance
-
-- [ ] Hoist fixed-size local allocations into function entry blocks.
-- [ ] Replace unnecessary aggregate spills and reloads with aggregate SSA.
-- [ ] Borrow symbol tables during type mapping instead of cloning them.
-
-### Cargo and Package Metadata
-
-- [ ] Confirm unused direct dependencies with Cargo tooling.
-- [ ] Remove confirmed unused direct dependencies.
-- [ ] Add package description, repository, README, keywords, and categories.
-- [ ] Add `rust-version` metadata matching the repository's MSRV policy.
-- [ ] Move test-only dependencies to development dependencies where possible.
-
-### LSP Frontend Integration
-
-Begin this work only after canonical declaration identity in Phase 3 and source
-information and diagnostics in Phase 4 are stable.
-
-- [ ] Replace the JavaScript analysis path with a Rust `fib-lsp` crate that
-      depends on `fibc` with default features disabled.
-- [ ] Define one frontend document-analysis API that accepts a URI, source
-      snapshot, include roots, and a cancellation token without invoking LLVM.
-- [ ] Introduce a source-provider abstraction for entry files and imports.
-- [ ] Make the source provider prefer versioned open-document snapshots and
-      fall back to disk for unopened files.
-- [ ] Key parsed and analyzed module caches by stable source ID, document
-      version, and dependency versions.
-- [ ] Invalidate cached dependants when an imported document changes.
-- [ ] Return diagnostics for every source involved in an analysis with its
-      canonical URI, byte range, severity, category, and optional remedy.
-- [ ] Add parser synchronization and recovery at declaration and statement
-      boundaries so one edit can produce multiple useful diagnostics.
-- [ ] Continue name and type analysis on recoverable partial AST nodes without
-      manufacturing valid types for erroneous expressions.
-- [ ] Add tested conversion utilities between compiler byte ranges and LSP
-      zero-based UTF-16 positions, including non-ASCII and multiline input.
-- [ ] Retain complete ranges and stable node IDs for declarations, bindings,
-      identifiers, expressions, and type expressions through semantic analysis.
-- [ ] Build a per-document semantic index mapping source ranges to resolved
-      declaration IDs and inferred types.
-- [ ] Generate semantic tokens from compiler tokens and the semantic index
-      instead of the heuristic scanner in `lsp/src/highlight.js`.
-- [ ] Implement compiler-backed hover, completion, go-to-definition, references,
-      and rename only after the semantic index is stable.
-- [ ] Run frontend work off the protocol thread, debounce rapid edits, cancel
-      obsolete analyses, and publish results only for the matching document
-      version.
-- [ ] Clear diagnostics on document close and when a newer successful analysis
-      no longer reports an earlier error.
-- [ ] Add protocol tests for unsaved entry files, unsaved imports, transitive
-      imports, stale-result suppression, cancellation, and diagnostic clearing.
-- [ ] Add Unicode protocol tests proving diagnostic and semantic-token ranges
-      use UTF-16 units expected by LSP clients.
-- [ ] Add an editor smoke test that starts `fib-lsp` without LLVM installed and
-      checks diagnostics plus semantic tokens for a small project.
-- [ ] Document installation, workspace-root discovery, include-path settings,
-      supported capabilities, and current recovery limitations.
-
-### Later Tooling
-
-- [ ] Add a package manifest format.
-- [ ] Add installed standard library discovery.
-- [ ] Add `fibc run`.
-- [ ] Add a formatter.
-- [ ] Add editor tooling after semantic soundness stabilizes.
+# Fib roadmap
+
+## Audited baseline (2026-10-17)
+
+This roadmap describes reconstruction and future language work, not completed
+compiler features. Source and executable tests take precedence over historical
+release notes, samples, and earlier roadmap decisions. See the
+[current implementation guide](../agents/README.md) and
+[compiler architecture](../compiler-architecture.md).
+
+| Area | Current implementation |
+| --- | --- |
+| Tokenizer/parser | Working independently, producing the source AST with pending analysis annotations. |
+| Supporting utilities | Lexical scope storage, diagnostics, source/file identity records, raw IR access and formatting work. These do not implement language-level analysis. |
+| Analysis | `Analyzer`, declaration collection, name/type resolution and completion validation return explicit unimplemented errors. No separate typed AST exists. |
+| Driver/build | `run_pipeline`, `run_frontend`, `parse_files`, `lower_to_ir` are error stubs. `BuildPlan` names files explicitly; single-file loading, build-file interpretation and builder orchestration are unfinished. |
+| SSA IR | Owned arenas, types, instructions, blocks, values and storage records exist. `FunctionBuilder` and `verify_ir` return unimplemented errors. |
+| Backend | IR-only phase contracts; no LLVM emission, objects, linking or direct AST fallback. The inactive `backend/lowering/next/` prototype is not a supported route. |
+| CLI/execution | Help accepts `build [--single-file PATH]`, `run`, `test`; command execution is `todo!()`. IR interpretation is also unfinished. |
+| Tests/corpus | Unit tests exercise parsing, data contracts and explicit stub failures. No integration/e2e harness exists; samples and `std` are not evidence of compilation or execution. |
+
+### Implemented syntax, not implemented semantics
+
+- Bare bit-width types: `int32`, `uint64`, `float32`; `int`/`uint` alias
+  32-bit types. Historical byte-width `int4` and `@` type spellings are not
+  current source guidance. Some token display helpers/comments still lag.
+- Bindings: `x := 1;`, `const x := 1;`, `x: int32;`.
+- Functions: `fn f(x: int32) int32 { return x; }`.
+- Loops: `while (condition) { ... };`, not legacy `for`.
+- Type syntax is still suffix: `int32[8]`, `int32[]`. Prefix forms are proposed.
+- Values use `a[i]`, `a[a..b]`, `.len`, and postfix pointer operations
+  (`p*`, `x&`), not historical dot-indexing.
+- Qualified names retain arbitrary `::` segments. This does not implement
+  namespace lookup or import loading; legacy `import` declarations are not
+  working grammar.
+- Builtin calls retain `@` (for example `@str_len(s)`). Builtin type values
+  still parse in expression position. Neither fact implements generic analysis.
+
+See the [parser audit](../agents/src/frontend/parser.md) for details and limits.
+
+## Proposal series
+
+Numbering preserves useful design history; it is not a completion sequence or a
+promise that old dependencies still hold. Each page distinguishes the baseline
+from proposals. There are no completed semantic or backend milestones here.
+
+| # | Proposal | Prerequisites / reconciliation |
+| --- | --- | --- |
+| 00 | [Canonical cross-file linkage](00-cross-module-linkage.md) | File/declaration resolution and explicit build-plan membership |
+| 01 | [Builtin sigil cleanup](01-builtin-sigil.md) | Type/property spelling already changed; function removal remains a proposal |
+| 02 | [Explicit generic functions](02-generic-functions.md) | Decide bracket ambiguity and type-value policy; implement analysis |
+| 03 | [Prefix arrays and slices](03-prefix-array-syntax.md) | Decide type-value expression grammar; independent of completed generic support |
+| 04 | [Generic data types](04-generic-types.md) | Generic syntax, canonical semantic identity, recursion and layout rules |
+| 05 | [String representation redesign](05-remove-string.md) | Literal/FFI/ownership policy; generic owning container for the proposed library model |
+| 06 | [Function overloading](06-function-overloading.md) | Canonical declaration identity, complete declaration collection and typing |
+| 07 | [Interfaces and constraints](07-interfaces.md) | Generic types/functions, overload rules and conformance identity |
+
+Earlier plans called these decisions “locked.” They remain design inputs, not
+implemented guarantees. In particular, removing type values, deleting builtin
+functions, return-type overloading and per-instantiation constraint checking
+require explicit reconciliation with the current architecture before adoption.
+
+## Reconstruction priorities
+
+### 1. Complete the frontend boundary
+
+- [ ] Load only files explicitly named by `BuildPlan`, preserving file identity
+      and source context. Specify build.fib interpretation and single-file plans.
+- [ ] Implement declaration collection, then lexical/file-name and alias
+      resolution, type/member resolution, initialization checking and annotation
+      completion on the original AST.
+- [ ] Enforce [planned name-resolution rules](../name-resolution.md), including
+      redeclarations, visibility, aliases, separate labels and forward visibility
+      versus initialization. Storage utilities are not enforcement.
+- [ ] Define one conversion/cast matrix; contextual literal ranges; operator,
+      assignment, call and return legality; pointer/null and `never` rules.
+- [ ] Validate control flow, conditions, reachable returns, enum payload use,
+      switch duplicates and definite initialization.
+- [ ] Detect alias cycles and infinite by-value types before lowering.
+- [ ] Add real positive/negative analysis tests with source locations. Never
+      replace an unfinished pass with successful empty output.
+
+### 2. Build and verify the owned SSA IR
+
+The flat instruction-stream importer and direct typed-AST LLVM route are
+historical, not migration targets. There is no fallback to restore.
+
+- [ ] Implement `lower_to_ir(&AnalyzedProject)` with a validated-analysis gate,
+      canonical declaration/instance maps and IR-owned runtime types.
+- [ ] Implement function-scoped construction: ownership, fresh definitions,
+      explicit terminators, block parameters and edge arguments, explicit memory.
+- [ ] Implement verification of IDs, ownership, declarations, constants, types,
+      dominance, edge arity/types, calls and returns; reject malformed input.
+- [ ] Lower short-circuiting and mutable bindings with correct joins and loops;
+      model nested lvalues as explicit addresses/projections.
+- [ ] Cover aggregates, tuples, arrays, slices, enum payloads, multiple results,
+      bounds checks, globals, qualified calls and specified runtime builtins.
+- [ ] Preserve diagnostics and source provenance through lowering. Raw records
+      and diagnostic dumps are not verified executable IR.
+
+See the [SSA contract](../../src/ir/README.md) for representation details and
+open semantic decisions.
+
+### 3. Implement target-aware backend and orchestration
+
+- [ ] Verify input before target/type planning; derive layout from target data,
+      including pointer widths, slices, aggregates and aligned enum payloads.
+- [ ] Share ABI classification across declarations, definitions, calls and
+      returns; specify C vararg promotions, callbacks and unsupported cases.
+- [ ] Predeclare all symbols, emit blocks/PHIs, patch forward/back/parallel
+      edges using actual emitted predecessors, then verify LLVM before artifacts.
+- [ ] Keep language traps, bounds policy and arithmetic semantics explicit; do
+      not guess LLVM flags or repair invalid input during emission.
+- [ ] Wire driver goals, object production, configured linker arguments, target,
+      sysroot, library paths and toolchain diagnostics. No obsolete `--emit`,
+      include-root, check or release CLI flags are available today.
+- [ ] Implement build-file interpretation, builder operations, IR interpretation
+      and CLI execution only with tests proving their real effects.
+
+The [backend plan](../../src/backend/README.md) is an IR-only contract. A future
+native backend consumes the same IR; it is not a second frontend lowering route.
+
+## Retained semantic policy proposals
+
+These are intended policies requiring specification and tests, not current
+analyzer/runtime behavior:
+
+- Numeric conversions: implicit widening only within a numeric family and
+  signedness; explicit narrowing keeps low bits; equal-width signed/unsigned
+  casts reinterpret bits; integer/float casts convert numerically.
+- Wrapping integer arithmetic; trap on runtime division/remainder by zero and
+  diagnose known zero divisors. Specify signed division overflow and shifts.
+- Float-to-integer conversion traps for NaN, infinity and out-of-range values;
+  integer-to-float conversion may lose precision. Specify NaN/signed-zero and
+  optimization rules plus explicit checked-operation APIs.
+- Restrict `null` to pointers, with unconstrained type `*void`; restrict `never`
+  to return types with no normal return. Neither rule is currently enforced.
+- Require commas between list elements, allow one trailing comma and keep
+  newlines insignificant. Audit each parser list: current acceptance is not a
+  guarantee of consistent strict separator enforcement.
+- Lexically scoped `defer`, reverse order on every scope exit, return value
+  evaluated first, deferred references evaluated when work starts. Reject
+  nested `defer` and `return` within it; decide break/continue behavior.
+
+## Further work retained from earlier phases
+
+### Diagnostics, parser reliability and determinism
+
+- [ ] Harden delimited lists and malformed/truncated input with success and
+      negative tokenizer/parser tests; add recovery and no-panic fuzzing.
+- [ ] Extend point spans to byte ranges, retaining existing `FileId` identities
+      and source context. There is no central source-map store today.
+- [ ] Define public diagnostic categories, source chains and machine-readable
+      output for the actual driver APIs, not removed compile/check APIs.
+- [ ] Use deterministic declaration/instance ordering and repeated-build tests.
+- [ ] Add independently callable stages before proposing stage-emission CLI flags.
+
+### Ownership, strings and standard library
+
+- [ ] Specify copy/move, borrowing, mutation, view lifetimes, escaping slices,
+      deterministic destruction and suppression, including all control-flow exits.
+- [ ] Audit experimental `std` for success-returning no-ops, fake atomics,
+      allocation/reallocation failure, overflow, hard-coded pthread layouts and
+      signed FFI returns. Old corpus counts and old ABI claims need re-auditing.
+- [ ] Classify modules as stub/unsafe/platform-specific/validated; first make
+      them parse under current syntax, then add semantic and runtime tests as
+      the corresponding compiler stages become executable.
+- [ ] Design `Result[T, E]`, `Option[T]`, owned/borrowed bytes, UTF-8 text,
+      paths and move-only files; specify allocation failure and embedded NUL.
+- [ ] Replace public libc dependencies with a private platform layer, immediate
+      errno translation, retry handling and C shims for ABI-sensitive structures.
+- [ ] Add robust files/I/O, buffering, formatting, partial-I/O and destruction
+      tests before migrating samples and removing the experimental libc facade.
+- [ ] Later: process, time, random, networking, threading and genuine atomics.
+
+### Native interoperability
+
+- [ ] Specify function-pointer/callback syntax and ABI; captured closures remain
+      outside this proposal.
+- [ ] Specify untagged C-union initialization/active-field safety and validate
+      size/alignment against C, separately from tagged enums.
+- [ ] Add platform-gated X11 bindings/shims and compile/link tests; run display
+      tests only where a server is available.
+
+### Tooling, tests and performance
+
+- [ ] Establish an executable integration harness with explicit sample policies
+      (output, compile-only, expected error). No `tests/e2e.rs` exists today.
+- [ ] Add semantic/backend regressions as those stages work, not old-route
+      differential tests or historical probe-file migrations.
+- [ ] Separate optimization from bounds policy; add target and CLI policy tests.
+- [ ] Measure lowering before optimizing allocation placement or aggregate spills.
+- [ ] Audit dependencies and package metadata; keep toolchain/MSRV changes deliberate.
+- [ ] Build a Rust compiler-backed LSP after identity/diagnostics stabilize:
+      versioned in-memory source provider, cancellation, dependency-aware caches,
+      partial-AST recovery, semantic index and UTF-16 position conversions.
+- [ ] Test unsaved/transitive files, stale-result suppression, diagnostic clearing,
+      Unicode and operation without LLVM; then add hover/navigation/rename and
+      semantic tokens rather than relying on heuristic highlighting.
+- [ ] Define package discovery and editor configuration around explicit build
+      membership, not resurrected recursive import/include-root loading.
+- [ ] Later: formatter and package tooling.
+
+## Validation
+
+Use the [validation guide](../agents/tests/README.md). No-default-feature
+check/test/help exercise this checkout without LLVM; passing stub tests does not
+prove semantic analysis, SSA verification, ABI correctness or execution. Default
+`llvm` enables Inkwell 0.8 / LLVM 21 dependencies, not working code generation.

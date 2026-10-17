@@ -1,93 +1,58 @@
-# 02 — Generic Functions With `[T]`
+# 02 — Explicit generic functions with `[T]`
 
-**Depends on:** [01](01-builtin-sigil.md). **Blocks:**
-[03](03-prefix-array-syntax.md), [04](04-generic-types.md).
+**Status:** proposal. **Related:** [prefix arrays](03-prefix-array-syntax.md),
+[generic types](04-generic-types.md), [constraints](07-interfaces.md).
 
-## Goal
+## Current implementation
 
-Replace the "types as positional comptime values" model with a type-parameter
-list. Call sites are **always explicit**.
+Function parsing expects `(` immediately after the name. The AST signature has
+an always-empty reserved `generic_parameters` string list; it is not working
+generic declaration syntax or a binding-bearing type-parameter model. Builtin
+types still parse as expression type values, and `type` remains a builtin
+metatype used by type-declaration dispatch. Analysis, substitution,
+instantiation, caching and code generation are unimplemented.
+
+## Proposed syntax
 
 ```fib
-fn insertion_sort[T](arr: *T, len: int4) void { ... }
-
-insertion_sort[int4](arr.& as *int4, 8);
+fn identity[T](x: T) T { return x; }
+y := identity[int32](1);
 ```
 
-`T: type` parameters are removed from the language.
+These examples are future grammar, not runnable Fib today. Require explicit
+arguments and share binding-bearing `TypeParam` nodes with generic data types,
+including source spans and later constraints.
 
-## Parsing
+### Grammar decisions required first
 
-- Declaration: after the function name, an optional `[` ident (`,` ident)* `]`
-  (`parser/function_declaration.rs:16-123`). Add `type_params` to
-  `FunctionSignature`.
-- The element type is a new `ast/type_param.rs`:
-  `TypeParam { name, constraints, span }`, with `constraints` always empty
-  until [07](07-interfaces.md). **Share it with `TypeDeclaration` in
-  [04](04-generic-types.md)** so constraints land in one place later.
-- Call site: `parse_postfix` (`parser/access.rs:17-32`) only consumes `(` and
-  `.` today — indexing is `.[i]` and slicing is `.[a..b]` — so a postfix `[` is
-  **free**. Add a branch that reads a type-argument list.
+Postfix `[` is **not free**: `a[i]` and `a[a..b]` already parse. `f[T](x)`
+can look like calling an indexed value. Specify syntactic disambiguation or an
+unresolved bracket node plus semantic resolution, with malformed-input tests.
+Prefix arrays do not by themselves remove this value-position ambiguity.
 
-## The deletion that unblocks 03
+The old series proposed deleting type values and positional `T: type` generics.
+That is a future language decision, not a deletion of a working generic engine.
+If adopted, preserve metatype/type-declaration parsing deliberately and reconcile
+compile-time aliases with [name resolution](../name-resolution.md).
 
-Remove `TypeExpressionKind::TypeKeyword`, `Ty::Type`,
-`TypedExprKind::ComptimeType`, and — the load-bearing one — **the builtin-type
-branch in expression position** (`parser/primary.rs:113-119`), along with the
-backstops at `analyze/types.rs:51`, `analyze/functions.rs:41-56` and `:73-86`,
-`ir/expressions.rs:159`, `ir/statements.rs:95,468,505`,
-`backend/lowering/expressions.rs:1312`, `backend/lowering/types.rs:98,234`, and
-the `type X type` special case at `analyze.rs:240-251`.
+## Semantic design and work
 
-After this, **a type can no longer appear in expression position**. That is
-precisely the precondition that makes prefix array syntax unambiguous in
-[03](03-prefix-array-syntax.md).
+- [ ] Collect templates by defining declaration identity; resolve names in the
+      defining environment, not by copying exports into consumer lexical scopes.
+- [ ] Check explicit argument arity/kinds and runtime call arity separately.
+- [ ] Key instances by declaration plus canonical semantic type arguments; use
+      deterministic emission and canonical linkage, not display-string identity.
+- [ ] Use an in-progress instance state to permit ordinary recursion and a
+      bounded resource/depth policy to diagnose expanding polymorphic recursion.
+- [ ] Substitute exhaustively through every type/expression/statement shape,
+      including slices, builtin arguments, enum payloads and nested instances.
+- [ ] Annotate instantiated source syntax under a documented ownership strategy,
+      then lower through `AnalyzedProject -> Ir`; no separate typed AST fallback.
 
-The new model is strictly simpler than the one it replaces.
+## Acceptance tests
 
-## Analyze
-
-- [ ] `GenericFunctionTemplate.comptime_params: Vec<usize>` becomes
-      `type_params: Vec<Identifier>`.
-- [ ] `is_generic_function` (`analyze/generics.rs:19-25`) tests
-      `signature.type_params` instead of scanning for `TypeKeyword`.
-- [ ] `instantiate_generic` (`analyze/generics.rs:256-367`) builds `subs` from
-      the explicit type arguments and stops stripping parameters from the
-      signature. Keep the mangling, the cache, the signature-only placeholder
-      that breaks recursion (L343-356), and the name-sorted drain
-      (`analyze.rs:258-264`).
-- [ ] Validate type-argument arity, which nothing checks today (roadmap
-      L152-154).
-
-## Defects to fix here
-
-- [ ] `substitute_in_expr` (`analyze/generics.rs:128-171`) silently skips
-      `Slice { object, start, end }`, `BuiltinCall { args }`, and
-      `EnumVariantConstruct { fields }` via a `_ => {}` arm. **Replace the
-      catch-alls with exhaustive matches and explicit no-op arms** — the
-      catch-all is the root cause, and exhaustiveness makes the compiler find
-      the next gap instead of swallowing it.
-- [ ] Cross-module generic calls are impossible today:
-      `analyze/expressions.rs:826-847` only accepts `TypedSymbol::Function` for
-      a qualified callee, so an imported template falls into "not a function"
-      even though templates are exported. Fix it, and qualify the mangled name
-      with the defining module (roadmap L377).
-
-Forwarding a type parameter to another generic (`other[T](x)`) starts working on
-its own: `T` now lives in a *type* position that `substitute_type` already
-walks. Today it is impossible, because inside the body `T` is an
-`ExpressionKind::Identifier` that nothing rewrites.
-
-## Tests
-
-- [ ] Parser: `f[T]` declares; `f[int4](x)` calls; wrong arity errors.
-- [ ] One instantiation per distinct type argument; a repeat hits the cache.
-- [ ] `other[T](x)` forwarding inside a template body.
-- [ ] A generic called across a module boundary.
-- [ ] Update `samples/sorting.fib` — the only sample using generics.
-
-## Docs
-
-- [ ] Rewrite `docs/generics.md`. It documents the old positional form, and its
-      example still uses a `for` loop — loops are `while` now, and the docs lag
-      behind. Write the new examples with `while`.
+Parser success/error coverage must include generic declarations, bracket/index
+ambiguity, nested arguments and truncated lists. Later semantic tests cover
+arity, repeated cache hits, `other[T](x)` forwarding, recursion limits and
+cross-file templates with multiple aliases. Execution tests require a new
+harness; no historical sorting sample or removed analyzer test proves support.
