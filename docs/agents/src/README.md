@@ -1,29 +1,23 @@
-# `src/` Compiler Map
+# Source ownership
 
-This directory mirrors the Rust source root.
+| Source under `src/` | Current role |
+| --- | --- |
+| `main.rs`, `cli.rs` | Clap entry and command schema; dispatch is `todo!()` |
+| `lib.rs` | Public modules and `CompilerError` re-export |
+| `build_plan.rs` | File IDs/names, source-file records, build plan; loader stub |
+| `builder_object.rs` | Build stages/state; build-file discovery attempt, remaining operations `todo!()` |
+| `driver.rs`, `driver/compiler_output.rs` | Pipeline boundaries, output enum; orchestration errors explicitly |
+| `frontend/` | Working tokenizer/parser, annotated syntax, analysis sketch and scope utilities |
+| `ir/` | Self-owned SSA records; builder/verifier sketches |
+| `ir_interpreter.rs` | Build-file interpreter `todo!()` |
+| `backend/` | IR-only backend sketch, available without LLVM |
+| `diagnostics.rs` | Structured rendering and parser-error conversion |
 
-| Source | Ownership | Detailed page |
-| --- | --- | --- |
-| `main.rs` | Minimal binary entry; parse CLI and execute | [`cli.md`](cli.md) |
-| `lib.rs` | Library facade and public re-exports | [`lib.md`](lib.md) |
-| `cli.rs` | Clap schema, output printing, process exit | [`cli.md`](cli.md) |
-| `diagnostics.rs` | User-facing diagnostic structure and rendering | [`diagnostics.md`](diagnostics.md) |
-| `driver.rs` | Pipeline orchestration, modules, outputs, linking | [`driver.md`](driver.md) |
-| `frontend/` | Lexing, parsing, semantic analysis | [`frontend/`](frontend/README.md) |
-| `ir/` | Flat middle-end importer and representation | [`ir/`](ir/README.md) |
-| `backend/` | LLVM lowering under the `llvm` feature | [`backend/`](backend/README.md) |
+Details: [CLI](cli.md), [library](lib.md), [driver/build](driver.md),
+[frontend](frontend/README.md), [IR](ir/README.md),
+[backend](backend/README.md), [diagnostics](diagnostics.md).
 
-## Ownership Rule
-
-- The frontend owns source-language validity.
-- The driver owns stage orchestration, filesystem/module loading, output policy,
-  and tool invocation.
-- The IR owns a verifiable, backend-independent control-flow/value contract.
-- The backend owns target representation and ABI details, not source-language
-  type checking.
-- Diagnostics should cross boundaries as structured errors; stages should not
-  print directly.
-
-Several current implementation gaps violate these ideal boundaries. They are
-listed on the subsystem pages and in the
-[`improvement roadmap`](../improvement-roadmap.md).
+Future ownership: frontend establishes source validity; driver owns filesystem
+and stage orchestration; IR owns backend-independent runtime identities/types;
+backend owns target/ABI representation. These are intended boundaries, not
+claims that the missing stages execute today.

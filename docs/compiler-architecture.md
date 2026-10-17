@@ -1,13 +1,31 @@
 # Compiler architecture sketches
 
-This branch defines **interfaces and data models**, not a working compilation
+Audited against the implementation on 2026-10-17. See the
+[current implementation guide](agents/README.md) and [roadmap](roadmap/README.md).
+
+This checkout defines **interfaces and data models**, not a working compilation
 pipeline. Tokenization and parsing work independently; project analysis,
 `AnalyzedProject -> Ir` lowering, SSA construction/verification, and LLVM emission
 are explicitly unimplemented. Their entry points return errors rather than fake
 successful output. Build-file interpretation, object generation, and linking
 remain separate unfinished work.
 
-## Boundaries
+## Present baseline and orchestration
+
+Working components are tokenization, parsing, source AST construction, lexical
+scope storage, diagnostics, and raw IR data/access/formatting utilities. Scope
+storage is not language-level name resolution; IR records are not verified SSA.
+
+`driver::{run_pipeline, run_frontend, parse_files, lower_to_ir}` all return
+explicit unimplemented errors. `BuildPlan` explicitly enumerates named files;
+there is no working recursive import loader. Single-file loading, build.fib
+interpretation, builder orchestration and IR interpretation are unfinished.
+The CLI accepts `build [--single-file PATH]`, `run`, and `test`; help works,
+but command execution is `todo!()`. Historical positional-file, include-root,
+check/emit/link/release options and `compile_project`/`check_project` APIs are
+not available.
+
+## Intended boundaries (not an executable pipeline)
 
 ```text
 BuildPlan + parsed SourceUnits
@@ -37,6 +55,22 @@ The tokenizer emits `Identifier(String)`. Parser identifier helpers return
 strings; single and qualified expression paths both use `QualifiedIdentifier`.
 Type-declaration dispatch consumes the `MetaType` builtin, not a separate `type`
 keyword. Member-access spelling is `accessed_identifier`.
+
+Current source uses bare bit-width types (`int32`, `uint64`; `int`/`uint`
+mean 32-bit), `x := 1;`, `const x := 1;`, `x: int32;`, and
+`fn f(x: int32) int32 { return x; }`. Loops use `while (condition) { ... };`.
+Array/slice **types** still use suffixes (`int32[8]`, `int32[]`); value access
+uses `a[i]`, `a[a..b]`, `.len` and postfix pointer operations (`p*`, `x&`).
+Builtin calls retain `@`, and builtin type values still parse in expressions.
+Some display helpers/comments retain old spellings and are not grammar authority.
+Legacy `@` types, byte-width `int4`, `var`, `for`, dot-index and import declarations
+are not current working syntax. Generic parameter lists, prefix array types,
+C-string literals, interfaces and constraints remain
+[proposals](roadmap/README.md), not parsed feature guarantees.
+
+`FileId`, `FileName` and paths live in `build_plan.rs`; there is no central
+source-map store. Spans are point locations, not complete byte ranges.
+`Parser::with_source` preserves in-memory diagnostic context.
 
 Parsing preserves spelling and source spans. It does not assign resolved names,
 infer even builtin expression types, or turn fields into lexical bindings.
@@ -115,7 +149,10 @@ implemented by declaring these records.
 The LLVM boundary consumes only `Ir` and an explicit target specification.
 It plans verification, target layout, shared ABI classification, predeclarations,
 block/PHI setup, emission, edge patching, and final LLVM verification. All phase
-entry points currently reject execution.
+entry points currently reject execution. These contracts are compiled without
+LLVM as well; `backend/lowering/next/ir_lower.rs` is an inactive legacy prototype
+outside the module tree, still referencing removed APIs. It is not a supported
+backend, compatibility layer or fallback.
 
 The adapter must handle block arguments on parallel edges and loop backedges,
 track actual predecessors after block splitting, and use target-derived aggregate
@@ -137,12 +174,18 @@ small tests cover pending annotations, model structure, and explicit unsupported
 operations. Deleted integration tests were not restored. These tests demonstrate
 contracts, **not end-to-end compilation**.
 
-Useful checks at this stage:
+There is no checked-in integration/e2e harness. Samples and the experimental
+standard library may contain stale syntax and are not automatically compiled or
+run. Tests of explicit stub errors do not demonstrate successful analysis,
+construction, verification, interpretation, layout or emission.
+
+Useful checks at this stage (commands, not a claim they all pass):
 
 ```sh
 cargo fmt --check
-cargo check --no-default-features
-cargo test --no-default-features
+cargo check --offline --no-default-features
+cargo test --offline --no-default-features
+cargo run --offline --no-default-features -- --help
 cargo check
 cargo clippy --all-targets -- -D warnings
 cargo build
@@ -152,4 +195,7 @@ cargo test --all-features
 
 The retained default `llvm` Cargo feature still brings in the existing LLVM 21
 dependency. The adapter sketches themselves contain no LLVM implementation;
-removing or replacing that dependency is not part of this change.
+removing or replacing that dependency is not part of this change. Default-feature
+checks require the compatible LLVM installation. Offline commands additionally
+require cached dependencies. See the [validation guide](agents/tests/README.md)
+for toolchain, formatting and environment limitations.

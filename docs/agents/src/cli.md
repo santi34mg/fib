@@ -1,38 +1,22 @@
-# `src/main.rs` and `src/cli.rs`
+# Binary and CLI
 
-## Responsibility
+[`main.rs`](../../../src/main.rs) calls `Command::parse()`, gathers
+`env::vars_os()`, and delegates to `exec_command`. The Clap schema in
+[`cli.rs`](../../../src/cli.rs) accepts:
 
-`main.rs` delegates to `cli::parse_args` and `cli::exec_command`. `cli.rs` owns
-the Clap argument schema, conversion to `CompilationOptions`, printing stage
-outputs, printing the single final diagnostic, and process exit status.
+```sh
+cargo run --no-default-features -- --help
+cargo run --no-default-features -- build --help
+# Accepted syntax only, NOT working compilation:
+cargo run --no-default-features -- build --single-file samples/minimal.fib
+```
 
-## User Options
+The Rust binary target is `fibc`; the Clap declaration names the tool `fib`.
+Top-level help was verified locally and displays `fibc` from invocation.
+Commands are `build` (optional `--single-file PATH`), `run`, and `test`.
+`exec_command` is `todo!()`; invoking an actual command panics rather than builds,
+runs, or tests Fib code. Help is handled by Clap before dispatch.
 
-The CLI accepts an entry file, repeatable include roots, output paths, an emit
-kind, check-only mode, retained LLVM output, compiler selection, optimization
-level, and release mode. `--check` forces the effective stage to typed analysis.
-`--release` currently means "omit dynamic bounds traps"; it is not a complete
-release profile and does not imply optimization.
-
-## Output Contract
-
-- lex, parse, and typed outputs are debug-oriented text.
-- LLVM and binary emits report output paths through `CompileOutput`.
-- compilation failures print once to stderr and exit with status 1.
-- Clap owns malformed-command-line behavior.
-
-## Known Risks
-
-- Lex/parse emits are named as stage cutoffs but the driver still runs all
-  frontend stages.
-- Typed debug output contains hash maps and is not guaranteed deterministic.
-- There are no subprocess tests asserting stdout/stderr and exit behavior.
-- Irrelevant or conflicting options are generally accepted rather than
-  diagnosed before compilation.
-- `--release` is easy to misread as an optimization/production umbrella.
-
-## Tests
-
-Unit tests in `src/cli.rs` exercise argument parsing. Add process-level tests for
-help/version, every emit, parse and analysis failures, missing LLVM/compiler,
-link failures, path conflicts, and exit codes.
+The former positional-file CLI, `-I`, `--check`, `--emit`, `--cc`, `-O`,
+`--release`, output and retained-LLVM switches are not current options. There
+are no CLI unit or subprocess contract tests in the current module.

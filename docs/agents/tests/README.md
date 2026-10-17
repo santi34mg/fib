@@ -1,48 +1,42 @@
-# `tests/`
+# Tests and validation
 
-## Current Suites
+There is no root `tests/` directory or `tests/e2e.rs`. This legacy documentation
+path is retained for test guidance. Tests live beside implementation under `src/`.
+No `compile_project`, `get_typed_err`, source-override compilation helper, sample
+runner, or integration target should be assumed.
 
-- Most unit tests live beside implementation modules under `src/`.
-- `tests/e2e.rs` is gated by the LLVM feature. It compiles selected samples into
-  fresh temporary directories, runs deterministic binaries, and compares exact
-  stdout. `fib_bench` is compile-only.
-- `tests/probe_tmp.rs` prints exploratory parser/analyzer/lexer outcomes but
-  makes no assertions.
+## What tests actually establish
 
-The no-default-features suite gives broad frontend coverage. LLVM-enabled tests
-exercise backend unit cases and the manually enumerated sample set.
+- `frontend/tokenizer/test.rs`: token kinds/values, malformed literals and positions.
+- `frontend/parser/test.rs`: AST shapes, precedence, current syntax and diagnostics.
+  `samples_parse_with_current_frontend` discovers and parses every top-level
+  `samples/*.fib` file; this is not semantic or runtime sample coverage.
+- `frontend/analyzer/test.rs`: working lexical scopes/identity utilities, pending
+  annotations, and failure/no mutation from unimplemented passes, not type checking.
+- `diagnostics.rs`: parser conversion and rendering/line extraction.
+- `driver/test.rs`: pipeline and lowering stubs explicitly fail.
+- `ir/test.rs`: raw representation/access/display contracts and unfinished API failure.
+- `backend/lowering/test.rs`: backend sketch boundaries do not fabricate success.
 
-## Coverage Strengths
+## Local verification (2026-10-17)
 
-- lexer token and malformed-literal cases;
-- parser precedence and many syntax shapes;
-- analyzer coercion, calls, assignments, enums, slices, imports, and generics;
-- driver import order, cycles, canonical aliases, and output precedence;
-- direct LLVM aggregate/pointer/sample behavior;
-- runtime dynamic index bounds failure.
+`cargo check --offline --no-default-features` succeeded.
+`cargo test --offline --no-default-features` passed 173 library tests, including
+sample parser discovery; binary tests
+and doctests each reported zero. `cargo run --offline --no-default-features -- --help`
+succeeded. System rustc/Cargo report 1.98.0, with rustup unavailable.
 
-## Important Gaps
+`cargo fmt --check` passed (Cargo exit status 0), and `git diff --check`
+reported no whitespace errors.
+Default-feature LLVM checks, full clippy/build/tests and all-features were not run
+for this sample migration. Do not infer that configured CI is green.
 
-- sample discovery is manual despite documentation saying every sample is tested;
-- expected sample output is duplicated in source comments and Rust strings;
-- imported user-defined functions are not linked and executed;
-- flat IR and direct lowering cannot be forced for differential tests;
-- generated LLVM is not verified;
-- no subprocess CLI contract tests;
-- no standard-library sweep beyond sample use of `std::libc`;
-- no fuzzing/property tests;
-- no determinism tests;
-- no runtime coverage for dynamic slice failures or release bounds behavior;
-- print-only probes cannot detect diagnostic regressions.
+## Change guidance
 
-## Test Policy for Changes
-
-- New syntax: lexer/parser positive and malformed-input tests.
-- New semantic rule: analyzer success and negative tests with stable substrings.
-- New lowering branch: a runnable sample when practical.
-- Soundness fix: a negative analyzer test and a backend regression if the bug
-  previously reached lowering.
-- Module change: filesystem fixture plus link-and-run coverage.
-- Shared lowering feature: force both routes, verify LLVM, and compare execution.
-- Diagnostic change: assert category, message substring, and source range rather
-  than the complete rendered message.
+Use `Parser::with_source(Tokenizer::new(source), Path::new("test.fib"), source)`
+for disk-free parser tests. Add accepted and malformed syntax cases. For diagnostics,
+prefer `is_err()` plus stable category/message/location assertions over full strings.
+For future semantic rules add real positive and negative tests as passes execute;
+keep explicit-error contracts until then. Do not return empty success to silence
+stub tests. Once lowering works, add sample reproducers plus verified IR/LLVM and
+link/run coverage. Avoid chasing 100% coverage with tautological lowering tests.
