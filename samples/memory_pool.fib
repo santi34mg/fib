@@ -1,5 +1,5 @@
 // Fixed-block bump allocator with exhaustion handling.
-// Expected output:
+// Intended output (unverified; analysis and execution are unfinished):
 //   Pool: block_size=4, capacity=6
 //   Block 0: wrote 7
 //   Block 1: wrote 14
@@ -9,58 +9,57 @@
 //   Block 5: wrote 42
 //   Alloc 6 failed: pool exhausted
 //   Used: 6 / 6
-import std::libc
 
 type Pool struct {
-    start: @uint8,
-    block_size: @uint8,
-    capacity: @uint8,
-    used: @uint8,
+    start: uint64,
+    block_size: uint64,
+    capacity: uint64,
+    used: uint64,
 }
 
-fn pool_create(block_size: @uint8, capacity: @uint8) Pool {
-    total: @uint8 = block_size * capacity;
-    buf: *@void = libc::malloc(total);
-    return Pool { start: buf as @uint8, block_size: block_size, capacity: capacity, used: 0 as @uint8 };
+fn pool_create(block_size: uint64, capacity: uint64) Pool {
+    total: uint64 = block_size * capacity;
+    buf: *void = libc::malloc(total);
+    return Pool { start: buf as uint64, block_size: block_size, capacity: capacity, used: 0 as uint64 };
 }
 
-fn pool_alloc(pool: *Pool) *@void {
-    if pool.*.used >= pool.*.capacity {
+fn pool_alloc(pool: *Pool) *void {
+    if (pool*).used >= (pool*).capacity {
         return null;
     };
-    offset: @uint8 = pool.*.used * pool.*.block_size;
-    addr: @uint8 = pool.*.start + offset;
-    p: Pool = pool.*;
+    offset: uint64 = (pool*).used * (pool*).block_size;
+    addr: uint64 = (pool*).start + offset;
+    p: Pool = pool*;
     p.used = p.used + 1;
-    pool.* = p;
-    return addr as *@void;
+    pool[0] = p;
+    return addr as *void;
 }
 
-fn pool_destroy(pool: *Pool) @void {
-    libc::free(pool.*.start as *@void);
+fn pool_destroy(pool: *Pool) void {
+    libc::free((pool*).start as *void);
 }
 
-fn main() @int4 {
-    pool: Pool = pool_create(4 as @uint8, 6 as @uint8);
-    defer pool_destroy(pool.&);
+fn main() int32 {
+    pool: Pool = pool_create(4 as uint64, 6 as uint64);
+    defer pool_destroy(pool&);
 
     libc::printf("Pool: block_size=%d, capacity=%d\n",
-        pool.block_size as @int4,
-        pool.capacity as @int4);
+        pool.block_size as int32,
+        pool.capacity as int32);
 
-    i: @int4 = 0;
+    i: int32 = 0;
     while (i < 8) {
-        block: *@void = pool_alloc(pool.&);
+        block: *void = pool_alloc(pool&);
         if block == null {
             libc::printf("Alloc %d failed: pool exhausted\n", i);
             break;
         };
-        val: *@int4 = block as *@int4;
-        val.* = (i + 1) * 7;
-        libc::printf("Block %d: wrote %d\n", i, val.*);
+        val: *int32 = block as *int32;
+        val[0] = (i + 1) * 7;
+        libc::printf("Block %d: wrote %d\n", i, val*);
         i += 1;
     };
 
-    libc::printf("Used: %d / %d\n", pool.used as @int4, pool.capacity as @int4);
+    libc::printf("Used: %d / %d\n", pool.used as int32, pool.capacity as int32);
     return 0;
 }
