@@ -10,12 +10,22 @@ where
     I: Iterator<Item = Token>,
 {
     /// Parse a declaration's left-hand side once per binding, including its
-    /// own `const` qualifier and optional type. The final `:=` is split into
+    /// own `[pub] [const | comp]` modifiers and optional type. The final `:=` is split into
     /// `:` and `=` tokens by the tokenizer.
     fn parse_declaration_binding(&mut self) -> anyhow::Result<(VariableDeclaration, bool)> {
-        let is_const = self
-            .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Const)))
+        let is_pub = self
+            .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Pub)))
             .is_some();
+        let modifier = self
+            .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Const | Keyword::Comp)));
+        let is_const = matches!(
+            modifier.as_ref().map(|t| &t.kind),
+            Some(TokenKind::Keyword(Keyword::Const))
+        );
+        let is_comp = matches!(
+            modifier.as_ref().map(|t| &t.kind),
+            Some(TokenKind::Keyword(Keyword::Comp))
+        );
         let name = self.expect_identifier("expected variable name")?;
         let mut inferred = false;
         let ty = if self
@@ -45,11 +55,13 @@ where
         };
         let mut binding = VariableDeclaration::new(name, ty, None);
         binding.is_const = is_const;
+        binding.is_pub = is_pub;
+        binding.is_comp = is_comp;
         Ok((binding, inferred))
     }
 
     /// Parse the same binding repeatedly while commas follow, then parse the
-    /// shared initializer. Constness and type belong to each binding, not to
+    /// shared initializer. Modifiers and type belong to each binding, not to
     /// the entire declaration statement.
     pub fn parse_variable_declaration(&mut self) -> anyhow::Result<StatementKind> {
         let (first, mut inferred) = self.parse_declaration_binding()?;

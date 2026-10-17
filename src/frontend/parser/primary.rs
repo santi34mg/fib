@@ -3,11 +3,8 @@ use anyhow::bail;
 use crate::diagnostics::Span;
 use crate::frontend::ast::qualified_name::QualifiedIdentifier;
 use crate::frontend::{
-    ast::{
-        expression::{Expression, ExpressionKind},
-        type_expression::{TypeExpression, TypeExpressionKind},
-    },
-    tokens::{Punctuation, Token, TokenKind, builtin::Builtin},
+    ast::expression::{Expression, ExpressionKind},
+    tokens::{Keyword, Operator, Punctuation, Token, TokenKind, builtin::Builtin},
 };
 
 use super::Parser;
@@ -54,11 +51,63 @@ where
         false
     }
 
+    /// A comma inside the outer parentheses distinguishes a tuple type value
+    /// from grouping. Commas in calls, fields, or nested types do not count.
+    fn starts_tuple_type_value(&mut self) -> bool {
+        if !matches!(
+            self.peek().map(|t| t.kind),
+            Some(TokenKind::Punctuation(Punctuation::OpeningParenthesis))
+        ) {
+            return false;
+        }
+        let mut depth = 0;
+        let mut n = 1;
+        while let Some(token) = self.peek_n(n) {
+            match token.kind {
+                TokenKind::Punctuation(
+                    Punctuation::OpeningParenthesis
+                    | Punctuation::OpeningSquareBrace
+                    | Punctuation::OpeningCurlyBrace,
+                ) => depth += 1,
+                TokenKind::Punctuation(
+                    Punctuation::ClosingParenthesis
+                    | Punctuation::ClosingSquareBrace
+                    | Punctuation::ClosingCurlyBrace,
+                ) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                TokenKind::Punctuation(Punctuation::Comma) if depth == 1 => return true,
+                _ => {}
+            }
+            n += 1;
+        }
+        false
+    }
+
     /// Parse a primary expression: literals, identifiers (including qualified names),
     /// array literals, grouping, builtin type values, builtin calls, and `null`.
     /// Postfix operators (calls, field access, ...) are handled by
     /// [`Parser::parse_postfix`].
     pub fn parse_primary(&mut self) -> anyhow::Result<Expression> {
+        if let Some(token) = self.peek()
+            && (matches!(
+                token.kind,
+                TokenKind::Builtin(Builtin::BuiltinType(_))
+                    | TokenKind::Keyword(Keyword::Struct | Keyword::Enum | Keyword::Function)
+                    | TokenKind::Operator(Operator::Star)
+            ) || self.starts_tuple_type_value())
+        {
+            let ty = self
+                .parse_type_expression()?
+                .ok_or_else(|| self.error("expected type expression", token.line, token.column))?;
+            return Ok(Expression::at(
+                ExpressionKind::TypeValue(ty),
+                Span::new(token.line, token.column),
+            ));
+        }
         let token = self.expect_next("parse_atom: expected a token, found none")?;
         let span = Span::new(token.line, token.column);
         match token.kind {
@@ -124,15 +173,7 @@ where
                 )?;
                 Ok(inner_expr)
             }
-            // A builtin type token in expression position — produces a comptime type value.
-            // This allows passing builtin types as generic arguments: `identity(sint32, 42)`
-            TokenKind::Builtin(Builtin::BuiltinType(bt)) => Ok(Expression::at(
-                ExpressionKind::TypeValue(TypeExpression::at(
-                    TypeExpressionKind::Builtin(bt),
-                    span,
-                )),
-                span,
-            )),
+
             // A builtin function call, e.g. `@concat(a, b)`. The parentheses are
             // mandatory — a bare `@concat` is an error.
             TokenKind::Builtin(Builtin::BuiltinFunction(bf)) => {

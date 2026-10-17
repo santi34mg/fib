@@ -144,7 +144,9 @@ where
                         else_branch,
                     }
                 }
-                TokenKind::Keyword(Keyword::Const) => self.parse_variable_declaration()?,
+                TokenKind::Keyword(Keyword::Pub | Keyword::Const | Keyword::Comp) => {
+                    self.parse_variable_declaration()?
+                }
                 TokenKind::Keyword(Keyword::Defer) => {
                     self.next(); // consume 'defer'
                     // Single `;` terminates the whole `defer <stmt>;`,

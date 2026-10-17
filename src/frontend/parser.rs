@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::frontend::ast::Ast;
 use crate::frontend::ast::statement::{Statement, StatementKind};
 use crate::frontend::tokens::Keyword;
-use crate::frontend::tokens::builtin::{Builtin, BuiltinFunction, BuiltinType};
+use crate::frontend::tokens::builtin::{Builtin, BuiltinFunction};
 use crate::frontend::tokens::{Punctuation, Token, TokenKind};
 
 #[derive(Debug, Clone)]
@@ -223,14 +223,6 @@ where
                         span,
                     });
                 }
-                TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::MetaType)) => {
-                    let ty = self.parse_type_declaration()?;
-                    statements.push(Statement {
-                        kind: StatementKind::TypeDeclaration(ty),
-                        span,
-                    });
-                }
-
                 TokenKind::Comment => {
                     self.next();
                 }
@@ -259,6 +251,8 @@ mod expression;
 mod function_declaration;
 mod function_type;
 
+#[cfg(test)]
+mod declaration_tests;
 mod logical_and;
 mod logical_or;
 mod pointer;
@@ -271,7 +265,6 @@ mod switch;
 mod term;
 mod test;
 mod tuple;
-mod type_declaration;
 mod type_expression;
 mod type_fields;
 mod unary;
