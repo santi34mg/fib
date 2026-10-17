@@ -17,7 +17,7 @@ export const TOKEN_TYPES = [
 const tokenTypeIndex = new Map(TOKEN_TYPES.map((type, index) => [type, index]));
 
 const keywords = new Set([
-  "var",
+  "const",
   "fn",
   "switch",
   "when",
@@ -34,28 +34,18 @@ const keywords = new Set([
   "as",
   "extern",
   "defer",
-  "import",
+
   "true",
   "false",
   "null",
 ]);
 
 const builtinTypes = new Set([
+  "type",
   "void",
-  "uint",
-  "uint2",
-  "uint4",
-  "uint8",
-  "uint16",
-  "int",
-  "int2",
-  "int4",
-  "int8",
-  "int16",
-  "float2",
-  "float4",
-  "float8",
-  "float16",
+  "uint", "uint8", "uint16", "uint32", "uint64", "uint128",
+  "int", "int8", "int16", "int32", "int64", "int128",
+  "float16", "float32", "float64", "float128",
   "char",
   "bool",
   "string",
@@ -64,7 +54,7 @@ const builtinTypes = new Set([
 ]);
 
 const builtinFunctions = new Set(["concat", "str_len", "str_eq"]);
-const builtinProperties = new Set(["len"]);
+
 const twoCharacterOperators = new Set([
   "==",
   "!=",
@@ -84,8 +74,8 @@ const twoCharacterOperators = new Set([
 ]);
 const operatorCharacters = new Set("=!><+-*/%&|^~");
 const punctuationCharacters = new Set("(){}[],;:.");
-const identifierStart = /[\p{L}_]/u;
-const identifierContinue = /[\p{L}\p{N}_]/u;
+const identifierStart = /[\p{Alphabetic}_]/u;
+const identifierContinue = /[\p{Alphabetic}\p{N}_]/u;
 
 function codePointAt(text, offset) {
   const value = String.fromCodePoint(text.codePointAt(offset));
@@ -133,6 +123,10 @@ function scanNumber(line, start) {
             ? /[01]/
             : /[0-9]/;
     while (offset < line.length && digit.test(line[offset])) offset += 1;
+    if (base === "d" && line[offset] === "." && /[0-9]/.test(line[offset + 1] ?? "")) {
+      offset += 1;
+      while (offset < line.length && /[0-9]/.test(line[offset])) offset += 1;
+    }
     return offset;
   }
 
@@ -201,13 +195,7 @@ function rawTokens(text) {
         offset += width;
         const end = offset < line.length && identifierStart.test(codePointAt(line, offset)[0]) ? scanIdentifier(line, offset) : offset;
         const name = line.slice(offset, end);
-        const type = builtinTypes.has(name)
-          ? "type"
-          : builtinFunctions.has(name)
-            ? "function"
-            : builtinProperties.has(name)
-              ? "property"
-              : "macro";
+        const type = builtinFunctions.has(name) ? "function" : "macro";
         tokens.push({ line: lineNumber, start, length: end - start, type, text: line.slice(start, end) });
         offset = end;
         continue;
@@ -216,7 +204,7 @@ function rawTokens(text) {
       if (identifierStart.test(character)) {
         const end = scanIdentifier(line, start);
         const word = line.slice(start, end);
-        tokens.push({ line: lineNumber, start, length: end - start, type: keywords.has(word) ? "keyword" : null, text: word });
+        tokens.push({ line: lineNumber, start, length: end - start, type: builtinTypes.has(word) ? "type" : keywords.has(word) ? "keyword" : builtinFunctions.has(word) ? "function" : null, text: word });
         offset = end;
         continue;
       }
@@ -246,8 +234,29 @@ function rawTokens(text) {
   return tokens;
 }
 
-function classifyIdentifiers(tokens) {
+function classifyIdentifiers(allTokens) {
+  const tokens = allTokens.filter((token) => token.type !== "comment");
+  const contexts = [];
+  const declaredTypes = new Set();
   for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index].text === "type" && tokens[index + 1]?.type === null) {
+      tokens[index + 1].type = "type";
+      declaredTypes.add(tokens[index + 1].text);
+    }
+  }
+  for (let index = 0; index < tokens.length; index += 1) {
+    const text = tokens[index].text;
+    if (text === "(" || text === "{") {
+      const previous = tokens[index - 1];
+      const beforePrevious = tokens[index - 2];
+      const kind = text === "("
+        ? (previous?.text === "fn" || beforePrevious?.text === "fn" ? "parameters" : "group")
+        : previous?.text === "enum" ? "enum"
+        : previous?.text === "struct" || contexts.at(-1)?.kind === "enum" ? "fields" : "block";
+      contexts.push({ kind, close: text === "(" ? ")" : "}" });
+    } else if (text === contexts.at(-1)?.close) {
+      contexts.pop();
+    }
     const token = tokens[index];
     if (token.type !== null) continue;
 
@@ -255,11 +264,13 @@ function classifyIdentifiers(tokens) {
     const next = tokens[index + 1];
     if (previous?.text === "fn") token.type = "function";
     else if (previous?.text === "type") token.type = "type";
-    else if (previous?.text === ".") token.type = /^[A-Z]/.test(token.text) ? "enumMember" : "property";
+    else if (previous?.text === ".") token.type = "property";
     else if (next?.text === "::") token.type = "namespace";
     else if (next?.text === "(") token.type = "function";
-    else if (previous?.text === "as" || /^[A-Z]/.test(token.text)) token.type = "type";
-    else if (next?.text === ":" && previous?.text !== ".") token.type = "parameter";
+    else if (contexts.at(-1)?.kind === "enum") token.type = "enumMember";
+    else if (next?.text === ":") token.type = contexts.at(-1)?.kind === "parameters" ? "parameter"
+      : contexts.at(-1)?.kind === "fields" ? "property" : "variable";
+    else if (previous?.text === "as" || previous?.text === ":" || declaredTypes.has(token.text)) token.type = "type";
     else token.type = "variable";
   }
 }
