@@ -10,12 +10,12 @@
 //   Alloc 6 failed: pool exhausted
 //   Used: 6 / 6
 
-type Pool struct {
+Pool: type = struct {
     start: uint64,
     block_size: uint64,
     capacity: uint64,
     used: uint64,
-}
+};
 
 fn pool_create(block_size: uint64, capacity: uint64) Pool {
     total: uint64 = block_size * capacity;

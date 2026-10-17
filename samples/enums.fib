@@ -2,11 +2,11 @@
 // Intended output (unverified; compiler pipeline unfinished):
 //   color discriminant = 1
 
-type Color enum {
+Color: type = enum {
     Red,
     Green,
     Blue,
-}
+};
 
 fn main() int32 {
     c: Color = Color.Green;

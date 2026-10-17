@@ -4,11 +4,11 @@
 //   green
 //   blue
 
-type Color enum {
+Color: type = enum {
     Red,
     Green,
     Blue,
-}
+};
 
 fn describe(c: Color) void {
     switch (c) {

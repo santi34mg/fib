@@ -7,11 +7,11 @@
 //   bool=1
 //   eof
 
-type Token enum {
+Token: type = enum {
     Integer { value: uint32 },
     Boolean { flag: bool },
     EOF,
-}
+};
 
 fn describe(t: Token) void {
     switch (t) {

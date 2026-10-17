@@ -3,10 +3,10 @@
 //   List:   10 -> 20 -> 30 -> null
 //   Length: 3
 
-type Node struct {
+Node: type = struct {
     data: int32,
     next: *Node,
-}
+};
 
 fn push(head: *Node, val: int32) *Node {
     node: *Node = libc::malloc(16 as uint64) as *Node;

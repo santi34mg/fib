@@ -49,7 +49,10 @@ mod tests {
         let trimmed = test_string.trim_start();
         let src = if trimmed.starts_with("fn ")
             || trimmed.starts_with("extern ")
-            || trimmed.starts_with("type ")
+            || trimmed
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains(": type ="))
         {
             test_string.to_string()
         } else {
@@ -1271,7 +1274,10 @@ mod tests {
         let trimmed = test_string.trim_start();
         let src = if trimmed.starts_with("fn ")
             || trimmed.starts_with("extern ")
-            || trimmed.starts_with("type ")
+            || trimmed
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains(": type ="))
         {
             test_string.to_string()
         } else {
@@ -1320,7 +1326,8 @@ mod tests {
 
     #[test]
     fn test_truncated_switch_pattern_errors_without_panic() {
-        let err = get_ast_err("type Color enum { Red }\nfn f(c: Color) void { switch (c) { when");
+        let err =
+            get_ast_err("Color: type = enum { Red };\nfn f(c: Color) void { switch (c) { when");
         assert!(
             err.contains("variant name") || err.contains("else"),
             "unexpected error: {}",
@@ -1734,14 +1741,19 @@ mod tests {
     #[test]
     fn type_declarations_preserve_struct_and_enum_payload_shapes() {
         let ast = get_ast(
-            "type Record struct { id: int32, next: *Record }\ntype Result enum { Ok { value: (int32, string) }, Empty, Error { code: uint8 } }",
+            "Record: type = struct { id: int32, next: *Record };\nResult: type = enum { Ok { value: (int32, string) }, Empty, Error { code: uint8 } };",
         );
         assert_eq!(ast.statements.len(), 2);
-        let StatementKind::TypeDeclaration(record) = &ast.statements[0].kind else {
+        let StatementKind::VariableDeclaration(record) = &ast.statements[0].kind else {
             panic!("expected struct declaration: {:#?}", ast.statements[0]);
         };
         assert_eq!(record.identifier, "Record");
-        let TypeExpressionKind::Struct { fields } = &record.expression.kind else {
+        let ExpressionKind::TypeValue(record_type) =
+            &record.expression.as_ref().expect("initializer").kind
+        else {
+            panic!("expected type value: {:#?}", record.expression);
+        };
+        let TypeExpressionKind::Struct { fields } = &record_type.kind else {
             panic!("expected struct type: {:#?}", record.expression);
         };
         assert_eq!(
@@ -1762,11 +1774,16 @@ mod tests {
             matches!(&fields[1].expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Pointer { pointed_type }, .. }) if matches!(pointed_type.kind, TypeExpressionKind::QualifiedIdentifier(_)))
         );
 
-        let StatementKind::TypeDeclaration(result) = &ast.statements[1].kind else {
+        let StatementKind::VariableDeclaration(result) = &ast.statements[1].kind else {
             panic!("expected enum declaration: {:#?}", ast.statements[1]);
         };
         assert_eq!(result.identifier, "Result");
-        let TypeExpressionKind::Enum { variants } = &result.expression.kind else {
+        let ExpressionKind::TypeValue(result_type) =
+            &result.expression.as_ref().expect("initializer").kind
+        else {
+            panic!("expected type value: {:#?}", result.expression);
+        };
+        let TypeExpressionKind::Enum { variants } = &result_type.kind else {
             panic!("expected enum type: {:#?}", result.expression);
         };
         assert_eq!(
@@ -1791,17 +1808,21 @@ mod tests {
 
     #[test]
     fn composite_type_expressions_preserve_nesting() {
-        let ast = get_ast("type Callback fn(*int32, (bool, string)) -> *uint64");
-        let StatementKind::TypeDeclaration(decl) = &ast.statements[0].kind else {
+        let ast = get_ast("Callback: type = fn(*int32, (bool, string)) -> *uint64;");
+        let StatementKind::VariableDeclaration(decl) = &ast.statements[0].kind else {
             panic!("expected type declaration: {:#?}", ast.statements[0]);
         };
         assert_eq!(decl.identifier, "Callback");
+        let ExpressionKind::TypeValue(ty) = &decl.expression.as_ref().expect("initializer").kind
+        else {
+            panic!("expected type value: {:#?}", decl.expression);
+        };
         let TypeExpressionKind::Function {
             argument_types,
             return_type,
-        } = &decl.expression.kind
+        } = &ty.kind
         else {
-            panic!("expected function type: {:#?}", decl.expression);
+            panic!("expected function type: {:#?}", ty);
         };
         assert!(
             matches!(argument_types.as_slice(), [TypeExpression { kind: TypeExpressionKind::Pointer { pointed_type }, .. }, TypeExpression { kind: TypeExpressionKind::Tuple { elements }, .. }] if matches!(pointed_type.kind, TypeExpressionKind::Builtin(BuiltinType::Int32)) && matches!(elements.as_slice(), [TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::Boolean), .. }, TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::String), .. }]))
@@ -2014,14 +2035,17 @@ mod tests {
     #[test]
     fn malformed_composite_types_signatures_and_patterns_error() {
         for (source, expected) in [
-            ("type Broken struct { x: }", "expected a type identifier"),
             (
-                "type Broken enum { Ok { value: } }",
+                "Broken: type = struct { x: };",
                 "expected a type identifier",
             ),
-            ("type Broken fn(int32) ->", "expected a return type"),
-            ("type Broken *", "expected type"),
-            ("type Broken ()", "expected at least one type"),
+            (
+                "Broken: type = enum { Ok { value: } };",
+                "expected a type identifier",
+            ),
+            ("Broken: type = fn(int32) ->", "expected a return type"),
+            ("Broken: type = *", "expected type"),
+            ("Broken: type = ();", "expected an atom"),
             ("fn f(x: ) {}", "expected parameter type"),
             ("fn f(x: int32, ... y) void {}", "expected ')'"),
             ("switch (x) { when .Ok(1) { } };", "expected binding name"),
@@ -2098,14 +2122,14 @@ mod tests {
 
     #[test]
     fn metatype_token_works_in_declarations_annotations_and_expressions() {
-        let ast = get_ast("type Alias pkg::Value\nfn identity(T: type) type { return type; }");
+        let ast = get_ast("Alias: type = pkg::Value;\nfn identity(T: type) type { return type; }");
         assert_eq!(ast.statements.len(), 2);
-        let StatementKind::TypeDeclaration(alias) = &ast.statements[0].kind else {
-            panic!("expected type declaration");
+        let StatementKind::VariableDeclaration(alias) = &ast.statements[0].kind else {
+            panic!("expected type binding");
         };
         assert_eq!(alias.identifier, "Alias");
         assert!(
-            matches!(&alias.expression.kind, TypeExpressionKind::QualifiedIdentifier(name) if name.segments == ["pkg", "Value"])
+            matches!(&alias.expression.as_ref().expect("initializer").kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["pkg", "Value"])
         );
         let function = find_func(&ast).expect("function declaration");
         assert_eq!(function.signature.parameters[0].parameter_identifier, "T");
@@ -2129,9 +2153,12 @@ mod tests {
             ("const int32 := 1;", "expected variable name"),
             ("fn type() {}", "expected function name"),
             ("fn f(int32: int32) {}", "expected parameter name"),
-            ("type int32 int32", "expected identifier"),
-            ("type Record struct { type: int32 }", "expected field name"),
-            ("type Choice enum { return }", "expected variant name"),
+            ("const int32: type = int32;", "expected variable name"),
+            (
+                "Record: type = struct { type: int32 };",
+                "expected field name",
+            ),
+            ("Choice: type = enum { return };", "expected variant name"),
             ("Point { type: 1 };", "expected field name"),
             ("switch (x) { when .return {} };", "expected variant name"),
             ("switch (x) { when .Ok(type) {} };", "expected binding name"),
@@ -2243,15 +2270,25 @@ mod tests {
     #[test]
     fn parsed_declaration_and_parameter_annotations_are_pending() {
         let ast = get_ast(
-            "type Alias pkg::Value\nfn identity(T: type) type { return type; }\nextern fn foreign(value: Alias);\nconst top := 1;",
+            "Alias: type = pkg::Value;\nfn identity(T: type) type { return type; }\nextern fn foreign(value: Alias);\nconst top := 1;",
         );
-        let StatementKind::TypeDeclaration(alias) = &ast.statements[0].kind else {
-            panic!("expected type declaration");
+        let StatementKind::VariableDeclaration(alias) = &ast.statements[0].kind else {
+            panic!("expected type binding");
         };
         assert_eq!(alias.annotation.binding, None);
-        assert_eq!(alias.expression.annotation.resolved, None);
-        let TypeExpressionKind::QualifiedIdentifier(name) = &alias.expression.kind else {
-            panic!("expected named type");
+        assert_eq!(
+            alias
+                .ty
+                .as_ref()
+                .expect("metatype annotation")
+                .annotation
+                .resolved,
+            None
+        );
+        let initializer = alias.expression.as_ref().expect("initializer");
+        assert_eq!(initializer.annotation.resolved, None);
+        let ExpressionKind::QualifiedIdentifier(name) = &initializer.kind else {
+            panic!("expected named initializer");
         };
         assert_eq!(name.annotation.resolved, None);
         for statement in &ast.statements[1..3] {
@@ -2338,11 +2375,16 @@ mod tests {
 
     #[test]
     fn parsed_type_definition_fields_have_pending_member_not_binding_slots() {
-        let ast = get_ast("type Record struct { value: int32 }");
-        let StatementKind::TypeDeclaration(declaration) = &ast.statements[0].kind else {
-            panic!("expected type declaration");
+        let ast = get_ast("Record: type = struct { value: int32 };");
+        let StatementKind::VariableDeclaration(declaration) = &ast.statements[0].kind else {
+            panic!("expected type binding");
         };
-        let TypeExpressionKind::Struct { fields } = &declaration.expression.kind else {
+        let ExpressionKind::TypeValue(ty) =
+            &declaration.expression.as_ref().expect("initializer").kind
+        else {
+            panic!("expected type value");
+        };
+        let TypeExpressionKind::Struct { fields } = &ty.kind else {
             panic!("expected struct type");
         };
         assert_eq!(fields[0].annotation.resolved, None);
