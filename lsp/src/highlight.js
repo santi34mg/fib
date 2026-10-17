@@ -17,7 +17,9 @@ export const TOKEN_TYPES = [
 const tokenTypeIndex = new Map(TOKEN_TYPES.map((type, index) => [type, index]));
 
 const keywords = new Set([
+  "pub",
   "const",
+  "comp",
   "fn",
   "switch",
   "when",
