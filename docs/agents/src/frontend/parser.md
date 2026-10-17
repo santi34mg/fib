@@ -18,12 +18,19 @@ This is parsing only. It does not type-check or compile the function.
 
 - Bare builtin types: `int32`, `uint64`, `bool`, `string`, `usize`, `type`;
   `@int32` is rejected. Builtin calls retain `@`, e.g. `@str_len(s)`.
-- Bindings: `x := 1;`, `x: int32 = 1;`, `x: int32;`, `const x := 1;`.
-  No `var` prefix. Each multi-binding has its own optional type/`const`;
-  uninitialized multi-bindings require a type on each binding.
+- Unified bindings: `[pub] [const | comp] name (: Type = | :=) expression;`.
+  `pub` precedes the optional, mutually exclusive `const`/`comp`. No `var` prefix.
+  For compatibility, typed declarations without initializers (`x: int32;`) remain
+  supported. Each multi-binding has independent modifiers and an optional type;
+  uninitialized multi-bindings require a type on each binding. A final `:=`
+  introduces the shared initializer list, not a shared type.
 - Functions: `fn add(a: int32, b: int32) int32 { return a + b; }`;
   omitted return type is void. Prototypes/externs use `;`.
-- Types start `type Name` followed directly by a type expression.
+- Type bindings use `Name: type = struct { field: int32 };` or
+  `Alias: type = pkg::Value;`, producing `VariableDeclaration` with an arbitrary
+  expression initializer. Explicit type syntax produces `TypeValue`; named
+  references and calls remain ordinary expressions, with type/value discrimination
+  left to semantic analysis. Legacy `type Name ...` declaration parsing is removed.
 - Qualified names use `file::name`; members use `value.field`; length is `.len`.
 - Index/slice syntax is `a[i]`, `a[start..end]`, with inclusive `.=` also parsed.
   Legacy `a.[i]`/`.@len` are not current syntax.
@@ -31,11 +38,13 @@ This is parsing only. It does not type-check or compile the function.
   supported delimiter contexts. Multiplication/bitwise-and remain binary operators.
 - Loops use `while (condition) { ... };`, or `while () { ... };`, not `for`.
 - Statements require `;`, including `if`, `while`, and `switch` blocks.
-  Top-level functions/types use dedicated declaration parsing, not this universal
-  statement terminator rule. `defer` owns one terminator for its inner statement.
+  Type bindings also require `;`, including after closing struct/enum braces.
+  Top-level function definitions do not take an extra `;`.
+  `defer` owns one terminator for its inner statement.
 - Top-level ordinary statements/bindings are accepted by `parse()` alongside
-  functions/types. Import is still a token keyword but not a supported loader or
-  parsed import-declaration branch. Generic parameter lists are not parsed.
+  functions. `pub`, `const`, and `comp` on bindings record flags only, not semantic
+  visibility or compile-time evaluation. Import has no supported loader or parsed
+  import-declaration branch. Generic parameter lists are not parsed.
 
 ## Implementation map
 

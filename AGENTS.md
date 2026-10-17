@@ -34,7 +34,7 @@ cargo test --offline --no-default-features
 cargo run --offline --no-default-features -- --help
 ```
 
-Check/help succeeded and tests passed 173 library tests; no integration/e2e suite
+Check/help succeeded and tests passed 178 library tests; no integration/e2e suite
 exists. Offline is optional outside restricted environments. Focus tests with
 `cargo test --no-default-features frontend::parser` or `frontend::tokenizer`.
 See [validation status](docs/agents/tests/README.md) for formatting and limitations.
@@ -49,6 +49,9 @@ pre-commit hook additionally makes deny blocking. CI skips docs-only paths.
 Use bare bit-width types (`int32`, `uint64`, aliases `int`/`uint` = 32-bit),
 `x := 1;`, `const x := 1;`, `x: int32;`, `fn f(x: int32) int32 { return x; }`,
 `while (condition) { ... };`, `a[i]`, `a[a..b]`, `.len`, postfix pointer operations.
+Bindings use `[pub] [const | comp] name (: Type = | :=) expression;`, including
+`Name: type = struct { field: int32 };`. Multi-bindings retain independent
+modifiers/types and a shared initializer list. Legacy `type Name ...` is removed.
 Builtin functions retain `@`; legacy `@` types, `var`, `for`, dot-index and imports
 are not the current working grammar. Parsing is not semantic/runtime support.
 See [parser details](docs/agents/src/frontend/parser.md). Samples use current

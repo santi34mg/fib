@@ -21,8 +21,9 @@ return type follows `)` **without an arrow**. Omit it before `{` or `;` to recor
 `void`. Body statements require semicolons, but there is no extra semicolon
 after the function's closing brace.
 
-Function declarations are dispatched at file level. Nested function/type
-declarations are not accepted by the ordinary block statement parser. A call
+Function declarations are dispatched at file level. Nested function
+declarations are not accepted by the ordinary block statement parser; type-valued
+bindings use ordinary declaration syntax. A call
 records any parsed callee expression plus arguments.
 
 ## Multiple return syntax
@@ -73,7 +74,7 @@ records ordinary parameters and a builtin type value argument; the signature's
 ## Function types and call expressions
 
 ```fib
-type Callback fn(int32) -> int32
+Callback: type = fn(int32) -> int32;
 callback: fn(int32) -> int32;
 callback(42);
 ```
