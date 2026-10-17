@@ -14,6 +14,8 @@ impl<'input> Tokenizer<'input> {
         // for now, "__<identifier>" is reserved for internal identifiers
         match identifier {
             "const" => TokenKind::Keyword(Keyword::Const),
+            "pub" => TokenKind::Keyword(Keyword::Pub),
+            "comp" => TokenKind::Keyword(Keyword::Comp),
             "fn" => TokenKind::Keyword(Keyword::Function),
             "switch" => TokenKind::Keyword(Keyword::Switch),
             "when" => TokenKind::Keyword(Keyword::When),
