@@ -1,5 +1,9 @@
 use crate::frontend::{
-    ast::{pattern::Pattern, statement::StatementKind, switch::SwitchArm},
+    ast::{
+        pattern::{Pattern, PatternBinding},
+        statement::StatementKind,
+        switch::SwitchArm,
+    },
     tokens::{Keyword, Punctuation, Token, TokenKind},
 };
 
@@ -43,7 +47,7 @@ where
                     ..
                 }) => {
                     self.next(); // consume '.'
-                    let name = self.expect_unqualified_name("expected variant name after '.'")?;
+                    let name = self.expect_identifier("expected variant name after '.'")?;
                     // Optional `(binding)` for variants carrying a payload.
                     let binding = if matches!(
                         self.peek(),
@@ -53,17 +57,21 @@ where
                         })
                     ) {
                         self.next(); // consume '('
-                        let b = self.expect_unqualified_name("expected binding name in pattern")?;
+                        let b = self.expect_identifier("expected binding name in pattern")?;
                         self.expect_token(
                             TokenKind::Punctuation(Punctuation::ClosingParenthesis),
                             "expected ')' after pattern binding",
                         )?;
-                        Some(b)
+                        Some(PatternBinding {
+                            identifier: b,
+                            annotation: Default::default(),
+                        })
                     } else {
                         None
                     };
                     Pattern::EnumVariant {
                         variant: name,
+                        member: Default::default(),
                         binding,
                     }
                 }

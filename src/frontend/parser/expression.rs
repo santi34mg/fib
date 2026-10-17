@@ -33,10 +33,10 @@ where
             ..
         }) = self.peek()
         {
-            return Ok(Expression {
-                kind: ExpressionKind::VoidExpression,
-                span: Span::new(line, column),
-            });
+            return Ok(Expression::at(
+                ExpressionKind::VoidExpression,
+                Span::new(line, column),
+            ));
         }
         self.parse_logical_or()
     }

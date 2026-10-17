@@ -3,7 +3,6 @@ use crate::frontend::{
     tokens::{
         Keyword, Literal, TokenKind,
         builtin::{Builtin, BuiltinFunction, BuiltinType},
-        name::Name,
     },
 };
 
@@ -11,14 +10,13 @@ impl<'input> Tokenizer<'input> {
     pub fn lex_identifier_or_keyword(&mut self) -> TokenKind {
         let start = self.position;
         self.skip_while(|c| c.is_alphanumeric() || c == '_');
-        let name = &self.input[start..self.position];
+        let identifier = &self.input[start..self.position];
         // for now, "__<identifier>" is reserved for internal identifiers
-        match name {
+        match identifier {
             "const" => TokenKind::Keyword(Keyword::Const),
             "fn" => TokenKind::Keyword(Keyword::Function),
             "switch" => TokenKind::Keyword(Keyword::Switch),
             "when" => TokenKind::Keyword(Keyword::When),
-            "type" => TokenKind::Keyword(Keyword::Type),
             "struct" => TokenKind::Keyword(Keyword::Struct),
             "enum" => TokenKind::Keyword(Keyword::Enum),
             "union" => TokenKind::Keyword(Keyword::Union),
@@ -36,19 +34,18 @@ impl<'input> Tokenizer<'input> {
             "false" => TokenKind::Literal(Literal::Boolean(false)),
             "null" => TokenKind::Literal(Literal::Null),
 
+            "type" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::MetaType)),
+
             "concat" => TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::Concat)),
             "str_len" => TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::StrLen)),
             "str_eq" => TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::StrEq)),
 
             _ => {
-                if let Some(ty) = BuiltinType::from_name(name) {
+                if let Some(ty) = BuiltinType::from_name(identifier) {
                     return TokenKind::Builtin(Builtin::BuiltinType(ty));
                 }
                 self.last_identifier_id += 1;
-                TokenKind::Name(Name {
-                    name: name.to_string(),
-                    id: self.last_identifier_id,
-                })
+                TokenKind::Identifier(identifier.to_string())
             }
         }
     }

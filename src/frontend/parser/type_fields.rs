@@ -21,7 +21,7 @@ where
                 self.next(); // consume the closing curly brace
                 break;
             }
-            let name = self.expect_unqualified_name("expected field name")?;
+            let name = self.expect_identifier("expected field name")?;
             self.expect_token(
                 TokenKind::Punctuation(Punctuation::Colon),
                 "expected ':' after field name",
@@ -35,7 +35,8 @@ where
                 }
             };
             fields.push(StructField {
-                field_name: name,
+                field_identifier: name,
+                annotation: Default::default(),
                 expression: Expression::at(
                     ExpressionKind::TypeValue(field_type),
                     Span::new(line, column),

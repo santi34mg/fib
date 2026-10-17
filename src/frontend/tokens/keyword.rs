@@ -14,7 +14,6 @@ pub enum Keyword {
     Struct,
     Enum,
     Union,
-    Type,
     As,
     Extern,
     Defer,

@@ -1,7 +1,7 @@
 use anyhow::bail;
 
 use crate::diagnostics::Span;
-use crate::frontend::ast::qualified_name::QualifiedName;
+use crate::frontend::ast::qualified_name::QualifiedIdentifier;
 use crate::frontend::{
     ast::{
         expression::{Expression, ExpressionKind},
@@ -22,7 +22,7 @@ where
         if !matches!(
             self.peek_n(2),
             Some(Token {
-                kind: TokenKind::Name(_),
+                kind: TokenKind::Identifier(_),
                 ..
             })
         ) || !matches!(
@@ -65,7 +65,7 @@ where
             TokenKind::Literal(literal) => {
                 Ok(Expression::at(ExpressionKind::Literal(literal), span))
             }
-            TokenKind::Name(name) => {
+            TokenKind::Identifier(name) => {
                 // Check if next token is `::` — qualified access: module::member
                 let mut segments = vec![name];
                 while matches!(
@@ -76,7 +76,7 @@ where
                     })
                 ) {
                     self.next(); // consume `::`
-                    segments.push(self.expect_unqualified_name("expected name after '::'")?);
+                    segments.push(self.expect_identifier("expected name after '::'")?);
                 }
                 if let Some(Token {
                     kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
@@ -85,15 +85,10 @@ where
                     && (!self.no_struct_literal || self.brace_starts_struct_fields())
                 {
                     self.next(); // consume '{'
-                    self.parse_struct_construct(QualifiedName { segments }, span) // this one consumes '}', TODO: test that
-                } else if segments.len() == 1 {
-                    Ok(Expression::at(
-                        ExpressionKind::UnqualifiedName(segments.remove(0)),
-                        span,
-                    ))
+                    self.parse_struct_construct(QualifiedIdentifier::new(segments), span) // this one consumes '}', TODO: test that
                 } else {
                     Ok(Expression::at(
-                        ExpressionKind::QualifiedAccess { segments },
+                        ExpressionKind::QualifiedIdentifier(QualifiedIdentifier::new(segments)),
                         span,
                     ))
                 }

@@ -93,12 +93,13 @@ where
         if let Some(token) = self.peek() {
             let span = expr.span;
             match token.kind {
-                TokenKind::Name(name) => {
+                TokenKind::Identifier(identifier_string) => {
                     self.next();
                     Ok(Expression::at(
                         ExpressionKind::ExprAcess {
                             expr: Box::new(expr),
-                            accesed_name: name,
+                            accessed_identifier: identifier_string,
+                            member: Default::default(),
                         },
                         span,
                     ))

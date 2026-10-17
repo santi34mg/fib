@@ -1,12 +1,32 @@
-use std::fmt::Display;
+//! Semantic identities, never source spellings or parser-assigned token IDs.
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq)]
-pub struct Identifier {
-    pub value: String,
+use crate::build_plan::FileId;
+
+/// A declaration's stable slot in its owning file namespace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DeclId {
+    pub file: FileId,
+    pub index: u32,
 }
 
-impl Display for Identifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.value)
-    }
+/// Unique within one analyzed project, including across functions and files.
+/// Allocation belongs to analysis, not tokenization or scope insertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LocalId(pub u32);
+
+/// Unique within one analyzed project; never denotes a value or declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LabelId(pub u32);
+
+/// A compile-time alias can denote a file or declaration, but never a local.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Entity {
+    File(FileId),
+    Declaration(DeclId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResolvedName {
+    Entity(Entity),
+    Local(LocalId),
 }

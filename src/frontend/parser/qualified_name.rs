@@ -1,7 +1,5 @@
-use anyhow::bail;
-
 use crate::frontend::{
-    ast::qualified_name::QualifiedName,
+    ast::qualified_name::QualifiedIdentifier,
     tokens::{Punctuation, Token, TokenKind},
 };
 
@@ -10,26 +8,19 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    pub fn parse_qualified_name(&mut self) -> anyhow::Result<QualifiedName> {
-        if let Some(Token {
-            kind: TokenKind::Name(base),
+    pub fn parse_qualified_name(&mut self) -> anyhow::Result<QualifiedIdentifier> {
+        let base = self.expect_identifier("expected an identifier")?;
+        // Check for `::` — qualified type: module::TypeName
+        let mut symbols = vec![base];
+        while let Some(Token {
+            kind: TokenKind::Punctuation(Punctuation::DoubleColon),
             ..
-        }) = self.next()
+        }) = self.peek()
         {
-            // Check for `::` — qualified type: module::TypeName
-            let mut symbols = vec![base];
-            while let Some(Token {
-                kind: TokenKind::Punctuation(Punctuation::DoubleColon),
-                ..
-            }) = self.peek()
-            {
-                self.next(); // consume `::`
-                let name = self.expect_unqualified_name("'::' must be followed by symbol")?;
-                symbols.push(name);
-            }
-            Ok(QualifiedName { segments: symbols })
-        } else {
-            bail!("expected an identifier")
+            self.next(); // consume `::`
+            let name = self.expect_identifier("'::' must be followed by symbol")?;
+            symbols.push(name);
         }
+        Ok(QualifiedIdentifier::new(symbols))
     }
 }

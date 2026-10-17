@@ -5,8 +5,7 @@ use std::path::Path;
 use crate::frontend::ast::Ast;
 use crate::frontend::ast::statement::{Statement, StatementKind};
 use crate::frontend::tokens::Keyword;
-use crate::frontend::tokens::builtin::{Builtin, BuiltinFunction};
-use crate::frontend::tokens::name::Name;
+use crate::frontend::tokens::builtin::{Builtin, BuiltinFunction, BuiltinType};
 use crate::frontend::tokens::{Punctuation, Token, TokenKind};
 
 #[derive(Debug, Clone)]
@@ -95,7 +94,7 @@ where
                     t.kind = match self.tokens.next() {
                         Some(next) => {
                             let name = match next.kind {
-                                TokenKind::Name(name) => Some(name.name),
+                                TokenKind::Identifier(name) => Some(name),
                                 TokenKind::Builtin(Builtin::BuiltinType(_)) => {
                                     t.kind = TokenKind::Error(
                                         "types do not use '@'; remove '@' before the type"
@@ -190,10 +189,10 @@ where
     }
 
     /// Consume the next token if it is any identifier, returning it. Errors otherwise.
-    fn expect_unqualified_name(&mut self, msg: &str) -> anyhow::Result<Name> {
+    fn expect_identifier(&mut self, msg: &str) -> anyhow::Result<String> {
         let token = self.expect_next(msg)?;
         match token.kind {
-            TokenKind::Name(name) => Ok(name),
+            TokenKind::Identifier(name) => Ok(name),
             _ => Err(self.error(msg, token.line, token.column)),
         }
     }
@@ -224,7 +223,7 @@ where
                         span,
                     });
                 }
-                TokenKind::Keyword(Keyword::Type) => {
+                TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::MetaType)) => {
                     let ty = self.parse_type_declaration()?;
                     statements.push(Statement {
                         kind: StatementKind::TypeDeclaration(ty),

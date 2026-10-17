@@ -186,7 +186,7 @@ where
                         StatementKind::Return(None)
                     }
                 }
-                TokenKind::Name(_)
+                TokenKind::Identifier(_)
                     if matches!(
                         self.peek_second(),
                         Some(Token {
@@ -197,7 +197,7 @@ where
                 {
                     self.parse_variable_declaration()?
                 }
-                TokenKind::Name(_) => {
+                TokenKind::Identifier(_) => {
                     let expr = self.parse_binary(
                         &[
                             Operator::Assign,
@@ -227,13 +227,15 @@ where
                         };
                         match bexpr.operator {
                             Operator::Def => {
-                                if let ExpressionKind::UnqualifiedName(name) = bexpr.left.kind {
-                                    StatementKind::VariableDeclaration(VariableDeclaration {
-                                        name,
-                                        ty: None,
-                                        expression: Some(*bexpr.right),
-                                        is_const: false,
-                                    })
+                                if let ExpressionKind::QualifiedIdentifier(mut name) =
+                                    bexpr.left.kind
+                                    && name.segments.len() == 1
+                                {
+                                    StatementKind::VariableDeclaration(VariableDeclaration::new(
+                                        name.segments.remove(0),
+                                        None,
+                                        Some(*bexpr.right),
+                                    ))
                                 } else {
                                     bail!("expected a name on left hand side of :=")
                                 }
@@ -256,7 +258,8 @@ where
                                     _ => unreachable!(),
                                 };
                                 let left = *bexpr.left;
-                                if !matches!(&left.kind, ExpressionKind::UnqualifiedName(_)) {
+                                if !matches!(&left.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments.len() == 1)
+                                {
                                     return Err(self.error(
                                         "compound assignment requires a variable name",
                                         line,
@@ -318,7 +321,6 @@ where
                     self.parse_switch_statement()?
                 }
                 TokenKind::Keyword(Keyword::Else)
-                | TokenKind::Identifier(_)
                 | TokenKind::Operator(_)
                 | TokenKind::Punctuation(_)
                 | TokenKind::Keyword(_) => {
