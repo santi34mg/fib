@@ -5,22 +5,23 @@
 ## Declaring enum types
 
 ```fib
-type Color enum {
+Color: type = enum {
     Red,
     Green,
     Blue,
-}
+};
 
-type Token enum {
+Token: type = enum {
     Integer { value: uint32 },
     Boolean { flag: bool },
     EOF,
-}
+};
 ```
 
 A variant is a name with an optional brace-delimited list of named, typed fields.
 Commas and trailing commas are accepted. An empty payload field list also parses.
-The declaration has no `=` and no trailing semicolon. Explicit numeric tags,
+The declaration is a unified binding with a `TypeValue` initializer and a
+required trailing semicolon: `Name: type = enum { ... };`. Explicit numeric tags,
 underlying-tag annotations, and tuple-style payload declarations are not parsed.
 
 ## Member expressions are not resolved constructors

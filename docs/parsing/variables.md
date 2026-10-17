@@ -10,19 +10,32 @@ head: *Node;
 total := 42;
 const limit: int32 = 10;
 const snapshot := total;
+comp Alias: type = int32;
+pub const exported := 42;
 ```
 
-`name: Type` may omit its initializer. `name := expression` records a declaration
-with no explicit type. `const` records an `is_const` flag for that binding.
-Even `const count: int32;` parses.
+Unified declarations use `[pub] [const | comp] name (: Type = | :=) expression;`.
+`pub` is optional and precedes the optional, mutually exclusive `const` or `comp`.
+The AST records independent `is_pub`, `is_const`, and `is_comp` flags; parsing
+these modifiers does not implement visibility or compile-time evaluation.
+`name := expression` records a declaration with no explicit type. For
+compatibility, typed declarations may still omit their initializer, including
+`head: *Node;` and `const count: int32;`.
+
+Type definitions and aliases use the same binding syntax, for example
+`Node: type = struct { next: *Node };`. Explicit type syntax produces a
+`TypeValue` initializer, not a separate type-declaration statement. Initializers
+are arbitrary expressions: named references and type-producing calls remain
+ordinary expressions, with type/value discrimination left to semantic analysis.
+Legacy `type Name ...` declarations are no longer accepted. See [Types](types.md).
 
 The old `var Type name = expression` declaration form is not supported. `var`
 is currently an ordinary identifier, not a declaration keyword.
 
 ## Multiple bindings
 
-Each binding has its **own** optional `const` and type annotation. A qualifier
-or type does not propagate to later bindings.
+Each binding has its **own** optional `[pub] [const | comp]` modifiers and type
+annotation. Neither modifiers nor types propagate to later bindings.
 
 ```fib
 q, r := divmod(17, 5);
@@ -68,9 +81,9 @@ Pointer-store syntax is also incomplete; see [Pointers and memory](pointers-memo
 
 Statements require `;`; newline does not terminate a statement. This includes
 `if`, `while`, and `switch` statements after their closing braces. Top-level
-function definitions and `type` declarations are exceptions: they are parsed
-by separate declaration routines and do not take an extra trailing `;`.
-Bodyless function signatures use `;`. See [Functions](functions.md).
+function definitions are the exception: they do not take an extra trailing `;`.
+Type-valued bindings require a trailing `;`, including after a struct or enum's
+closing brace. Bodyless function signatures use `;`. See [Functions](functions.md).
 
 Related follow-up is collected in this [GitHub issue #10](https://github.com/santi34mg/fib/issues/10).
 

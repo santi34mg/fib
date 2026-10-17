@@ -6,6 +6,8 @@ Active modules are [`tokenizer.rs`](../../../../src/frontend/tokenizer.rs),
 source module in this checkout.
 
 Working: source -> tokens -> syntax AST, including pending annotation slots.
+Unified `[pub] [const | comp]` bindings include type-valued initializers
+(`Name: type = ...;`); modifier flags are syntax, not implemented semantic policy.
 Working utilities: lexical scope insertion/lookup/exit and separate labels.
 Sketched: project declarations, name/alias/visibility resolution, type/member
 resolution, generics, initialization and annotation validation.
