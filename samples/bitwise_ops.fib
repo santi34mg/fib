@@ -1,5 +1,5 @@
-// Shifts/masks over @uint4: IPv4 packing, permission flags, popcount.
-// Expected output:
+// Shifts/masks over uint32: IPv4 packing, permission flags, popcount.
+// Intended output (unverified; compiler pipeline unfinished):
 //   Packed IPv4: 0xC0A80164
 //   Octet 0: 192
 //   Octet 1: 168
@@ -12,36 +12,35 @@
 //     [x] READ
 //     [x] EXEC
 //   Bits set in perms: 2
-import std::libc
 
-fn pack_ipv4(a: @uint4, b: @uint4, c: @uint4, d: @uint4) @uint4 {
+fn pack_ipv4(a: uint32, b: uint32, c: uint32, d: uint32) uint32 {
     return (a << 24) | (b << 16) | (c << 8) | d;
 }
 
-fn popcount(x: @uint4) @uint4 {
-    count: @uint4 = 0;
-    v: @uint4 = x;
-    while (v != 0 as @uint4) {
+fn popcount(x: uint32) uint32 {
+    count: uint32 = 0;
+    v: uint32 = x;
+    while (v != 0 as uint32) {
         count = count + (v & 1);
         v = v >> 1;
     };
     return count;
 }
 
-fn main() @int4 {
-    ip: @uint4 = pack_ipv4(192, 168, 1, 100);
+fn main() int32 {
+    ip: uint32 = pack_ipv4(192, 168, 1, 100);
     libc::printf("Packed IPv4: 0x%08X\n", ip);
     libc::printf("Octet 0: %u\n", (ip >> 24) & 255);
     libc::printf("Octet 1: %u\n", (ip >> 16) & 255);
     libc::printf("Octet 2: %u\n", (ip >> 8) & 255);
     libc::printf("Octet 3: %u\n", ip & 255);
 
-    PERM_READ: @uint4   = 1;
-    PERM_WRITE: @uint4  = 2;
-    PERM_EXEC: @uint4   = 4;
-    PERM_DELETE: @uint4 = 8;
+    PERM_READ: uint32   = 1;
+    PERM_WRITE: uint32  = 2;
+    PERM_EXEC: uint32   = 4;
+    PERM_DELETE: uint32 = 8;
 
-    perms: @uint4 = PERM_READ | PERM_WRITE;
+    perms: uint32 = PERM_READ | PERM_WRITE;
     libc::printf("\nInitial permissions: 0x%X\n", perms);
 
     perms = perms | PERM_EXEC;

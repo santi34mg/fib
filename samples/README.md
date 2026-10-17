@@ -1,35 +1,57 @@
 # Samples
 
-Working Fib programs exercised end-to-end by `tests/e2e.rs`: each sample is
-compiled through the library API and executed, with exact-stdout asserts for
-the deterministic cases (`fib_bench` is compile-only). The expected output is
-recorded in an `Expected output:` header comment inside each file — the same
-strings the e2e harness asserts on.
+All 15 `.fib` files in this directory use current tokenizer/parser syntax.
+`frontend::parser::test::tests::samples_parse_with_current_frontend` discovers
+and parses every top-level `.fib` sample, rejecting parse failures and empty ASTs.
+This is **syntax regression coverage, not semantic or execution validation**.
 
-Run any sample from the project root:
+Run the focused check from the repository root:
 
-```bash
-cargo run -- samples/hello_world.fib -I=std
-./out/hello_world
+```sh
+cargo test --no-default-features samples_parse_with_current_frontend
 ```
 
-`-I` adds an import search directory (`std/` here, so `import std::libc`
-resolves). The entry file's own directory is always searched first.
+The CLI's build/run commands, analysis, and lowering remain unfinished. Intended
+output comments describe example goals, not verified results. There is no working
+e2e runner, and historical positional-file / `-I=std` commands are unsupported.
+See the [parsing reference](../docs/parsing/README.md) for verified syntax and
+[compiler status](../README.md) for pipeline boundaries.
 
-## Files
+## Dependencies and unresolved semantics
 
-- `hello_world.fib` — minimal `libc::printf` program.
-- `minimal.fib` — smallest valid program (`fn main`, no imports, no output).
-- `bitwise_ops.fib` — shifts/masks over `@uint4` (IPv4 packing, permission flags, popcount).
-- `unsigned_ops.fib` — unsigned `div`/`rem`/`cmp`/`shr` with values above the signed maximum (must pick `udiv`/`urem`/`ult`/`lshr`).
-- `enums.fib` — plain enum discriminant cast (`Color.Green` → `1`).
-- `switch_enum.fib` — `switch`/`when` dispatch over a plain enum.
-- `tagged_union.fib` — enum variants with payloads (`Integer`/`Boolean`/`EOF`).
-- `sorting.fib` — generic `insertion_sort(T: type, ...)` over `@int4[8]`.
-- `slices.fib` — slices (`@int4[]`) as `(ptr, len)` views: explicit `arr.[a..b]`, `.@len`, indexing, mutation.
-- `string_builtins.fib` — `@concat`/`@str_len`/`@str_eq` over `@string`.
-- `multiple_returns.fib` — multi-value return (`divmod` → `q, r`).
-- `nested_assign.fib` — nested struct field assignment (`o.inner.value = 42`).
-- `linked_list.fib` — heap list via `malloc`/`free` with `defer` cleanup.
-- `memory_pool.fib` — fixed-block bump allocator with exhaustion handling.
-- `fib_bench.fib` — naive recursive `fib(50)` benchmark (compile-only in e2e; takes hours to run).
+Samples retain qualified `libc::` calls without obsolete import declarations.
+A future build plan must explicitly provide a source file named `libc`; parsing
+these calls does not discover files or validate external signatures. Historical
+bindings in `std/libc.fib` have not been migrated as part of this sample change
+and are not a working dependency today.
+
+- `sorting.fib` retains parsed `T: type` parameters and type-valued arguments;
+  generic analysis/specialization and pointer casts are not validated.
+- `tagged_union.fib` retains payload values using parsed member calls such as
+  `Token.Integer(7)`. This is not a claim of implemented enum constructors.
+- `linked_list.fib` and `memory_pool.fib` retain allocation, casts, indexed pointer
+  stores, and defer calls. Pointer indexing, layout, allocation safety, and cleanup
+  behavior need semantic/runtime tests. The linked-list allocation assumes a
+  16-byte node layout, and the pool uses 64-bit integer addresses; these are
+  illustrative target assumptions, not portable ABI guarantees.
+- `slices.fib` illustrates view/mutation intent without asserting a runtime layout
+  or implemented bounds checks.
+
+Temporary parser restrictions are not intended language-design decisions. Future
+analysis work is tracked in [GitHub issues](../docs/agents/issues/README.md).
+
+## Example topics
+
+- `hello_world.fib`, `minimal.fib`: entry functions and output.
+- `bitwise_ops.fib`, `unsigned_ops.fib`: arithmetic and bitwise operations.
+- `enums.fib`, `switch_enum.fib`, `tagged_union.fib`: enum and pattern examples.
+- `sorting.fib`, `slices.fib`: generic sorting and slice design examples.
+- `string_builtins.fib`, `multiple_returns.fib`: builtin calls and return shapes.
+- `nested_assign.fib`: nested field assignment.
+- `linked_list.fib`, `memory_pool.fib`: allocation and cleanup design examples.
+- `fib_bench.fib`: recursive Fibonacci benchmark intent, with 64-bit results
+  sufficient for `fib(50)`; expensive to execute once a runner exists.
+
+New syntax changes need positive and malformed-input parser tests. Keep sample
+syntax covered by the discovery test; add real analysis and execution coverage
+as those passes become usable rather than treating parsing as a conformance test.

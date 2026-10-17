@@ -18,6 +18,33 @@ mod tests {
     use crate::frontend::tokens::builtin::BuiltinType;
     use crate::frontend::tokens::{Literal, Operator, Token};
 
+    #[test]
+    fn samples_parse_with_current_frontend() {
+        let samples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
+        let mut paths: Vec<_> = std::fs::read_dir(&samples_dir)
+            .expect("samples directory must be readable")
+            .map(|entry| entry.expect("sample entry must be readable").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "fib"))
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "sample discovery must not be empty");
+
+        let mut failures = Vec::new();
+        for path in paths {
+            let source = std::fs::read_to_string(&path).expect("sample must be readable UTF-8");
+            let mut parser = Parser::with_source(Tokenizer::new(&source), &path, &source);
+            match parser.parse() {
+                Ok(ast) => assert!(
+                    !ast.statements.is_empty(),
+                    "{} must contain parsed statements",
+                    path.display()
+                ),
+                Err(error) => failures.push(format!("{}:\n{error}", path.display())),
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
     fn get_ast(test_string: &str) -> Ast {
         let trimmed = test_string.trim_start();
         let src = if trimmed.starts_with("fn ")
