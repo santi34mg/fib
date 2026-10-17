@@ -1,11 +1,11 @@
 use crate::diagnostics::Span;
 use crate::frontend::ast::binary_expression::BinaryExpression;
-use crate::frontend::ast::qualified_name::QualifiedName;
+use crate::frontend::ast::qualified_name::QualifiedIdentifier;
 use crate::frontend::ast::structl_field::StructField;
 use crate::frontend::ast::unary_expression::UnaryExpression;
 use crate::frontend::{
+    analysis_annotation::{ExpressionAnnotation, MemberAnnotation},
     ast::type_expression::TypeExpression,
-    tokens::name::Name,
     tokens::{Literal, builtin::BuiltinFunction},
 };
 
@@ -16,11 +16,16 @@ use crate::frontend::{
 pub struct Expression {
     pub kind: ExpressionKind,
     pub span: Span,
+    pub annotation: ExpressionAnnotation,
 }
 
 impl Expression {
     pub const fn at(kind: ExpressionKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            annotation: ExpressionAnnotation { resolved: None },
+        }
     }
 }
 
@@ -37,8 +42,7 @@ pub enum ExpressionKind {
         callee: Box<Expression>,
         args: Vec<Expression>,
     },
-    UnqualifiedName(Name),
-    QualifiedName(QualifiedName),
+    QualifiedIdentifier(QualifiedIdentifier),
     // FIXME: this should probably be integrated with normal calls
     /// A call to a builtin function, e.g. `@concat(a, b)`.
     CallToBuiltin {
@@ -48,11 +52,12 @@ pub enum ExpressionKind {
     /// Access to an expression's inner constructs. This can work for (`my_struct.my_field`)
     ExprAcess {
         expr: Box<Expression>,
-        accesed_name: Name,
+        accessed_identifier: String,
+        member: MemberAnnotation,
     },
     /// Construction of a struct
     StructConstruct {
-        struct_name: QualifiedName,
+        struct_identifier: QualifiedIdentifier,
         fields: Vec<StructField>,
     },
     Cast {
@@ -80,7 +85,7 @@ pub enum ExpressionKind {
     },
     //
     QualifiedAccess {
-        segments: Vec<Name>,
+        segments: Vec<String>,
     },
     /// A compile-time type value used in expression position (e.g., as a generic argument).
     TypeValue(TypeExpression),

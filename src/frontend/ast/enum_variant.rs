@@ -1,13 +1,7 @@
-use crate::frontend::{ast::structl_field::StructField, tokens::name::Name};
+use crate::frontend::ast::structl_field::StructField;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
-    pub name: Name,
+    pub identifier: String,
     pub payload: Option<Vec<StructField>>,
 }
-
-/*
-type Colors = enum {
-    Red[]
-}
-*/

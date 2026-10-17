@@ -1,37 +1,67 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 
-use crate::frontend::{scope_kind::ScopeKind, tokens::name::Name};
+use crate::frontend::{identifier::LabelId, scope_kind::ScopeKind, symbol_table::LocalBinding};
 
+/// One lexical frame. File declarations and type members live elsewhere.
 #[derive(Debug, Clone)]
 pub struct Scope {
     kind: ScopeKind,
-    name_map: HashMap<String, Name>,
-    // TODO: define frame correctly
-    frame: HashMap<Name, Option<()>>,
+    bindings: HashMap<String, LocalBinding>,
+    labels: HashMap<String, LabelId>,
 }
 
 impl Scope {
     pub fn new(kind: ScopeKind) -> Self {
         Self {
             kind,
-            name_map: HashMap::new(),
-            frame: HashMap::new(),
+            bindings: HashMap::new(),
+            labels: HashMap::new(),
         }
     }
 
-    pub fn insert_name(&mut self, name: &mut Name) {
-        if self.name_map.contains_key(&name.name) {
-            name.id = self
-                .name_map
-                .get(&name.name)
-                // this is never None because we just checked
-                .unwrap()
-                .id;
-        } else {
-            let name_str = name.name.clone();
-            // this is always None
-            self.name_map.insert(name_str, name.clone());
-            // nothing to update on the symbol
+    /// Inserts only in this frame. Cross-frame redeclaration policy belongs to
+    /// the name pass; insertion never allocates or rewrites semantic identities.
+    pub fn insert_binding(
+        &mut self,
+        spelling: String,
+        binding: LocalBinding,
+    ) -> anyhow::Result<()> {
+        match self.bindings.entry(spelling) {
+            Entry::Vacant(entry) => {
+                entry.insert(binding);
+                Ok(())
+            }
+            Entry::Occupied(entry) => anyhow::bail!("duplicate lexical binding '{}'", entry.key()),
         }
+    }
+
+    pub fn lookup_binding(&self, spelling: &str) -> Option<LocalBinding> {
+        self.bindings.get(spelling).copied()
+    }
+
+    pub fn insert_label(&mut self, spelling: String, label: LabelId) -> anyhow::Result<()> {
+        match self.labels.entry(spelling) {
+            Entry::Vacant(entry) => {
+                entry.insert(label);
+                Ok(())
+            }
+            Entry::Occupied(entry) => {
+                anyhow::bail!("duplicate control-flow label '{}'", entry.key())
+            }
+        }
+    }
+
+    pub fn lookup_label(&self, spelling: &str) -> Option<LabelId> {
+        self.labels.get(spelling).copied()
+    }
+
+    pub fn get_kind(&self) -> ScopeKind {
+        self.kind
+    }
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        Self::new(ScopeKind::Module)
     }
 }

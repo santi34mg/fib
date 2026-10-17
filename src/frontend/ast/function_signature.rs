@@ -1,12 +1,16 @@
-use crate::frontend::{
-    ast::{function_parameter::FunctionParameter, type_expression::TypeExpression},
-    tokens::name::Name,
+use crate::frontend::analysis_annotation::BindingAnnotation;
+use crate::frontend::ast::{
+    function_parameter::FunctionParameter, type_expression::TypeExpression,
 };
 
 #[derive(Debug, Clone)]
 pub struct FunctionSignature {
-    pub funcition_name_symbol: Name,
+    pub function_identifier: String,
+    /// The function's sole binding slot; FunctionDeclaration does not duplicate it.
+    pub annotation: BindingAnnotation,
     pub parameters: Vec<FunctionParameter>,
     pub return_type: TypeExpression,
-    pub generic_parameters: Vec<Name>,
+    /// Reserved syntax, currently never populated by the parser. Binding slots
+    /// belong on parameter nodes once generic declaration syntax is defined.
+    pub generic_parameters: Vec<String>,
 }

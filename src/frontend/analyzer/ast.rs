@@ -1,23 +1,15 @@
-use crate::{
-    frontend::{ast::Ast, scope_kind::ScopeKind, symbol_table::SymbolTable, tokens::name::Name},
-    ir::Ir,
-};
+use crate::frontend::ast::Ast;
+
+use super::{ResolveContext, TypeContext, not_implemented};
 
 impl Ast {
-    pub fn resolve_name(
-        &mut self,
-        mut symbol_table: &mut SymbolTable,
-        module_name: Name,
-    ) -> anyhow::Result<()> {
-        symbol_table.enter_scope(ScopeKind::Module(module_name));
-        for stmt in &mut self.statements {
-            stmt.resolve_name(&mut symbol_table)?;
-        }
-        symbol_table.exit_scope();
-        Ok(())
+    /// Resolve uses in a file whose declarations have already been collected.
+    pub fn resolve_name(&mut self, _context: &mut ResolveContext<'_>) -> anyhow::Result<()> {
+        not_implemented("file name resolution")
     }
 
-    pub fn resolve_type(&mut self) -> anyhow::Result<Ir> {
-        todo!()
+    /// Enrich the same AST; IR lowering belongs after project analysis.
+    pub fn resolve_type(&mut self, _context: &mut TypeContext<'_>) -> anyhow::Result<()> {
+        not_implemented("file type resolution")
     }
 }

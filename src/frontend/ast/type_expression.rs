@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::diagnostics::Span;
-use crate::frontend::ast::qualified_name::QualifiedName;
-use crate::frontend::tokens::name::Name;
+use crate::frontend::ast::qualified_name::QualifiedIdentifier;
 use crate::frontend::{
+    analysis_annotation::TypeAnnotation,
     ast::{enum_variant::EnumVariant, structl_field::StructField},
     tokens::builtin::BuiltinType,
 };
@@ -13,11 +13,16 @@ use crate::frontend::{
 pub struct TypeExpression {
     pub kind: TypeExpressionKind,
     pub span: Span,
+    pub annotation: TypeAnnotation,
 }
 
 impl TypeExpression {
     pub const fn at(kind: TypeExpressionKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            annotation: TypeAnnotation { resolved: None },
+        }
     }
 }
 
@@ -48,10 +53,7 @@ pub enum TypeExpressionKind {
     Slice {
         element_type: Box<TypeExpression>,
     },
-    UnqualifiedName(Name),
-    QualifiedName(QualifiedName),
-    /// The `type` keyword used as a type annotation — indicates this binding holds a compile-time type value.
-    TypeKeyword,
+    QualifiedIdentifier(QualifiedIdentifier),
 }
 impl fmt::Display for TypeExpressionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -78,7 +80,7 @@ impl fmt::Display for TypeExpressionKind {
             TypeExpressionKind::Slice { element_type } => {
                 write!(f, "{}[]", element_type)
             }
-            TypeExpressionKind::QualifiedName(QualifiedName { segments }) => {
+            TypeExpressionKind::QualifiedIdentifier(QualifiedIdentifier { segments, .. }) => {
                 if let Some((last, rest)) = segments.split_last() {
                     for sym in rest {
                         write!(f, "{}::", sym)?
@@ -87,14 +89,8 @@ impl fmt::Display for TypeExpressionKind {
                 }
                 Ok(())
             }
-            TypeExpressionKind::TypeKeyword => {
-                write!(f, "type")
-            }
             TypeExpressionKind::Pointer { pointed_type } => {
                 write!(f, "*{}", *pointed_type)
-            }
-            TypeExpressionKind::UnqualifiedName(name) => {
-                write!(f, "{}", name)
             }
         }
     }
