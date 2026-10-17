@@ -1,9 +1,8 @@
 // Hello-world smoke test.
-// Expected output:
+// Intended output (unverified; compiler pipeline unfinished):
 //   Hello, World!
-import std::libc
 
-fn main() @int4 {
+fn main() int32 {
     libc::printf("Hello, World!\n");
     return 0;
 }

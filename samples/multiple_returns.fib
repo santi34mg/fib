@@ -1,13 +1,12 @@
 // Multi-value return: divmod(17, 5).
-// Expected output:
+// Intended output (unverified; compiler pipeline unfinished):
 //   q=3 r=2
-import std::libc
 
-fn divmod(a: @int4, b: @int4) (@int4, @int4) {
+fn divmod(a: int32, b: int32) (int32, int32) {
     return a / b, a % b;
 }
 
-fn main() @int4 {
+fn main() int32 {
     q, r := divmod(17, 5);
     libc::printf("q=%d r=%d\n", q, r);
     return 0;
