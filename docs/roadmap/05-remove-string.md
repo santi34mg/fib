@@ -1,103 +1,54 @@
-# 05 — Remove the `string` Type
+# 05 — Redesign strings and the C boundary
 
-**Depends on:** [04](04-generic-types.md) — `Vec[char]` cannot be written
-without generic types.
+**Status:** future representation proposal. **Related:**
+[generic data types](04-generic-types.md), [builtin cleanup](01-builtin-sigil.md).
 
-## Today
+## Current baseline versus history
 
-`@string` is an opaque `ptr`. A literal lowers to a private global
-`[N+1 x i8]`, NUL-terminated by inkwell's `build_global_string_ptr`, and the
-expression value is the pointer to element 0. There is no length anywhere.
+The tokenizer/parser retain `string`, string/character literals and builtin
+string calls. No semantic literal typing, allocation, NUL layout or LLVM string
+emission executes. The old opaque-pointer/NUL implementation, pointer equality
+bug and fixed 64-bit slice/payload layouts are historical motivation, not
+verified current runtime behavior. `c"..."` is not implemented C-string syntax.
 
-## The new model
+## Retained proposal
 
-| Form | Type | Lowers to |
-|---|---|---|
-| `"hola"` | `[4]char` | global `[4 x i8]`, **no** NUL |
-| `c"hola"` | `*char` | global `[5 x i8]` with NUL; value is the pointer |
-| `[]char` | slice | `{ptr, i64}` — views over `[N]char` |
-| `Vec[char]` | std generic struct | `{ptr, len, cap}`, owning, freeable |
+| Proposed form | Intended meaning | Decisions still required |
+| --- | --- | --- |
+| `"hola"` | Fixed byte/character array, e.g. `[4]char` | Encoding, length unit, mutability and storage lifetime |
+| `c"hola"` | NUL-terminated storage addressed as `*char` | Embedded NUL, encoding, FFI ownership and escapes |
+| `[]char` | Borrowed view | Lifetime, mutation, target-width length/layout |
+| `Vec[char]` | Owning generic buffer | Allocation failure, destruction and explicit C conversion |
 
-`char` is already `i8` and already has literals (`'\n'`, `'\xNN'`, `'\u{…}'`),
-so the foundation exists. `c"…"` is a new lexer form beside
-`lex_string_literal` (`lexer.rs:306-351`).
-
-## The FFI is the real work
-
-**54 of the 153 `extern` declarations in `std/libc.fib` mention `@string`** (81
-tokens), and every one depends on NUL termination: `printf`, `strlen`, `strcmp`,
-`open`, `system`, `getenv`, `dlopen`, and the rest. All become `*char`. Every
-format-string literal in the corpus becomes `c"…"` — mechanical but wide (13 in
-`bitwise_ops.fib`, 10 in `unsigned_ops.fib`, and so on).
-
-Two uses are conflated under `@string` today and must be separated:
-
-- **input values** — `printf(fmt)`, `open(path)` → `*char`;
-- **output buffers** — `getcwd`, `readlink`, `gethostname`, `snprintf`,
-  `sprintf`, `strcpy` → also `*char`, but the caller allocates. `std` does this
-  today with `libc::malloc(n) as @string`.
-
-Nine externs declare `*@string` where C says `char*` (`strcpy`, `strdup`,
-`getenv`). That extra indirection is harmless today because both lower to `ptr`;
-once the element type is `*char` they become a genuine `**char` and must be
-corrected.
-
-## The 215 uses in `std`
-
-Twenty files. Heaviest: `libc.fib` (54), `file.fib` (18), `str.fib` (15),
-`serialization.fib` (9), `format.fib` (9), `encoding.fib` (8).
-
-Two patterns change shape, not just spelling:
-
-- **`@string` as a struct field or enum payload** (`serialization.fib`,
-  `net.fib`, `core/error.fib`, `event.fib`, `io/fd.fib`) goes from 8 bytes to 16
-  (`[]char`) or 24 (`Vec[char]`), **changing the payload computation of every
-  tagged union** (`enum_max_payload_bytes`, `backend/lowering/types.rs:120-134`).
-- **`format_bool` returns literals** `"true"`/`"false"`. Under `[N]char` those
-  have different types (`[4]char`, `[5]char`), so the function must return
-  `[]char` views over globals — no allocation, but it has to be written that way
-  deliberately.
-
-## An ICE to close here
-
-`s1 == s2` currently compiles to a **pointer** comparison
-(`backend/lowering/expressions.rs:881-883`) — it never compared contents, which
-is exactly why `@str_eq` existed. With an aggregate type that same arm calls
-`into_int_value()` and breaks.
-
-Reject `==` on arrays and slices in analyze, with a diagnostic pointing at
-`str::equals`. Comparing `[N]char` by content inline would hide a loop behind an
-operator.
+All prefix/generic forms in the table are proposals. Do not promise that
+`char` has a working i8 runtime representation or that Unicode escapes fit one
+byte without an explicit encoding policy. Do not hard-code `{ptr, i64}` or
+aggregate sizes: target layout and ABI work are prerequisites.
 
 ## Work
 
-- [ ] Add the `c"…"` literal to the lexer and a `*char`-typed AST/typed node.
-- [ ] Retype string literals as `[N]char`; lower to a non-NUL global.
-- [ ] Delete `BuiltinType::String` and its six non-test sites
-      (`analyze/expressions.rs:488`, `backend/lowering/types.rs:51` and
-      `:163-165`, `backend/lowering/ir_lower.rs:384`).
-- [ ] Convert the 54 `@string` externs in `std/libc.fib` to `*char`; fix the 9
-      `*@string` declarations.
-- [ ] Migrate the 20 `std` modules; rewrite `std/str.fib` around
-      `[]char`/`Vec[char]`.
-- [ ] Add `Vec[T]` to `std` and `Vec[char]` helpers, including an explicit
-      NUL-terminating conversion for runtime-built strings crossing into C.
-- [ ] Reject `==` on arrays and slices with a directed diagnostic.
-- [ ] Convert every corpus format string to `c"…"`.
-- [ ] New `docs/strings.md`; update `docs/literals.md` and `docs/types.md`.
+- [ ] Specify literal encoding/byte length, global storage and array-to-view
+      conversions, including unequal-length literal branches such as true/false.
+- [ ] Decide whether to remove `BuiltinType::String`, provide a migration period,
+      or retain a distinct language string abstraction.
+- [ ] Add a dedicated C-string token/AST form and diagnostics only after its
+      grammar and embedded-NUL policy are settled.
+- [ ] Audit each std FFI declaration against the C API: inputs, output buffers,
+      pointer indirection, const/mutation, ownership and returned lifetime.
+      Historical token/declaration counts and opaque-pointer behavior are not
+      proof that declarations are correct.
+- [ ] Provide owning/view APIs and explicit runtime-built NUL conversion before
+      migrating std, format strings, samples and builtin calls.
+- [ ] Decide array/slice equality: reject with a directed library hint or define
+      content equality explicitly. Never accidentally use pointer equality or
+      attempt scalar LLVM conversion of aggregates.
+- [ ] Validate enum payload layout/alignment and every affected call/return ABI
+      through SSA and target-aware backend plans.
 
-## Tests
+## Acceptance tests
 
-- [ ] `"x"` is `[1]char`; `c"x"` is `*char` and the global carries the NUL.
-- [ ] `printf(c"%d\n", n)` compiles, links, and runs.
-- [ ] A `[]char` view over a `[N]char`.
-- [ ] `==` on arrays produces the directed error.
-- [ ] An enum payload holding `[]char` sizes correctly.
-- [ ] `samples/strings.fib` with a `#[test]` in `tests/e2e.rs`.
-
-## Notes
-
-`.len` starts working on strings, which is an error today.
-
-This is the largest and riskiest document in the series: it touches the C ABI
-boundary, the layout of every tagged union that stores text, and every sample.
+Tokenizer/parser malformed and successful C-string forms; encoding and embedded
+NUL; literal length and view lifetime; explicit C conversion and allocation
+failure; equality diagnostics; target-dependent aggregate layouts. Add actual
+printf/link/run tests only once a harness and backend exist. Current samples
+and stub tests do not validate this proposal.
