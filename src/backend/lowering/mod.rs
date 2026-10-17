@@ -1,23 +1,21 @@
-#[cfg(feature = "llvm")]
-mod context;
-#[cfg(feature = "llvm")]
+//! Fallible phase boundaries for `Ir -> LLVM IR text`.
+//!
+//! These APIs are available without the `llvm` feature because they contain no
+//! LLVM objects. Every unfinished operation returns `BackendError::NotImplemented`.
+//! The preserved `next/` directory is not part of this module tree.
+
+pub mod abi;
+pub mod context;
 pub mod error;
-#[cfg(feature = "llvm")]
-mod expressions;
-#[cfg(feature = "llvm")]
-mod ir_lower;
-#[cfg(feature = "llvm")]
+pub mod expressions;
+pub mod ir_lower;
 pub mod llvm_lower;
-#[cfg(feature = "llvm")]
-mod statements;
-#[cfg(all(test, feature = "llvm"))]
-mod test;
-#[cfg(feature = "llvm")]
+pub mod statements;
 pub mod types;
 
-#[cfg(feature = "llvm")]
-pub use error::LowerError;
-#[cfg(feature = "llvm")]
-pub use ir_lower::lower_ir;
-#[cfg(feature = "llvm")]
-pub use llvm_lower::lower;
+#[cfg(test)]
+mod test;
+
+pub use error::BackendError;
+pub use llvm_lower::{LlvmArtifact, emit_llvm};
+pub use types::TargetSpec;
