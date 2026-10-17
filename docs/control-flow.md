@@ -53,7 +53,7 @@ for (; v != 0 as @uint4 ;) {
 
 ## `break` / `continue`
 
-Exit or skip the current iteration of the enclosing `for` loop.
+Exit or skip the current iteration of the enclosing `for` loop. Named control-flow targets with leading `::` are [planned](name-resolution.md), not supported by the behavior described here.
 
 ```fib
 for (;;) {

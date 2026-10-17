@@ -34,7 +34,8 @@ A type imported from another module is referenced with a qualified name, e.g. `e
 
 ## Type aliases
 
-Use `type` to give a name to a type expression:
+Use `type` to give a name to a type expression in the current language. The planned `comp`-based first-class type declarations are described in [Planned Name Resolution](name-resolution.md); they are not yet implemented.
+
 
 ```fib
 type Color enum { Red, Green, Blue }

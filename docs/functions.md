@@ -97,4 +97,4 @@ See [Generics](generics.md) for details.
 
 ## Function types (reserved)
 
-The type expression `fn(Type1, Type2) -> ReturnType` is parsed for future first-class function values, but calling through a function-typed binding is not supported yet.
+The type expression `fn(Type1, Type2) -> ReturnType` is parsed for future first-class function values, but calling through a function-typed binding is not supported yet. The planned values are plain function pointers, without captured local state; see [Planned Name Resolution](name-resolution.md).

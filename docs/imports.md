@@ -1,5 +1,9 @@
 # Imports and Modules
 
+This page describes the existing `import` model. The planned replacement using
+file namespaces and `comp` aliases is documented in [Planned Name
+Resolution](name-resolution.md); it is not yet implemented.
+
 Modules are organized in directories under an include path (e.g. `std/`). Path segments are separated by `::`.
 
 ## Basic import
