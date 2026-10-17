@@ -99,6 +99,11 @@ These decisions constrain implementation and are not open roadmap questions.
 
 ## Unresolved Language Decisions
 
+The planned file-namespace, binding, visibility, and function-pointer decisions
+are recorded in [Planned Name Resolution](../name-resolution.md). Earlier
+import-specific Phase 3 work items below need reconciliation with that design
+before implementation.
+
 Resolve each item in maintained language documentation and tests before
 implementing work that depends on it.
 
@@ -111,11 +116,11 @@ implementing work that depends on it.
 - [ ] Define how standard library APIs report allocation failure.
 - [ ] Define module visibility, re-export, ambiguity, and collision policies.
 - [ ] Define duplicate declaration and foreign-symbol policies.
-- [ ] Define nested-scope shadowing rules.
+- [ ] Specify remaining name-collision cases beyond the function-local and sibling-block rules in [Planned Name Resolution](../name-resolution.md).
 - [ ] Define slice ownership, aliasing, mutation, and escape rules.
 - [ ] Define NaN, signed-zero, infinity, and optimization behavior.
 - [ ] Define untagged C-union syntax and safety.
-- [ ] Define function-value syntax and semantics.
+- [ ] Define the syntax and ABI of plain function-pointer values and callbacks; captured closures are not planned.
 - [ ] Define module-constant initialization, evaluation, mutability, and
       visibility.
 - [ ] Define release-mode and bounds-check option semantics.

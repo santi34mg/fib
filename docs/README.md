@@ -2,6 +2,12 @@
 
 Fib is a systems programming language designed for performance, clarity, and developer control. The pages below cover each feature of the language briefly with example syntax.
 
+## Compiler status
+
+The current branch contains parser fixes and architecture sketches, not an
+executable compilation pipeline. See [Compiler Architecture](compiler-architecture.md)
+for the `AnalyzedProject → Ir` contract, implemented pieces, and deferred work.
+
 ## Contents
 
 - [Types](types.md) — built-in primitive types (`@`-prefixed)
@@ -16,12 +22,14 @@ Fib is a systems programming language designed for performance, clarity, and dev
 - [Switch](switch.md) — pattern matching over enums and tagged unions
 - [Arrays](arrays.md) — fixed-size arrays, indexing, array literals
 - [Pointers and Memory](pointers-memory.md) — raw pointers, address-of, dereference, manual allocation
-- [Imports and Modules](imports.md) — `import`, qualified access, selective imports, aliasing
+- [Imports and Modules](imports.md) — current `import` behavior and qualified access
+- [Planned Name Resolution](name-resolution.md) — proposed file namespaces, `comp` aliases, visibility, and function pointers (not implemented)
 - [Casting](casting.md) — `as` operator
 - [Generics via Type Parameters](generics.md) — `T type` parameters
 
-For working programs that exercise these features end-to-end, see the [`samples/`](../samples) directory.
-Each sample carries an `Expected output:` header comment — the same strings `tests/e2e.rs` asserts on.
+The [`samples/`](../samples) directory contains language examples with expected-output
+comments from the previous pipeline. They do not establish end-to-end support in
+the current architecture-only branch.
 
 Compiler contributors and automated agents should start with the
 [`implementation/`](implementation/README.md) tree. It mirrors the repository
