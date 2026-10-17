@@ -7,6 +7,24 @@ mod tests {
     };
 
     #[test]
+    fn unified_declaration_keywords() {
+        let tokens: Vec<_> = Tokenizer::new("pub comp const public compute pub_value comp_value")
+            .map(|token| token.kind)
+            .collect();
+        assert_eq!(tokens[0], TokenKind::Keyword(Keyword::Pub));
+        assert_eq!(tokens[1], TokenKind::Keyword(Keyword::Comp));
+        assert_eq!(tokens[2], TokenKind::Keyword(Keyword::Const));
+        assert!(
+            tokens[3..]
+                .iter()
+                .all(|kind| matches!(kind, TokenKind::Identifier(_)))
+        );
+        let tokens: Vec<_> = Tokenizer::new("pub\ncomp").collect();
+        assert_eq!((tokens[0].line, tokens[0].column), (1, 1));
+        assert_eq!((tokens[1].line, tokens[1].column), (2, 1));
+    }
+
+    #[test]
     fn metatype_name_lookup_matches_tokenization() {
         let metatype = BuiltinType::MetaType;
         assert_eq!(BuiltinType::from_name(metatype.name()), Some(metatype));
