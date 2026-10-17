@@ -1,7 +1,10 @@
-use crate::frontend::{ast::type_expression::TypeExpression, tokens::name::Name};
+use crate::frontend::{
+    analysis_annotation::BindingAnnotation, ast::type_expression::TypeExpression,
+};
 
 #[derive(Debug, Clone)]
 pub struct TypeDeclaration {
-    pub identifier: Name,
+    pub identifier: String,
+    pub annotation: BindingAnnotation,
     pub expression: TypeExpression,
 }

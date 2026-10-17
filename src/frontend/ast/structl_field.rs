@@ -1,7 +1,10 @@
-use crate::frontend::{ast::expression::Expression, tokens::name::Name};
+use crate::frontend::{analysis_annotation::MemberAnnotation, ast::expression::Expression};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructField {
-    pub field_name: Name,
+    pub field_identifier: String,
+    /// A member of the owning type, for both definitions and initializer fields;
+    /// never a lexical binding.
+    pub annotation: MemberAnnotation,
     pub expression: Expression,
 }

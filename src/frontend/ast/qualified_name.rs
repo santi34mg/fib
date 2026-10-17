@@ -1,6 +1,16 @@
-use crate::frontend::tokens::name::Name;
+use crate::frontend::analysis_annotation::NameAnnotation;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct QualifiedName {
-    pub segments: Vec<Name>,
+pub struct QualifiedIdentifier {
+    pub segments: Vec<String>,
+    pub annotation: NameAnnotation,
+}
+
+impl QualifiedIdentifier {
+    pub fn new(segments: Vec<String>) -> Self {
+        Self {
+            segments,
+            annotation: NameAnnotation::default(),
+        }
+    }
 }

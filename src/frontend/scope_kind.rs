@@ -1,8 +1,6 @@
-use crate::frontend::tokens::name::Name;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeKind {
-    Module(Name),
+    Module,
     Function,
     Block,
 }

@@ -1,103 +1,34 @@
 use crate::frontend::{
-    ast::expression::{Expression, ExpressionKind},
-    symbol_table::SymbolTable,
+    analysis_annotation::{ExpressionInfo, MemberInfo},
+    ast::expression::Expression,
+    semantic_type::{SemanticTypes, TypeId},
 };
 
+use super::{ResolveContext, TypeContext, not_implemented};
+
 impl Expression {
-    pub fn resolve_name(&mut self, symbol_table: &mut SymbolTable) -> anyhow::Result<()> {
-        match self.kind {
-            ExpressionKind::BinaryExpresison(ref mut binary_expression) => {
-                binary_expression.left.resolve_name(symbol_table)?;
-                binary_expression.right.resolve_name(symbol_table)?;
-            }
-            ExpressionKind::UnaryExpression(ref mut unary_expression) => {
-                unary_expression.expression.resolve_name(symbol_table)?;
-            }
-            ExpressionKind::Literal(_) => {}
-            ExpressionKind::UnqualifiedName(ref mut name) => {
-                symbol_table.insert_name(name);
-            }
-            ExpressionKind::Call {
-                ref mut callee,
-                ref mut args,
-            } => {
-                callee.resolve_name(symbol_table)?;
-                for arg in args {
-                    arg.resolve_name(symbol_table)?;
-                }
-            }
-            ExpressionKind::CallToBuiltin {
-                builtin: _,
-                ref mut args,
-            } => {
-                for arg in args {
-                    arg.resolve_name(symbol_table)?;
-                }
-            }
-            ExpressionKind::ExprAcess {
-                ref mut expr,
-                ref mut accesed_name,
-            } => {
-                expr.resolve_name(symbol_table)?;
-                symbol_table.insert_name(accesed_name);
-            }
-            ExpressionKind::StructConstruct {
-                ref mut struct_name,
-                ref mut fields,
-            } => {
-                symbol_table.insert_name(struct_name);
-                for field in fields {
-                    field.expression.resolve_name(symbol_table)?;
-                    // we update the field name string to have the type name
-                    field.field_name.name =
-                        format!("{}.{}", struct_name.name, field.field_name.name);
-                    symbol_table.insert_name(&mut field.field_name);
-                }
-            }
-            ExpressionKind::Cast {
-                ref mut expr,
-                ref mut target_type,
-            } => {
-                expr.resolve_name(symbol_table)?;
-                target_type.resolve_name(symbol_table)?;
-            }
-            ExpressionKind::IndexAccess {
-                ref mut object,
-                ref mut index,
-            } => {
-                object.resolve_name(symbol_table)?;
-                index.resolve_name(symbol_table)?;
-            }
-            ExpressionKind::SliceLiteral {
-                ref mut object,
-                ref mut start,
-                ref mut end,
-                inclusive: _,
-            } => {
-                object.resolve_name(symbol_table)?;
-                if let Some(s) = start {
-                    s.resolve_name(symbol_table)?;
-                }
-                if let Some(e) = end {
-                    e.resolve_name(symbol_table)?;
-                }
-            }
-            ExpressionKind::ArrayLiteral { ref mut elements } => {
-                for e in elements {
-                    e.resolve_name(symbol_table)?;
-                }
-            }
-            ExpressionKind::QualifiedAccess { ref mut segments } => {
-                for seg in segments {
-                    symbol_table.insert_name(seg);
-                }
-            }
-            ExpressionKind::TypeValue(ref mut type_expression) => {
-                type_expression.resolve_name(symbol_table)?;
-            }
-            ExpressionKind::VoidExpression => {}
-            ExpressionKind::QualifiedName(qualified_name) => todo!(),
-        };
-        Ok(())
+    /// Resolve name uses, not binding sites. For member access resolve only the
+    /// receiver here; never insert a field name or rewrite its source spelling.
+    pub fn resolve_name(&mut self, _context: &mut ResolveContext<'_>) -> anyhow::Result<()> {
+        not_implemented("expression name resolution")
     }
+
+    /// Infer/check a value and annotate its type and place category in situ.
+    pub fn resolve_type(
+        &mut self,
+        _context: &mut TypeContext<'_>,
+        _expected: Option<TypeId>,
+    ) -> anyhow::Result<ExpressionInfo> {
+        not_implemented("expression type resolution")
+    }
+}
+
+/// Used for selection and initializer-field validation after the owner type is
+/// known. Deliberately has no mutable lexical table or source spelling access.
+pub fn resolve_member(
+    _owner: TypeId,
+    _spelling: &str,
+    _types: &SemanticTypes,
+) -> anyhow::Result<MemberInfo> {
+    not_implemented("type member resolution")
 }
