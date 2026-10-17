@@ -1,73 +1,46 @@
-# 00 — Canonical Cross-Module Linkage Names
+# 00 — Canonical cross-file linkage names
 
-**Depends on:** nothing. **Blocks:** [06 — Function Overloading](06-function-overloading.md).
-**Kind:** bug fix. Belongs to Phase 3 "Declaration Identity and Linkage".
+**Status:** future identity/linkage design. **Related:**
+[06 — Overloading](06-function-overloading.md).
 
-## Problem
+## Baseline and historical motivation
 
-Calls across modules to non-`extern` functions do not link.
+The old compiler could derive a call symbol from an import alias while emitting
+the definition under another name. That is historical motivation, not a
+reproducible link failure in the current checkout: analysis, lowering and linking
+are unfinished. Removed `TypedFunction`, `TypedModule`, `decl_key`,
+`dedupe_declarations`, `analyze_in_module` and `--emit=typed` are not APIs to patch.
 
-`src/frontend/analyze/expressions.rs:849-855` mangles a qualified callee to
-`{alias}__{member}`, but the defining module emits the definition under its bare
-source name (`src/backend/lowering/llvm_lower.rs:34`, fed by
-`src/driver.rs:814-815`). The call then falls into the auto-declare path in
-`src/backend/lowering/expressions.rs:924-942` and fails at link time.
+Current contracts use explicit `BuildPlan` file membership, `FileId`, `DeclId`,
+`ResolvedName`, and project symbol tables. Qualified paths parse, but lookup does
+not execute. Follow [planned name resolution](../name-resolution.md), not legacy
+recursive imports. The [architecture](../compiler-architecture.md) maps identities
+into owned IR functions/globals before the backend consumes them.
 
-Reproduce with two files and `--emit=typed`: the call site emits
-`helper__add_one` while the definition is emitted as `add_one`.
+## Proposed invariants
 
-The bug is invisible today because every cross-module callee in `samples/` and
-`std/` is `extern`, and `extern` callees are deliberately left unmangled.
+- One canonical identity per defining declaration, independent of source aliases
+  and how many paths reach it. Generic instances additionally include canonical
+  type arguments, never just diagnostic names.
+- Derive linkage names once from canonical identities; definitions and call sites
+  consume the same mapping. Keep source names for diagnostics.
+- Specify stable file/package identity before promising reproducible symbols
+  across checkout locations. `FileId` alone is not a persistent linker spelling.
+- Preserve declared foreign symbols and the designated entry symbol according
+  to explicit ABI/entry policy. Detect collisions and incompatible redeclarations.
+- Never deduplicate unrelated declarations by bare spelling or synthesize a
+  missing callee signature in the backend.
 
-A second defect hides behind the same code: the call site mangles with the
-**import alias**, so two spellings of one module produce two different symbols.
+## Work and acceptance tests
 
-## Design
+- [ ] Implement declaration collection and alias/file resolution first.
+- [ ] Define canonical symbol encoding, instance keys and collision handling.
+- [ ] Carry identities through AST annotations and `lower_to_ir` maps into
+      `FunctionId`/`GlobalId`; predeclare before emitting bodies.
+- [ ] Test two local names in different files, multiple aliases to one entity,
+      repeated/diamond references, foreign symbols and entry policy.
+- [ ] Once an execution harness exists, prove cross-file calls link and run,
+      with one definition per canonical entity and deterministic output.
 
-One canonical symbol per declaration, computed by the **defining** module and
-stored on the declaration. Call sites read it; they never recompute it.
-
-- Add `TypedFunction::symbol: String` next to `name`. `name` stays the source
-  name and remains what diagnostics, tests, and the LSP show.
-- Compute it through a single `linkage_name(module_id, name, ...)` helper so
-  Phase 3 can swap the module-identity half without touching anything else.
-- `extern` functions keep their declared C symbol. `main` in the entry unit
-  keeps `main`.
-- `analyze()` does not currently know which module it is analyzing
-  (`src/driver.rs:803` wraps the result in a `TypedModule` only afterwards).
-  Add `analyze_in_module(ast, resolved, module_path)` and keep `analyze` as a
-  wrapper passing `&[]`, so existing tests compile unchanged.
-
-## Work
-
-- [ ] Add `TypedFunction::symbol` and populate it at the three construction
-      sites (`analyze/functions.rs:99`, `analyze/functions.rs:251`,
-      `analyze/generics.rs:348`).
-- [ ] Add `analyze_in_module`; pass the module path from `src/driver.rs:803`
-      and `&[]` from `analyze_entry`.
-- [ ] Add `linkage_name` behind a `ModuleId`-shaped parameter.
-- [ ] Emit definitions under `symbol` in `backend/lowering/llvm_lower.rs:34`
-      and `ir/mod.rs:306`.
-- [ ] Resolve qualified call sites to the callee's `symbol`; delete the
-      alias-based `format!` at `analyze/expressions.rs:853` and its duplicate at
-      `backend/lowering/expressions.rs:1302`.
-- [ ] Key `decl_key` (`src/driver.rs:841-846`) on `symbol` for functions.
-
-## Tests
-
-- [ ] Driver test: a non-`extern` function called across a module boundary
-      compiles, links, and runs.
-- [ ] The same function reached through two different import aliases resolves to
-      one symbol and is emitted once.
-- [ ] `main` is emitted as `main`; an `extern` keeps its declared C name.
-- [ ] A diamond import still emits each declaration exactly once.
-
-## Risks
-
-- Every non-`extern`, non-`main` symbol is renamed. Any test asserting on IR
-  text or on `decl_key` strings breaks — sweep for `fn:` and `__` first.
-  `src/driver.rs:1430` asserts `decl_key(d) == "fn:shared"` and must change.
-- A local `fn helper` and an imported `mod::helper` currently collide on
-  `decl_key`, so the local one silently replaces the imported one — which
-  breaks that module's internal calls to its own `helper`. After this change
-  both are emitted. That is correct, and it changes `.ll` output.
+Renaming future symbols can affect foreign consumers; specify that compatibility
+policy before emission ships. Old sample/import counts are not regression proof.
