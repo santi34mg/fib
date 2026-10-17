@@ -2,6 +2,8 @@
 pub enum Keyword {
     Var,
     Const,
+    Pub,
+    Comp,
     If,
     Else,
     While,
