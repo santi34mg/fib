@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Backend-independent SSA `Ir` contracts with explicit function ownership, block parameters and edge arguments, typed values, memory operations, and fallible builder/verifier sketches.
+- In-place AST analysis annotations, semantic type and resolver-context contracts, plus an LLVM adapter phase plan covering verification, target layout, ABI classification, and SSA edge translation. Analysis, lowering, verification, and code generation remain unimplemented.
+- Parser and architecture-contract regression tests; deleted integration tests remain deleted.
+- Documented planned file namespaces, `comp` aliases, visibility, lexical lookup, and plain function-pointer semantics; these are not yet implemented.
 - An unfinished `BuilderObject` build-file pipeline with build stages; compilation and interpretation of build files, object emission, and linking are not yet implemented end-to-end.
 - Split tokenizer and new token shapes for the upcoming parser migration; the current compiler still uses the existing lexer.
 - Opt-in statement-only parser and AST modules for the new syntax, including bit-width builtin type names, per-binding types and `const` in multi-variable declarations, and qualified-access module aliases instead of import declarations.
@@ -17,8 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Builtin numeric type variants and displayed names use bit widths (`Int32`, `int32`); bare `int` and `uint` now denote 32-bit types. The production lexer still accepts legacy numbered `@int4`-style source spellings until the parser migration.
 - The opt-in parser uses postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of the established compiler's dotted access forms.
-- Replaced the legacy driver, CLI, and library entry points with the unfinished build-file pipeline from `refactor/modules-and-generic-functions`. `build`, `run`, and `test` do not work yet, and this branch does not currently compile: the driver still expects an analyzer and IR output that are not wired up.
-- Extracted the existing flat IR instruction definitions into their own module without changing lowering behavior.
+- Replaced the legacy driver, CLI, and library entry points with the unfinished build-file pipeline from `refactor/modules-and-generic-functions`. `build`, `run`, and `test` do not work yet; the `AnalyzedProject → Ir` pipeline is represented by architecture sketches, not executable passes.
+- Replaced obsolete typed-AST/flat-IR lowering bodies with coherent SSA and backend API sketches; no direct AST-to-LLVM fallback or compatibility `IrProgram` is retained.
+
+### Fixed
+- Migrated parser identifier handling to string-based `Identifier` tokens and qualified identifier expressions; type declarations consume the metatype builtin, and member accesses consistently use `accessed_identifier`.
+- Driver pipeline/lowering sketches now return explicit not-implemented errors instead of panicking.
 
 ## [0.1.1] - 2026-10-14
 
