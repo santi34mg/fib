@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{
     frontend::{ast::Ast, tokens::Token},
     ir::Ir,
@@ -9,7 +11,8 @@ use crate::{
 pub enum CompilationOutput {
     Tokens(Vec<Token>),
     Ast(Ast),
+    Checked,
     Ir(Ir),
-    ObjectFile(Vec<u8>),
-    Binary(Vec<u8>),
+    Objects(Vec<PathBuf>),
+    Binary(PathBuf),
 }

@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod build_plan;
 pub mod builder_object;
 pub mod cli;
 pub mod diagnostics;
