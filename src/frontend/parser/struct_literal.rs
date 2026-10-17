@@ -1,5 +1,5 @@
 use crate::diagnostics::Span;
-use crate::frontend::ast::qualified_name::QualifiedName;
+use crate::frontend::ast::qualified_name::QualifiedIdentifier;
 use crate::frontend::ast::structl_field::StructField;
 use crate::frontend::{
     ast::{
@@ -57,14 +57,15 @@ where
             }) | None
         ) {
             let field_name =
-                self.expect_unqualified_name(&format!("expected field name in {}", context))?;
+                self.expect_identifier(&format!("expected field name in {}", context))?;
             self.expect_token(
                 TokenKind::Punctuation(Punctuation::Colon),
                 &format!("expected ':' after field name in {}", context),
             )?;
             let expression = self.allow_struct_literals(|p| p.parse_expression())?;
             fields.push(StructField {
-                field_name,
+                field_identifier: field_name,
+                annotation: Default::default(),
                 expression,
             });
             // optional comma
@@ -78,13 +79,13 @@ where
     /// Assumes `{` was already consumed; `span` is the type name's position.
     pub fn parse_struct_construct(
         &mut self,
-        struct_name: QualifiedName,
+        struct_name: QualifiedIdentifier,
         span: Span,
     ) -> anyhow::Result<Expression> {
         let fields = self.parse_brace_fields("struct construction")?;
         Ok(Expression::at(
             ExpressionKind::StructConstruct {
-                struct_name,
+                struct_identifier: struct_name,
                 fields,
             },
             span,

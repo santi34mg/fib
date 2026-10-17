@@ -28,7 +28,7 @@ where
                 self.next();
                 break;
             }
-            let name = self.expect_unqualified_name("expected variant name")?;
+            let name = self.expect_identifier("expected variant name")?;
             // Optional payload: `Variant { field-list }`
             let payload = if matches!(
                 self.peek(),
@@ -43,7 +43,10 @@ where
             } else {
                 None
             };
-            variants.push(EnumVariant { name, payload });
+            variants.push(EnumVariant {
+                identifier: name,
+                payload,
+            });
             // optional comma
             self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
         }

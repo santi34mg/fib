@@ -1,10 +1,23 @@
 #[cfg(test)]
 mod tests {
-    use crate::frontend::tokens::name::Name;
+    use crate::frontend::tokens::builtin::{Builtin, BuiltinType};
     use crate::frontend::{
         tokenizer::Tokenizer,
         tokens::{Keyword, Literal, Operator, Punctuation, TokenKind},
     };
+
+    #[test]
+    fn metatype_name_lookup_matches_tokenization() {
+        let metatype = BuiltinType::MetaType;
+        assert_eq!(BuiltinType::from_name(metatype.name()), Some(metatype));
+        let tokens: Vec<_> = Tokenizer::new("type").map(|token| token.kind).collect();
+        assert_eq!(
+            tokens,
+            vec![TokenKind::Builtin(Builtin::BuiltinType(
+                BuiltinType::MetaType
+            ))]
+        );
+    }
 
     #[test]
     fn test_comment() {
@@ -12,10 +25,7 @@ mod tests {
         let expected = [
             TokenKind::Comment,
             TokenKind::Keyword(Keyword::Const),
-            TokenKind::Name(Name {
-                name: "x".to_string(),
-                id: 1,
-            }),
+            TokenKind::Identifier("x".to_string()),
             TokenKind::Punctuation(Punctuation::Colon),
             TokenKind::Operator(Operator::Assign),
             TokenKind::Literal(Literal::Integer(5)),
@@ -161,7 +171,6 @@ mod tests {
             ("struct", TokenKind::Keyword(Keyword::Struct)),
             ("enum", TokenKind::Keyword(Keyword::Enum)),
             ("union", TokenKind::Keyword(Keyword::Union)),
-            ("type", TokenKind::Keyword(Keyword::Type)),
             ("fn", TokenKind::Keyword(Keyword::Function)),
             ("switch", TokenKind::Keyword(Keyword::Switch)),
             ("when", TokenKind::Keyword(Keyword::When)),
@@ -246,15 +255,43 @@ mod tests {
         let expected = ["hello_world", "foo", "bar123", "_private"];
         let tokens: Vec<_> = Tokenizer::new(test_string).collect();
         assert_eq!(tokens.len(), expected.len());
-        for (i, (tok, name)) in tokens.iter().zip(expected.iter()).enumerate() {
-            assert_eq!(
-                tok.kind,
-                TokenKind::Name(Name {
-                    name: name.to_string(),
-                    id: (i + 1) as u64,
-                })
-            );
+        for (tok, name) in tokens.iter().zip(expected.iter()) {
+            assert_eq!(tok.kind, TokenKind::Identifier(name.to_string()));
         }
+    }
+
+    #[test]
+    fn identifiers_are_strings_independent_of_occurrence() {
+        let kinds: Vec<_> = Tokenizer::new("value value pkg::value _private café")
+            .map(|token| token.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Identifier("value".to_owned()),
+                TokenKind::Identifier("value".to_owned()),
+                TokenKind::Identifier("pkg".to_owned()),
+                TokenKind::Punctuation(Punctuation::DoubleColon),
+                TokenKind::Identifier("value".to_owned()),
+                TokenKind::Identifier("_private".to_owned()),
+                TokenKind::Identifier("café".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn type_is_a_metatype_builtin_not_an_identifier() {
+        let kinds: Vec<_> = Tokenizer::new("type type_name Type")
+            .map(|token| token.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::MetaType)),
+                TokenKind::Identifier("type_name".to_owned()),
+                TokenKind::Identifier("Type".to_owned()),
+            ]
+        );
     }
 
     #[test]
@@ -264,7 +301,7 @@ mod tests {
         let tokens: Vec<_> = Tokenizer::new(test_string).collect();
         for tok in &tokens {
             assert!(
-                matches!(tok.kind, TokenKind::Name(_)),
+                matches!(tok.kind, TokenKind::Identifier(_)),
                 "expected identifier, got {:?}",
                 tok.kind
             );
@@ -460,7 +497,7 @@ mod tests {
         ] {
             let tokens: Vec<_> = Tokenizer::new(old_spelling).collect();
             assert!(
-                matches!(tokens[0].kind, TokenKind::Name(_)),
+                matches!(tokens[0].kind, TokenKind::Identifier(_)),
                 "{old_spelling}"
             );
         }
@@ -486,7 +523,7 @@ mod tests {
             toks[0].kind,
             TokenKind::Punctuation(Punctuation::At)
         ));
-        assert!(matches!(toks[1].kind, TokenKind::Name(_)));
+        assert!(matches!(toks[1].kind, TokenKind::Identifier(_)));
 
         // A bare `@` not followed by an identifier stays punctuation.
         let toks: Vec<_> = Tokenizer::new("@ x").collect();
@@ -504,10 +541,7 @@ mod tests {
     fn test_complex_expression_tokens() {
         let test_string = "x += 42 * 3;";
         let expected = [
-            TokenKind::Name(Name {
-                name: "x".to_string(),
-                id: 1,
-            }),
+            TokenKind::Identifier("x".to_string()),
             TokenKind::Operator(Operator::PlusAssign),
             TokenKind::Literal(Literal::Integer(42)),
             TokenKind::Operator(Operator::Star),
@@ -546,7 +580,7 @@ mod tests {
         let tokens: Vec<_> = Tokenizer::new(test_string).collect();
         let symbols: Vec<_> = tokens
             .iter()
-            .filter(|t| !matches!(t.kind, TokenKind::Name(_)))
+            .filter(|t| !matches!(t.kind, TokenKind::Identifier(_)))
             .collect();
         assert_eq!(symbols.len(), expected.len());
         for (tok, exp) in symbols.iter().zip(expected.iter()) {
@@ -558,37 +592,19 @@ mod tests {
     fn test_punctuation_at_and_string_dispatch() {
         let toks: Vec<_> = Tokenizer::new("f(a, b) { x; y } [z] : :: @").collect();
         let expected = [
-            TokenKind::Name(Name {
-                name: "f".to_string(),
-                id: 1,
-            }),
+            TokenKind::Identifier("f".to_string()),
             TokenKind::Punctuation(Punctuation::OpeningParenthesis),
-            TokenKind::Name(Name {
-                name: "a".to_string(),
-                id: 2,
-            }),
+            TokenKind::Identifier("a".to_string()),
             TokenKind::Punctuation(Punctuation::Comma),
-            TokenKind::Name(Name {
-                name: "b".to_string(),
-                id: 3,
-            }),
+            TokenKind::Identifier("b".to_string()),
             TokenKind::Punctuation(Punctuation::ClosingParenthesis),
             TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
-            TokenKind::Name(Name {
-                name: "x".to_string(),
-                id: 4,
-            }),
+            TokenKind::Identifier("x".to_string()),
             TokenKind::Punctuation(Punctuation::Semicolon),
-            TokenKind::Name(Name {
-                name: "y".to_string(),
-                id: 5,
-            }),
+            TokenKind::Identifier("y".to_string()),
             TokenKind::Punctuation(Punctuation::ClosingCurlyBrace),
             TokenKind::Punctuation(Punctuation::OpeningSquareBrace),
-            TokenKind::Name(Name {
-                name: "z".to_string(),
-                id: 6,
-            }),
+            TokenKind::Identifier("z".to_string()),
             TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
             TokenKind::Punctuation(Punctuation::Colon),
             TokenKind::Punctuation(Punctuation::DoubleColon),
@@ -615,7 +631,7 @@ mod tests {
             toks[0].kind,
             TokenKind::Punctuation(Punctuation::At)
         ));
-        assert!(matches!(toks[1].kind, TokenKind::Name(_)));
+        assert!(matches!(toks[1].kind, TokenKind::Identifier(_)));
     }
 
     // ── 05 testing: char/string escape + unknown-char error branches ──

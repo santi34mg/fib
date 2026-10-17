@@ -5,6 +5,7 @@ mod tests {
     use crate::frontend::ast::binary_expression::BinaryExpression;
     use crate::frontend::ast::function_declaration::FunctionDeclaration;
     use crate::frontend::ast::pattern::Pattern;
+    use crate::frontend::ast::qualified_name::QualifiedIdentifier;
     use crate::frontend::ast::statement::StatementKind;
     use crate::frontend::ast::unary_expression::UnaryExpression;
     use crate::frontend::ast::variable_declaration::VariableDeclaration;
@@ -15,7 +16,6 @@ mod tests {
     use crate::frontend::parser::Parser;
     use crate::frontend::tokenizer::Tokenizer;
     use crate::frontend::tokens::builtin::BuiltinType;
-    use crate::frontend::tokens::name::Name;
     use crate::frontend::tokens::{Literal, Operator, Token};
 
     fn get_ast(test_string: &str) -> Ast {
@@ -281,7 +281,7 @@ mod tests {
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
         if let StatementKind::VariableDeclaration(VariableDeclaration {
-            name: identifier,
+            identifier,
             ty:
                 Some(TypeExpression {
                     kind: TypeExpressionKind::Builtin(_),
@@ -295,7 +295,7 @@ mod tests {
             ..
         }) = stmts[0]
         {
-            assert_eq!(identifier.name, "count");
+            assert_eq!(identifier, "count");
         } else {
             panic!("unexpected AST: {:#?}", stmts[0]);
         }
@@ -343,10 +343,11 @@ mod tests {
         let stmts = module_statements(&ast);
         assert!(
             matches!(stmts[0], StatementKind::VariableDeclaration(VariableDeclaration {
-            name: Name { name, .. },
+            identifier: name,
             ty: None,
             expression: Some(_),
             is_const: true,
+            ..
         }) if name == "count")
         );
         let ast = get_ast("const count: int32 = 0;");
@@ -383,7 +384,7 @@ mod tests {
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
         if let StatementKind::VariableDeclaration(VariableDeclaration {
-            name: identifier,
+            identifier,
             ty:
                 Some(TypeExpression {
                     kind: TypeExpressionKind::Builtin(_),
@@ -397,7 +398,7 @@ mod tests {
             ..
         }) = stmts[0]
         {
-            assert_eq!(identifier.name, "count");
+            assert_eq!(identifier, "count");
         } else {
             panic!("unexpected AST: {:#?}", stmts[0]);
         }
@@ -410,7 +411,7 @@ mod tests {
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
         if let StatementKind::VariableDeclaration(VariableDeclaration {
-            name: identifier,
+            identifier,
             ty: None,
             expression:
                 Some(Expression {
@@ -420,7 +421,7 @@ mod tests {
             ..
         }) = stmts[0]
         {
-            assert_eq!(identifier.name, "count");
+            assert_eq!(identifier, "count");
         } else {
             panic!("unexpected AST: {:#?}", stmts[0]);
         }
@@ -440,8 +441,8 @@ mod tests {
                 panic!("unexpected AST for {source}: {:#?}", stmts[0]);
             };
             assert_eq!(bindings.len(), 2);
-            assert_eq!(bindings[0].name.name, "q");
-            assert_eq!(bindings[1].name.name, "r");
+            assert_eq!(bindings[0].identifier, "q");
+            assert_eq!(bindings[1].identifier, "r");
             assert_eq!(
                 bindings.iter().map(|b| b.is_const).collect::<Vec<_>>(),
                 constness
@@ -479,7 +480,7 @@ mod tests {
             assert_eq!(
                 bindings
                     .iter()
-                    .map(|b| b.name.name.as_str())
+                    .map(|b| b.identifier.as_str())
                     .collect::<Vec<_>>(),
                 ["a", "b"]
             );
@@ -532,7 +533,7 @@ mod tests {
         assert_eq!(
             bindings
                 .iter()
-                .map(|b| b.name.name.as_str())
+                .map(|b| b.identifier.as_str())
                 .collect::<Vec<_>>(),
             ["a", "b", "c"]
         );
@@ -635,7 +636,7 @@ mod tests {
                     Expression {
                         kind:
                             ExpressionKind::StructConstruct {
-                                struct_name,
+                                struct_identifier: struct_name,
                                 fields,
                             },
                         ..
@@ -653,12 +654,12 @@ mod tests {
                 struct_name
                     .segments
                     .iter()
-                    .map(|name| name.name.as_str())
+                    .map(|name| name.as_str())
                     .collect::<Vec<_>>(),
                 expected_name
             );
             assert_eq!(fields.len(), 1);
-            assert_eq!(fields[0].field_name.name, "my_field");
+            assert_eq!(fields[0].field_identifier, "my_field");
             assert!(matches!(
                 fields[0].expression.kind,
                 ExpressionKind::Literal(Literal::Integer(10))
@@ -682,7 +683,7 @@ mod tests {
                 stmts[0],
                 StatementKind::If {
                     condition: Expression {
-                        kind: ExpressionKind::UnqualifiedName(_),
+                        kind: ExpressionKind::QualifiedIdentifier(_),
                         ..
                     },
                     ..
@@ -760,10 +761,10 @@ mod tests {
         let ast = get_ast(test_string);
         let func = find_func(&ast);
         let func = func.expect("expected function");
-        assert_eq!(func.signature.funcition_name_symbol.name, "add");
+        assert_eq!(func.signature.function_identifier, "add");
         assert_eq!(func.signature.parameters.len(), 2);
-        assert_eq!(func.signature.parameters[0].parameter_name.name, "a");
-        assert_eq!(func.signature.parameters[1].parameter_name.name, "b");
+        assert_eq!(func.signature.parameters[0].parameter_identifier, "a");
+        assert_eq!(func.signature.parameters[1].parameter_identifier, "b");
     }
 
     #[test]
@@ -789,7 +790,7 @@ mod tests {
             assert!(matches!(
                 **callee,
                 Expression {
-                    kind: ExpressionKind::UnqualifiedName(_),
+                    kind: ExpressionKind::QualifiedIdentifier(_),
                     ..
                 }
             ));
@@ -1064,11 +1065,11 @@ mod tests {
             StatementKind::ExpressionStatement(Expression {
                 kind:
                     ExpressionKind::ExprAcess {
-                        accesed_name: field,
+                        accessed_identifier: field,
                         ..
                     },
                 ..
-            }) => assert_eq!(field.name, "len"),
+            }) => assert_eq!(field, "len"),
             other => panic!("expected FieldAccess, found {:?}", other),
         }
     }
@@ -1396,7 +1397,7 @@ mod tests {
             assert!(matches!(
                 **right,
                 Expression {
-                    kind: ExpressionKind::UnqualifiedName(_),
+                    kind: ExpressionKind::QualifiedIdentifier(_),
                     ..
                 }
             ));
@@ -1461,12 +1462,12 @@ mod tests {
         if let StatementKind::VariableDeclaration(decl) = stmts[0] {
             let init = decl.expression.as_ref().expect("initializer");
             if let Expression {
-                kind: ExpressionKind::QualifiedAccess { segments },
+                kind: ExpressionKind::QualifiedIdentifier(QualifiedIdentifier { segments, .. }),
                 ..
             } = init
             {
-                assert_eq!(segments[0].name, "a");
-                assert_eq!(segments[1].name, "b");
+                assert_eq!(segments[0], "a");
+                assert_eq!(segments[1], "b");
             } else {
                 panic!("unexpected init: {:#?}", init);
             }
@@ -1484,11 +1485,11 @@ mod tests {
         let StatementKind::VariableDeclaration(alias) = &ast.statements[0].kind else {
             panic!("expected a variable declaration");
         };
-        assert_eq!(alias.name.name, "File");
+        assert_eq!(alias.identifier, "File");
         assert!(alias.is_const);
         assert!(alias.ty.is_none());
         let Some(Expression {
-            kind: ExpressionKind::QualifiedAccess { segments },
+            kind: ExpressionKind::QualifiedIdentifier(QualifiedIdentifier { segments, .. }),
             ..
         }) = &alias.expression
         else {
@@ -1497,7 +1498,7 @@ mod tests {
         assert_eq!(
             segments
                 .iter()
-                .map(|segment| segment.name.as_str())
+                .map(|segment| segment.as_str())
                 .collect::<Vec<_>>(),
             ["std", "io", "File"]
         );
@@ -1545,7 +1546,7 @@ mod tests {
         let StatementKind::ExpressionStatement(Expression {
             kind:
                 ExpressionKind::StructConstruct {
-                    struct_name,
+                    struct_identifier: struct_name,
                     fields,
                 },
             ..
@@ -1553,9 +1554,9 @@ mod tests {
         else {
             panic!("expected a struct construction expression: {:#?}", stmts[0]);
         };
-        assert_eq!(struct_name.segments[0].name, "MyStruct");
+        assert_eq!(struct_name.segments[0], "MyStruct");
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].field_name.name, "my_field");
+        assert_eq!(fields[0].field_identifier, "my_field");
         assert!(matches!(
             fields[0].expression.kind,
             ExpressionKind::Literal(Literal::Integer(10))
@@ -1571,17 +1572,17 @@ mod tests {
             if let Expression {
                 kind:
                     ExpressionKind::StructConstruct {
-                        struct_name,
+                        struct_identifier: struct_name,
                         fields,
                     },
                 ..
             } = init
             {
                 assert_eq!(struct_name.segments.len(), 1);
-                assert_eq!(struct_name.segments[0].name, "Point");
+                assert_eq!(struct_name.segments[0], "Point");
                 assert_eq!(fields.len(), 2);
-                assert_eq!(fields[0].field_name.name, "x");
-                assert_eq!(fields[1].field_name.name, "y");
+                assert_eq!(fields[0].field_identifier, "x");
+                assert_eq!(fields[1].field_identifier, "y");
             } else {
                 panic!("unexpected init: {:#?}", init);
             }
@@ -1601,12 +1602,17 @@ mod tests {
                 ..
             } = init
             {
-                if let ExpressionKind::ExprAcess { expr, accesed_name } = &callee.kind {
-                    let ExpressionKind::UnqualifiedName(Name { name, .. }) = &expr.kind else {
-                        panic!("expected {:#?} to be an UnqualifiedName", expr.kind);
+                if let ExpressionKind::ExprAcess {
+                    expr,
+                    accessed_identifier,
+                    ..
+                } = &callee.kind
+                {
+                    let ExpressionKind::QualifiedIdentifier(name) = &expr.kind else {
+                        panic!("expected {:#?} to be a QualifiedIdentifier", expr.kind);
                     };
-                    assert_eq!(name, "Color");
-                    assert_eq!(accesed_name.name, "Red");
+                    assert_eq!(name.segments, ["Color"]);
+                    assert_eq!(accessed_identifier, "Red");
                     assert_eq!(args.len(), 1);
                     assert_eq!(args[0].kind, ExpressionKind::Literal(Literal::Integer(1)));
                 } else {
@@ -1629,7 +1635,7 @@ mod tests {
             assert!(matches!(
                 subject,
                 Expression {
-                    kind: ExpressionKind::UnqualifiedName(_),
+                    kind: ExpressionKind::QualifiedIdentifier(_),
                     ..
                 }
             ));
@@ -1707,14 +1713,14 @@ mod tests {
         let StatementKind::TypeDeclaration(record) = &ast.statements[0].kind else {
             panic!("expected struct declaration: {:#?}", ast.statements[0]);
         };
-        assert_eq!(record.identifier.name, "Record");
+        assert_eq!(record.identifier, "Record");
         let TypeExpressionKind::Struct { fields } = &record.expression.kind else {
             panic!("expected struct type: {:#?}", record.expression);
         };
         assert_eq!(
             fields
                 .iter()
-                .map(|f| f.field_name.name.as_str())
+                .map(|f| f.field_identifier.as_str())
                 .collect::<Vec<_>>(),
             ["id", "next"]
         );
@@ -1726,33 +1732,33 @@ mod tests {
             })
         ));
         assert!(
-            matches!(&fields[1].expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Pointer { pointed_type }, .. }) if matches!(pointed_type.kind, TypeExpressionKind::QualifiedName(_)))
+            matches!(&fields[1].expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Pointer { pointed_type }, .. }) if matches!(pointed_type.kind, TypeExpressionKind::QualifiedIdentifier(_)))
         );
 
         let StatementKind::TypeDeclaration(result) = &ast.statements[1].kind else {
             panic!("expected enum declaration: {:#?}", ast.statements[1]);
         };
-        assert_eq!(result.identifier.name, "Result");
+        assert_eq!(result.identifier, "Result");
         let TypeExpressionKind::Enum { variants } = &result.expression.kind else {
             panic!("expected enum type: {:#?}", result.expression);
         };
         assert_eq!(
             variants
                 .iter()
-                .map(|v| v.name.name.as_str())
+                .map(|v| v.identifier.as_str())
                 .collect::<Vec<_>>(),
             ["Ok", "Empty", "Error"]
         );
         let ok = variants[0].payload.as_ref().expect("Ok payload");
         assert_eq!(ok.len(), 1);
-        assert_eq!(ok[0].field_name.name, "value");
+        assert_eq!(ok[0].field_identifier, "value");
         assert!(
             matches!(&ok[0].expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Tuple { elements }, .. }) if matches!(elements.as_slice(), [TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::Int32), .. }, TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::String), .. }]))
         );
         assert!(variants[1].payload.is_none());
         let error = variants[2].payload.as_ref().expect("Error payload");
         assert!(
-            matches!(error.as_slice(), [field] if field.field_name.name == "code" && matches!(field.expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::UInt8), .. })))
+            matches!(error.as_slice(), [field] if field.field_identifier == "code" && matches!(field.expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::UInt8), .. })))
         );
     }
 
@@ -1762,7 +1768,7 @@ mod tests {
         let StatementKind::TypeDeclaration(decl) = &ast.statements[0].kind else {
             panic!("expected type declaration: {:#?}", ast.statements[0]);
         };
-        assert_eq!(decl.identifier.name, "Callback");
+        assert_eq!(decl.identifier, "Callback");
         let TypeExpressionKind::Function {
             argument_types,
             return_type,
@@ -1811,8 +1817,8 @@ mod tests {
                 func.signature.return_type
             );
             if source.contains("declared") {
-                assert_eq!(func.signature.funcition_name_symbol.name, "declared");
-                assert_eq!(func.signature.parameters[0].parameter_name.name, "x");
+                assert_eq!(func.signature.function_identifier, "declared");
+                assert_eq!(func.signature.parameters[0].parameter_identifier, "x");
                 assert!(
                     matches!(&func.signature.parameters[0].parameter_type.kind, TypeExpressionKind::Pointer { pointed_type } if matches!(pointed_type.kind, TypeExpressionKind::Builtin(BuiltinType::Char)))
                 );
@@ -1846,25 +1852,35 @@ mod tests {
             right.kind,
             ExpressionKind::Literal(Literal::Integer(1))
         ));
-        let ExpressionKind::ExprAcess { expr, accesed_name } = &left.kind else {
+        let ExpressionKind::ExprAcess {
+            expr,
+            accessed_identifier,
+            ..
+        } = &left.kind
+        else {
             panic!("expected .value access: {left:#?}");
         };
-        assert_eq!(accesed_name.name, "value");
-        let ExpressionKind::ExprAcess { expr, accesed_name } = &expr.kind else {
+        assert_eq!(accessed_identifier, "value");
+        let ExpressionKind::ExprAcess {
+            expr,
+            accessed_identifier,
+            ..
+        } = &expr.kind
+        else {
             panic!("expected .item access: {expr:#?}");
         };
-        assert_eq!(accesed_name.name, "item");
+        assert_eq!(accessed_identifier, "item");
         let ExpressionKind::StructConstruct {
-            struct_name,
+            struct_identifier: struct_name,
             fields,
         } = &expr.kind
         else {
             panic!("expected struct condition: {expr:#?}");
         };
-        assert_eq!(struct_name.segments[0].name, "Box");
-        assert_eq!(fields[0].field_name.name, "item");
+        assert_eq!(struct_name.segments[0], "Box");
+        assert_eq!(fields[0].field_identifier, "item");
         assert!(
-            matches!(&fields[0].expression.kind, ExpressionKind::StructConstruct { struct_name, fields } if struct_name.segments[0].name == "Inner" && matches!(fields.as_slice(), [field] if field.field_name.name == "value" && matches!(field.expression.kind, ExpressionKind::Literal(Literal::Integer(1)))))
+            matches!(&fields[0].expression.kind, ExpressionKind::StructConstruct { struct_identifier, fields } if struct_identifier.segments[0] == "Inner" && matches!(fields.as_slice(), [field] if field.field_identifier == "value" && matches!(field.expression.kind, ExpressionKind::Literal(Literal::Integer(1)))))
         );
         assert_eq!(then_branch.len(), 1);
         let [inner] = otherwise.as_slice() else {
@@ -1873,7 +1889,7 @@ mod tests {
         let StatementKind::If {
             condition:
                 Expression {
-                    kind: ExpressionKind::UnqualifiedName(name),
+                    kind: ExpressionKind::QualifiedIdentifier(name),
                     ..
                 },
             then_branch,
@@ -1882,7 +1898,7 @@ mod tests {
         else {
             panic!("expected else-if: {inner:#?}");
         };
-        assert_eq!(name.name, "ready");
+        assert_eq!(name.segments, ["ready"]);
         assert_eq!(then_branch.len(), 1);
         assert_eq!(final_branch.len(), 1);
     }
@@ -1903,11 +1919,11 @@ mod tests {
                 panic!("{source}: {:#?}", stmts[0]);
             };
             assert!(
-                matches!(&left.kind, ExpressionKind::UnqualifiedName(name) if name.name == "x"),
+                matches!(&left.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["x"]),
                 "{source}"
             );
             assert!(
-                matches!(&right.kind, ExpressionKind::BinaryExpresison(BinaryExpression { left, operator: actual, right }) if *actual == operator && matches!(&left.kind, ExpressionKind::UnqualifiedName(name) if name.name == "x") && matches!(right.kind, ExpressionKind::Literal(Literal::Integer(2)))),
+                matches!(&right.kind, ExpressionKind::BinaryExpresison(BinaryExpression { left, operator: actual, right }) if *actual == operator && matches!(&left.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["x"]) && matches!(right.kind, ExpressionKind::Literal(Literal::Integer(2)))),
                 "{source}: {right:#?}"
             );
         }
@@ -1924,9 +1940,11 @@ mod tests {
             panic!("expected indexed target: {left:#?}");
         };
         assert!(
-            matches!(&object.kind, ExpressionKind::UnqualifiedName(name) if name.name == "items")
+            matches!(&object.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["items"])
         );
-        assert!(matches!(&index.kind, ExpressionKind::UnqualifiedName(name) if name.name == "i"));
+        assert!(
+            matches!(&index.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["i"])
+        );
         assert!(matches!(
             right.kind,
             ExpressionKind::Literal(Literal::Integer(5))
@@ -1951,17 +1969,17 @@ mod tests {
             panic!("expected switch: {:#?}", stmts[0]);
         };
         assert!(
-            matches!(&subject.kind, ExpressionKind::UnqualifiedName(name) if name.name == "result")
+            matches!(&subject.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["result"])
         );
         assert_eq!(arms.len(), 3);
         assert!(
-            matches!(&arms[0].pattern, Pattern::EnumVariant { variant, binding: Some(binding) } if variant.name == "Ok" && binding.name == "payload")
+            matches!(&arms[0].pattern, Pattern::EnumVariant { variant, binding: Some(binding), .. } if variant == "Ok" && binding.identifier == "payload")
         );
         assert!(
-            matches!(&arms[0].body.as_slice(), [statement] if matches!(&statement.kind, StatementKind::VariableDeclaration(decl) if decl.name.name == "value" && matches!(&decl.expression, Some(Expression { kind: ExpressionKind::ExprAcess { expr, accesed_name }, .. }) if matches!(&expr.kind, ExpressionKind::UnqualifiedName(name) if name.name == "payload") && accesed_name.name == "value")))
+            matches!(&arms[0].body.as_slice(), [statement] if matches!(&statement.kind, StatementKind::VariableDeclaration(decl) if decl.identifier == "value" && matches!(&decl.expression, Some(Expression { kind: ExpressionKind::ExprAcess { expr, accessed_identifier, .. }, .. }) if matches!(&expr.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["payload"]) && accessed_identifier == "value")))
         );
         assert!(
-            matches!(&arms[1].pattern, Pattern::EnumVariant { variant, binding: None } if variant.name == "Empty")
+            matches!(&arms[1].pattern, Pattern::EnumVariant { variant, binding: None, .. } if variant == "Empty")
         );
         assert!(matches!(&arms[2].pattern, Pattern::Wildcard));
     }
@@ -1999,6 +2017,313 @@ mod tests {
         assert_eq!(error.line, 1);
         assert_eq!(error.source_line, "break");
         assert!(error.to_string().contains("break"));
+    }
+
+    #[test]
+    fn identifier_expressions_share_qualified_shape_and_preserve_spans() {
+        for (source, expected) in [
+            ("value", vec!["value"]),
+            ("pkg::value", vec!["pkg", "value"]),
+            ("pkg::nested::value", vec!["pkg", "nested", "value"]),
+        ] {
+            let source = format!("\n  {source};");
+            let mut parser =
+                Parser::with_source(Tokenizer::new(&source), Path::new("test"), &source);
+            let statement = parser.parse_statement().expect("identifier expression");
+            let StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::QualifiedIdentifier(identifier),
+                span,
+                ..
+            }) = statement.kind
+            else {
+                panic!("expected qualified identifier: {source}");
+            };
+            assert_eq!(identifier.segments, expected);
+            assert_eq!(span, crate::diagnostics::Span::new(2, 3));
+        }
+    }
+
+    #[test]
+    fn qualified_callee_and_field_access_preserve_identifiers() {
+        let ast = get_ast("pkg::factory().field;");
+        let statements = module_statements(&ast);
+        let StatementKind::ExpressionStatement(Expression {
+            kind:
+                ExpressionKind::ExprAcess {
+                    expr,
+                    accessed_identifier,
+                    ..
+                },
+            ..
+        }) = statements[0]
+        else {
+            panic!("expected field access");
+        };
+        assert_eq!(accessed_identifier, "field");
+        let ExpressionKind::Call { callee, args } = &expr.kind else {
+            panic!("expected call");
+        };
+        assert!(args.is_empty());
+        assert!(
+            matches!(&callee.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["pkg", "factory"])
+        );
+    }
+
+    #[test]
+    fn metatype_token_works_in_declarations_annotations_and_expressions() {
+        let ast = get_ast("type Alias pkg::Value\nfn identity(T: type) type { return type; }");
+        assert_eq!(ast.statements.len(), 2);
+        let StatementKind::TypeDeclaration(alias) = &ast.statements[0].kind else {
+            panic!("expected type declaration");
+        };
+        assert_eq!(alias.identifier, "Alias");
+        assert!(
+            matches!(&alias.expression.kind, TypeExpressionKind::QualifiedIdentifier(name) if name.segments == ["pkg", "Value"])
+        );
+        let function = find_func(&ast).expect("function declaration");
+        assert_eq!(function.signature.parameters[0].parameter_identifier, "T");
+        assert!(matches!(
+            function.signature.parameters[0].parameter_type.kind,
+            TypeExpressionKind::Builtin(BuiltinType::MetaType)
+        ));
+        assert!(matches!(
+            function.signature.return_type.kind,
+            TypeExpressionKind::Builtin(BuiltinType::MetaType)
+        ));
+        let body = function.body.as_ref().expect("function body");
+        assert!(
+            matches!(&body.statements[0].kind, StatementKind::Return(Some(values)) if matches!(values.as_slice(), [Expression { kind: ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::MetaType), .. }), .. }]))
+        );
+    }
+
+    #[test]
+    fn identifier_positions_reject_builtin_types_and_keywords() {
+        for (source, expected) in [
+            ("const int32 := 1;", "expected variable name"),
+            ("fn type() {}", "expected function name"),
+            ("fn f(int32: int32) {}", "expected parameter name"),
+            ("type int32 int32", "expected identifier"),
+            ("type Record struct { type: int32 }", "expected field name"),
+            ("type Choice enum { return }", "expected variant name"),
+            ("Point { type: 1 };", "expected field name"),
+            ("switch (x) { when .return {} };", "expected variant name"),
+            ("switch (x) { when .Ok(type) {} };", "expected binding name"),
+            ("pkg::type;", "expected name after '::'"),
+            ("value: pkg::type;", "must be followed by symbol"),
+        ] {
+            let error = get_ast_err(source);
+            assert!(error.contains(expected), "{source}: {error}");
+        }
+    }
+
+    #[test]
+    fn compound_assignment_still_requires_a_single_identifier() {
+        for target in ["pkg::value", "obj.field", "items[0]", "make()"] {
+            let source = format!("{target} += 1;");
+            let error = get_ast_err(&source);
+            assert!(
+                error.contains("compound assignment requires a variable name"),
+                "{source}: {error}"
+            );
+        }
+        assert!(get_ast_err("pkg::value := 1;").contains("expected ';'"));
+    }
+
+    #[test]
+    fn definition_operator_tokens_require_a_single_identifier() {
+        use crate::frontend::tokens::{Punctuation, TokenKind};
+
+        for qualified in [false, true] {
+            let mut kinds = vec![TokenKind::Identifier("value".to_owned())];
+            if qualified {
+                kinds.extend([
+                    TokenKind::Punctuation(Punctuation::DoubleColon),
+                    TokenKind::Identifier("member".to_owned()),
+                ]);
+            }
+            kinds.extend([
+                TokenKind::Operator(Operator::Def),
+                TokenKind::Literal(Literal::Integer(1)),
+                TokenKind::Punctuation(Punctuation::Semicolon),
+            ]);
+            let tokens = kinds.into_iter().map(|kind| Token::new(kind, 1, 1));
+            let mut parser = Parser::with_source(tokens, Path::new("test"), "");
+            let result = parser.parse_statement();
+            if qualified {
+                assert!(
+                    result
+                        .expect_err("qualified definition must fail")
+                        .to_string()
+                        .contains("expected a name")
+                );
+            } else {
+                assert!(
+                    matches!(result.expect("single-name definition").kind, StatementKind::VariableDeclaration(decl) if decl.identifier == "value" && decl.ty.is_none())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parsed_expression_name_type_and_member_annotations_are_pending() {
+        let ast = get_ast("value: pkg::Record = pkg::Record { field: pkg::source.value };");
+        let statements = module_statements(&ast);
+        let StatementKind::VariableDeclaration(binding) = statements[0] else {
+            panic!("expected binding");
+        };
+        assert_eq!(binding.annotation.binding, None);
+        let ty = binding.ty.as_ref().expect("declared type");
+        assert_eq!(ty.annotation.resolved, None);
+        let TypeExpressionKind::QualifiedIdentifier(name) = &ty.kind else {
+            panic!("expected named type");
+        };
+        assert_eq!(name.segments, ["pkg", "Record"]);
+        assert_eq!(name.annotation.resolved, None);
+
+        let initializer = binding.expression.as_ref().expect("initializer");
+        assert_eq!(initializer.annotation.resolved, None);
+        let ExpressionKind::StructConstruct {
+            struct_identifier,
+            fields,
+        } = &initializer.kind
+        else {
+            panic!("expected struct construction");
+        };
+        assert_eq!(struct_identifier.annotation.resolved, None);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].field_identifier, "field");
+        assert_eq!(fields[0].annotation.resolved, None);
+        let value = &fields[0].expression;
+        assert_eq!(value.annotation.resolved, None);
+        let ExpressionKind::ExprAcess {
+            expr,
+            accessed_identifier,
+            member,
+        } = &value.kind
+        else {
+            panic!("expected member access");
+        };
+        assert_eq!(accessed_identifier, "value");
+        assert_eq!(member.resolved, None);
+        assert_eq!(expr.annotation.resolved, None);
+        let ExpressionKind::QualifiedIdentifier(name) = &expr.kind else {
+            panic!("expected receiver name");
+        };
+        assert_eq!(name.segments, ["pkg", "source"]);
+        assert_eq!(name.annotation.resolved, None);
+    }
+
+    #[test]
+    fn parsed_declaration_and_parameter_annotations_are_pending() {
+        let ast = get_ast(
+            "type Alias pkg::Value\nfn identity(T: type) type { return type; }\nextern fn foreign(value: Alias);\nconst top := 1;",
+        );
+        let StatementKind::TypeDeclaration(alias) = &ast.statements[0].kind else {
+            panic!("expected type declaration");
+        };
+        assert_eq!(alias.annotation.binding, None);
+        assert_eq!(alias.expression.annotation.resolved, None);
+        let TypeExpressionKind::QualifiedIdentifier(name) = &alias.expression.kind else {
+            panic!("expected named type");
+        };
+        assert_eq!(name.annotation.resolved, None);
+        for statement in &ast.statements[1..3] {
+            let StatementKind::FunctionDeclaration(function) = &statement.kind else {
+                panic!("expected function declaration");
+            };
+            assert_eq!(function.signature.annotation.binding, None);
+            assert_eq!(function.signature.return_type.annotation.resolved, None);
+            let parameter = &function.signature.parameters[0];
+            assert_eq!(parameter.annotation.binding, None);
+            assert_eq!(parameter.parameter_type.annotation.resolved, None);
+        }
+        let function = find_func(&ast).expect("identity function");
+        let StatementKind::Return(Some(values)) =
+            &function.body.as_ref().unwrap().statements[0].kind
+        else {
+            panic!("expected return value");
+        };
+        assert_eq!(values[0].annotation.resolved, None);
+        let ExpressionKind::TypeValue(ty) = &values[0].kind else {
+            panic!("expected metatype expression");
+        };
+        assert_eq!(ty.kind, TypeExpressionKind::Builtin(BuiltinType::MetaType));
+        assert_eq!(ty.annotation.resolved, None);
+        let StatementKind::VariableDeclaration(top) = &ast.statements[3].kind else {
+            panic!("expected file-level constant");
+        };
+        assert!(top.is_const);
+        assert_eq!(top.annotation.binding, None);
+        assert_eq!(top.expression.as_ref().unwrap().annotation.resolved, None);
+    }
+
+    #[test]
+    fn parsed_multi_bindings_each_own_a_pending_annotation() {
+        for source in ["a: int32, const b := 1, 2;", "a: int32, b: int32;"] {
+            let ast = get_ast(source);
+            let statements = module_statements(&ast);
+            let StatementKind::MultiVariableDeclaration { bindings, values } = statements[0] else {
+                panic!("expected multi-binding");
+            };
+            assert_eq!(bindings.len(), 2);
+            for binding in bindings {
+                assert_eq!(binding.annotation.binding, None);
+                assert!(binding.expression.is_none());
+                if let Some(ty) = &binding.ty {
+                    assert_eq!(ty.annotation.resolved, None);
+                }
+            }
+            for value in values {
+                assert_eq!(value.annotation.resolved, None);
+            }
+        }
+    }
+
+    #[test]
+    fn parsed_pattern_payload_and_variant_annotations_are_pending() {
+        let ast = get_ast("switch (result) { when .Ok(payload) {} when .Empty {} when else {} };");
+        let statements = module_statements(&ast);
+        let StatementKind::Switch { arms, .. } = statements[0] else {
+            panic!("expected switch");
+        };
+        let Pattern::EnumVariant {
+            member,
+            binding: Some(binding),
+            ..
+        } = &arms[0].pattern
+        else {
+            panic!("expected payload binding");
+        };
+        assert_eq!(member.resolved, None);
+        assert_eq!(binding.identifier, "payload");
+        assert_eq!(binding.annotation.binding, None);
+        let Pattern::EnumVariant {
+            member,
+            binding: None,
+            ..
+        } = &arms[1].pattern
+        else {
+            panic!("unit variant must not have a payload binding slot");
+        };
+        assert_eq!(member.resolved, None);
+        assert!(matches!(arms[2].pattern, Pattern::Wildcard));
+    }
+
+    #[test]
+    fn parsed_type_definition_fields_have_pending_member_not_binding_slots() {
+        let ast = get_ast("type Record struct { value: int32 }");
+        let StatementKind::TypeDeclaration(declaration) = &ast.statements[0].kind else {
+            panic!("expected type declaration");
+        };
+        let TypeExpressionKind::Struct { fields } = &declaration.expression.kind else {
+            panic!("expected struct type");
+        };
+        assert_eq!(fields[0].annotation.resolved, None);
+        assert_eq!(fields[0].expression.annotation.resolved, None);
+        let ExpressionKind::TypeValue(ty) = &fields[0].expression.kind else {
+            panic!("expected field type");
+        };
+        assert_eq!(ty.annotation.resolved, None);
     }
 
     #[test]

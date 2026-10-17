@@ -16,7 +16,7 @@ where
         let is_const = self
             .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Const)))
             .is_some();
-        let name = self.expect_unqualified_name("expected variable name")?;
+        let name = self.expect_identifier("expected variable name")?;
         let mut inferred = false;
         let ty = if self
             .consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Colon)))

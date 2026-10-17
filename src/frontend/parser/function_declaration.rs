@@ -40,7 +40,7 @@ where
 
         // Function name
         let identifier =
-            self.expect_unqualified_name("parse_function_declaration: expected function name")?;
+            self.expect_identifier("parse_function_declaration: expected function name")?;
 
         // Parameters
         self.expect_token(
@@ -65,9 +65,8 @@ where
                     break;
                 }
                 _ => {
-                    let argument_name = self.expect_unqualified_name(
-                        "parse_function_declaration: expected parameter name",
-                    )?;
+                    let argument_name = self
+                        .expect_identifier("parse_function_declaration: expected parameter name")?;
 
                     self.expect_token(
                         TokenKind::Punctuation(Punctuation::Colon),
@@ -85,7 +84,8 @@ where
                     };
 
                     args.push(FunctionParameter {
-                        parameter_name: argument_name,
+                        parameter_identifier: argument_name,
+                        annotation: Default::default(),
                         parameter_type: argument_type,
                     });
 
@@ -135,7 +135,8 @@ where
 
         Ok(FunctionDeclaration {
             signature: FunctionSignature {
-                funcition_name_symbol: identifier,
+                function_identifier: identifier,
+                annotation: Default::default(),
                 parameters: args,
                 return_type,
                 generic_parameters: Vec::new(),

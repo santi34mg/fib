@@ -30,7 +30,6 @@ where
                     Keyword::Struct => self.parse_struct_literal(&type_token)?,
                     Keyword::Enum => self.parse_enum_literal(&type_token)?,
                     Keyword::Function => self.parse_function_type(&type_token)?,
-                    Keyword::Type => TypeExpression::at(TypeExpressionKind::TypeKeyword, span),
                     _ => return Err(self.error("not a type", type_token.line, type_token.column)),
                 }
             }
@@ -42,8 +41,8 @@ where
                 self.next(); // consume '('
                 self.parse_tuple_type_expression(&type_token)?
             }
-            TokenKind::Name(_) => TypeExpression::at(
-                TypeExpressionKind::QualifiedName(self.parse_qualified_name()?),
+            TokenKind::Identifier(_) => TypeExpression::at(
+                TypeExpressionKind::QualifiedIdentifier(self.parse_qualified_name()?),
                 span,
             ),
             _ => {

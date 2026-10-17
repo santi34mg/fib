@@ -11,7 +11,7 @@ pub enum Builtin {
 
 impl Builtin {
     /// Map legacy `@`-prefixed builtin names after the old lexer consumes `@`.
-    #[deprecated(since = "0.1.2")]
+    #[deprecated(since = "0.2.0")]
     pub fn from_name(name: &str) -> Option<Builtin> {
         if let Some(ty) = BuiltinType::from_legacy_name(name) {
             return Some(Builtin::BuiltinType(ty));
@@ -29,34 +29,37 @@ impl Builtin {
 #[derive(Debug, Clone, PartialEq)]
 #[repr(u32)]
 pub enum BuiltinType {
-    Void = 0,
-    UInt8 = 1,
-    UInt16 = 2,
-    UInt32 = 3,
-    UInt64 = 4,
-    UInt128 = 5,
-    Int8 = 6,
-    Int16 = 7,
-    Int32 = 8,
-    Int64 = 9,
-    Int128 = 10,
-    Float16 = 11,
-    Float32 = 12,
-    Float64 = 13,
-    Float128 = 14,
-    Char = 15,
-    Boolean = 16,
-    String = 17,
-    Never = 18,
+    /// Represents that the value is itself a `type`.
+    MetaType,
+    Void,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    UInt128,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Int128,
+    Float16,
+    Float32,
+    Float64,
+    Float128,
+    Char,
+    Boolean,
+    String,
+    Never,
     /// Pointer-width unsigned integer. Maps to `uint64` (i64) on 64-bit
     /// targets; the length type returned by `@str_len`, `.len`, and `.@len`.
-    Usize = 19,
+    Usize,
 }
 
 impl BuiltinType {
     /// The canonical bit-width name of this type (without the legacy `@` prefix).
     pub fn name(&self) -> &'static str {
         match self {
+            Self::MetaType => "type",
             Self::Void => "void",
             Self::UInt8 => "uint8",
             Self::UInt16 => "uint16",
@@ -80,9 +83,10 @@ impl BuiltinType {
         }
     }
 
-    /// Resolve a canonical bit-width type name or its default-width alias.
+    /// Resolve a canonical type name or its default-width alias.
     pub fn from_name(name: &str) -> Option<BuiltinType> {
         Some(match name {
+            "type" => Self::MetaType,
             "void" => Self::Void,
             "uint" | "uint32" => Self::UInt32,
             "uint8" => Self::UInt8,
