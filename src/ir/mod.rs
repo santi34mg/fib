@@ -1,206 +1,186 @@
-//! Dragon-style three-address IR (middle-end).
+//! Self-owned SSA IR architecture, not an implemented lowering pipeline.
 //!
-//! Boundary: the frontend produces `typed_ast::TypedAst` (trees +
-//! `If`/`For`/`Switch`, nested expressions). This module is the first
-//! flat representation: at most one operation per instruction, control
-//! flow only via labels and jumps, values in temporaries.
-//!
-//! Status: `lower_typed_program` implements locals, integer/bool/float
-//! arithmetic, calls, `if`/`for`/`break`/`continue`, `defer` (inline
-//! duplication), `return`, plus assignment forms (`MultiAssign` /
-//! `MultiBinding` / `FieldAssign` / `DerefAssign` / `IndexAssign`),
-//! plain-enum `switch` (no payload bindings), and module-level `const`
-//! globals. Aggregate / pointer / enum-payload / qualified nodes are
-//! modeled as explicit `Instruction` variants; complex shapes still return
-//! `LowerError::Unsupported` so the driver can fall back to the direct
-//! `TypedAst -> LLVM` path. `driver::lower_to_llvm_ir` tries this
-//! import first, then the `ir_lower` consumer; on any `Unsupported` (or
-//! consumer gap) it falls back, so `IrProgram` is on the production path
-//! for every program that fits the core subset.
-
-// FIXME: can this be avoided?
-/// Generic binary operation, shared with the frontend (`TypedExprKind::Binary`).
-/// Signedness / float-ness is carried by the `ty` field on
-/// `Instruction::Binary` so the backend can pick `SDiv` vs `UDiv`, `SLT` vs
-/// `ULT`, `LShr` vs `AShr`, etc.
-use crate::{
-    frontend::typed_ast::{
-        ty::Ty, typed_ast::TypedAst, typed_binding::TypedBinding, typed_declaration::TypedDecl,
-        typed_symbol_id::NameId,
-    },
-    ir::{builder::BasicBlockBuilder, expressions::lower_expr, instruction::Instruction},
-};
-use statements::lower_function;
+//! The intended boundary is `AnalyzedProject -> Ir`; the driver owns that
+//! lowering entry point. All runtime types, identities and constants here are
+//! independent of the frontend and of any backend. See README.md for invariants
+//! that a future verifier must enforce. Public records are deliberately raw,
+//! unverified data; neither construction nor formatting certifies validity.
 
 mod builder;
 mod display;
 mod expressions;
 mod instruction;
 mod statements;
+#[cfg(test)]
 mod test;
+mod types;
+mod verify;
 
+pub use builder::FunctionBuilder;
+pub use expressions::{Address, Constant, ConstantKind, Operand, Value, ValueDefinition};
+pub use instruction::{BinaryOp, CastKind, Instruction, InstructionKind, UnaryOp};
+pub use statements::{BasicBlock, Edge, SwitchCase, Terminator};
+pub use types::{CallingConvention, EnumVariant, FloatWidth, IntegerWidth, IrType, Signature};
+pub use verify::verify_ir;
+
+macro_rules! ids {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            /// Index into the corresponding arena of one `Ir`. Not portable
+            /// between IR instances; indices must remain stable while in use.
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+            pub struct $name(pub usize);
+        )+
+    };
+}
+
+ids!(
+    FunctionId,
+    GlobalId,
+    TypeId,
+    ConstantId,
+    BlockId,
+    ValueId,
+    StackSlotId
+);
+
+/// Arena indices are IR-wide, including those for function-local entities.
+/// Owner metadata and body membership must agree. No deletion/compaction API
+/// is provided: remapping live IDs is a future transformation's responsibility.
 #[derive(Debug, Clone, Default)]
 pub struct Ir {
-    blocks: Vec<BasicBlock>,
+    pub functions: Vec<Function>,
+    pub globals: Vec<Global>,
+    pub types: Vec<IrType>,
+    pub constants: Vec<Constant>,
+    pub blocks: Vec<BasicBlock>,
+    pub values: Vec<Value>,
+    pub stack_slots: Vec<StackSlot>,
 }
 
 impl Ir {
     pub fn new() -> Self {
-        Self { blocks: Vec::new() }
+        Self::default()
     }
 
+    /// Whether all arenas are empty, including declaration-only modules.
     pub fn is_empty(&self) -> bool {
-        self.blocks.is_empty()
+        self.functions.is_empty()
+            && self.globals.is_empty()
+            && self.types.is_empty()
+            && self.constants.is_empty()
+            && self.blocks.is_empty()
+            && self.values.is_empty()
+            && self.stack_slots.is_empty()
+    }
+
+    pub fn function(&self, id: FunctionId) -> Option<&Function> {
+        self.functions.get(id.0)
+    }
+
+    pub fn global(&self, id: GlobalId) -> Option<&Global> {
+        self.globals.get(id.0)
+    }
+
+    pub fn ty(&self, id: TypeId) -> Option<&IrType> {
+        self.types.get(id.0)
+    }
+
+    pub fn constant(&self, id: ConstantId) -> Option<&Constant> {
+        self.constants.get(id.0)
+    }
+
+    pub fn block(&self, id: BlockId) -> Option<&BasicBlock> {
+        self.blocks.get(id.0)
+    }
+
+    pub fn value(&self, id: ValueId) -> Option<&Value> {
+        self.values.get(id.0)
+    }
+
+    pub fn stack_slot(&self, id: StackSlotId) -> Option<&StackSlot> {
+        self.stack_slots.get(id.0)
+    }
+
+    /// Only resolves the recorded type; does not check ownership or validity.
+    pub fn operand_type(&self, operand: Operand) -> Option<TypeId> {
+        match operand {
+            Operand::Value(id) => self.value(id).map(|value| value.ty),
+            Operand::Constant(id) => self.constant(id).map(|constant| constant.ty),
+        }
     }
 }
 
-/// A jump target. Labels are patched after emission (Dragon backpatching),
-/// so jumps refer to a `Label` id, never to an `Instruction` by reference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Label(pub u32);
-
-/// A compiler-generated temporary holding one flat value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Temp(pub u32);
-
-/// An operand: a temporary, a resolved binding, or a constant.
 #[derive(Debug, Clone)]
-pub enum Operand {
-    Temp(Temp),
-    Symbol(NameId),
-    ConstInt { value: u64, ty: Ty },
-    ConstFloat { value: f64, ty: Ty },
-    ConstBool(bool),
-    StringLit(String),
-    Null,
+pub struct Function {
+    /// Owned, canonical linker name, not a source-name lookup key.
+    pub name: String,
+    pub signature: Signature,
+    pub linkage: Linkage,
+    pub body: FunctionBody,
+}
+
+#[derive(Debug, Clone)]
+pub enum FunctionBody {
+    /// External declaration: retains the signature but owns no local entities.
+    Declaration,
+    Definition {
+        /// Entry parameters are the function arguments, in signature order.
+        /// No control-flow edge may target the entry block.
+        entry: BlockId,
+        /// Includes entry; order is for traversal, never implicit fallthrough.
+        blocks: Vec<BlockId>,
+        stack_slots: Vec<StackSlotId>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnOp {
-    Neg,
-    Not,
+pub enum Linkage {
+    Internal,
+    External,
 }
 
 #[derive(Debug, Clone)]
-pub struct BasicBlock {
-    pub label: Label,
-    pub instrs: Vec<Instruction>,
+pub struct Global {
+    pub name: String,
+    /// Stored value type, not the type of its address.
+    pub ty: TypeId,
+    pub mutable: bool,
+    pub linkage: Linkage,
+    pub initializer: GlobalInitializer,
 }
 
-// ---------------------------------------------------------------------------
-// Predicates shared with the backend (single source of truth for signedness)
-// ---------------------------------------------------------------------------
-
-/// True for `@uint*` types. The backend uses this to pick `UDiv`/`URem`,
-/// `ULT/UGT/...`, logical `LShr`, and `zext`/`uitofp` over signed forms.
-pub fn ty_is_unsigned(ty: &Ty) -> bool {
-    use crate::frontend::tokens::builtin::BuiltinType;
-    matches!(
-        ty,
-        Ty::Builtin(
-            BuiltinType::UInt1
-                | BuiltinType::UInt2
-                | BuiltinType::UInt4
-                | BuiltinType::UInt8
-                | BuiltinType::UInt16
-                | BuiltinType::Usize
-        )
-    )
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlobalInitializer {
+    /// Storage is supplied outside this module.
+    Declaration,
+    /// An explicitly typed constant, including explicit zero initializers.
+    Constant(ConstantId),
 }
 
-pub fn ty_is_float(ty: &Ty) -> bool {
-    use crate::frontend::tokens::builtin::BuiltinType;
-    matches!(
-        ty,
-        Ty::Builtin(
-            BuiltinType::Float2 | BuiltinType::Float4 | BuiltinType::Float8 | BuiltinType::Float16
-        )
-    )
+/// Mutable storage is not an SSA value. Taking its address produces a pointer
+/// value; only explicit loads/stores read/write its contents.
+#[derive(Debug, Clone)]
+pub struct StackSlot {
+    pub owner: FunctionId,
+    pub ty: TypeId,
+    pub debug_name: Option<String>,
 }
 
-/// Lower a typed program to flat IR.
-///
-/// Handles locals, arithmetic, calls, `if`/`for`/`break`/`continue`,
-/// `defer`, `return`, assignment forms, plain-enum `switch`, and
-/// module-level `const` globals. Anything else returns
-/// `LowerError::Unsupported` with the source construct named so the
-/// driver can fall back to the direct path.
-pub fn lower_typed_ast<'tast>(typed_ast: TypedAst) -> anyhow::Result<Ir> {
-    let mut ir = Ir::default();
-    for decl in typed_ast.declarations {
-        match decl {
-            TypedDecl::Function(f) => {
-                ir.blocks.extend(lower_function(f)?);
-            }
-            TypedDecl::Const(binding) => {}
-            TypedDecl::Type => {
-                // Types live in the scope; no code to emit.
-            }
+/// Sketch operations must fail explicitly rather than certify or emit IR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrError {
+    NotImplemented { operation: &'static str },
+}
+
+pub type IrResult<T> = Result<T, IrError>;
+
+impl std::fmt::Display for IrError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotImplemented { operation } => write!(f, "{operation} is not implemented"),
         }
     }
-    Ok(ir)
 }
 
-/// Lower a module-level `const` to an `IrConst` global.
-///
-/// Only constant initializers (no emitted instructions, constant operand)
-/// are accepted; anything requiring runtime code returns `Unsupported`.
-fn lower_const(binding: &TypedBinding) -> anyhow::Result<BasicBlock> {
-    let mut b = BasicBlockBuilder::new();
-    let alloca = Instruction::Alloca {
-        sym: binding.symbol,
-        name: binding.symbol.name,
-        ty: binding.ty,
-    };
-    if let Some(init) = binding.init {
-        let instr = lower_expr(&mut b, &init);
-        Ok(BasicBlock {
-            label: todo!(),
-            instrs: vec![alloca],
-        })
-    } else {
-        Ok(BasicBlock {
-            label: todo!(),
-            instrs: vec![alloca],
-        })
-    }
-    // let init_expr = b.init.as_ref().ok_or_else(|| {
-    //     LowerError::Unsupported(format!(
-    //         "module-level const '{}' has no initializer",
-    //         b.symbol
-    //     ))
-    // })?;
-    // // Lower with a throwaway builder: const inits must not emit code.
-    // let mut tmp =
-    //     builder::FunctionBuilder::new("__const_init".to_string(), b.ty.clone(), true, false);
-    // let operand = expressions::lower_expr(&mut tmp, init_expr)?;
-    // if tmp.emitted_any() {
-    //     return Err(LowerError::Unsupported(format!(
-    //         "module-level const '{}' needs runtime lowering",
-    //         b.symbol
-    //     )));
-    // }
-    // // Accept only constant operands; temps/symbols need runtime slots.
-    // let is_const = matches!(
-    //     operand,
-    //     Operand::ConstInt { .. }
-    //         | Operand::ConstFloat { .. }
-    //         | Operand::ConstBool(_)
-    //         | Operand::StringLit(_)
-    //         | Operand::Null
-    // );
-    // if !is_const {
-    //     // Void-typed const inits (e.g. calls) lower to a dummy bool; still
-    //     // not a compile-time constant.
-    //     let _ = BuiltinType::Void;
-    //     return Err(LowerError::Unsupported(format!(
-    //         "module-level const '{}' needs runtime lowering",
-    //         b.symbol
-    //     )));
-    // }
-    // Ok(IrConst {
-    //     name: b.symbol.raw_str.clone(),
-    //     ty: b.ty.clone(),
-    //     init: operand,
-    // })
-}
+impl std::error::Error for IrError {}
