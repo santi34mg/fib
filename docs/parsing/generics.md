@@ -23,7 +23,7 @@ in expression position remains an unresolved name. Resolution must determine
 whether it denotes a type, value, or invalid argument.
 
 ```fib
-type Count int32
+Count: type = int32;
 fn first(T: type, values: *T) T {
     return values[0];
 }

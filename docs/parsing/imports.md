@@ -37,7 +37,9 @@ cast operator, not an import alias declaration.
 ## Qualified names versus module declarations
 
 `const File := other::file;` parses as an ordinary const variable declaration,
-not a module-alias declaration. `comp` and `pub` have no declaration productions.
+not a resolved module-alias declaration. `comp` and `pub` are parsed as unified
+binding modifiers (`is_comp` and `is_pub`); namespace/visibility semantics remain
+unfinished.
 The proposed namespace model is detailed in [Name resolution](../name-resolution.md)
 and the [roadmap](../roadmap/).
 

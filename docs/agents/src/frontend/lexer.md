@@ -17,6 +17,12 @@ Bare canonical builtin type names use bit widths (`int8`, `uint64`, `float32`);
 following name by the parser for builtin functions. Do not use legacy byte-width
 mapping helpers as the current grammar; some comments and Display output are stale.
 
+Unified declaration modifiers `pub`, `const`, and `comp` tokenize as keywords.
+`type` remains the builtin metatype token for annotations and type values, not a
+legacy `type Name ...` declaration introducer. The parser interprets `:=` as
+inferred binding syntax and requires `;` on type-valued bindings too. Modifier
+flags do not imply implemented visibility or compile-time evaluation.
+
 Tests live in `src/frontend/tokenizer/test.rs`. Add exact kinds, literal values,
 positions, and malformed-input cases. Verify escape/backslash, NUL, Unicode and
 numeric overflow behavior before making broader lexical guarantees. No analyzer

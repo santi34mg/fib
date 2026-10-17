@@ -5,24 +5,26 @@
 ## Declarations
 
 ```fib
-type Point struct {
+Point: type = struct {
     x: int32,
     y: int32,
-}
-type Node struct {
+};
+Node: type = struct {
     value: int32,
     next: *Node,
-}
+};
 ```
 
 Fields are `name: Type`; comma-separated lists and trailing commas are accepted.
-The top-level declaration is `type Name struct { ... }`, without `=` or a
-trailing semicolon. A pointer reference to the type being declared also parses.
+The declaration is a unified binding, `Name: type = struct { ... };`, with
+an initializer and required trailing semicolon. A pointer reference to the type
+being declared also parses.
 
 The parser also accepts anonymous struct type expressions in annotations;
 parsing does not supply an anonymous struct-value construction syntax.
-`comp Name: type = struct { ... };` is a planned alternative declaration model,
-not current grammar. See [Name resolution](../name-resolution.md).
+`comp Name: type = struct { ... };` uses the same syntax with the `is_comp`
+binding flag; this does not implement compile-time evaluation.
+See [Name resolution](../name-resolution.md).
 
 ## Named construction
 
@@ -42,8 +44,8 @@ See [Enums](enums.md).
 ## Access, assignment, and nesting
 
 ```fib
-type Inner struct { value: uint64 }
-type Outer struct { inner: Inner }
+Inner: type = struct { value: uint64 };
+Outer: type = struct { inner: Inner };
 outer := Outer { inner: Inner { value: 0 } };
 outer.inner.value = 42;
 read := outer.inner.value;

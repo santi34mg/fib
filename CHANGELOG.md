@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserved the unfinished symbol-table and IR rewrite sources from `refactor/modules-and-generic-functions`; the IR interpreter is now exported but remains unimplemented.
 
 ### Changed
+- **Breaking:** unified declarations use `[pub] [const | comp] name (: Type = | :=) expression;`. Type definitions and aliases now use `Name: type = ...;` with a required semicolon and parse as variable bindings with arbitrary expression initializers (`TypeValue` for explicit type syntax; ordinary expressions for names and calls, with semantic discrimination later); the legacy `type Name ...` parser route is removed. Each multi-binding retains independent modifiers and types, with the final `:=` introducing the shared initializer list. Typed declarations without initializers remain supported for compatibility. Parser tests, samples, and parsing/agent references follow the new syntax; semantic visibility and compile-time evaluation remain unfinished.
 - Builtin numeric type variants and canonical source names use bit widths (`Int32`, `int32`); bare `int` and `uint` denote 32-bit types. The current parser rejects legacy `@`-prefixed types.
 - The current parser uses restricted postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of legacy dotted access forms.
 - Aligned language references, roadmap baselines, repository instructions, and agent guides with the implemented syntax and explicit unfinished compiler boundaries.
