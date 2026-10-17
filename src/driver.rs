@@ -1,43 +1,47 @@
-use anyhow::bail;
-use std::path::Path;
-
-use crate::builder_object::BuildStage;
-#[cfg(feature = "llvm")]
-use crate::builder_object::BuilderObject;
+use crate::build_plan::{BuildPlan, FileId};
 use crate::driver::compiler_output::CompilationOutput;
-use crate::frontend::analyzer::Analyzer;
-use crate::frontend::parser::Parser;
-use crate::frontend::tokenizer::Tokenizer;
+use crate::frontend::analyzer::AnalyzedProject;
+use crate::frontend::ast::Ast;
 use crate::ir::Ir;
 
-/// `run_pipeline` is the main connector between different parts of the compiler.
-pub fn run_pipeline(path: &Path, bo: &BuilderObject) -> anyhow::Result<CompilationOutput> {
-    match bo.build_stage {
-        BuildStage::BuildFileCompilation => Ok(CompilationOutput::Ir(run_frontend(path, bo)?)),
-        BuildStage::IndividualIrCompilation => Ok(CompilationOutput::ObjectFile(todo!())),
-        BuildStage::Linking => Ok(CompilationOutput::Binary(todo!())),
-        _ => bail!("build stage unsupported"),
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineGoal {
+    Check,
+    Ir,
+    Objects,
+    Binary,
 }
 
-/// Run lex + parse + import resolution + analysis. No LLVM involved, so this
-/// works with `--no-default-features` and is unit-testable without clang.
-pub fn run_frontend(
-    path: &Path,
-    // TODO: consider removing builer object from here
-    bo: &BuilderObject,
-) -> anyhow::Result<Ir> {
-    let _ = bo;
-    let mut source = std::fs::read_to_string(path)?;
+#[derive(Debug, Clone)]
+pub struct SourceUnit {
+    pub file: FileId,
+    pub ast: Ast,
+}
 
-    let tokens = Tokenizer::new(&mut source);
+/// Compile only the files explicitly enumerated and named by the plan.
+pub fn run_pipeline(_plan: &BuildPlan, _goal: PipelineGoal) -> anyhow::Result<CompilationOutput> {
+    // Run the frontend, then stop at the requested stage or emit and link.
+    anyhow::bail!("pipeline orchestration is not implemented")
+}
 
-    let mut parser = Parser::new(tokens, path);
-    let ast = parser.parse()?;
+pub fn run_frontend(_plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
+    // Parse every named file, collect declarations, then resolve names and types.
+    anyhow::bail!("frontend orchestration is not implemented")
+}
 
-    let analyzer = Analyzer::new(ast);
-    analyzer.analyze()
+pub fn parse_files(_plan: &BuildPlan) -> anyhow::Result<Vec<SourceUnit>> {
+    // Read, tokenize, and parse every source file listed in the build plan.
+    anyhow::bail!("build-plan file parsing is not implemented")
+}
+
+/// The sole frontend-to-IR boundary. A future implementation must validate
+/// analysis completeness, translate semantic types and identities into owned
+/// IR records, and construct SSA before invoking IR verification. It must not
+/// fall back to direct AST-to-backend emission.
+pub fn lower_to_ir(_project: &AnalyzedProject) -> anyhow::Result<Ir> {
+    anyhow::bail!("AnalyzedProject to SSA IR lowering is not implemented")
 }
 
 pub mod compiler_output;
+#[cfg(test)]
 mod test;
