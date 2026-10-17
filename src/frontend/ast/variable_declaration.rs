@@ -11,6 +11,8 @@ pub struct VariableDeclaration {
     pub ty: Option<TypeExpression>,
     pub expression: Option<Expression>,
     pub is_const: bool,
+    pub is_pub: bool,
+    pub is_comp: bool,
 }
 
 impl VariableDeclaration {
@@ -25,6 +27,8 @@ impl VariableDeclaration {
             ty,
             expression,
             is_const: false,
+            is_pub: false,
+            is_comp: false,
         }
     }
 }

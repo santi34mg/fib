@@ -2,13 +2,13 @@
 // Intended output (unverified; compiler pipeline unfinished):
 //   got 42
 
-type Inner struct {
+Inner: type = struct {
     value: uint64,
-}
+};
 
-type Outer struct {
+Outer: type = struct {
     inner: Inner,
-}
+};
 
 fn main() int32 {
     o: Outer = Outer { inner: Inner { value: 0 } };
