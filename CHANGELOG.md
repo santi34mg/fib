@@ -8,23 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A local Zed extension in `lsp/editors/zed` registers `.fib` files without a Tree-sitter grammar and launches the existing JS highlighting server via `fib-lsp` on PATH or a configurable binary override; setup documents semantic-token opt-in and Rust/Wasm requirements.
 - Backend-independent SSA `Ir` contracts with explicit function ownership, block parameters and edge arguments, typed values, memory operations, and fallible builder/verifier sketches.
 - In-place AST analysis annotations, semantic type and resolver-context contracts, plus an LLVM adapter phase plan covering verification, target layout, ABI classification, and SSA edge translation. Analysis, lowering, verification, and code generation remain unimplemented.
 - Parser and architecture-contract regression tests; deleted integration tests remain deleted.
+- An automatic parser regression test discovers every top-level `samples/*.fib` file; it does not perform semantic analysis or execution.
 - Documented planned file namespaces, `comp` aliases, visibility, lexical lookup, and plain function-pointer semantics; these are not yet implemented.
 - An unfinished `BuilderObject` build-file pipeline with build stages; compilation and interpretation of build files, object emission, and linking are not yet implemented end-to-end.
-- Split tokenizer and new token shapes for the upcoming parser migration; the current compiler still uses the existing lexer.
-- Opt-in statement-only parser and AST modules for the new syntax, including bit-width builtin type names, per-binding types and `const` in multi-variable declarations, and qualified-access module aliases instead of import declarations.
-- Opt-in lexical name resolution for the new AST, with scoped declaration IDs and diagnostics for unknown or duplicate names. Module-qualified imports and type checking remain future work.
+- Split tokenizer and token shapes used by the current parser and its tests; there is no separate production lexer module.
+- Current parser and AST support bare bit-width builtin type names, per-binding types and `const` in multi-variable declarations, and qualified identifier syntax. Import declarations and module-alias resolution are not implemented.
+- Lexical scope utilities and declaration-identity contracts; language-level name resolution and type checking remain unfinished.
 - Preserved the unfinished symbol-table and IR rewrite sources from `refactor/modules-and-generic-functions`; the IR interpreter is now exported but remains unimplemented.
 
 ### Changed
-- Builtin numeric type variants and displayed names use bit widths (`Int32`, `int32`); bare `int` and `uint` now denote 32-bit types. The production lexer still accepts legacy numbered `@int4`-style source spellings until the parser migration.
-- The opt-in parser uses postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of the established compiler's dotted access forms.
+- Builtin numeric type variants and canonical source names use bit widths (`Int32`, `int32`); bare `int` and `uint` denote 32-bit types. The current parser rejects legacy `@`-prefixed types.
+- The current parser uses restricted postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of legacy dotted access forms.
+- Aligned language references, roadmap baselines, repository instructions, and agent guides with the implemented syntax and explicit unfinished compiler boundaries.
+- Moved verified syntax observations into `docs/parsing/`, separate from language-design proposals. Filed analysis gaps as GitHub issues; `docs/agents/issues/README.md` links to them without duplicating report bodies.
 - Replaced the legacy driver, CLI, and library entry points with the unfinished build-file pipeline from `refactor/modules-and-generic-functions`. `build`, `run`, and `test` do not work yet; the `AnalyzedProject → Ir` pipeline is represented by architecture sketches, not executable passes.
 - Replaced obsolete typed-AST/flat-IR lowering bodies with coherent SSA and backend API sketches; no direct AST-to-LLVM fallback or compatibility `IrProgram` is retained.
 
 ### Fixed
+- Migrated all 15 sample programs to current syntax while preserving their operations and numeric widths; output remains intended/unverified. Fibonacci benchmark results now use `int64` so `fib(50)` fits, and linked-list cleanup is registered after constructing the list.
 - Aligned LSP highlighting with the current tokenizer/parser: bare bit-width types, `const` bindings, `.len`, declaration contexts, and decimal-prefixed floats; removed legacy `var`/`import` keyword and `@`-type highlighting.
 - Migrated parser identifier handling to string-based `Identifier` tokens and qualified identifier expressions; type declarations consume the metatype builtin, and member accesses consistently use `accessed_identifier`.
 - Driver pipeline/lowering sketches now return explicit not-implemented errors instead of panicking.

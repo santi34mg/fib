@@ -1,26 +1,24 @@
-# `src/frontend/ast/`
+# AST and annotation ownership
 
-## Responsibility
+[`ast.rs`](../../../../src/frontend/ast.rs) defines `Ast { statements }`.
+`ast/` splits expressions, statements, functions/signatures/parameters, types,
+patterns, fields, enum variants, qualified names and switch syntax. Actual
+spellings include `structl_field.rs`, `ExprAcess`, and `BinaryExpresison`; do not
+invent corrected source paths in tooling.
 
-The syntax AST preserves source-language structure before name and type
-resolution. Major node groups are declarations, function signatures/bodies,
-expressions, statements, type expressions, imports, fields, enum variants, and
-switch patterns.
+Analysis enriches this original tree in place; it does not manufacture a second
+typed AST. [`analysis_annotation.rs`](../../../../src/frontend/analysis_annotation.rs)
+defines pending name, binding, type, expression and member slots. Parsing leaves
+all applicable resolution slots `None`; pending never means successfully unknown.
+Names/qualified paths retain spelling, and expressions/statements/type expressions
+retain start spans. See [diagnostics/source locations](../diagnostics.md).
 
-Expressions, statements, and type expressions carry a start `Span`. Many
-declaration-level structures do not carry their own source range.
+Bindings use declaration or local identities; members use owner/type plus field,
+variant or length identity, not lexical bindings. Function bindings belong on
+signatures; parameter and multi-binding sites have their own slots. Label slots
+are reserved but not embedded because label syntax is undefined. The generic
+parameter string list is reserved and not parsed. Legacy `QualifiedAccess` is not
+the parser-produced annotated qualified-name representation.
 
-## Known Consequences
-
-- signature diagnostics may fall back to the first body statement;
-- empty function declarations can be spanless;
-- import and type declaration analysis errors can be spanless;
-- end positions collected by tokens are lost;
-- typed AST and IR cannot retain source correlation they never receive.
-
-## Improvement Direction
-
-Give every AST node that can produce a diagnostic a `SourceId` and byte range,
-including names, declarations, fields, variants, parameters, and patterns.
-Keep syntax spelling and semantic identity separate. Avoid deriving diagnostic
-locations from unrelated child statements.
+Completion validation is unimplemented. A public AST or `AnalyzedProject` with
+filled-looking records is not evidence that semantic checking ran.

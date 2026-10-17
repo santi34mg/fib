@@ -2,86 +2,84 @@
 
 [![CI](https://github.com/santi34mg/fib/actions/workflows/ci.yml/badge.svg)](https://github.com/santi34mg/fib/actions/workflows/ci.yml)
 
-Fib is a systems programming language designed for performance, clarity, and developer control. 
+Fib is a systems programming language under reconstruction, written in Rust.
+Performance, clarity, and developer control are design goals, not a claim of a
+finished compiler.
 
-## Compiler
+## Current implementation
 
-The compiler is written in Rust. Future plans include a self-hosted compiler.
+Tokenization, parsing, AST construction, lexical scope utilities, diagnostics,
+and raw IR data utilities work independently. Semantic analysis, build-file
+execution, AST-to-IR lowering, SSA building/verification, IR interpretation,
+and backend emission remain unfinished. There is no working end-to-end compiler
+or executable custom backend in this checkout.
 
-The compiler has two backends.
-The first is an LLVM backend, which is the default setting (for now).
-The second is a custom backend made for specialized builds.
+See the [language documentation](docs/README.md) for current parsed syntax and
+[compiler architecture](docs/compiler-architecture.md) for implementation boundaries.
+Contributors and coding agents should start with [AGENTS.md](AGENTS.md) and the
+[implementation guide](docs/agents/README.md).
 
-## Installation
+## Build and test
 
-### Prerequisites
+The repository pins Rust **1.98.0** in `rust-toolchain.toml`. Install it through
+[rustup](https://rustup.rs). For development without LLVM:
 
-- **Rust toolchain** (stable): install via [rustup](https://rustup.rs)
-- **clang 21**: must be on `$PATH` when using the LLVM backend (`clang-21` is preferred; otherwise unversioned `clang` is used).
-
-### Building from source
-
-```bash
+```sh
 git clone https://github.com/santi34mg/fib.git
 cd fib
-
-cargo build
+cargo check --no-default-features
+cargo test --no-default-features
+cargo run --no-default-features -- --help
 ```
 
-### Running hello world
+Use `--offline` when dependencies are already cached and network access is not
+available. The default `llvm` feature enables Inkwell 0.8 / LLVM 21 dependency
+builds and requires a compatible LLVM installation. Enabling it does not enable
+working code generation.
 
-To run any of the samples you can do so directly with cargo from the project root:
+The CLI accepts `build [--single-file PATH]`, `run`, and `test`, but executing
+these commands is unimplemented. Help works. Historical positional source-file,
+include-root, check, emit, linker, and release flags are not supported. All 15
+sample files are checked by an automatic parser test, not compiled or executed.
+Standard-library files may still contain obsolete syntax and are not swept by
+that test.
 
+## Current syntax
+
+This example illustrates parsing, not successful compilation or execution:
+
+```fib
+type Point struct { x: int32, y: int32 }
+
+fn add(a: int32, b: int32) int32 {
+    const offset := 1;
+    result: int32 = a + b + offset;
+    while (result < 10) {
+        result += 1;
+    };
+    return result;
+}
 ```
-cargo run -- samples/hello_world.fib -I=std
-./out/hello_world
-```
 
-`-I`/`--include-path` adds an import search directory (repeatable). The entry
-file's own directory is always searched first, so `-I=std` is what lets
-`import std::libc` resolve. `-o` overrides the default `out/<stem>` binary
-path.
+- Builtin types use bare bit-width names: `int8` through `int128`, `uint8`
+  through `uint128`, `float16` through `float128`, plus `bool`, `char`,
+  `string`, `void`, `never`, `usize`, and `type`. `int` and `uint` alias 32-bit types.
+- Bindings use `x := value`, `x: T = value`, or `x: T`, with optional `const`.
+- Control flow includes `if`, `while`, and `switch`; statements require semicolons.
+- Indexing and slicing use `a[i]` and `a[a..b]`; length access uses `.len`.
+- Builtin functions retain `@`: `@concat`, `@str_len`, and `@str_eq`.
+- Imports, module loading, semantic generic specialization, runtime memory
+  behavior, and executable lowering are not implemented.
 
-Useful flags (see `cargo run -- --help` for the full list):
-
-- `--check` — frontend only (lex + parse + analyze), no LLVM/clang needed.
-- `--emit=lex|parse|typed|llvm|bin` — stop after a stage.
-- `--emit-llvm` / `--llvm-out <FILE>` — keep the intermediate `.ll`.
-- `--cc <CC>` — C compiler for linking (defaults to `$CC`, else `clang-21`, else `clang`).
-- `-O <LEVEL>` — optimization level passed to clang as `-O<LEVEL>`.
-- `--release` — skip debug runtime bounds checks on `arr.[i]` / `arr.[a..b]`
-  (by default every index/slice traps to stderr + abort on OOB; constant
-  OOB is always a compile error).
-
-### Troubleshooting
-
-- `clang-21: not found` / linker errors: install Clang 21 and ensure it is on
-  `$PATH`, or point at a compatible compiler explicitly:
-  `cargo run -- samples/hello_world.fib -I=std --cc clang`.
-- Building the compiler itself needs LLVM 21 (CI installs it via
-  `ZhongRuoyu/setup-llvm@v0`). Frontend-only work (`--check`,
-  `--emit=lex|parse|typed`, `cargo check --no-default-features`) needs
-  neither LLVM nor clang.
-- No output binary? The default `--emit=bin` writes to `out/<stem>`
-  (`out/` is git-ignored); use `-o` to choose another path.
-
-## Language Features
-
-- **Types**: built-in types are `@`-prefixed — byte-sized integers (`@int`, `@int2`, `@int4`, `@int8`, `@int16` and unsigned `@uint...` counterparts), `@float4/8/16`, `@bool`, `@char`, `@string`, plus structs, enums/tagged unions, arrays, raw pointers
-- **Builtins**: `@`-prefixed builtin functions for string building — `@concat`, `@str_len`, `@str_eq`
-- **Functions**: declarations with `name: type` parameters, forward declarations, multiple return values, variadic, extern, type parameters (generics)
-- **Variables**: explicit declarations use `name: type = init`; inferred declarations use `name := init`
-- **Control flow**: `if`/`else`, C-style `for`, `break`, `continue`, `defer`, `return`, `switch`/`when` pattern matching
-- **Expressions**: arithmetic, bitwise, logical, comparison, compound assignment, type casting (`as`), field/index access, address-of (`.&`), dereference (`.*`), struct construction, array literals, `null`
-- **Memory**: manual `malloc`/`free`, pointer arithmetic, defer for cleanup
-- **Modules**: `import a::b`, selective imports `::{X}`, aliasing `as`
-
-See `docs/` for language documentation and `samples/` for working example programs.
+The [language reference](docs/README.md) describes parser restrictions and future
+features separately. The dependency-free [LSP](lsp/README.md) supplies syntax-based
+semantic highlighting, not compiler diagnostics.
 
 ## Contributing
 
-Contributions, suggestions, and bug reports are welcome. See [CONTRIBUTING](CONTRIBUTING) for details.
+Contributions, suggestions, and bug reports are welcome. See
+[CONTRIBUTING](CONTRIBUTING) for development and PR guidance.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE).
