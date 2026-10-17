@@ -46,7 +46,7 @@ test("serves initialize and semantic token requests", async (context) => {
   server.stdin.write(frame({
     jsonrpc: "2.0",
     method: "textDocument/didOpen",
-    params: { textDocument: { uri, languageId: "fib", version: 1, text: "fn main() int32 {}" } },
+    params: { textDocument: { uri, languageId: "fib", version: 1, text: "pub comp answer := 42;\nfn main() int32 {}" } },
   }));
   server.stdin.write(frame({
     jsonrpc: "2.0",
@@ -55,7 +55,8 @@ test("serves initialize and semantic token requests", async (context) => {
     params: { textDocument: { uri } },
   }));
   await waitForMessages(2);
-  assert.ok(messages[1].result.data.length > 0);
+  const keyword = messages[0].result.capabilities.semanticTokensProvider.legend.tokenTypes.indexOf("keyword");
+  assert.deepEqual(messages[1].result.data.slice(0, 10), [0, 0, 3, keyword, 0, 0, 4, 4, keyword, 0]);
 
   server.stdin.write(frame({ jsonrpc: "2.0", id: 3, method: "shutdown", params: null }));
   await waitForMessages(3);
