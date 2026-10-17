@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced obsolete typed-AST/flat-IR lowering bodies with coherent SSA and backend API sketches; no direct AST-to-LLVM fallback or compatibility `IrProgram` is retained.
 
 ### Fixed
+- Aligned LSP highlighting with the current tokenizer/parser: bare bit-width types, `const` bindings, `.len`, declaration contexts, and decimal-prefixed floats; removed legacy `var`/`import` keyword and `@`-type highlighting.
 - Migrated parser identifier handling to string-based `Identifier` tokens and qualified identifier expressions; type declarations consume the metatype builtin, and member accesses consistently use `accessed_identifier`.
 - Driver pipeline/lowering sketches now return explicit not-implemented errors instead of panicking.
 

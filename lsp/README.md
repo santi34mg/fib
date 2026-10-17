@@ -7,6 +7,13 @@ provides semantic syntax highlighting for:
 - builtin types, functions, and properties
 - functions, types, namespaces, variables, fields, and enum members
 
+Highlighting follows the current tokenizer/parser syntax: bare builtin types
+(`int32`, `uint64`, `string`), `const` and `name := value` bindings, and `.len`.
+Builtin calls retain the `@` prefix (`@concat`, `@str_len`, `@str_eq`).
+Legacy `var`/`import` keywords and `@int4`-style types are not supported.
+Identifier classification is syntax-based, not compiler-backed name resolution;
+the server does not provide parsing or type-checking diagnostics.
+
 ## Requirements
 
 Node.js 20 or newer.
