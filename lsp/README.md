@@ -8,7 +8,9 @@ provides semantic syntax highlighting for:
 - functions, types, namespaces, variables, fields, and enum members
 
 Highlighting follows the current tokenizer/parser syntax: bare builtin types
-(`int32`, `uint64`, `string`), `const` and `name := value` bindings, and `.len`.
+(`int32`, `uint64`, `string`), `[pub] [const | comp]` binding modifiers,
+`name := value` bindings, and `.len`. Modifiers are highlighted independently
+for each binding in multi-variable declarations.
 Builtin calls retain the `@` prefix (`@concat`, `@str_len`, `@str_eq`).
 Legacy `var`/`import` keywords and `@int4`-style types are not supported.
 Identifier classification is syntax-based, not compiler-backed name resolution;
