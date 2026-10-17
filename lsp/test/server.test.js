@@ -46,7 +46,7 @@ test("serves initialize and semantic token requests", async (context) => {
   server.stdin.write(frame({
     jsonrpc: "2.0",
     method: "textDocument/didOpen",
-    params: { textDocument: { uri, languageId: "fib", version: 1, text: "fn main() @int4 {}" } },
+    params: { textDocument: { uri, languageId: "fib", version: 1, text: "fn main() int32 {}" } },
   }));
   server.stdin.write(frame({
     jsonrpc: "2.0",
