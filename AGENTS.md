@@ -1,35 +1,81 @@
 # AGENTS.md
 
-Fib compiler (`fibc`) in Rust. Pipeline: `src/driver.rs` validate → read → lex/parse → `resolve_imports` → `analyze` → lower → emit/link. Library API in `src/lib.rs`: `compile_project` / `check_project`.
+Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
+[current implementation guide](docs/agents/README.md), not historical compiler claims.
 
-## Toolchain
+## Current checkout
 
-- Pinned stable `1.98.0` via `rust-toolchain.toml` (also the MSRV policy — bump deliberately, never by drift). No `rustfmt.toml`/`clippy.toml`; defaults enforced by CI.
-- Full builds need LLVM 21 (CI: `ZhongRuoyu/setup-llvm@v0`) + a C compiler on `$PATH`. Frontend-only work needs neither.
+- Working: `src/frontend/tokenizer.rs` + `tokenizer/`, `parser.rs` + `parser/`,
+  AST construction, lexical scope utilities, diagnostics and raw IR data utilities.
+- `analyzer.rs` + `analyzer/` are explicit-error sketches. Analysis annotates the
+  original AST in the intended architecture; no lexer/analyze/typed_ast modules exist.
+- `src/driver.rs` exposes `run_pipeline`, `run_frontend`, `parse_files`,
+  `lower_to_ir`, all unimplemented. No `compile_project`/`check_project` APIs.
+- `BuildPlan` explicitly names files; single-file loading, build.fib interpretation,
+  builder orchestration and IR interpreter are unfinished (`todo!()` or errors).
+- `src/ir/` is an owned SSA representation, not the former flat importer.
+  Builder/verifier always error. Backend is an IR-only sketch, available without
+  LLVM; no emission or direct AST fallback. `backend/lowering/next/` is uncompiled
+  legacy code referencing removed APIs, not a supported route.
+- CLI accepts `build [--single-file PATH]`, `run`, `test`; execution is `todo!()`.
+  Help works. Old positional-file, include-root, check/emit/link/release flags do not.
 
-## Commands
+## Toolchain and commands
 
-Pre-push gate (CI order): `cargo fmt --check` → `cargo check` → `cargo clippy --all-targets -- -D warnings` → `cargo build` → `cargo test` + `cargo test --all-features`. Also: `cargo check --no-default-features`, `cargo test --no-default-features` (frontend job).
+`rust-toolchain.toml` and CI pin 1.98.0 (MSRV policy); bump deliberately together.
+Rust 2024 package; default `llvm` enables Inkwell 0.8 / LLVM 21 dependency builds,
+not working LLVM emission. No-default-features work needs no LLVM installation.
 
-- `cargo test --lib` — unit tests only (works with `--no-default-features`).
-- `cargo test --test e2e [name]` — e2e only; e.g. `cargo test --test e2e e2e_hello_world`. Needs `llvm` feature + clang; slow.
-- Fast focused check without LLVM/clang: `cargo run --no-default-features -- <file> --check` or `--emit=lex|parse|typed`. Full CLI: `cargo run -- --help`.
+Verified on system Cargo/rustc 1.98.0 (offline cache present):
 
-## Running Fib programs
+```sh
+cargo check --offline --no-default-features
+cargo test --offline --no-default-features
+cargo run --offline --no-default-features -- --help
+```
 
-- `cargo run -- samples/hello_world.fib -I=std` → binary at `out/<stem>` (`out/` git-ignored, `*.ll` ignored); `-o` overrides, `--emit-llvm`/`--llvm-out <FILE>` keeps IR.
-- `-I`/`--include-path` is repeatable; entry file's dir is always searched first. `import std::libc` with `-I std` resolves via the drop-first-segment fallback (`<root>/libc.fib`) — keep `-I=std`, do not "fix" the two-way search in `module_candidate_paths`.
-- Linker: `--cc` > `$CC` > `clang-21` > `clang`. `-O 0|1|2|3|s|z`, `--release` skips debug OOB traps on `arr.[i]`/`arr.[a..b]` (constant OOB is always a compile error). `--check` overrides `--emit`; `lex|parse|typed` never touch LLVM/clang.
+Check/help succeeded and tests passed 173 library tests; no integration/e2e suite
+exists. Offline is optional outside restricted environments. Focus tests with
+`cargo test --no-default-features frontend::parser` or `frontend::tokenizer`.
+See [validation status](docs/agents/tests/README.md) for formatting and limitations.
 
-## Architecture notes
+CI config runs fmt; no-default check/test; LLVM 21 fmt/check/clippy
+(`--all-targets -- -D warnings`)/build/test/all-features. These are configured gates,
+not verified green status. Audit/deny/coverage are advisory. The optional local
+pre-commit hook additionally makes deny blocking. CI skips docs-only paths.
 
-- `src/driver.rs` owns orchestration, module resolution (canonical-path interning dedupes alias spellings; diamond imports merged by `dedupe_declarations`, entry shadows imports), and clang linking. `src/cli.rs` is arg parsing + printing only. All errors funnel into one `CompilerError` (`src/diagnostics.rs`) — single print path.
-- Middle-end `src/ir/`: `lower_typed_program` tries the flat `IrProgram` path (`ir_lower` consumer) first, falls back to direct `TypedProgram → LLVM` for structs/pointers/enum payloads/etc. Never silently miscompiles; which path is live is observable per program.
-- `src/frontend/{lexer,parser,analyze}/` are split per-operator/per-concern mirroring each other; `src/backend/lowering/` is split per-concern (`context.rs` owns `FunctionLowering`, `types.rs` owns `map_type_to_llvm`).
+## Syntax and source guidance
 
-## Tests & conventions
+Use bare bit-width types (`int32`, `uint64`, aliases `int`/`uint` = 32-bit),
+`x := 1;`, `const x := 1;`, `x: int32;`, `fn f(x: int32) int32 { return x; }`,
+`while (condition) { ... };`, `a[i]`, `a[a..b]`, `.len`, postfix pointer operations.
+Builtin functions retain `@`; legacy `@` types, `var`, `for`, dot-index and imports
+are not the current working grammar. Parsing is not semantic/runtime support.
+See [parser details](docs/agents/src/frontend/parser.md). Samples use current
+syntax and have automatic parser coverage; std sources may still be stale.
 
-- `tests/e2e.rs` (`#![cfg(feature = "llvm")]`) compiles every `samples/*.fib` via the library API into fresh temp dirs and runs them; deterministic samples pin exact stdout, `fib_bench` is compile-only. Expected output is also in each sample's header comment.
-- Unit tests use in-memory sources (`CompilationOptions { source_override: Some(..), project_path: "test.fib" }`) — no disk needed.
-- New lowering branch → ship a `samples/*.fib` reproducer. Soundness fix → ship a `get_typed_err` negative test. For diagnostics assert `is_err()` + message substring/line, never the full message. Do not chase 100% coverage on lowering files; `audit`/`deny`/`tarpaulin` jobs are advisory (`continue-on-error`).
-- Trunk-based on `main`; squash-merge with Conventional Commits PR title (`feat(frontend): …`, `fix(backend): …`); update `CHANGELOG.md` under `[Unreleased]`. CI skips docs-only changes (`docs/**`, `*.md`, `LICENSE`, `.gitignore`).
+`FileId`/`FileName`/paths live in `build_plan.rs`; syntax retains point spans and
+pending analysis slots. There is no central source-map store. Prefer
+`Parser::with_source` for in-memory tests; preserve source context and identities
+when implementing missing passes. See [diagnostics](docs/agents/src/diagnostics.md).
+
+## Tests and contribution discipline
+
+- Add tokenizer/parser success and malformed-input tests for syntax changes.
+- Analyzer/driver/IR/backend tests mostly protect data or explicit stub failure,
+  not successful semantic analysis, verification or program execution.
+- Never turn unfinished operations into successful empty results. Implement the
+  root invariant, then add real positive/negative coverage. Assert diagnostic
+  category/substrings/locations instead of brittle full rendered strings.
+- Future lowering branches should ship sample reproducers and executable tests
+  once a harness exists; current samples are automatically parsed, not compiled
+    or run. Use `cargo test --no-default-features samples_parse_with_current_frontend`.
+- Keep changes focused; preserve user work. Do not chase advisory coverage totals.
+- Preserve trunk-based/main and Conventional Commit PR guidance; update
+  `CHANGELOG.md` under `[Unreleased]` for behavior changes when in scope.
+- Update mirrored agent docs with implementation changes. Clearly distinguish
+  working code, representation contracts, sketches, and future policy.
+- Keep verified tokenizer/parser behavior in `docs/parsing/`, not as the intended
+  language specification. Parser limitations during the refactor are not language
+  decisions. Track analysis gaps in GitHub issues, not local report copies.
+  Keep only GitHub links in `docs/agents/issues/README.md`.

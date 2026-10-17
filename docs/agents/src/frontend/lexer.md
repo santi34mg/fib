@@ -1,49 +1,23 @@
-# `src/frontend/lexer.rs` and `src/frontend/tokens/`
+# Tokenizer — legacy lexer documentation URL
 
-## Representation
+The old `src/frontend/lexer.rs` path is obsolete. Current implementation is
+[`tokenizer.rs`](../../../../src/frontend/tokenizer.rs) and its per-concern
+`tokenizer/` modules; token definitions live in `tokens/`.
 
-`Lexer` is an iterator over `Token`. A token contains its `TokenKind` plus start
-and end positions. Positions are byte traversal state expressed as 1-based line
-and character columns.
+`Tokenizer::new(&str)` implements `Iterator<Item = Token>`. It traverses UTF-8
+bytes with character-based line/column updates, starting at 1. Tokens retain
+start/end positions. Comments remain tokens and parser lookahead skips them.
+Malformed text produces `Error(String)` or `Unknown(char)` tokens, not a lexical
+Result. Parser paths surface those as parse failures.
 
-Malformed input is represented in the token stream as `Unknown(char)` or
-`Error(String)` rather than as `Result<Token, LexError>`. The parser later turns
-these tokens into parse errors.
+Implemented tokenization includes Unicode identifiers, line comments, numeric
+bases, decimal floats, string/character escapes, operators and punctuation.
+Bare canonical builtin type names use bit widths (`int8`, `uint64`, `float32`);
+`int`/`uint` alias 32-bit types. `@` is a punctuation token interpreted with the
+following name by the parser for builtin functions. Do not use legacy byte-width
+mapping helpers as the current grammar; some comments and Display output are stale.
 
-`tokens/` centralizes:
-
-- keywords;
-- operators;
-- punctuation;
-- builtin types, functions, and properties;
-- literal values;
-- token/span structures.
-
-Comments remain tokens and are skipped by parser lookahead.
-
-## Current Lexical Features
-
-- Unicode alphabetic/alphanumeric identifiers;
-- line comments;
-- decimal plus explicit decimal, binary, octal, and hexadecimal integers;
-- decimal floating literals;
-- strings, characters, booleans, and `null`;
-- `@`-prefixed builtins;
-- multi-character and compound operators.
-
-## Known Risks
-
-- strings are escape-decoded in the lexer and decoded again during analysis;
-- string and character escapes use different validation policy;
-- integer literal storage is `u64` while 128-bit integer types exist;
-- contextual integer range checks are absent;
-- exponent notation and separators are unsupported;
-- reserved `__` identifiers are documented but not rejected;
-- lexical failures are categorized as parse failures.
-
-## Test Guidance
-
-Lexer tests live in `src/frontend/lexer/test.rs`. Add exact token/value/range
-tests for every literal change and malformed-input no-panic tests. Escape
-handling changes must explicitly cover a literal backslash followed by `n`, a
-trailing escaped backslash, Unicode escapes, and embedded NUL.
+Tests live in `src/frontend/tokenizer/test.rs`. Add exact kinds, literal values,
+positions, and malformed-input cases. Verify escape/backslash, NUL, Unicode and
+numeric overflow behavior before making broader lexical guarantees. No analyzer
+executes to perform a second escape-decoding or contextual range-check pass.

@@ -1,35 +1,19 @@
-# `src/frontend/typed_ast.rs`
+# Semantic types — obsolete typed-AST path
 
-## Core Types
+`src/frontend/typed_ast.rs`, `TypedProgram`, `TypedModule` and `Ty` are gone.
+This URL is retained to redirect old implementation guidance to the current
+[annotated AST](ast.md) and [analyzer](analyze/README.md).
 
-- `TypedProgram`: symbol table, local declarations, imported declarations.
-- `TypedModule`: exports and declarations for an analyzed module.
-- `SymbolTable`: lexical frames plus module aliases.
-- `Ty`: builtins, nominal identifiers, structs, enums, pointers, arrays,
-  slices, functions, tuples, qualified identifiers, and metatype.
-- `TypedDecl`: functions, types, and a currently unparsed constant form.
-- `TypedExpr` / `TypedStatement`: semantic operators and checked statement forms.
-- `TypedBinding` / `TypedFunction`: lowered declaration data.
+[`semantic_type.rs`](../../../../src/frontend/semantic_type.rs) defines project-local
+`TypeId` and `SemanticType` records: builtins, pointers, arrays, slices, tuples,
+functions, structs, enums, declaration-backed types and binding-identified generic
+parameters. `SemanticTypes` holds type records plus declaration/local type maps.
+It is a raw workspace: interning, normalization, inference, recursive-type legality
+and layout are not implemented.
 
-Semantic `BinOp` and `LogicalOp` are separate from token operators, which is a
-useful boundary: reserved or assignment-only syntax cannot accidentally enter
-normal binary lowering.
-
-## Current Invariants
-
-- frame zero is global;
-- lookup is lexical from inner to outer frames;
-- imported module aliases live outside lexical frames;
-- plain source names remain the primary identity for many bindings/functions;
-- typed nodes generally do not retain source spans.
-
-`ScopeKind` is accepted by scope entry but currently ignored. Termination helper
-logic exists but is not a reliable all-path control-flow proof.
-
-## Improvement Direction
-
-Introduce stable IDs for modules, symbols, bindings, and nominal types. Typed
-identifier/lvalue/call nodes should refer to IDs rather than reconstructing
-identity from source text. Preserve source ranges on typed nodes for downstream
-diagnostics. Keep module ownership with declarations instead of recursively
-copying and deduplicating them by name.
+Expression annotation information includes semantic type, value/place category,
+and optional denoted type for type-valued expressions. Names, bindings and member
+identities are separate. `AnalyzedProject` owns the same source trees and semantic
+tables, not copied typed declarations. Planned lowering must translate these into
+IR-owned runtime types/IDs, not borrow frontend semantic tables or fall back to AST
+emission. No existing pass validates annotation completeness yet.

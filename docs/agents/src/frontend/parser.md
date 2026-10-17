@@ -1,63 +1,52 @@
-# `src/frontend/parser.rs` and `src/frontend/parser/`
+# Parser and current syntax
 
-## State and Lookahead
+[`Parser`](../../../../src/frontend/parser.rs) consumes a token iterator and
+returns `anyhow::Result<Ast>` from `parse()`. For in-memory tests:
 
-`Parser<I>` wraps a token iterator with a comment-filtering lookahead queue.
-Two parser-wide flags resolve grammar ambiguities:
+```rust
+use std::path::Path;
+use fibc::frontend::{parser::Parser, tokenizer::Tokenizer};
+let source = "fn main() int32 { value := 1; return value; }";
+let ast = Parser::with_source(Tokenizer::new(source), Path::new("test.fib"), source)
+    .parse().unwrap();
+assert_eq!(ast.statements.len(), 1);
+```
 
-- `no_struct_literal` while parsing conditions;
-- `slice_bound` while parsing range bounds.
+This is parsing only. It does not type-check or compile the function.
 
-Top-level declarations are imports, functions/extern functions, and type
-declarations. There are no parsed top-level value constants.
+## Grammar currently exercised
 
-## Expression Precedence
+- Bare builtin types: `int32`, `uint64`, `bool`, `string`, `usize`, `type`;
+  `@int32` is rejected. Builtin calls retain `@`, e.g. `@str_len(s)`.
+- Bindings: `x := 1;`, `x: int32 = 1;`, `x: int32;`, `const x := 1;`.
+  No `var` prefix. Each multi-binding has its own optional type/`const`;
+  uninitialized multi-bindings require a type on each binding.
+- Functions: `fn add(a: int32, b: int32) int32 { return a + b; }`;
+  omitted return type is void. Prototypes/externs use `;`.
+- Types start `type Name` followed directly by a type expression.
+- Qualified names use `file::name`; members use `value.field`; length is `.len`.
+- Index/slice syntax is `a[i]`, `a[start..end]`, with inclusive `.=` also parsed.
+  Legacy `a.[i]`/`.@len` are not current syntax.
+- Pointer types use `*T`; postfix `p*`/`x&` express dereference/address-of in
+  supported delimiter contexts. Multiplication/bitwise-and remain binary operators.
+- Loops use `while (condition) { ... };`, or `while () { ... };`, not `for`.
+- Statements require `;`, including `if`, `while`, and `switch` blocks.
+  Top-level functions/types use dedicated declaration parsing, not this universal
+  statement terminator rule. `defer` owns one terminator for its inner statement.
+- Top-level ordinary statements/bindings are accepted by `parse()` alongside
+  functions/types. Import is still a token keyword but not a supported loader or
+  parsed import-declaration branch. Generic parameter lists are not parsed.
 
-Lowest to highest:
+## Implementation map
 
-1. logical `||`
-2. logical `&&`
-3. bitwise `|`
-4. bitwise `^`
-5. bitwise `&`
-6. equality
-7. relational comparison
-8. cast `as`
-9. shifts
-10. addition/subtraction
-11. multiplication/division/remainder
-12. unary `!`, `-`, `~`
-13. primary and postfix access/call/index/slice
+Per-concern modules include declaration/body/type parsing, postfix access/calls,
+pointer, switch, tuple, and literal parsing. Low-to-high binary precedence:
+`||`, `&&`, `|`, `^`, `&`, equality, comparison, `as`, shifts, additive,
+multiplicative, unary, postfix/primary. `binary.rs` shares binary parsing.
+Lookahead filters comments and normalizes `@` builtins; `no_struct_literal`
+resolves condition/body brace ambiguity.
 
-`parser/binary.rs` supplies the shared left-associative binary helper.
-Assignment is statement syntax rather than an expression.
-
-## Statement Grammar
-
-The parser currently requires a trailing semicolon after every statement,
-including compound control-flow statements. This conflicts with several
-language-guide examples that describe or show optional semicolons.
-
-Supported statements include bindings, expression statements, assignment and
-compound assignment, multiple assignment/binding, return, if/else, C-style for,
-break, continue, defer, and enum switch.
-
-## Known Risks
-
-- Several delimited parsers accept EOF without requiring the closing token,
-  including parameter, field, enum, switch, tuple, and construction lists.
-- Commas are inconsistently optional in lists despite documentation describing
-  comma-separated syntax.
-- `defer` accepts arbitrary statements, including declarations and control
-  transfer whose runtime meaning is unsafe or undefined.
-- loop initializer/post positions use broad statement parsing and can produce
-  analysis visibility inconsistent with execution order.
-- several guarded `expect` calls remain in slice parsing.
-- parser recovery is absent, so one error ends the parse.
-
-## Improvement Direction
-
-Introduce one reusable delimited-list helper with explicit separator and EOF
-contracts. Publish an EBNF and align examples/tests with the chosen semicolon
-and comma policy. Restrict syntactic forms in defer and loop headers unless the
-analyzer has a precise model for them.
+No recovery pass exists. List/EOF handling and optional separators vary by parser;
+do not infer a strict grammar from successful happy-path tests. Tests are in
+`src/frontend/parser/test.rs`; add accepted and rejected cases with every syntax
+change. No semantic claims follow from the returned AST.

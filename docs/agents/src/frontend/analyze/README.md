@@ -1,82 +1,35 @@
-# `src/frontend/analyze.rs` and `src/frontend/analyze/`
+# Analyzer — legacy analyze documentation URL
 
-## Pass Structure
+There is no `src/frontend/analyze/` implementation. Current source is
+[`analyzer.rs`](../../../../../src/frontend/analyzer.rs) and `analyzer/`.
+Every analysis pass and helper is an explicit unimplemented-error sketch.
 
-`analyze` currently:
+Planned order: validate source units against the named build-plan files, collect
+file declarations for forward references, resolve names/aliases, resolve
+types/members, validate initialization and completion, return `AnalyzedProject`.
+That project owns original source units, `ProjectSymbols`, and `SemanticTypes`.
+No type inference, semantic coercion, generic instantiation, visibility checking,
+alias-cycle detection or all-path return analysis runs today.
 
-1. processes imports and inserts module aliases or selected exports;
-2. copies imported declarations for later whole-program lowering;
-3. walks local declarations in source order;
-4. resolves each declaration and immediately analyzes its body;
-5. appends cached generic instantiations sorted by mangled name;
-6. returns `TypedProgram` with a symbol table, local declarations, and imported
-   declarations.
+## Identity and scope contracts
 
-Submodules own functions, types, expressions, statements, and generic
-substitution.
+`identifier.rs` separates `DeclId { file, index }`, `LocalId`, `LabelId`, `Entity`
+and `ResolvedName` from spelling. `namespace.rs` describes per-file declarations,
+visibility and aliases. `ProjectSymbols::from_plan` and `resolve_path` error;
+resolution is intended to select only plan files, never search disk.
 
-## Name and Scope Model
+`SymbolTable`/`Scope` are working lexical utilities: permanent module root,
+inner-to-outer lookup, scope kinds, duplicate rejection without replacing identity,
+shadowing across frames, scoped aliases and separate label lookup. They do not
+implement declaration order, no-capture function boundaries, file visibility or
+label legality. `ResolveContext` and `TypeContext` separate name/type pass inputs;
+member lookup must not create lexical bindings.
 
-`SymbolTable` has a stack of lexical frames plus a separate module-alias map.
-Lookup searches inner to outer frames. Module aliases are global to the table.
-Insertion returns a replaced symbol, but most callers ignore it, so duplicate
-names commonly overwrite earlier names without a diagnostic.
+Per-concern sketches cover AST, expressions, statements, functions/signatures,
+types/declarations, variables, generics and `swtich_arm.rs` (actual spelling).
+[Semantic tables and annotations](../typed-ast.md) replace the removed typed AST.
 
-Functions are not all predeclared in a first pass. Recursion works because a
-function signature is inserted before its own body; calls to later functions
-generally require a forward declaration.
-
-## Coercion and Type Checking
-
-Analysis inserts typed expression forms and performs many useful checks:
-ordinary assignments, calls, struct construction, switch exhaustiveness,
-loop-control placement, slices, and constant bounds. Numeric coercion is
-largely contextual and asymmetric: binary RHS values are often coerced to the
-LHS type.
-
-## Missing Frontend Invariants
-
-The following can currently survive analysis or are incompletely checked:
-
-- non-boolean if/loop conditions;
-- float bitwise/shift operations and broad pointer binary operations;
-- unsupported casts;
-- `null` coerced to non-pointer targets through `@never`;
-- reads of uninitialized locals;
-- non-void reachable fallthrough;
-- type mismatches in multiple assignment;
-- bare construction of payload enum variants;
-- duplicate declarations, fields, variants, aliases, and locals;
-- unknown or qualified types in some contexts;
-- cyclic aliases and recursive-by-value layout;
-- generic runtime arity and substitution through all AST variants;
-- root mutability through nested lvalues.
-
-These are correctness issues because lowering assumes stronger types and
-control flow than analysis proves.
-
-## Generic Model
-
-Functions with `type` parameters are retained as templates and instantiated at
-explicit generic calls. Instantiations are cached by a string mangle and added
-to declarations in sorted order. Current mangles collapse broad anonymous type
-classes and substitution does not visit every expression/type position.
-
-Prefer a canonical structural type fingerprint and one exhaustive visitor over
-variant-by-variant partial substitution.
-
-## Diagnostic Model
-
-`AnalysisError` defaults to `ErrorKind::Type`; `with_kind` exists but is rarely
-used. Spans are attached while bubbling through syntax nodes. Internal helper
-names appear in several user-facing messages.
-
-Use `Name` for resolution/duplicate errors, preserve precise ranges, and render
-types in source spelling rather than `Debug` output.
-
-## Test Guidance
-
-Analyzer tests are in `src/frontend/analyze/test.rs` and use in-memory sources.
-For every soundness fix, add `is_err()` plus a stable message/category/range
-substring. Do not require full diagnostic string equality. Add success tests
-when a nearby legal construct could regress.
+`analyzer/test.rs` tests utility behavior, pending defaults, identity separation,
+and explicit failure/no mutation from sketches. It is not the old semantic
+behavior suite. Add real positive/negative language tests as passes become real;
+never claim soundness coverage from an unimplemented-error assertion.

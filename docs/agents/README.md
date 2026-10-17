@@ -1,84 +1,57 @@
-# Compiler Implementation Guide
+# Compiler implementation guide
 
-This tree is the maintained implementation map for Fib compiler contributors
-and automated agents. It complements the user-facing language guide in
-[`docs/`](../README.md) and replaces the dated audit files as the starting point
-for current architecture work.
+Reviewed against this checkout on 2026-10-17. Source and tests take precedence over
+historical comments, samples, and language proposals.
 
-Reviewed against the repository on 2026-09-23.
+## Actual status
 
-## Pipeline
+Working components are the tokenizer, parser, AST construction, lexical scope
+utilities, diagnostic rendering, and raw IR data/access/formatting utilities.
+Analysis, build-plan loading, pipeline orchestration, IR construction/verification,
+interpretation, and LLVM emission are sketches, not a usable compiler pipeline.
 
 ```text
-src/main.rs
-  -> src/cli.rs
-  -> src/driver.rs
-       validate and read
-       -> lexer
-       -> parser / AST
-       -> recursive import resolution
-       -> semantic analysis / TypedProgram
-       -> TypedProgram -> IrProgram -> LLVM (core subset)
-          or TypedProgram -> LLVM (fallback)
-       -> emit LLVM / invoke clang
+main -> Clap Command::parse -> cli::exec_command (todo!)
+
+Directly usable: source -> Tokenizer -> Parser -> Ast (pending annotations)
+
+Planned, not executable:
+BuildPlan -> parse_files -> Analyzer -> AnalyzedProject -> lower_to_ir -> Ir
+         -> verified/target-aware LLVM -> objects/link
+build.fib -> IR interpreter -> project BuildPlan (also unimplemented)
 ```
 
-The two lowering routes both produce LLVM. They are not independent target
-backends. The direct typed-AST route currently supports more language features.
+There is no separate typed AST, direct AST-to-LLVM fallback, recursive import
+loader, `compile_project`, `check_project`, or checked-in integration/e2e suite.
+Public architecture types do not certify successful analysis or verification.
 
-## Repository Mirror
+## Map
 
-- [`repository.md`](repository.md): root manifests, toolchain, workflows, and directory ownership
-- [`src/`](src/README.md): compiler pipeline and public API
-- [`src/frontend/`](src/frontend/README.md): tokens, lexer, parser, AST, analyzer, and typed AST
-- [`src/ir/`](src/ir/README.md): flat middle-end representation and importer
-- [`src/backend/`](src/backend/README.md): LLVM feature boundary and lowering routes
-- [`tests/`](tests/README.md): unit, integration, and end-to-end strategy
-- [`samples/`](samples/README.md): executable language coverage
-- [`std/`](std/README.md): standard-library status and safety concerns
-- [`.github/workflows/`](.github/workflows/ci.md): CI contract
-- [`roadmap/README.md`](docs/roadmap/README.md): prioritized language and compiler work
+- [Repository and commands](repository.md)
+- [Source ownership](src/README.md)
+- [Tokenizer, parser, AST, and analysis](src/frontend/README.md)
+- [SSA IR sketch](src/ir/README.md)
+- [Backend sketch](src/backend/README.md)
+- [Tests and validation](tests/README.md)
+- [Samples](samples/README.md) and [standard library](std/README.md)
+- [CI](.github/workflows/ci.md)
+- [Open design boundaries](language-design-questions.md)
+- [Documentation overview and language-design proposals](../README.md)
+- [Verified parsing snapshot](../parsing/README.md), not a language specification
+- [Analysis issues on GitHub](issues/README.md)
 
-## Reading Rules
+Legacy page names are retained as explicit redirects/status pages so existing
+links remain useful. No missing roadmap is implied by this index.
 
-Every implementation page distinguishes these concepts:
+## Maintenance rules
 
-- **Current behavior** describes what the checked-in code does now.
-- **Invariant** describes a property a stage establishes or relies on.
-- **Known risk** describes evidence-backed behavior that may be incorrect,
-  incomplete, nondeterministic, or unsafe.
-- **Improvement direction** is not a compatibility promise. Confirm it against
-  tests and language documentation before implementation.
-
-Source line numbers intentionally are not embedded here because they decay
-quickly. Links point to files and name the relevant functions or types.
-
-## Highest-Risk Boundaries
-
-1. Module analysis resolves qualified names, but backend declaration flattening
-   does not preserve stable module-qualified symbol identity.
-2. Semantic analysis does not yet prove all assumptions made by lowering,
-   including boolean conditions, legal casts/operators, initialization, and
-   all-path returns.
-3. The flat IR route silently falls back on every error, has no verifier, and
-   has known SSA and capability mismatches with its LLVM consumer.
-4. The direct LLVM route tracks storage by source name rather than resolved
-   binding identity, which can violate lexical scoping under shadowing.
-5. LLVM modules are printed without verification, and target layout is largely
-   hard-coded for a 64-bit native environment.
-6. Most standard-library modules are not exercised by CI and several expose
-   stubs or platform-sensitive FFI as if they were complete.
-
-Start correctness changes with the P0 section of the
-[`improvement roadmap`](docs/roadmap/README.md).
-
-## Updating This Tree
-
-When changing a compiler subsystem:
-
-1. Update its mirrored implementation page in the same change.
-2. Update the support matrix or known risks if a stage boundary changes.
-3. Move completed roadmap items to the changelog rather than leaving stale
-   warnings here.
-4. Add both positive and negative tests for new semantic invariants.
-5. Prefer named items and relative source paths over line-number references.
+Distinguish working behavior, raw representation contracts, and intended future
+passes. Do not turn a stub into successful empty output to satisfy tests. Preserve
+source spellings/spans and stable identity through future passes. Add positive
+and negative tests for implemented invariants, not assertions that pretend a
+sketched pass runs. Update these pages with subsystem changes; avoid line-number
+links and unverified runtime claims. Keep observed syntax in `docs/parsing/`;
+parser limitations are not design decisions. Report analysis gaps as actionable
+GitHub issues rather than embedding implementation backlogs in user-facing
+language documentation. Keep only GitHub links in the issue index, not local
+copies of report bodies.
