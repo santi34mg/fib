@@ -791,7 +791,7 @@ mod tests {
         let ast = get_ast(test_string);
         let func = find_func(&ast);
         let func = func.expect("expected function");
-        assert_eq!(func.signature.function_identifier, "add");
+        assert_eq!(func.signature.identifier, "add");
         assert_eq!(func.signature.parameters.len(), 2);
         assert_eq!(func.signature.parameters[0].parameter_identifier, "a");
         assert_eq!(func.signature.parameters[1].parameter_identifier, "b");
@@ -1865,7 +1865,7 @@ mod tests {
                 func.signature.return_type
             );
             if source.contains("declared") {
-                assert_eq!(func.signature.function_identifier, "declared");
+                assert_eq!(func.signature.identifier, "declared");
                 assert_eq!(func.signature.parameters[0].parameter_identifier, "x");
                 assert!(
                     matches!(&func.signature.parameters[0].parameter_type.kind, TypeExpressionKind::Pointer { pointed_type } if matches!(pointed_type.kind, TypeExpressionKind::Builtin(BuiltinType::Char)))
