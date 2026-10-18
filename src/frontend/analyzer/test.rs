@@ -10,7 +10,11 @@ use crate::{
             BindingAnnotation, ExpressionAnnotation, ExpressionInfo, LabelAnnotation,
             MemberAnnotation, NameAnnotation, TypeAnnotation, ValueCategory,
         },
-        ast::{Ast, expression::Expression, expression::ExpressionKind},
+        analyzer::LocalIdAllocator,
+        ast::{
+            Ast,
+            expression::{Expression, ExpressionKind},
+        },
         identifier::{DeclId, Entity, LabelId, LocalId, ResolvedName},
         namespace::ProjectSymbols,
         scope_kind::ScopeKind,
@@ -20,10 +24,10 @@ use crate::{
 };
 
 use super::{
-    AnalyzedProject, Analyzer, ResolveContext, TypeContext, collect_declarations,
+    AnalyzedProject, Analyzer, ResolveContext, TypeContext,
     expression::resolve_member,
     generics::{GenericInstanceKey, resolve_generic_instance},
-    resolve_names, resolve_types,
+    resolve_types,
     statement::{resolve_multi_value_types, validate_assignment_target},
     types::check_assignable,
     validate_analysis,
@@ -116,7 +120,7 @@ fn labels_use_a_separate_scoped_namespace() {
 #[test]
 fn aliases_share_entities_not_spellings_or_storage() {
     let id = DeclId {
-        file: FileId(1),
+        file_id: FileId(1),
         index: 0,
     };
     let entity = Entity::Declaration(id);
@@ -133,7 +137,7 @@ fn aliases_share_entities_not_spellings_or_storage() {
     assert_ne!(
         id,
         DeclId {
-            file: FileId(2),
+            file_id: FileId(2),
             index: 0
         }
     );
@@ -157,20 +161,19 @@ fn project_entrypoints_never_report_fake_success_even_for_empty_input() {
         output: "out".into(),
     };
     assert_unimplemented(ProjectSymbols::from_plan(&plan));
-    assert_unimplemented(Analyzer::new(&plan, Vec::new()));
-    assert_unimplemented(
-        Analyzer {
-            units: Vec::new(),
-            symbols: symbols(),
-        }
-        .analyze(),
-    );
+    assert_unimplemented(Analyzer::new(plan, Vec::new()));
+    let mut analyzer = Analyzer {
+        units: Vec::new(),
+        symbols: symbols(),
+        local_ids: LocalIdAllocator::default(),
+    };
+    assert_unimplemented(analyzer.clone().analyze());
 
-    let mut registry = symbols();
+    let registry = symbols();
     let mut units = Vec::new();
     let mut types = SemanticTypes::default();
-    assert_unimplemented(collect_declarations(&units, &mut registry));
-    assert_unimplemented(resolve_names(&mut units, &mut registry));
+    assert_unimplemented(analyzer.collect_declarations());
+    assert_unimplemented(analyzer.resolve_names());
     assert_unimplemented(resolve_types(&mut units, &registry, &mut types));
     assert_unimplemented(registry.resolve_path(FileId(0), &["file".into(), "name".into()]));
     assert_unimplemented(validate_analysis(&AnalyzedProject {
@@ -184,9 +187,10 @@ fn project_entrypoints_never_report_fake_success_even_for_empty_input() {
 fn name_sketches_do_not_mutate_ast_or_scopes() {
     let mut registry = symbols();
     let mut context = ResolveContext {
-        file: FileId(0),
+        file_id: FileId(0),
         symbols: &mut registry,
         lexical: SymbolTable::new(),
+        local_ids: &mut LocalIdAllocator::default(),
     };
     let mut ast = Ast::new();
     let mut expression = Expression::at(
@@ -195,7 +199,10 @@ fn name_sketches_do_not_mutate_ast_or_scopes() {
     );
     let original = expression.clone();
     assert_unimplemented(ast.resolve_name(&mut context));
-    assert_unimplemented(expression.resolve_name(&mut context));
+    assert_unimplemented(Analyzer::resolve_name_expression(
+        &mut expression,
+        &mut context,
+    ));
     assert!(ast.statements.is_empty());
     assert_eq!(expression, original);
     assert_eq!(context.lexical.depth(), 1);
@@ -216,10 +223,14 @@ fn typing_member_and_generic_sketches_fail_without_fabricating_annotations() {
         ExpressionKind::VoidExpression,
         crate::diagnostics::Span::new(1, 1),
     );
-    assert_unimplemented(expression.resolve_type(&mut context, None));
+    assert_unimplemented(Analyzer::resolve_type_expression(
+        &mut expression,
+        &mut context,
+        None,
+    ));
     let key = GenericInstanceKey {
         template: DeclId {
-            file: FileId(0),
+            file_id: FileId(0),
             index: 0,
         },
         arguments: vec![TypeId(0)],

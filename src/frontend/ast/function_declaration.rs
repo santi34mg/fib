@@ -6,6 +6,7 @@ pub struct FunctionDeclaration {
     pub body: Option<FunctionBody>,
     pub is_extern: bool,
     pub is_variadic: bool,
+    pub is_pub: bool,
 }
 
 impl FunctionDeclaration {

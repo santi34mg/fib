@@ -3,6 +3,7 @@ use crate::frontend::ast::Ast;
 use super::{ResolveContext, TypeContext, not_implemented};
 
 impl Ast {
+    // TODO: move functions that are implemented directly on analyzer.rs to here
     /// Resolve uses in a file whose declarations have already been collected.
     pub fn resolve_name(&mut self, _context: &mut ResolveContext<'_>) -> anyhow::Result<()> {
         not_implemented("file name resolution")

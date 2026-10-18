@@ -1,6 +1,5 @@
 use crate::diagnostics::Span;
 use crate::frontend::ast::function_declaration::FunctionDeclaration;
-use crate::frontend::ast::type_declaration::TypeDeclaration;
 use crate::frontend::ast::{
     expression::Expression, switch::SwitchArm, variable_declaration::VariableDeclaration,
 };
@@ -16,7 +15,6 @@ pub struct Statement {
 #[derive(Debug, Clone)]
 pub enum StatementKind {
     FunctionDeclaration(FunctionDeclaration),
-    TypeDeclaration(TypeDeclaration),
     VariableDeclaration(VariableDeclaration),
     ExpressionStatement(Expression),
     Assignment {
@@ -37,6 +35,11 @@ pub enum StatementKind {
         targets: Vec<Expression>,
         values: Vec<Expression>,
     },
+    // Separate bindings from values because rhs can be an expression that _semantically_
+    // represents multiple values. example:
+    // ```
+    // q, r := divmod(5, 2);
+    // ```
     MultiVariableDeclaration {
         bindings: Vec<VariableDeclaration>,
         /// Empty when all bindings are typed and no initializer was provided.

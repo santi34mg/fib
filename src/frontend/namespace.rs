@@ -24,7 +24,7 @@ pub struct Declaration {
 /// Declarations owned by a source file, independent of its lexical scopes.
 #[derive(Debug, Clone)]
 pub struct Namespace {
-    pub file: FileId,
+    pub file_id: FileId,
     pub declarations: Vec<Declaration>,
     pub names: HashMap<String, DeclId>,
 }

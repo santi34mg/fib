@@ -13,8 +13,9 @@ pub enum PipelineGoal {
 }
 
 #[derive(Debug, Clone)]
-pub struct SourceUnit {
-    pub file: FileId,
+pub struct CompilationUnit {
+    /// ID of the source file that generated this unit
+    pub source_file_id: FileId,
     pub ast: Ast,
 }
 
@@ -29,7 +30,7 @@ pub fn run_frontend(_plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
     anyhow::bail!("frontend orchestration is not implemented")
 }
 
-pub fn parse_files(_plan: &BuildPlan) -> anyhow::Result<Vec<SourceUnit>> {
+pub fn parse_files(_plan: &BuildPlan) -> anyhow::Result<Vec<CompilationUnit>> {
     // Read, tokenize, and parse every source file listed in the build plan.
     anyhow::bail!("build-plan file parsing is not implemented")
 }

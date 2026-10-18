@@ -5,7 +5,7 @@ use crate::build_plan::FileId;
 /// A declaration's stable slot in its owning file namespace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DeclId {
-    pub file: FileId,
+    pub file_id: FileId,
     pub index: u32,
 }
 

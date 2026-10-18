@@ -135,7 +135,7 @@ where
 
         Ok(FunctionDeclaration {
             signature: FunctionSignature {
-                function_identifier: identifier,
+                identifier,
                 annotation: Default::default(),
                 parameters: args,
                 return_type,
@@ -144,6 +144,8 @@ where
             body,
             is_extern,
             is_variadic,
+            // FIXME: parse function visibility properly
+            is_pub: false,
         })
     }
 }

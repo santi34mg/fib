@@ -5,7 +5,7 @@ use crate::frontend::ast::{
 
 #[derive(Debug, Clone)]
 pub struct FunctionSignature {
-    pub function_identifier: String,
+    pub identifier: String,
     /// The function's sole binding slot; FunctionDeclaration does not duplicate it.
     pub annotation: BindingAnnotation,
     pub parameters: Vec<FunctionParameter>,

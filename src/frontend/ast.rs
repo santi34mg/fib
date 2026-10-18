@@ -12,7 +12,6 @@ pub mod qualified_name;
 pub mod statement;
 pub mod structl_field;
 pub mod switch;
-pub mod type_declaration;
 pub mod type_expression;
 pub mod unary_expression;
 pub mod variable_declaration;
