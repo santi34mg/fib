@@ -1,6 +1,6 @@
 # Fib roadmap
 
-## Audited baseline (2026-10-17)
+## Implementation and test baseline (2026-10-19)
 
 This roadmap describes reconstruction and future language work, not completed
 compiler features. Source and executable tests take precedence over historical
@@ -12,12 +12,12 @@ release notes, samples, and earlier roadmap decisions. See the
 | --- | --- |
 | Tokenizer/parser | Working independently, producing the source AST with pending analysis annotations. |
 | Supporting utilities | Lexical scope storage, diagnostics, source/file identity records, raw IR access and formatting work. These do not implement language-level analysis. |
-| Analysis | `Analyzer`, declaration collection, name/type resolution and completion validation return explicit unimplemented errors. No separate typed AST exists. |
+| Analysis | Plan/unit ID validation and declaration collection partially work; name traversal is incomplete. Type/member resolution and completion validation remain stubs. No separate typed AST exists. |
 | Driver/build | `run_pipeline`, `run_frontend`, `parse_files`, `lower_to_ir` are error stubs. `BuildPlan` names files explicitly; single-file loading, build-file interpretation and builder orchestration are unfinished. |
 | SSA IR | Owned arenas, types, instructions, blocks, values and storage records exist. `FunctionBuilder` and `verify_ir` return unimplemented errors. |
 | Backend | IR-only phase contracts; no LLVM emission, objects, linking or direct AST fallback. The inactive `backend/lowering/next/` prototype is not a supported route. |
 | CLI/execution | Help accepts `build [--single-file PATH]`, `run`, `test`; command execution is `todo!()`. IR interpretation is also unfinished. |
-| Tests/corpus | Unit tests exercise parsing, data contracts and explicit stub failures. No integration/e2e harness exists; samples and `std` are not evidence of compilation or execution. |
+| Tests/corpus | Unit tests exercise parsing, data and stub contracts. `analyzer/test.rs` contains six inline name-resolution specification phases with ordinary failing tests for unfinished semantics; see [validation](../agents/tests/README.md). No integration/e2e harness exists; samples and `std` are not evidence of compilation or execution. |
 
 ### Implemented syntax, not implemented semantics
 
@@ -66,9 +66,9 @@ require explicit reconciliation with the current architecture before adoption.
 
 - [ ] Load only files explicitly named by `BuildPlan`, preserving file identity
       and source context. Specify build.fib interpretation and single-file plans.
-- [ ] Implement declaration collection, then lexical/file-name and alias
-      resolution, type/member resolution, initialization checking and annotation
-      completion on the original AST.
+- [ ] Complete declaration binding annotations and lexical/file-name and alias
+      resolution, then implement type/member resolution, initialization checking
+      and annotation completion on the original AST.
 - [ ] Enforce [planned name-resolution rules](../name-resolution.md), including
       redeclarations, visibility, aliases, separate labels and forward visibility
       versus initialization. Storage utilities are not enforcement.
@@ -77,8 +77,9 @@ require explicit reconciliation with the current architecture before adoption.
 - [ ] Validate control flow, conditions, reachable returns, enum payload use,
       switch duplicates and definite initialization.
 - [ ] Detect alias cycles and infinite by-value types before lowering.
-- [ ] Add real positive/negative analysis tests with source locations. Never
-      replace an unfinished pass with successful empty output.
+- [ ] Make the six name-resolution specification phases pass, then extend
+      positive/negative analysis coverage to types and initialization with source
+      locations. Never replace an unfinished pass with successful empty output.
 
 ### 2. Build and verify the owned SSA IR
 
