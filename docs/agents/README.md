@@ -7,12 +7,13 @@ historical comments, samples, and language proposals.
 
 Working components are the tokenizer, parser, AST construction, lexical scope
 utilities, diagnostic rendering, and raw IR data/access/formatting utilities.
-Analysis partially validates named units, collects declarations and traverses some
-name uses; it remains incomplete. Build-plan loading, pipeline orchestration,
-IR construction/verification, interpretation, and LLVM emission are sketches,
-not a usable compiler pipeline. The name-resolution specification has six test
-phases in `src/frontend/analyzer/test.rs` and deliberately includes failing tests
-for unfinished behavior; see [test commands and results](tests/README.md).
+The name pass validates named units, annotates declarations, and resolves lexical
+names, file paths, visibility, and compile-time aliases. Semantic typing/member
+lookup and full analysis completion remain unfinished. Build-plan loading,
+pipeline orchestration, IR construction/verification, interpretation, and LLVM
+emission are sketches, not a usable compiler pipeline. The name-resolution
+specification has six passing phases in `src/frontend/analyzer/test.rs`; see
+[test commands and results](tests/README.md).
 
 ```text
 main -> Clap Command::parse -> cli::exec_command (todo!)
@@ -53,8 +54,7 @@ Distinguish working behavior, raw representation contracts, and intended future
 passes. Do not turn a stub into successful empty output to satisfy tests. Preserve
 source spellings/spans and stable identity through future passes. Add positive
 and negative tests for implemented invariants. The phased name-resolution suite
-also specifies unfinished behavior through ordinary failing assertions; it must
-not be described as successful semantic coverage. Update these pages with
+covers names and identities, not semantic typing or executable programs. Update these pages with
 subsystem changes; avoid line-number links and unverified runtime claims. Keep observed syntax in `docs/parsing/`;
 parser limitations are not design decisions. Report analysis gaps as actionable
 GitHub issues rather than embedding implementation backlogs in user-facing

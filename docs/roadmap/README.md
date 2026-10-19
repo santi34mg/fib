@@ -12,12 +12,12 @@ release notes, samples, and earlier roadmap decisions. See the
 | --- | --- |
 | Tokenizer/parser | Working independently, producing the source AST with pending analysis annotations. |
 | Supporting utilities | Lexical scope storage, diagnostics, source/file identity records, raw IR access and formatting work. These do not implement language-level analysis. |
-| Analysis | Plan/unit ID validation and declaration collection partially work; name traversal is incomplete. Type/member resolution and completion validation remain stubs. No separate typed AST exists. |
+| Analysis | Plan/unit validation, annotated declaration collection, names/aliases, visibility, and name-slot completion work. Type/member resolution and full completion validation remain stubs. No separate typed AST exists. |
 | Driver/build | `run_pipeline`, `run_frontend`, `parse_files`, `lower_to_ir` are error stubs. `BuildPlan` names files explicitly; single-file loading, build-file interpretation and builder orchestration are unfinished. |
 | SSA IR | Owned arenas, types, instructions, blocks, values and storage records exist. `FunctionBuilder` and `verify_ir` return unimplemented errors. |
 | Backend | IR-only phase contracts; no LLVM emission, objects, linking or direct AST fallback. The inactive `backend/lowering/next/` prototype is not a supported route. |
 | CLI/execution | Help accepts `build [--single-file PATH]`, `run`, `test`; command execution is `todo!()`. IR interpretation is also unfinished. |
-| Tests/corpus | Unit tests exercise parsing, data and stub contracts. `analyzer/test.rs` contains six inline name-resolution specification phases with ordinary failing tests for unfinished semantics; see [validation](../agents/tests/README.md). No integration/e2e harness exists; samples and `std` are not evidence of compilation or execution. |
+| Tests/corpus | Unit tests exercise parsing, data and stub contracts. `analyzer/test.rs` contains six passing inline name-resolution specification phases; see [validation](../agents/tests/README.md). No integration/e2e harness exists; samples and `std` are not evidence of compilation or execution. |
 
 ### Implemented syntax, not implemented semantics
 
@@ -30,9 +30,9 @@ release notes, samples, and earlier roadmap decisions. See the
 - Type syntax is still suffix: `int32[8]`, `int32[]`. Prefix forms are proposed.
 - Values use `a[i]`, `a[a..b]`, `.len`, and postfix pointer operations
   (`p*`, `x&`), not historical dot-indexing.
-- Qualified names retain arbitrary `::` segments. This does not implement
-  namespace lookup or import loading; legacy `import` declarations are not
-  working grammar.
+- Qualified names retain arbitrary `::` segments. Name resolution selects registered
+  build-plan files and aliases without filesystem import loading; legacy `import`
+  declarations are not working grammar.
 - Builtin calls retain `@` (for example `@str_len(s)`). Builtin type values
   still parse in expression position. Neither fact implements generic analysis.
 

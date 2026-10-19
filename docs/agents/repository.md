@@ -23,11 +23,11 @@ cargo test --offline --no-default-features -- --skip frontend::analyzer::test::n
 cargo fmt --check
 ```
 
-Compilation and formatting pass. The full library suite reports 212 passes and
-183 failures for unfinished name-resolution behavior. Excluding that specification
-passes all 178 existing library tests, with zero binary tests and zero doctests.
-The full suite is intentionally not green; see [phase commands and validation
-notes](tests/README.md). Earlier check/help verification (2026-10-17) succeeded;
+Compilation and formatting pass. The full no-default-features library suite passes
+413 tests, including 235 name-resolution tests in six phases, with zero binary
+tests and doctests. No-default Clippy with all targets and warnings denied also
+passes. See [phase commands and validation notes](tests/README.md).
+Earlier check/help verification (2026-10-17) succeeded;
 help lists `build`, `run`, and `test`. Offline mode requires a populated cache
 and is not necessary for normal development.
 

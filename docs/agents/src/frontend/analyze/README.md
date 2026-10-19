@@ -2,55 +2,58 @@
 
 There is no `src/frontend/analyze/` implementation. Current source is
 [`analyzer.rs`](../../../../../src/frontend/analyzer.rs) and `analyzer/`.
-`Analyzer::new` validates plan/unit file IDs and builds a file-name registry;
-`collect_declarations` collects file bindings, visibility flags and declaration
-slots, rejecting duplicates and unexpected top-level statements. Collection does
-not yet annotate binding sites. These are partial implementations, not a completed
-analyzer. `ProjectSymbols` registration/path helpers remain explicit-error stubs.
 
-`resolve_names` walks file initializers and function bodies, but function signature
-resolution still errors. Expression traversal handles literals, unary/binary nodes,
-calls and lexical lookup; unqualified file fallback is missing and qualified lookup
-discards the found target without visibility checks or annotation. Local insertion
-currently precedes its initializer and omits binding annotations. Other branches
-contain `todo!()` panics or explicit errors. The specification tests expose these
-unfinished behaviors rather than treating them as language policy.
+`Analyzer::new` validates plan/unit IDs using `ProjectSymbols::from_plan` and
+retains source paths for diagnostics. `collect_declarations` assigns and annotates
+file binding identities, visibility, and private local compile-time type slots.
+It rejects duplicate file declarations and unexpected top-level statements without
+resolving initializer names. Local type slots are excluded from file-name lookup.
 
-Planned order: validate source units against the named build-plan files, collect
-file declarations for forward references, resolve names/aliases, resolve
-types/members, validate initialization and completion, return `AnalyzedProject`.
-That project owns original source units, `ProjectSymbols`, and `SemanticTypes`.
-No type inference, semantic coercion, generic instantiation, visibility checking,
-alias-cycle detection or all-path return analysis runs today.
+`resolve_names` normalizes file aliases, traverses each original AST through
+`Ast::resolve_name`, and validates applicable name/binding annotations. Collection
+and resolution run once in that order; a failed pass cannot be retried on partial
+state. The public API is unchanged; there is no name-resolved project wrapper.
+`Analyzer::analyze` still errors after names because type/member, initialization,
+and full completion passes are unfinished. `AnalyzedProject` remains the intended
+complete-analysis handoff, owning original units, symbols, and semantic types.
 
-## Identity and scope contracts
+## Identity and lookup
 
-`identifier.rs` separates `DeclId { file, index }`, `LocalId`, `LabelId`, `Entity`
-and `ResolvedName` from spelling. `namespace.rs` describes per-file declarations,
-visibility and aliases. `ProjectSymbols::from_plan` and `resolve_path` error;
-resolution is intended to select only plan files, never search disk.
+`DeclId` identifies file bindings and private local compile-time types. Project-wide
+`LocalId`s identify parameters, runtime locals, local alias binding sites, and
+switch payloads. Alias uses retain the canonical entity identity rather than
+allocating new storage. `ProjectSymbols::resolve_path` follows registered files and
+aliases with visibility checks; it never searches disk. Pending file aliases use
+a dependency walk with cycle-chain diagnostics and cached canonical targets.
 
-`SymbolTable`/`Scope` are working lexical utilities: permanent module root,
-inner-to-outer lookup, scope kinds, duplicate rejection without replacing identity,
-shadowing across frames, scoped aliases and separate label lookup. They do not
-implement declaration order, no-capture function boundaries, file visibility or
-label legality. `ResolveContext` and `TypeContext` separate name/type pass inputs;
-member lookup must not create lexical bindings.
+Unqualified names prefer lexical bindings, then current-file declarations, then
+registered file names. Qualified paths prefer the longest canonical file prefix.
+Only files and aliases to files can be intermediate namespaces.
 
-Per-concern sketches cover AST, expressions, statements, functions/signatures,
-types/declarations, variables, generics and `swtich_arm.rs` (actual spelling).
-[Semantic tables and annotations](../typed-ast.md) replace the removed typed AST.
+Local bindings and aliases follow declaration order. All multi-binding initializers
+resolve before any new binding is introduced. Active enclosing lexical bindings
+cannot be redeclared; sibling scopes can reuse names. Local aliases cannot reuse
+registered file names or file roots, and cannot target parameters/runtime locals.
 
-All analyzer tests and fixtures live in
-[`analyzer/test.rs`](../../../../../src/frontend/analyzer/test.rs). Its inline
-`name_resolution` module groups six independently runnable specification phases:
-files/declarations, parameters/locals, qualified references/functions, aliases,
-type/member names, and control-flow/traversal. Utility/default and unfinished
-AST/typing contracts remain at the test module's top level. There are no separate
-phase files. The specification deliberately fails on unfinished semantics; see
-[test commands and validation](../../../tests/README.md).
+Type bindings require explicit `comp`, including inline local types and type
+aliases. Local type aliases can target previously declared compile-time types.
+Type/member checking is separate: name traversal does not insert fields/variants
+into lexical scopes or fill semantic type, expression, or member slots. Scopes
+restore on errors. Unsupported nested functions, generic declarations, legacy
+qualified-access nodes, and computed compile-time initializers return errors.
 
-Local value initializers resolve before introducing new bindings; multi-binding
-initializers all resolve before introducing any member of the group. File-level
-forward visibility and alias chains remain separate contracts. Type checking and
-initialization validation are not executed by these tests.
+`SymbolTable`/`Scope` remain mechanical lexical utilities, including separate label
+storage. Scope policy is enforced by the resolver. `ResolveContext` and `TypeContext`
+separate pass inputs. Name errors use structured diagnostics with available spans
+and owning file paths, without fabricating source lines.
+
+## Tests and remaining boundary
+
+All analyzer tests/helpers remain in
+[`analyzer/test.rs`](../../../../../src/frontend/analyzer/test.rs), with six inline
+name-resolution phases. They pass for registration, locals, references, aliases,
+type names, and traversal; [validation](../../../tests/README.md) records commands.
+Name completion does not imply semantic type validity, legal initialization,
+control-flow legality, or executable code. Member lookup remains a separate
+deliverable. See [name-resolution behavior](../../../../name-resolution.md) and
+[semantic tables and annotations](../typed-ast.md).

@@ -7,10 +7,11 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 
 - Working: `src/frontend/tokenizer.rs` + `tokenizer/`, `parser.rs` + `parser/`,
   AST construction, lexical scope utilities, diagnostics and raw IR data utilities.
-- `analyzer.rs` + `analyzer/` partially validate plan/unit IDs, collect declarations
-  and traverse name uses; name resolution remains incomplete, with error stubs and
-  `todo!()` branches. Analysis annotates the original AST in the intended
-  architecture; no lexer/analyze/typed_ast modules exist.
+- `analyzer.rs` + `analyzer/` validate plan/unit IDs, collect and annotate declarations,
+  and resolve lexical names, file paths, visibility, and compile-time aliases.
+  Name resolution validates its annotation slots; typing/member lookup and full
+  analysis remain unfinished. Analysis annotates the original AST; no
+  lexer/analyze/typed_ast modules exist.
 - `src/driver.rs` exposes `run_pipeline`, `run_frontend`, `parse_files`,
   `lower_to_ir`, all unimplemented. No `compile_project`/`check_project` APIs.
 - `BuildPlan` explicitly names files; single-file loading, build.fib interpretation,
@@ -36,11 +37,10 @@ cargo test --offline --no-default-features
 cargo run --offline --no-default-features -- --help
 ```
 
-Earlier check/help verification succeeded. The current full suite reports
-212 passes and 183 failures from unfinished name-resolution specifications; with
-`-- --skip frontend::analyzer::test::name_resolution`, all 178 existing library
-tests pass. All analyzer tests/helpers live in `src/frontend/analyzer/test.rs`;
-its inline `name_resolution` module contains six phases. Run one with
+The current no-default-features suite passes all 413 library tests, including 235
+name-resolution tests in six inline phases. Check, fmt, and no-default Clippy with
+`--all-targets -- -D warnings` pass. All analyzer tests/helpers live in
+`src/frontend/analyzer/test.rs`. Run one phase with
 `cargo test --no-default-features name_resolution::phase_01_files`.
 No integration/e2e suite exists. Offline is optional outside restricted environments.
 Focus tests with
@@ -58,7 +58,8 @@ Use bare bit-width types (`int32`, `uint64`, aliases `int`/`uint` = 32-bit),
 `x := 1;`, `const x := 1;`, `x: int32;`, `fn f(x: int32) int32 { return x; }`,
 `while (condition) { ... };`, `a[i]`, `a[a..b]`, `.len`, postfix pointer operations.
 Bindings use `[pub] [const | comp] name (: Type = | :=) expression;`, including
-`Name: type = struct { field: int32 };`. Multi-bindings retain independent
+`comp Name: type = struct { field: int32 };`. Analysis requires explicit `comp`
+for type bindings; parsing alone still accepts the unmodified form. Multi-bindings retain independent
 modifiers/types and a shared initializer list. Legacy `type Name ...` is removed.
 Builtin functions retain `@`; legacy `@` types, `var`, `for`, dot-index and imports
 are not the current working grammar. Parsing is not semantic/runtime support.
@@ -74,8 +75,8 @@ when implementing missing passes. See [diagnostics](docs/agents/src/diagnostics.
 
 - Add tokenizer/parser success and malformed-input tests for syntax changes.
 - Analyzer tests combine utility/stub contracts with six inline name-resolution
-  specification phases in `src/frontend/analyzer/test.rs`. The phases deliberately
-  include ordinary failing tests for unfinished semantics. Driver/IR/backend tests
+  specification phases in `src/frontend/analyzer/test.rs`. The phases pass for
+  implemented name resolution; typing and member lookup remain separate. Driver/IR/backend tests
   protect data or explicit stub failure, not successful verification or execution.
 - Never turn unfinished operations into successful empty results. Implement the
   root invariant, then add real positive/negative coverage. Assert diagnostic

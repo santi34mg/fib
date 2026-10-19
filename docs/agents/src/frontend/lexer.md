@@ -21,7 +21,8 @@ Unified declaration modifiers `pub`, `const`, and `comp` tokenize as keywords.
 `type` remains the builtin metatype token for annotations and type values, not a
 legacy `type Name ...` declaration introducer. The parser interprets `:=` as
 inferred binding syntax and requires `;` on type-valued bindings too. Modifier
-flags do not imply implemented visibility or compile-time evaluation.
+flags are preserved for analysis. The name pass enforces visibility and static
+alias rules; arbitrary compile-time evaluation remains unfinished.
 
 Tests live in `src/frontend/tokenizer/test.rs`. Add exact kinds, literal values,
 positions, and malformed-input cases. Verify escape/backslash, NUL, Unicode and

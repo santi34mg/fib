@@ -16,4 +16,5 @@ and optional denoted type for type-valued expressions. Names, bindings and membe
 identities are separate. `AnalyzedProject` owns the same source trees and semantic
 tables, not copied typed declarations. Planned lowering must translate these into
 IR-owned runtime types/IDs, not borrow frontend semantic tables or fall back to AST
-emission. No existing pass validates annotation completeness yet.
+emission. The name pass validates name/binding completeness; full semantic
+annotation validation remains unfinished.

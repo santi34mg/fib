@@ -1,15 +1,24 @@
 //! Analysis architecture sketch: parsed source units are enriched in place.
-//! No pass here executes yet. The only lowering boundary is `AnalyzedProject`
-//! to `Ir`; analysis never manufactures a separate typed AST or emits IR.
+//! The name pass executes; typing and full completion validation remain unfinished.
+//! The only lowering boundary is `AnalyzedProject` to `Ir`; analysis never
+//! manufactures a separate typed AST or emits IR.
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 
 use crate::build_plan::{BuildPlan, FileId};
+use crate::diagnostics::{CompilerError, Span};
 use crate::driver::CompilationUnit;
+use crate::frontend::analysis_annotation::{BindingAnnotation, BindingId};
 use crate::frontend::ast::statement::StatementKind;
-use crate::frontend::namespace::{DeclId, Declaration, LocalId, Namespace, Visibility};
+use crate::frontend::ast::{
+    expression::ExpressionKind, qualified_name::QualifiedIdentifier,
+    variable_declaration::VariableDeclaration,
+};
+use crate::frontend::namespace::{
+    DeclId, Declaration, DeclarationKind, LocalId, Namespace, Visibility, name_error,
+};
 use crate::frontend::scope_kind::ScopeKind;
 use crate::frontend::{
     namespace::ProjectSymbols, semantic_type::SemanticTypes, symbol_table::SymbolTable,
@@ -34,6 +43,19 @@ pub struct ResolveContext<'a> {
     pub lexical: SymbolTable,
     pub symbols: &'a ProjectSymbols,
     pub local_ids: &'a mut LocalIdAllocator,
+}
+
+impl ResolveContext<'_> {
+    pub(super) fn scoped<T>(
+        &mut self,
+        kind: ScopeKind,
+        action: impl FnOnce(&mut Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        self.lexical.enter_scope(kind);
+        let result = action(self);
+        self.lexical.exit_scope()?;
+        result
+    }
 }
 
 /// Name annotations are inputs to typing; type/member lookup cannot insert
@@ -67,42 +89,43 @@ pub struct Analyzer {
     units: Vec<CompilationUnit>,
     symbols: ProjectSymbols,
     local_ids: LocalIdAllocator,
+    paths: HashMap<FileId, std::path::PathBuf>,
+    phase: NamePhase,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NamePhase {
+    New,
+    Collecting,
+    Collected,
+    Resolving,
+    Resolved,
 }
 
 impl Analyzer {
     /// Validate that compilation-unit IDs match exactly the named build-plan files,
     /// then construct ProjectSymbols. Do not discover additional files.
     pub fn new(plan: BuildPlan, units: Vec<CompilationUnit>) -> anyhow::Result<Self> {
-        let plan_set = plan
-            .files
-            .iter()
-            .map(|file| file.id)
-            .collect::<HashSet<FileId>>();
-        if plan_set.len() != plan.files.len() {
-            bail!("duplicate file IDs in build plan");
-        }
+        let symbols = ProjectSymbols::from_plan(&plan)?;
+        let plan_set = plan.files.iter().map(|f| f.id).collect::<HashSet<_>>();
         let unit_set = units
             .iter()
-            .map(|unit| unit.source_file_id)
-            .collect::<HashSet<FileId>>();
+            .map(|u| u.source_file_id)
+            .collect::<HashSet<_>>();
         if unit_set.len() != units.len() {
-            bail!("duplicate file IDs in compilation units");
+            return Err(name_error("duplicate file IDs in compilation units"));
         }
         if plan_set != unit_set {
-            bail!("compilation-unit IDs do not match build-plan file IDs");
+            return Err(name_error(
+                "compilation-unit IDs do not match build-plan file IDs",
+            ));
         }
-        let files_by_name = plan
-            .files
-            .into_iter()
-            .map(|file| (file.name, file.id))
-            .collect();
         Ok(Self {
             units,
-            symbols: ProjectSymbols {
-                files_by_name,
-                namespaces: HashMap::new(),
-            },
+            symbols,
             local_ids: LocalIdAllocator::default(),
+            paths: plan.files.into_iter().map(|f| (f.id, f.path)).collect(),
+            phase: NamePhase::New,
         })
     }
 
@@ -118,153 +141,237 @@ impl Analyzer {
     /// confuse name visibility with top-level initialization order.
     /// Rejects invalid top-level statements.
     pub fn collect_declarations(&mut self) -> anyhow::Result<()> {
-        for unit in self.units.iter() {
-            let mut declarations = Vec::new();
-            let mut names = HashMap::new();
-            let mut idx = 0;
-            for statement in unit.ast.statements.iter() {
-                match statement.kind {
-                    StatementKind::VariableDeclaration(ref var_decl) => {
-                        declarations.push(Declaration {
-                            name: var_decl.identifier.clone(),
-                            visibility: if var_decl.is_pub {
-                                Visibility::Public
-                            } else {
-                                Visibility::Private
-                            },
-                            span: statement.span,
-                            alias_target: None,
-                        });
-                        let None = names.get(&var_decl.identifier) else {
-                            bail!("duplicate identifier {}", var_decl.identifier)
-                        };
-                        names.insert(
-                            var_decl.identifier.clone(),
-                            DeclId {
-                                file_id: unit.source_file_id,
-                                index: idx as u32,
-                            },
-                        );
-                        idx += 1;
-                    }
-                    StatementKind::FunctionDeclaration(ref fun_decl) => {
-                        declarations.push(Declaration {
-                            name: fun_decl.signature.identifier.clone(),
-                            visibility: if fun_decl.is_pub {
-                                Visibility::Public
-                            } else {
-                                Visibility::Private
-                            },
-                            span: statement.span,
-                            alias_target: None,
-                        });
-                        let None = names.get(&fun_decl.signature.identifier) else {
-                            bail!("duplicate identifier {}", fun_decl.signature.identifier)
-                        };
-                        names.insert(
-                            fun_decl.signature.identifier.clone(),
-                            DeclId {
-                                file_id: unit.source_file_id,
-                                index: idx as u32,
-                            },
-                        );
-                        idx += 1;
-                    }
-                    StatementKind::MultiVariableDeclaration {
-                        ref bindings,
-                        values: _,
-                    } => {
-                        for binding in bindings {
-                            declarations.push(Declaration {
-                                name: binding.identifier.clone(),
-                                visibility: if binding.is_pub {
-                                    Visibility::Public
-                                } else {
-                                    Visibility::Private
-                                },
-                                span: statement.span,
-                                alias_target: None,
-                            });
-                            let None = names.get(&binding.identifier) else {
-                                bail!("duplicate identifier {}", binding.identifier)
-                            };
-                            names.insert(
-                                binding.identifier.clone(),
-                                DeclId {
-                                    file_id: unit.source_file_id,
-                                    index: idx as u32,
-                                },
-                            );
-                            idx += 1;
+        if self.phase != NamePhase::New {
+            return Err(name_error("declaration collection has already started"));
+        }
+        self.phase = NamePhase::Collecting;
+        for unit in &mut self.units {
+            let file_id = unit.source_file_id;
+            let result = (|| {
+                let mut namespace = Namespace {
+                    file_id,
+                    declarations: Vec::new(),
+                    names: HashMap::new(),
+                };
+                for statement in &mut unit.ast.statements {
+                    let span = statement.span;
+                    match &mut statement.kind {
+                        StatementKind::VariableDeclaration(var) => {
+                            let inline = inline_type(var.expression.as_ref());
+                            collect_variable(&mut namespace, var, span, inline)?;
+                        }
+                        StatementKind::FunctionDeclaration(fun) => {
+                            fun.signature.annotation.binding =
+                                Some(BindingId::Declaration(add_declaration(
+                                    &mut namespace,
+                                    &fun.signature.identifier,
+                                    fun.is_pub,
+                                    DeclarationKind::Value,
+                                    span,
+                                    true,
+                                )?));
+                        }
+                        StatementKind::MultiVariableDeclaration { bindings, values } => {
+                            for (i, binding) in bindings.iter_mut().enumerate() {
+                                collect_variable(
+                                    &mut namespace,
+                                    binding,
+                                    span,
+                                    inline_type(values.get(i)),
+                                )?;
+                            }
+                        }
+                        _ => {
+                            return Err(at_span(
+                                name_error("unexpected top-level statement"),
+                                span,
+                            ));
                         }
                     }
-                    ref stmt => bail!("found unexpected top-level statement: {:?}", stmt),
                 }
-            }
-            let namespace = Namespace {
-                file_id: unit.source_file_id,
-                declarations,
-                names,
-            };
-            // we create the namespace for this compilation unit
-            self.symbols
-                .namespaces
-                .insert(unit.source_file_id, namespace);
+                // Reserve identities without adding lexical names or resolving initializers.
+                struct LocalTypes<'a>(&'a mut Namespace);
+                impl walk::Visitor for LocalTypes<'_> {
+                    fn variable(
+                        &mut self,
+                        var: &mut VariableDeclaration,
+                        span: Span,
+                        file: bool,
+                        inline: bool,
+                    ) -> anyhow::Result<()> {
+                        if !file && var.is_comp && inline {
+                            var.annotation.binding = Some(BindingId::Declaration(add_declaration(
+                                self.0,
+                                &var.identifier,
+                                false,
+                                DeclarationKind::Type,
+                                span,
+                                false,
+                            )?));
+                        }
+                        Ok(())
+                    }
+                }
+                walk::statements(
+                    &mut LocalTypes(&mut namespace),
+                    &mut unit.ast.statements,
+                    true,
+                )?;
+                self.symbols.namespaces.insert(file_id, namespace);
+                Ok(())
+            })();
+            result.map_err(|e| with_path(e, self.paths.get(&file_id)))?;
         }
+        self.phase = NamePhase::Collected;
         Ok(())
     }
 
     pub fn resolve_names(&mut self) -> anyhow::Result<()> {
-        // Use a ResolveContext per file; allocate project-unique LocalId/LabelId
-        // values and annotate uses. Reject alias cycles and illegal redeclarations.
-        for unit in self.units.iter_mut() {
+        if self.phase != NamePhase::Collected {
+            return Err(name_error(
+                "resolve_names requires declaration collection and may only run once",
+            ));
+        }
+        self.phase = NamePhase::Resolving;
+        let aliases = aliases::definitions(&self.units, &self.paths)?;
+        aliases::resolve(&mut self.symbols, &aliases, &self.paths)?;
+        for unit in &mut self.units {
+            let file = unit.source_file_id;
             let mut context = ResolveContext {
-                file_id: unit.source_file_id,
+                file_id: file,
                 lexical: SymbolTable::new(),
                 local_ids: &mut self.local_ids,
                 symbols: &self.symbols,
             };
-            for statement in unit.ast.statements.iter_mut() {
-                match statement.kind {
-                    StatementKind::FunctionDeclaration(ref mut function_declaration) => {
-                        // the function itself is in the namespace, we avoid
-                        // resolving locally it so it can be referenced with
-                        // namespace semantics without a problem
-                        if let Some(ref mut fbody) = function_declaration.body {
-                            context.lexical.enter_scope(ScopeKind::Function);
-                            Self::resolve_name_signature(
-                                &mut function_declaration.signature,
-                                &mut context,
-                            )?;
-                            for fstmt in fbody.statements.iter_mut() {
-                                Self::resolve_name_statement(fstmt, &mut context)?;
-                            }
-                            context.lexical.exit_scope()?;
-                        }
-                    }
-                    StatementKind::VariableDeclaration(ref mut variable_declaration) => {
-                        // the identifier is already in the namespace
-                        // we only resolve the rhs if any
-                        if let Some(ref mut expression) = variable_declaration.expression {
-                            Self::resolve_name_expression(expression, &mut context)?;
-                        }
-                    }
-                    StatementKind::MultiVariableDeclaration {
-                        bindings: _,
-                        ref mut values,
-                    } => {
-                        // the identifiers (bindings) are already in the namespace
-                        // we only resolve the rhs (values) if any
-                        for expression in values.iter_mut() {
-                            Self::resolve_name_expression(expression, &mut context)?;
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            unit.ast
+                .resolve_name(&mut context)
+                .map_err(|e| with_path(e, self.paths.get(&file)))?;
+            validate_names(&mut unit.ast).map_err(|e| with_path(e, self.paths.get(&file)))?;
         }
+        self.phase = NamePhase::Resolved;
         Ok(())
     }
+}
+
+fn add_declaration(
+    ns: &mut Namespace,
+    name: &str,
+    public: bool,
+    kind: DeclarationKind,
+    span: Span,
+    file: bool,
+) -> anyhow::Result<DeclId> {
+    if file && ns.names.contains_key(name) {
+        return Err(at_span(
+            name_error(format!("duplicate identifier '{name}'")),
+            span,
+        ));
+    }
+    let index = u32::try_from(ns.declarations.len())
+        .map_err(|_| name_error("declaration ID space exhausted"))?;
+    let id = DeclId {
+        file_id: ns.file_id,
+        index,
+    };
+    ns.declarations.push(Declaration {
+        name: name.into(),
+        visibility: if public {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        },
+        span,
+        kind,
+        alias_target: None,
+    });
+    if file {
+        ns.names.insert(name.into(), id);
+    }
+    Ok(id)
+}
+
+fn inline_type(expr: Option<&crate::frontend::ast::expression::Expression>) -> bool {
+    matches!(expr.map(|e| &e.kind), Some(ExpressionKind::TypeValue(_)))
+}
+
+fn collect_variable(
+    ns: &mut Namespace,
+    var: &mut VariableDeclaration,
+    span: Span,
+    inline: bool,
+) -> anyhow::Result<()> {
+    let kind = if var.is_comp {
+        if inline {
+            DeclarationKind::Type
+        } else {
+            DeclarationKind::Alias
+        }
+    } else {
+        DeclarationKind::Value
+    };
+    var.annotation.binding = Some(BindingId::Declaration(add_declaration(
+        ns,
+        &var.identifier,
+        var.is_pub,
+        kind,
+        span,
+        true,
+    )?));
+    Ok(())
+}
+
+pub(super) fn at_span(error: anyhow::Error, span: Span) -> anyhow::Error {
+    match error.downcast::<CompilerError>() {
+        Ok(mut error) => {
+            if error.span.is_none() {
+                error.span = Some(span);
+            }
+            error.into()
+        }
+        Err(error) => error,
+    }
+}
+
+pub(super) fn with_path(error: anyhow::Error, path: Option<&std::path::PathBuf>) -> anyhow::Error {
+    match error.downcast::<CompilerError>() {
+        Ok(mut error) => {
+            if error.filename.is_none() {
+                error.filename = path.cloned();
+            }
+            error.into()
+        }
+        Err(error) => error,
+    }
+}
+
+fn validate_names(ast: &mut crate::frontend::ast::Ast) -> anyhow::Result<()> {
+    struct Complete;
+    impl walk::Visitor for Complete {
+        fn name(&mut self, name: &mut QualifiedIdentifier) -> anyhow::Result<()> {
+            if name.annotation.resolved.is_none() {
+                return Err(name_error(format!(
+                    "pending name '{}'",
+                    name.segments.join("::")
+                )));
+            }
+            Ok(())
+        }
+        fn binding(
+            &mut self,
+            name: &str,
+            slot: &mut BindingAnnotation,
+            span: Span,
+        ) -> anyhow::Result<()> {
+            if slot.binding.is_none() {
+                return Err(at_span(
+                    name_error(format!("pending binding '{name}'")),
+                    span,
+                ));
+            }
+            Ok(())
+        }
+    }
+    walk::statements(&mut Complete, &mut ast.statements, true)
 }
 
 pub fn get_namespace(filename: String, symbols: &mut ProjectSymbols) -> anyhow::Result<&Namespace> {
@@ -297,6 +404,7 @@ pub(super) fn not_implemented<T>(operation: &str) -> anyhow::Result<T> {
     anyhow::bail!("{operation} is not implemented")
 }
 
+mod aliases;
 pub mod ast;
 pub mod expression;
 pub mod function_declaration;
@@ -307,6 +415,7 @@ pub mod swtich_arm;
 pub mod type_expression;
 pub mod types;
 pub mod variable_declaration;
+mod walk;
 
 #[cfg(test)]
 mod test;
