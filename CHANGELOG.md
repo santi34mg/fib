@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A tests-only name-resolution specification in six independently runnable inline entity phases within `src/frontend/analyzer/test.rs`, covering file declarations, locals/parameters, qualified references, aliases, type/member names, and traversal. It specifies local initializer lookup before binding registration and includes ordinary failing tests for unfinished resolver behavior.
 - A local Zed extension in `lsp/editors/zed` registers `.fib` files without a Tree-sitter grammar and launches the existing JS highlighting server via `fib-lsp` on PATH or a configurable binary override; setup documents semantic-token opt-in and Rust/Wasm requirements.
 - Backend-independent SSA `Ir` contracts with explicit function ownership, block parameters and edge arguments, typed values, memory operations, and fallible builder/verifier sketches.
 - In-place AST analysis annotations, semantic type and resolver-context contracts, plus an LLVM adapter phase plan covering verification, target layout, ABI classification, and SSA edge translation. Analysis, lowering, verification, and code generation remain unimplemented.

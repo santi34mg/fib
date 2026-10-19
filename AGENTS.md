@@ -7,8 +7,10 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 
 - Working: `src/frontend/tokenizer.rs` + `tokenizer/`, `parser.rs` + `parser/`,
   AST construction, lexical scope utilities, diagnostics and raw IR data utilities.
-- `analyzer.rs` + `analyzer/` are explicit-error sketches. Analysis annotates the
-  original AST in the intended architecture; no lexer/analyze/typed_ast modules exist.
+- `analyzer.rs` + `analyzer/` partially validate plan/unit IDs, collect declarations
+  and traverse name uses; name resolution remains incomplete, with error stubs and
+  `todo!()` branches. Analysis annotates the original AST in the intended
+  architecture; no lexer/analyze/typed_ast modules exist.
 - `src/driver.rs` exposes `run_pipeline`, `run_frontend`, `parse_files`,
   `lower_to_ir`, all unimplemented. No `compile_project`/`check_project` APIs.
 - `BuildPlan` explicitly names files; single-file loading, build.fib interpretation,
@@ -34,8 +36,14 @@ cargo test --offline --no-default-features
 cargo run --offline --no-default-features -- --help
 ```
 
-Check/help succeeded and tests passed 178 library tests; no integration/e2e suite
-exists. Offline is optional outside restricted environments. Focus tests with
+Earlier check/help verification succeeded. The current full suite reports
+212 passes and 183 failures from unfinished name-resolution specifications; with
+`-- --skip frontend::analyzer::test::name_resolution`, all 178 existing library
+tests pass. All analyzer tests/helpers live in `src/frontend/analyzer/test.rs`;
+its inline `name_resolution` module contains six phases. Run one with
+`cargo test --no-default-features name_resolution::phase_01_files`.
+No integration/e2e suite exists. Offline is optional outside restricted environments.
+Focus tests with
 `cargo test --no-default-features frontend::parser` or `frontend::tokenizer`.
 See [validation status](docs/agents/tests/README.md) for formatting and limitations.
 
@@ -65,8 +73,10 @@ when implementing missing passes. See [diagnostics](docs/agents/src/diagnostics.
 ## Tests and contribution discipline
 
 - Add tokenizer/parser success and malformed-input tests for syntax changes.
-- Analyzer/driver/IR/backend tests mostly protect data or explicit stub failure,
-  not successful semantic analysis, verification or program execution.
+- Analyzer tests combine utility/stub contracts with six inline name-resolution
+  specification phases in `src/frontend/analyzer/test.rs`. The phases deliberately
+  include ordinary failing tests for unfinished semantics. Driver/IR/backend tests
+  protect data or explicit stub failure, not successful verification or execution.
 - Never turn unfinished operations into successful empty results. Implement the
   root invariant, then add real positive/negative coverage. Assert diagnostic
   category/substrings/locations instead of brittle full rendered strings.

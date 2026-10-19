@@ -12,29 +12,31 @@ either, indextree, and tempfile; do not remove them based on old usage inventori
 [`rust-toolchain.toml`](../../rust-toolchain.toml) pins 1.98.0 with rustfmt/clippy;
 its comments define the pin as MSRV policy. Bump deliberately with CI, not by drift.
 
-## Verified locally (2026-10-17)
+## Local validation
 
-System Cargo and rustc report 1.98.0; rustup is unavailable in this environment.
-Commands below were run with offline dependencies already present:
+The current tests-only verification (2026-10-19) used cached offline dependencies:
 
 ```sh
-cargo check --offline --no-default-features
+cargo test --offline --no-default-features --no-run
 cargo test --offline --no-default-features
-cargo run --offline --no-default-features -- --help
+cargo test --offline --no-default-features -- --skip frontend::analyzer::test::name_resolution
 cargo fmt --check
 ```
 
-Check succeeded; tests reported 173 passing library tests, zero binary tests and
-zero doctests. Help succeeded and lists `build`, `run`, `test`. Formatting was
-checked separately; see [validation notes](tests/README.md) for its status.
-The terminal shell also emits a tty-process-group error after commands; distinguish
-that wrapper failure from Cargo's own output. Offline mode requires a populated
-cache and is not necessary for normal development.
+Compilation and formatting pass. The full library suite reports 212 passes and
+183 failures for unfinished name-resolution behavior. Excluding that specification
+passes all 178 existing library tests, with zero binary tests and zero doctests.
+The full suite is intentionally not green; see [phase commands and validation
+notes](tests/README.md). Earlier check/help verification (2026-10-17) succeeded;
+help lists `build`, `run`, and `test`. Offline mode requires a populated cache
+and is not necessary for normal development.
 
 Useful focused commands: `cargo test --no-default-features frontend::parser`,
 `cargo test --no-default-features frontend::tokenizer`, and
-`cargo test --no-default-features --lib`. These filters select Rust unit tests,
-not Fib program compilation.
+`cargo test --no-default-features name_resolution::phase_01_files`. All analyzer
+tests and helpers live in `src/frontend/analyzer/test.rs`, with six inline
+`name_resolution` phases. These filters select Rust unit tests, not Fib program
+compilation.
 
 ## Assets
 

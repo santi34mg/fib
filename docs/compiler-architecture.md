@@ -1,13 +1,13 @@
 # Compiler architecture sketches
 
-Audited against the implementation on 2026-10-17. See the
+Analysis/test status updated against the implementation on 2026-10-19. See the
 [current implementation guide](agents/README.md) and [roadmap](roadmap/README.md).
 
 This checkout defines **interfaces and data models**, not a working compilation
-pipeline. Tokenization and parsing work independently; project analysis,
-`AnalyzedProject -> Ir` lowering, SSA construction/verification, and LLVM emission
-are explicitly unimplemented. Their entry points return errors rather than fake
-successful output. Build-file interpretation, object generation, and linking
+pipeline. Tokenization and parsing work independently. Analysis partially
+validates named units, collects declarations and traverses name uses, but cannot
+produce a completed analyzed project. `AnalyzedProject -> Ir` lowering, SSA
+construction/verification, and LLVM emission remain explicit-error sketches. Build-file interpretation, object generation, and linking
 remain separate unfinished work.
 
 ## Present baseline and orchestration
@@ -30,7 +30,7 @@ not available.
 ```text
 BuildPlan + parsed SourceUnits
             |
-       Analyzer passes                 not implemented
+       Analyzer passes                 incomplete
             |
      AnalyzedProject
             |
@@ -77,8 +77,14 @@ infer even builtin expression types, or turn fields into lexical bindings.
 
 ## Analysis contracts
 
-`Analyzer::new(&BuildPlan, Vec<SourceUnit>)` and `Analyzer::analyze` are sketches.
-The intended pass order is:
+`Analyzer::new(BuildPlan, Vec<CompilationUnit>)` validates plan/unit file IDs and
+creates the file-name registry. `collect_declarations` creates per-file declaration
+slots and visibility flags, rejecting duplicates and invalid top-level statements;
+it does not yet annotate binding sites. Name resolution partially traverses
+initializers and expressions, but parameters, aliases, qualified target annotations,
+access checks and many statement/expression branches remain unfinished. Pending
+branches return errors or panic through `todo!()`. `Analyzer::analyze` still cannot
+complete successfully. The intended pass order is:
 
 1. Register only files named in the build plan and collect file declarations.
 2. Resolve lexical names, file paths, visibility, and compile-time aliases.
@@ -89,7 +95,8 @@ The intended pass order is:
 `ResolveContext` combines the current file, shared `ProjectSymbols`, and a lexical
 `SymbolTable`; namespaces are not scope stacks. `TypeContext` can resolve members
 without inserting their spellings into lexical scopes. Basic scope storage exists,
-but language-level lookup and redeclaration rules are not implemented.
+but file fallback, alias/access rules and complete language-level scope handling
+remain unfinished.
 
 Identities live separately from source strings:
 
@@ -101,7 +108,11 @@ Identities live separately from source strings:
 
 See [name resolution](name-resolution.md) for the language rules that future
 passes must enforce. Forward name visibility does not permit reading a later
-uninitialized variable. Compile-time aliases do not allocate runtime storage.
+uninitialized variable. Local value declarations instead resolve all initializer
+expressions before introducing any new bindings, including all members of a
+multi-binding. This is the test specification, not the current local-insertion
+implementation. Compile-time aliases retain forward-chain resolution and do not
+allocate runtime storage.
 
 ### AST annotations
 
@@ -173,6 +184,15 @@ behind compatibility aliases. Existing parser/tokenizer tests were migrated;
 small tests cover pending annotations, model structure, and explicit unsupported
 operations. Deleted integration tests were not restored. These tests demonstrate
 contracts, **not end-to-end compilation**.
+
+All analyzer tests and helpers are in
+[`src/frontend/analyzer/test.rs`](../src/frontend/analyzer/test.rs). Its inline
+`name_resolution` module has six independently runnable phases for files,
+parameters/locals, references/functions, aliases, type/member names and traversal.
+The 217 specification tests include ordinary failures for unfinished behavior:
+34 pass and 183 fail. The other 178 library tests pass when the specification is
+excluded. See [validation commands](agents/tests/README.md); the full test command
+currently exits unsuccessfully.
 
 There is no checked-in integration/e2e harness. Samples and the experimental
 standard library may contain stale syntax and are not automatically compiled or
