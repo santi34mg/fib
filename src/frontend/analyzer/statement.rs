@@ -10,60 +10,97 @@ use super::{ResolveContext, TypeContext, not_implemented};
 impl Analyzer {
     /// Manage block lifetimes, declaration ordering, pattern bindings, and the
     /// separate control-flow label namespace. Do not insert names at use sites.
-    // TODO(review): Return explicit not-implemented errors for pending statement
-    // cases instead of panicking through todo!(), preserving the Result contract.
     pub fn resolve_name_statement(
         statement: &mut Statement,
-        context: &mut ResolveContext,
+        context: &mut ResolveContext<'_>,
     ) -> anyhow::Result<()> {
-        match statement.kind {
-            StatementKind::FunctionDeclaration(ref mut function_declaration) => todo!(),
-            StatementKind::VariableDeclaration(ref mut variable_declaration) => {
-                Self::resolve_name_variable_declaration(variable_declaration, context)?;
+        Self::resolve_name_statement_inner(statement, context)
+            .map_err(|e| super::at_span(e, statement.span))
+    }
+
+    fn resolve_name_statement_inner(
+        statement: &mut Statement,
+        context: &mut ResolveContext<'_>,
+    ) -> anyhow::Result<()> {
+        use crate::frontend::{namespace::name_error, scope_kind::ScopeKind};
+        fn block(
+            statements: &mut [Statement],
+            context: &mut ResolveContext<'_>,
+        ) -> anyhow::Result<()> {
+            context.scoped(ScopeKind::Block, |context| {
+                for statement in statements {
+                    Analyzer::resolve_name_statement(statement, context)?;
+                }
+                Ok(())
+            })
+        }
+        match &mut statement.kind {
+            StatementKind::FunctionDeclaration(_) => {
+                return Err(name_error("nested functions are not supported yet"));
             }
-            StatementKind::MultiVariableDeclaration {
-                ref mut bindings,
-                ref mut values,
-            } => todo!(),
-            StatementKind::ExpressionStatement(ref mut expression) => {
-                Self::resolve_name_expression(expression, context)?;
+            StatementKind::VariableDeclaration(var) => {
+                Self::resolve_name_variable_declaration(var, context)?
             }
-            StatementKind::Assignment {
-                ref mut left,
-                ref mut right,
-            } => {
-                todo!()
+            StatementKind::MultiVariableDeclaration { bindings, values } => {
+                Self::resolve_multi_bindings(bindings, values, context, false)?
             }
-            StatementKind::DerefAssign {
-                ref mut pointer,
-                ref mut expr,
-            } => todo!(),
+            StatementKind::ExpressionStatement(expr) => {
+                Self::resolve_name_expression(expr, context)?
+            }
+            StatementKind::Assignment { left, right } => {
+                Self::resolve_name_expression(left, context)?;
+                Self::resolve_name_expression(right, context)?;
+            }
+            StatementKind::DerefAssign { pointer, expr } => {
+                Self::resolve_name_expression(pointer, context)?;
+                Self::resolve_name_expression(expr, context)?;
+            }
             StatementKind::IndexAssign {
-                ref mut object,
-                ref mut index,
-                ref mut expr,
-            } => todo!(),
-            StatementKind::Return(ref mut expressions) => todo!(),
-            StatementKind::MultiAssignment {
-                ref mut targets,
-                ref mut values,
-            } => todo!(),
+                object,
+                index,
+                expr,
+            } => {
+                Self::resolve_name_expression(object, context)?;
+                Self::resolve_name_expression(index, context)?;
+                Self::resolve_name_expression(expr, context)?;
+            }
+            StatementKind::Return(values) => {
+                if let Some(values) = values {
+                    for value in values {
+                        Self::resolve_name_expression(value, context)?;
+                    }
+                }
+            }
+            StatementKind::MultiAssignment { targets, values } => {
+                for expr in targets.iter_mut().chain(values) {
+                    Self::resolve_name_expression(expr, context)?;
+                }
+            }
             StatementKind::If {
-                ref mut condition,
-                ref mut then_branch,
-                ref mut else_branch,
-            } => todo!(),
-            StatementKind::While {
-                ref mut condition,
-                ref mut body,
-            } => todo!(),
-            StatementKind::Break => todo!(),
-            StatementKind::Continue => todo!(),
-            StatementKind::Defer(ref mut statement) => todo!(),
-            StatementKind::Switch {
-                ref mut subject,
-                ref mut arms,
-            } => todo!(),
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::resolve_name_expression(condition, context)?;
+                block(then_branch, context)?;
+                if let Some(branch) = else_branch {
+                    block(branch, context)?;
+                }
+            }
+            StatementKind::While { condition, body } => {
+                if let Some(condition) = condition {
+                    Self::resolve_name_expression(condition, context)?;
+                }
+                block(body, context)?;
+            }
+            StatementKind::Defer(statement) => Self::resolve_name_statement(statement, context)?,
+            StatementKind::Switch { subject, arms } => {
+                Self::resolve_name_expression(subject, context)?;
+                for arm in arms {
+                    arm.resolve_name(context)?;
+                }
+            }
+            StatementKind::Break | StatementKind::Continue => {}
         }
         Ok(())
     }

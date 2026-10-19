@@ -159,6 +159,8 @@ fn unfinished_analysis_and_typing_never_report_fake_success() {
         units: Vec::new(),
         symbols: symbols(),
         local_ids: LocalIdAllocator::default(),
+        paths: HashMap::new(),
+        phase: super::NamePhase::New,
     };
     assert_unimplemented(analyzer.analyze());
 
@@ -174,7 +176,7 @@ fn unfinished_analysis_and_typing_never_report_fake_success() {
 }
 
 #[test]
-fn unfinished_ast_entrypoint_does_not_mutate_ast_or_scopes() {
+fn empty_ast_name_resolution_preserves_scopes() {
     let mut registry = symbols();
     let mut context = ResolveContext {
         file_id: FileId(0),
@@ -183,7 +185,7 @@ fn unfinished_ast_entrypoint_does_not_mutate_ast_or_scopes() {
         local_ids: &mut LocalIdAllocator::default(),
     };
     let mut ast = Ast::new();
-    assert_unimplemented(ast.resolve_name(&mut context));
+    ast.resolve_name(&mut context).unwrap();
     assert!(ast.statements.is_empty());
     assert_eq!(context.lexical.depth(), 1);
     assert!(context.symbols.namespaces.is_empty());
@@ -230,7 +232,7 @@ fn typing_member_and_generic_sketches_fail_without_fabricating_annotations() {
 }
 
 mod name_resolution {
-    //! Executable specification, including ordinary failing tests for unfinished passes.
+    //! Executable specification of name resolution and its explicit semantic boundary.
     //! Run one entity phase with `cargo test --no-default-features name_resolution::phase_01`.
 
     use std::{collections::HashMap, path::Path};
@@ -343,7 +345,7 @@ mod name_resolution {
             reject(ProjectSymbols::from_plan(&plan), &["main"]);
         }
 
-        const DECLARATIONS: &str = "value := 1; pub const limit := 2; fn callable() {} Type: type = struct { field: int32 }; pub left, const right := 3, 4;";
+        const DECLARATIONS: &str = "value := 1; pub const limit := 2; fn callable() {} comp Type: type = struct { field: int32 }; pub left, const right := 3, 4;";
         #[test]
         fn declarations_have_ordered_namespace_slots_and_independent_visibility() {
             let analyzer = collected(&[("main", DECLARATIONS)]);
@@ -384,10 +386,25 @@ mod name_resolution {
             for (i, (_, binding)) in observed.bindings.iter().enumerate() {
                 assert_eq!(*binding, Some(BindingId::Declaration(decl(0, i as u32))));
             }
-            let analyzer = collected(&[("main", "a := later; later := 1;")]);
+            let mut analyzer = collected(&[("main", "a := later; later := 1;")]);
             assert_eq!(
                 observe(&analyzer.units[0].ast).names,
                 vec![("later".into(), None)]
+            );
+            reject(
+                crate::frontend::analyzer::validate_names(&mut analyzer.units[0].ast),
+                &["pending", "later"],
+            );
+            analyzer.resolve_names().unwrap();
+            crate::frontend::analyzer::validate_names(&mut analyzer.units[0].ast).unwrap();
+            if let StatementKind::VariableDeclaration(var) =
+                &mut analyzer.units[0].ast.statements[0].kind
+            {
+                var.annotation.binding = None;
+            }
+            reject(
+                crate::frontend::analyzer::validate_names(&mut analyzer.units[0].ast),
+                &["pending binding", "a"],
             );
         }
         #[test]
@@ -428,7 +445,7 @@ mod name_resolution {
         duplicate!(duplicate_functions, "fn same() {} fn same() {}");
         duplicate!(function_variable_collision, "fn same() {} same := 1;");
         duplicate!(variable_function_collision, "same := 1; fn same() {}");
-        duplicate!(type_value_collision, "same: type = int32; same := 1;");
+        duplicate!(type_value_collision, "comp same: type = int32; same := 1;");
         duplicate!(duplicate_inside_multi_binding, "same, same := 1, 2;");
         duplicate!(
             multi_binding_collision_with_prior_declaration,
@@ -462,6 +479,44 @@ mod name_resolution {
                 analyzer.symbols.namespaces[&FileId(0)].declarations[0].visibility,
                 Visibility::Public
             );
+        }
+
+        #[test]
+        fn staged_api_rejects_invalid_order_and_repeated_calls() {
+            let (plan, units) = inputs(&[("main", "x := 1;")]);
+            let mut analyzer = Analyzer::new(plan, units).unwrap();
+            reject(analyzer.resolve_names(), &["collection"]);
+            analyzer.collect_declarations().unwrap();
+            reject(analyzer.collect_declarations(), &["already"]);
+            analyzer.resolve_names().unwrap();
+            let original = analyzer.units.clone();
+            reject(analyzer.resolve_names(), &["once"]);
+            assert_eq!(analyzer.units, original);
+        }
+
+        #[test]
+        fn failed_resolution_cannot_be_retried() {
+            let mut analyzer = collected(&[("main", "fn f() { x := 1; absent; }")]);
+            reject(analyzer.resolve_names(), &["absent"]);
+            reject(analyzer.resolve_names(), &["once"]);
+        }
+
+        #[test]
+        fn name_errors_preserve_category_file_and_location() {
+            let mut analyzer = collected(&[(
+                "main",
+                "fn f() {
+    absent;
+}",
+            )]);
+            let error = analyzer
+                .resolve_names()
+                .unwrap_err()
+                .downcast::<crate::diagnostics::CompilerError>()
+                .unwrap();
+            assert_eq!(error.kind, crate::diagnostics::ErrorKind::Name);
+            assert_eq!(error.span, Some(Span::new(2, 5)));
+            assert_eq!(error.filename, Some("main.fib".into()));
         }
     }
     mod phase_02_locals {
@@ -809,7 +864,7 @@ mod name_resolution {
         }
         #[test]
         fn bodyless_function_types_and_parameters_are_annotated() {
-            let analyzer = resolved(&[("main", "T: type = int32; fn declared(value: T) T;")]);
+            let analyzer = resolved(&[("main", "comp T: type = int32; fn declared(value: T) T;")]);
             local(&analyzer, 0, "value", 0);
             names(&analyzer, 0, &[("T", target(0, 0)), ("T", target(0, 0))]);
             assert_eq!(
@@ -941,6 +996,25 @@ mod name_resolution {
                 Some(ResolvedName::Local(LocalId(100)))
             );
         }
+
+        #[test]
+        fn canonical_file_path_bypasses_same_spelled_runtime_local() {
+            let analyzer = resolved(&[
+                ("main", "fn f(util: int32) { util::value; }"),
+                ("util", "pub value := 1;"),
+            ]);
+            names(&analyzer, 0, &[("util::value", target(1, 0))]);
+        }
+
+        #[test]
+        fn longest_registered_file_prefix_is_selected() {
+            let analyzer = resolved(&[
+                ("main", "result := pkg::math::value;"),
+                ("pkg", "unused := 1;"),
+                ("pkg::math", "pub value := 2;"),
+            ]);
+            names(&analyzer, 0, &[("pkg::math::value", target(2, 0))]);
+        }
     }
     mod phase_04_aliases {
         //! Compile-time entities and aliases retain canonical target identities.
@@ -1006,7 +1080,7 @@ mod name_resolution {
         fn type_alias_references_use_original_type_binding() {
             let analyzer = resolved(&[(
                 "main",
-                "Original: type = int32; comp Alias := Original; value: Alias;",
+                "comp Original: type = int32; comp Alias := Original; value: Alias;",
             )]);
             names(
                 &analyzer,
@@ -1210,7 +1284,14 @@ mod name_resolution {
                 ("main", "pub comp first := util::second;"),
                 ("util", "pub comp second := main::first;"),
             ]);
-            reject(analyzer.resolve_names(), &["cycle"]);
+            let error = analyzer
+                .resolve_names()
+                .unwrap_err()
+                .downcast::<crate::diagnostics::CompilerError>()
+                .unwrap();
+            assert_eq!(error.filename, Some("main.fib".into()));
+            assert_eq!(error.span, Some(Span::new(1, 19)));
+            reject::<()>(Err(error.into()), &["cycle", "main::first", "util::second"]);
         }
         #[test]
         fn local_file_alias_is_scoped_and_resolves_qualified_uses() {
@@ -1233,6 +1314,123 @@ mod name_resolution {
                 "original := 1; fn f() { if true { comp alias := original; }; alias; }",
                 &["alias"],
             );
+        }
+
+        #[test]
+        fn local_alias_obeys_declaration_order() {
+            reject_source(
+                "original := 1; fn f() { alias; comp alias := original; }",
+                &["alias"],
+            );
+            reject_source(
+                "original := 1; fn f() { comp first := second; comp second := original; }",
+                &["second"],
+            );
+        }
+
+        #[test]
+        fn local_alias_cannot_reuse_file_name_or_registered_root() {
+            for file in ["util", "util::math"] {
+                let mut analyzer = collected(&[
+                    ("main", "fn f() { comp util := main; }"),
+                    (file, "pub value := 1;"),
+                ]);
+                reject(analyzer.resolve_names(), &["local alias", "util", "file"]);
+            }
+        }
+
+        #[test]
+        fn private_alias_step_cannot_be_bypassed_by_public_target() {
+            let mut analyzer = collected(&[
+                ("main", "value := facade::Library::value;"),
+                ("facade", "comp Library := util;"),
+                ("util", "pub value := 1;"),
+            ]);
+            reject(analyzer.resolve_names(), &["Library", "private"]);
+        }
+
+        #[test]
+        fn invalid_comp_initializers_have_source_diagnostics() {
+            for source in ["comp alias := 1 + 2;", "comp alias: int32;"] {
+                let mut analyzer = collected(&[("main", source)]);
+                let error = analyzer
+                    .resolve_names()
+                    .unwrap_err()
+                    .downcast::<crate::diagnostics::CompilerError>()
+                    .unwrap();
+                assert_eq!(error.kind, crate::diagnostics::ErrorKind::Name);
+                assert_eq!(error.filename, Some("main.fib".into()));
+                assert!(error.span.is_some());
+            }
+        }
+
+        #[test]
+        fn cycle_diagnostic_contains_dependency_chain() {
+            let mut analyzer = collected(&[(
+                "main",
+                "comp first := second; comp second := third; comp third := first;",
+            )]);
+            reject(
+                analyzer.resolve_names(),
+                &["cycle", "first", "second", "third", "->"],
+            );
+        }
+
+        #[test]
+        fn long_alias_chain_resolves_without_stack_overflow() {
+            const CHILD_MARKER: &str = "FIBC_TEST_LONG_ALIAS_CHAIN_CHILD";
+            const COMPLETED: &str = "long alias chain identities verified";
+
+            // Stack overflow aborts rather than unwinds. Isolate the fixture so
+            // a regression fails this test without aborting the entire suite.
+            if std::env::var_os(CHILD_MARKER).is_none() {
+                let module = module_path!().split_once("::").unwrap().1;
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .arg("--exact")
+                    .arg(format!(
+                        "{module}::long_alias_chain_resolves_without_stack_overflow"
+                    ))
+                    .arg("--nocapture")
+                    .env(CHILD_MARKER, "1")
+                    .env("RUST_MIN_STACK", (2 * 1024 * 1024).to_string())
+                    .output()
+                    .expect("run the alias-chain regression in a child test process");
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    output.status.success(),
+                    "alias-chain child failed: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                    output.status
+                );
+                assert!(
+                    stdout.contains(COMPLETED),
+                    "child did not execute the fixture\nstdout:\n{stdout}\nstderr:\n{stderr}"
+                );
+                return;
+            }
+
+            const ALIAS_COUNT: u32 = 8_000;
+            let mut source = String::new();
+            for i in 0..ALIAS_COUNT {
+                source.push_str(&format!("comp a{i} := a{};\n", i + 1));
+            }
+            source.push_str(&format!("a{ALIAS_COUNT} := 1;"));
+            let mut analyzer = collected(&[("main", &source)]);
+            analyzer
+                .resolve_names()
+                .expect("a long acyclic alias chain must resolve");
+
+            let declarations = &analyzer.symbols.namespaces[&FileId(0)].declarations;
+            let terminal = Entity::Declaration(decl(0, ALIAS_COUNT));
+            for declaration in &declarations[..ALIAS_COUNT as usize] {
+                assert_eq!(
+                    declaration.alias_target,
+                    Some(terminal),
+                    "alias '{}' must retain the terminal declaration identity",
+                    declaration.name
+                );
+            }
+            println!("{COMPLETED}");
         }
     }
     mod phase_05_types {
@@ -1327,7 +1525,7 @@ mod name_resolution {
         fn file_binding_types_and_function_signatures_resolve_forward_names() {
             let analyzer = resolved(&[(
                 "main",
-                "value: Later; fn f(p: Later) Later { return p; } Later: type = int32;",
+                "value: Later; fn f(p: Later) Later { return p; } comp Later: type = int32;",
             )]);
             names(
                 &analyzer,
@@ -1344,16 +1542,9 @@ mod name_resolution {
         fn local_type_value_can_be_referenced_by_later_local() {
             let analyzer = resolved(&[(
                 "main",
-                "fn f() { Local: type = struct { field: int32 }; value: Local; }",
+                "fn f() { comp Local: type = struct { field: int32 }; value: Local; }",
             )]);
-            names(
-                &analyzer,
-                0,
-                &[(
-                    "Local",
-                    ResolvedName::Local(local(&analyzer, 0, "Local", 0)),
-                )],
-            );
+            names(&analyzer, 0, &[("Local", target(0, 1))]);
         }
         #[test]
         fn qualified_and_aliased_type_names_resolve_canonically() {
@@ -1362,7 +1553,7 @@ mod name_resolution {
                     "main",
                     "comp Alias := util::Type; first: util::Type; second: Alias;",
                 ),
-                ("util", "pub Type: type = int32;"),
+                ("util", "pub comp Type: type = int32;"),
             ]);
             names(
                 &analyzer,
@@ -1378,7 +1569,7 @@ mod name_resolution {
         fn cast_resolves_operand_and_target_name() {
             let analyzer = resolved(&[(
                 "main",
-                "Type: type = int32; source := 1; result := source as Type;",
+                "comp Type: type = int32; source := 1; result := source as Type;",
             )]);
             names(
                 &analyzer,
@@ -1390,7 +1581,7 @@ mod name_resolution {
         fn struct_construction_resolves_owner_and_values_but_not_field_spelling() {
             let analyzer = resolved(&[(
                 "main",
-                "Owner: type = struct { field: int32 }; value := 1; result := Owner { field: value };",
+                "comp Owner: type = struct { field: int32 }; value := 1; result := Owner { field: value };",
             )]);
             names(
                 &analyzer,
@@ -1416,20 +1607,80 @@ mod name_resolution {
         #[test]
         fn field_definitions_cannot_supply_lexical_names() {
             reject_source(
-                "Owner: type = struct { field: int32 }; result := field;",
+                "comp Owner: type = struct { field: int32 }; result := field;",
                 &["field"],
             );
         }
         #[test]
         fn variant_definitions_cannot_supply_lexical_names() {
             reject_source(
-                "Owner: type = enum { Variant }; result := Variant;",
+                "comp Owner: type = enum { Variant }; result := Variant;",
                 &["Variant"],
             );
         }
+
+        #[test]
+        fn type_bindings_require_explicit_comp() {
+            for source in [
+                "Point: type = struct { x: int32 };",
+                "Number: type = int32;",
+                "Number := int32;",
+                "fn f() { Number: type = int32; }",
+                "comp Original: type = int32; Alias: type = Original;",
+                "comp Original: type = int32; const Alias := Original;",
+                "comp Original: type = int32; fn f() { Alias := Original; }",
+                "comp Original: type = int32; Alias, value := Original, 1;",
+            ] {
+                reject_source(source, &["requires explicit comp"]);
+            }
+        }
+
+        #[test]
+        fn local_type_aliases_share_declaration_identity_without_exporting_names() {
+            let analyzer = resolved(&[(
+                "main",
+                "fn f() { comp T: type = struct { x: int32 }; comp U := T; value: U; }",
+            )]);
+            names(&analyzer, 0, &[("T", target(0, 1)), ("U", target(0, 1))]);
+            let ns = &analyzer.symbols.namespaces[&FileId(0)];
+            assert_eq!(ns.names.len(), 1);
+            assert!(!ns.names.contains_key("T"));
+            reject(
+                analyzer
+                    .symbols
+                    .resolve_path(FileId(0), &["main".into(), "T".into()]),
+                &["T"],
+            );
+        }
+
+        #[test]
+        fn inline_type_multi_bindings_get_independent_identities() {
+            let analyzer = resolved(&[(
+                "main",
+                "comp A, comp B := int32, int64; fn f() { comp C, comp D := int32, int64; c: C; d: D; }",
+            )]);
+            names(&analyzer, 0, &[("C", target(0, 3)), ("D", target(0, 4))]);
+            assert_eq!(analyzer.symbols.namespaces[&FileId(0)].names.len(), 3);
+        }
+
+        #[test]
+        fn local_types_are_ordered_and_scoped() {
+            reject_source("fn f() { value: T; comp T: type = int32; }", &["T"]);
+            reject_source(
+                "fn f() { if true { comp T: type = int32; }; value: T; }",
+                &["T"],
+            );
+            reject_source("fn f() { comp T: type = struct { next: *T }; }", &["T"]);
+        }
+
+        #[test]
+        fn recursive_file_type_names_resolve_without_layout_checking() {
+            let analyzer = resolved(&[("main", "comp Node: type = struct { next: *Node };")]);
+            names(&analyzer, 0, &[("Node", target(0, 0))]);
+        }
     }
     mod phase_06_traversal {
-        //! Each name-bearing child is exercised directly, without a signature stub gate.
+        //! Each name-bearing child is exercised directly as well as through file traversal.
         use super::*;
         use crate::frontend::identifier::LabelId;
 
@@ -1876,6 +2127,60 @@ mod name_resolution {
                 .unwrap();
             assert_eq!(table.resolve_lexical("label"), None);
             assert_eq!(table.resolve_label("value"), None);
+        }
+
+        #[test]
+        fn failed_block_traversal_restores_scope_and_discards_bindings() {
+            let mut statements = body("if true { temporary := 1; Missing; };");
+            let symbols = empty_symbols();
+            let mut ids = LocalIdAllocator::default();
+            let mut context = context(&symbols, &mut ids);
+            reject(
+                Analyzer::resolve_name_statement(&mut statements[0], &mut context),
+                &["Missing"],
+            );
+            assert_eq!(context.lexical.depth(), 2);
+            assert_eq!(context.lexical.resolve_lexical("temporary"), None);
+        }
+
+        #[test]
+        fn failed_function_signature_restores_function_scope() {
+            let mut ast = parse("fn f(p: int32, p: int32) {}");
+            let symbols = empty_symbols();
+            let mut ids = LocalIdAllocator::default();
+            let mut context = context(&symbols, &mut ids);
+            reject(ast.resolve_name(&mut context), &["p"]);
+            assert_eq!(context.lexical.depth(), 2);
+            assert_eq!(context.lexical.resolve_lexical("p"), None);
+        }
+
+        #[test]
+        fn unsupported_nodes_return_errors_without_panics() {
+            let mut ast = parse("fn f() {}");
+            let StatementKind::FunctionDeclaration(fun) = &mut ast.statements[0].kind else {
+                unreachable!()
+            };
+            fun.signature.generic_parameters.push("T".into());
+            let symbols = empty_symbols();
+            let mut ids = LocalIdAllocator::default();
+            let mut context = context(&symbols, &mut ids);
+            reject(ast.resolve_name(&mut context), &["generic"]);
+            assert_eq!(context.lexical.depth(), 2);
+            let mut expr = Expression::at(
+                ExpressionKind::QualifiedAccess {
+                    segments: vec!["x".into()],
+                },
+                Span::new(1, 1),
+            );
+            reject(
+                Analyzer::resolve_name_expression(&mut expr, &mut context),
+                &["legacy"],
+            );
+            let mut statement = parse("fn nested() {}").statements.remove(0);
+            reject(
+                Analyzer::resolve_name_statement(&mut statement, &mut context),
+                &["nested"],
+            );
         }
     }
 

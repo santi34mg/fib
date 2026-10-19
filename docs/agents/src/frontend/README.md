@@ -6,16 +6,15 @@ Active modules are [`tokenizer.rs`](../../../../src/frontend/tokenizer.rs),
 source module in this checkout.
 
 Working: source -> tokens -> syntax AST, including pending annotation slots.
-Unified `[pub] [const | comp]` bindings include type-valued initializers
-(`Name: type = ...;`); modifier flags are syntax, not implemented semantic policy.
-Working utilities: lexical scope insertion/lookup/exit and separate labels.
-Partial analysis: plan/unit ID validation, file declaration collection, and some
-name traversal/lexical lookup. Name/alias/visibility resolution remains incomplete;
-type/member resolution, generics, initialization and annotation validation are
-sketches. The phased name-resolution suite specifies intended behavior with
-ordinary failing tests, rather than certifying a completed analyzer. All analyzer
-tests and helpers are in [`analyzer/test.rs`](../../../../src/frontend/analyzer/test.rs),
-with six inline phases under `name_resolution`; see [validation](../../tests/README.md).
+Unified `[pub] [const | comp]` bindings include type-valued initializers.
+Analysis requires explicit `comp` for type bindings (`comp Name: type = ...;`).
+Working name resolution: plan/unit validation, annotated declaration collection,
+lexical lookup/order, qualified paths, visibility, and compile-time aliases with
+cycle detection. Lexical scope utilities also provide separate label storage.
+Type/member resolution, generics, initialization and full completion validation
+remain sketches. All analyzer tests/helpers are in
+[`analyzer/test.rs`](../../../../src/frontend/analyzer/test.rs), including six
+passing inline phases under `name_resolution`; see [validation](../../tests/README.md).
 
 - [Tokenizer (legacy lexer page)](lexer.md)
 - [Parser and current syntax](parser.md)

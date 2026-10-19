@@ -4,17 +4,17 @@ Analysis/test status updated against the implementation on 2026-10-19. See the
 [current implementation guide](agents/README.md) and [roadmap](roadmap/README.md).
 
 This checkout defines **interfaces and data models**, not a working compilation
-pipeline. Tokenization and parsing work independently. Analysis partially
-validates named units, collects declarations and traverses name uses, but cannot
-produce a completed analyzed project. `AnalyzedProject -> Ir` lowering, SSA
+pipeline. Tokenization, parsing, and name resolution work independently. The name
+pass validates named units, annotates declarations, and resolves names/aliases,
+but typing and completion cannot yet produce a fully analyzed project. `AnalyzedProject -> Ir` lowering, SSA
 construction/verification, and LLVM emission remain explicit-error sketches. Build-file interpretation, object generation, and linking
 remain separate unfinished work.
 
 ## Present baseline and orchestration
 
 Working components are tokenization, parsing, source AST construction, lexical
-scope storage, diagnostics, and raw IR data/access/formatting utilities. Scope
-storage is not language-level name resolution; IR records are not verified SSA.
+scope storage, name resolution, diagnostics, and raw IR data/access/formatting
+utilities. IR records are not verified SSA.
 
 `driver::{run_pipeline, run_frontend, parse_files, lower_to_ir}` all return
 explicit unimplemented errors. `BuildPlan` explicitly enumerates named files;
@@ -77,14 +77,13 @@ infer even builtin expression types, or turn fields into lexical bindings.
 
 ## Analysis contracts
 
-`Analyzer::new(BuildPlan, Vec<CompilationUnit>)` validates plan/unit file IDs and
-creates the file-name registry. `collect_declarations` creates per-file declaration
-slots and visibility flags, rejecting duplicates and invalid top-level statements;
-it does not yet annotate binding sites. Name resolution partially traverses
-initializers and expressions, but parameters, aliases, qualified target annotations,
-access checks and many statement/expression branches remain unfinished. Pending
-branches return errors or panic through `todo!()`. `Analyzer::analyze` still cannot
-complete successfully. The intended pass order is:
+`Analyzer::new(BuildPlan, Vec<CompilationUnit>)` validates plan/unit IDs through
+`ProjectSymbols::from_plan` and retains paths for diagnostics. Collection annotates
+source-ordered file bindings and reserves private local compile-time type slots.
+`resolve_names` resolves file aliases, traverses names on the original AST, and
+validates name/binding completeness. Both staged methods run once in order;
+failed passes cannot be retried. No additional project wrapper is introduced.
+`Analyzer::analyze` still cannot complete successfully. The pass order is:
 
 1. Register only files named in the build plan and collect file declarations.
 2. Resolve lexical names, file paths, visibility, and compile-time aliases.
@@ -94,24 +93,25 @@ complete successfully. The intended pass order is:
 
 `ResolveContext` combines the current file, shared `ProjectSymbols`, and a lexical
 `SymbolTable`; namespaces are not scope stacks. `TypeContext` can resolve members
-without inserting their spellings into lexical scopes. Basic scope storage exists,
-but file fallback, alias/access rules and complete language-level scope handling
-remain unfinished.
+without inserting their spellings into lexical scopes. The name pass enforces
+lexical order, scope lifetime, file fallback, alias visibility, and cycle detection.
+Member lookup and semantic typing remain unfinished.
 
 Identities live separately from source strings:
 
-- `DeclId` identifies a declaration within a file.
+- `DeclId` identifies a file binding or a private, lexically scoped compile-time type.
 - `LocalId` and `LabelId` are intended to be project-unique allocations, in separate
   namespaces.
 - `ResolvedName` identifies a file/declaration entity or local binding.
 - Semantic `TypeId` indexes one project's `SemanticTypes`, not a backend layout.
 
-See [name resolution](name-resolution.md) for the language rules that future
-passes must enforce. Forward name visibility does not permit reading a later
+See [name resolution](name-resolution.md) for the implemented rules and remaining
+semantic boundary. Forward name visibility does not permit reading a later
 uninitialized variable. Local value declarations instead resolve all initializer
 expressions before introducing any new bindings, including all members of a
-multi-binding. This is the test specification, not the current local-insertion
-implementation. Compile-time aliases retain forward-chain resolution and do not
+multi-binding. File aliases support forward chains; local aliases follow declaration
+order and cannot reuse registered file names/roots. Type bindings require explicit
+`comp`, including inline local types and aliases to those types. Aliases do not
 allocate runtime storage.
 
 ### AST annotations
@@ -189,10 +189,9 @@ All analyzer tests and helpers are in
 [`src/frontend/analyzer/test.rs`](../src/frontend/analyzer/test.rs). Its inline
 `name_resolution` module has six independently runnable phases for files,
 parameters/locals, references/functions, aliases, type/member names and traversal.
-The 217 specification tests include ordinary failures for unfinished behavior:
-34 pass and 183 fail. The other 178 library tests pass when the specification is
-excluded. See [validation commands](agents/tests/README.md); the full test command
-currently exits unsuccessfully.
+All 235 tests in those phases pass, alongside the rest of the 413-test library
+suite. See [validation commands](agents/tests/README.md). These name-resolution
+checks do not establish type correctness or executable compilation.
 
 There is no checked-in integration/e2e harness. Samples and the experimental
 standard library may contain stale syntax and are not automatically compiled or

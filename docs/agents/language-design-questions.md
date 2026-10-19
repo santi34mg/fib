@@ -5,8 +5,8 @@ These are implementation questions, not completed features. Compare source and
 
 - How will `build.fib` interpretation construct named plans and report source errors?
 - How will declaration collection reconcile forward visibility with initialization order?
-- How will file visibility, aliases, cycles, no-capture boundaries and generic identities
-  be validated without filesystem discovery during semantic resolution?
+- How will nested no-capture functions and generic identities extend the existing
+  file visibility, alias-cycle, and lexical name-resolution rules?
 - What syntax will labels and generic parameters have? Current reserved annotation
   slots/string lists do not define that syntax.
 - How will source records/ranges survive analysis and SSA lowering for diagnostics?

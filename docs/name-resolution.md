@@ -1,148 +1,105 @@
-# Name resolution: implementation status and design
+# Name resolution
 
-> **Boundary:** Tokenization/parsing and lexical table operations exist. The
-> analyzer partially validates named units, collects declarations, and traverses
-> name uses. Name resolution is incomplete; path/alias and type passes,
-> initialization validation, and lowering remain unfinished. The phased tests
-> specify intended behavior and deliberately fail where it is not implemented.
+The name pass runs on the original parsed AST through `Analyzer::new`,
+`collect_declarations`, and `resolve_names`. It resolves bindings, file paths,
+visibility, and compile-time aliases. Successful name resolution is not successful
+compilation: semantic typing, member lookup, initialization validation, lowering,
+and execution remain unfinished.
 
-## What the parser records today
+## Files and identities
 
-```fib
-Count: type = int32;
-const snapshot := other::counter;
-fn read(value: Count) Count {
-    result := other::calculate(value);
-    return result;
-}
-```
+The build plan supplies every visible file's `FileId`, canonical name, and path.
+Registration rejects duplicate IDs/names and mismatched compilation units without
+reading or discovering files. File names may contain `::`, such as `pkg::math`.
 
-Names and type names retain identifier segments, source spans, and pending
-semantic annotations. `other::calculate` is an unresolved qualified identifier;
-`object.field` is unresolved member access. Parsing does not decide which names
-are files, aliases, declarations, locals, or valid members.
+Collection assigns source-ordered `DeclId { file_id, index }` slots to file
+bindings, including each member of a multi-binding. It annotates binding sites
+without resolving their initializers. File declarations are forward visible;
+that does not make reads of later uninitialized variables legal.
 
-The active grammar includes unified `[pub] [const | comp]` bindings, including
-`Name: type = TypeExpression;`, and ordinary functions. Parsing `comp` records a
-modifier; it does not establish alias semantics. `const` records immutability and
-is not an alias. Imports, labels and leading-`::` control-flow references are not
-parsed; `pub fn` also needs a direct AST fixture today.
+Inline local compile-time types receive additional declaration slots after all
+of their file's top-level declarations. Those slots are absent from the file's
+name map: `file::LocalType` cannot expose a lexically scoped type. Ordinary locals,
+parameters, local alias binding sites, and switch payload bindings receive
+project-unique `LocalId`s. Alias uses carry the canonical target's identity.
 
-## Implemented lexical infrastructure
+## Lookup and visibility
 
-`SymbolTable` maintains a permanent root frame and explicitly entered scopes.
-Lookup searches innermost to outermost. A frame rejects duplicate bindings in
-that same frame without replacing the original identity. Exiting the root is an
-error; exiting a nested scope removes its bindings from lookup.
+Unqualified lookup checks lexical bindings, current-file declarations, then
+registered file names. Qualified lookup selects the longest matching canonical
+file prefix before considering a lexical or current-file alias. A canonical file
+path bypasses a same-spelled runtime local. Only files, including aliases to files,
+can be intermediate namespaces; variables, functions, and types can be final targets.
 
-Labels have a separate scoped table, so a label and lexical binding can share a
-spelling. `LocalBinding` can hold a local identity or a compile-time alias entity;
-multiple table entries can refer to the same entity. These operations are tested
-as data-structure behavior, not produced by a completed source resolver.
+File declarations are private unless `pub`. Each declaration selected across a
+file boundary must be public before its alias target is followed. Resolution uses
+registered names, never include paths or recursive filesystem imports.
 
-In particular, the table itself does not enforce cross-frame redeclaration
-policy, declaration order, capture boundaries, alias legality, or label-target
-legality. Do not infer the full language shadowing policy from innermost lookup.
+## Compile-time types and aliases
 
-## Partial and unfinished project passes
-
-`Analyzer::new` checks plan/unit ID agreement and creates a name registry;
-`collect_declarations` creates per-file slots and rejects duplicates and invalid
-top-level statements. Binding annotations remain pending. Name traversal handles
-some expression forms and local lookup, but file fallback, qualified target
-annotation/access checking, parameters, aliases and most statements are unfinished.
-Local insertion currently precedes initializer traversal and does not fill the
-binding annotation; this differs from the specification below.
-
-`ProjectSymbols::from_plan` and `resolve_path`, type resolution and analysis
-completion/initialization validation return not-implemented errors. Other pending
-name branches may panic through `todo!()`. Parsing leaves annotations pending;
-public semantic structures are not proof a completion pass has run.
-
-The intended pass order is declaration collection, names/aliases, types/members,
-then initialization and annotation validation. Driver frontend orchestration and
-`AnalyzedProject` to IR lowering are also unimplemented. No successful parse
-establishes a runnable or even type-correct program.
-
-## Planned files, paths, and visibility
-
-A source file is intended to own a namespace. The build-plan contract explicitly
-enumerates named files; future path resolution must not discover extra files on
-disk. `::` is intended for static selection through file namespaces or aliases;
-functions and variables may be final declarations, not intermediate namespaces.
-Locals are intended to take precedence for unqualified lookup, while a qualified
-file path can bypass a same-spelled local.
-
-File declarations are intended to be private by default, with `pub` exporting a
-binding. Alias chains should preserve entity identity and obey access checks;
-alias-only cycles should be rejected. Access checks and alias traversal are not
-implemented.
-Legacy include-path/import search is not an alternative implemented resolver;
-see [Imports](parsing/imports.md).
-
-## Intended `comp` versus `const`
-
-The proposed `comp` binding aliases compile-time entities (files, functions,
-file variables, or types), without separate runtime storage. An alias to a
-mutable file variable is intended to denote the same storage. It is not a
-promise of arbitrary compile-time expression evaluation. Local `comp` aliases
-are intended not to target parameters or function-local variables.
-
-The following parses today; its alias semantics remain unfinished:
+Type bindings require explicit `comp`:
 
 ```fib
-comp File := other;
-comp calculate := File::calculate;
-comp counter := File::counter;
-pub comp Color: type = struct { r: uint32, g: uint32, b: uint32 };
+comp Point: type = struct { x: int32, y: int32 };
+comp Number: type = int32;
+comp Alias := Point;
 ```
 
-By contrast, parsed `const` declares a new binding with an immutability flag,
-not an alias node. Intended const semantics copy an initializer value rather
-than creating a live alias to variable storage; constness of a pointer binding
-alone should not imply immutable pointee storage. Enforcement is pending.
+`Point: type = struct { ... };` still parses, but analysis rejects it. The name
+pass recognizes explicit metatype annotations, inline type values, and references
+to known type declarations. General expression typing is separate.
 
-First-class types and callable function values are design goals. Function values
-are intended as plain function pointers without captured local state; APIs
-needing callback state would take a separate context pointer with a caller-managed
-lifetime. Nested no-capture function support remains undecided and is not parsed.
+An inline type owns a declaration identity. An entity-reference initializer aliases
+an existing file or declaration, without creating runtime storage. For example,
+an alias to a mutable file variable denotes that variable's original identity.
+`const` creates an independent value binding; it does not create an alias.
+Computed `comp` initializers and missing initializers are rejected. Compile-time
+multi-bindings require one initializer per binding; runtime tuple arity is left
+to typing.
 
-## Planned lexical policy and labels
+File aliases support forward chains across files. A dependency walk records
+unvisited, resolving, and resolved aliases, caches final targets, and reports a
+cycle chain when it reaches an alias already being resolved.
 
-The proposed policy rejects redeclaration of an enclosing parameter or local
-within a function, allows reuse across sibling blocks/functions, and permits a
-parameter to share a file declaration's spelling. Struct fields are separate
-from lexical bindings. The current source resolver does not enforce this policy.
+Local aliases follow declaration order and cannot target parameters or runtime
+locals. They can target previously introduced local compile-time types. A local
+alias cannot reuse a registered file name or the first segment of a registered
+file path, preventing ambiguity between aliases and canonical file paths.
 
-Named control-flow targets are intended to use a separate namespace, with
-references beginning `::` (for example, design notation `break ::outer;`). Exact
-label declaration syntax and permitted break/continue targets remain unspecified.
-The parser currently accepts only bare `break;` and `continue;`.
+## Lexical lifetime and traversal
 
-## Intended local initializer visibility
+A new local is introduced after its type names and initializer resolve. All
+initializers in a multi-binding resolve before any member is introduced. Thus
+`x := x + 1;` can refer to a file-level `x` on its right side; without an existing
+binding it fails. Local aliases and inline local types have no forward visibility.
 
-The test specification resolves all initializer expressions before registering
-any new local value bindings. In `x := x + 1;`, the RHS must refer to an existing
-binding (for example, a file declaration); without one, it is unresolved. Later
-uses refer to the new local. For `a, b := 1, a;`, the RHS `a` cannot refer to the
-new `a`, because the entire shared initializer list precedes both new bindings.
-The no-redeclaration rule still rejects reuse of enclosing parameters/locals.
+Redeclaring an active enclosing lexical binding is rejected. Sibling blocks and
+separate functions can reuse spellings, and locals can share file-declaration
+spellings. Function signature type names resolve before parameters are inserted;
+bodyless functions also receive parameter annotations. Blocks and switch arms
+restore their scopes on both success and failure.
 
-This is a name-visibility rule, not execution during analysis. Compile-time alias
-chains retain their separate forward-resolution contract.
+All current name-bearing expression, statement, and type children are traversed.
+Field and variant spellings are members, never lexical bindings. The pass resolves
+member receivers and constructor field values while leaving member, semantic type,
+and expression annotations pending. Nested functions, reserved generic declarations,
+and legacy unannotatable qualified-access nodes return explicit errors. Label
+storage remains separate; label syntax and control-flow target legality are deferred.
 
-## Planned forward references and initialization
+## API and validation
 
-File declaration collection predeclares names for forward references, unlike
-local binding registration. File variable initialization is intended to run in
-declaration order, rejecting reads of later uninitialized variables. This is
-distinct from whether a name exists. Initialization validation is not implemented;
-recursive type/value dependency rules still need definition.
+Collection and resolution each run once, in that order. Failed passes cannot be
+retried on the partially annotated analyzer. `Ast::resolve_name` is the shared file
+traversal; callers of this lower-level helper must supply collected declarations
+and normalized file aliases. `Analyzer::resolve_names` validates all applicable
+name/binding slots before returning success. No additional project wrapper exists.
 
-Evidence: `src/frontend/namespace.rs`, `symbol_table.rs`, `scope.rs`,
-`analyzer.rs`, and [`analyzer/test.rs`](../src/frontend/analyzer/test.rs). All
-analyzer tests and helpers are in that single file; the inline `name_resolution`
-module contains six entity-focused phases specifying identity and visibility
-behavior using parsed source and isolated AST/table fixtures. They contain ordinary failing tests for unfinished behavior. The suite
-does not run type checking, initialization validation, or compiled programs; see
-[test commands and validation](agents/tests/README.md).
+Source failures use `CompilerError` with the name category, available point span,
+and owning path. Compilation units do not retain source text, so these diagnostics
+do not invent source lines. Source spellings/spans and later-pass annotations are
+preserved.
+
+`Analyzer::analyze` still errors after the name pass because typing and full
+analysis-completion validation are unfinished. The six inline specification phases
+in `src/frontend/analyzer/test.rs` exercise the working resolver; see
+[validation](agents/tests/README.md).

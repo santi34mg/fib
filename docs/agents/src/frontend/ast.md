@@ -24,16 +24,18 @@ Unified bindings use `VariableDeclaration` with independent `is_pub`, `is_const`
 and `is_comp` flags; `const` and `comp` are mutually exclusive in the grammar.
 An explicit annotation is stored in `ty`, and the optional initializer in
 `expression`. Typed declarations may omit initializers for compatibility.
-`Name: type = ...;` is a variable binding with an arbitrary expression
+`comp Name: type = ...;` is a variable binding with an arbitrary expression
 initializer, not a parser-produced `TypeDeclaration`. Explicit type syntax such
 as `struct { ... }` produces `ExpressionKind::TypeValue(TypeExpression)`;
 named references such as `pkg::Value` and type-producing calls remain ordinary
 `QualifiedIdentifier` and `Call` expressions. Semantic analysis must determine
 whether these expressions denote types. Initializers retain pending expression
 annotations, enclosed type syntax retains pending type annotations, and the
-binding retains its pending binding slot.
+binding is annotated by declaration collection/name resolution. Analysis rejects
+type bindings without explicit `comp`; the parser retains that syntax.
 Multi-bindings retain individual declaration records and a separate shared
 initializer list introduced by the final `:=` (or typed `=`).
 
-Completion validation is unimplemented. A public AST or `AnalyzedProject` with
+Name/binding completion is validated by the name pass. Full semantic completion
+validation is unimplemented. A public AST or `AnalyzedProject` with
 filled-looking records is not evidence that semantic checking ran.
