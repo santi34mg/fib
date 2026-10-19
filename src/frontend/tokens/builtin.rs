@@ -26,7 +26,7 @@ impl Builtin {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(u32)]
 pub enum BuiltinType {
     /// Represents that the value is itself a `type`.
@@ -145,7 +145,7 @@ impl fmt::Display for BuiltinType {
 }
 
 /// Builtin functions, primarily for string building. Spelled `@name` in source.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BuiltinFunction {
     /// `@concat(a: string, b: string) string` — heap-allocate the concatenation.
     Concat,

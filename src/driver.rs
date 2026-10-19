@@ -12,7 +12,7 @@ pub enum PipelineGoal {
     Binary,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CompilationUnit {
     /// ID of the source file that generated this unit
     pub source_file_id: FileId,

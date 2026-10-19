@@ -12,7 +12,7 @@ use crate::frontend::{
 /// An expression together with the source position it starts on. The
 /// analyzer records these spans so type errors can point at the exact
 /// offending sub-expression.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Expression {
     pub kind: ExpressionKind,
     pub span: Span,
@@ -29,7 +29,7 @@ impl Expression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExpressionKind {
     /// Binary expressions like `1 + 1`
     BinaryExpresison(BinaryExpression),

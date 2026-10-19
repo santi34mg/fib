@@ -9,7 +9,7 @@ use crate::frontend::{
 };
 
 /// A syntax type expression together with the source position it starts on.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeExpression {
     pub kind: TypeExpressionKind,
     pub span: Span,
@@ -26,7 +26,7 @@ impl TypeExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeExpressionKind {
     Builtin(BuiltinType),
     Function {

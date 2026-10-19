@@ -3,7 +3,7 @@ use crate::frontend::ast::{
     function_parameter::FunctionParameter, type_expression::TypeExpression,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionSignature {
     pub identifier: String,
     /// The function's sole binding slot; FunctionDeclaration does not duplicate it.

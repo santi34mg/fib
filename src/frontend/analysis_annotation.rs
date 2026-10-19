@@ -24,44 +24,44 @@ use crate::frontend::{
 };
 
 /// Attach to a name use, including the final target of a qualified path.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct NameAnnotation {
     pub resolved: Option<ResolvedName>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BindingId {
     Declaration(DeclId),
     Local(LocalId),
 }
 
 /// Attach to binding sites, including parameters and pattern bindings.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct BindingAnnotation {
     pub binding: Option<BindingId>,
 }
 
 /// Reserved for label declarations and control-flow target uses, not ordinary
 /// names. Not embedded until label syntax is defined.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct LabelAnnotation {
     pub target: Option<LabelId>,
 }
 
 /// The type denoted by a syntax type expression (not the metatype of a value).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct TypeAnnotation {
     pub resolved: Option<TypeId>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValueCategory {
     Value,
     ImmutablePlace,
     MutablePlace,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExpressionInfo {
     pub ty: TypeId,
     pub category: ValueCategory,
@@ -69,20 +69,20 @@ pub struct ExpressionInfo {
     pub type_value: Option<TypeId>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct ExpressionAnnotation {
     pub resolved: Option<ExpressionInfo>,
 }
 
 /// Member indices refer to the owner's semantic field/variant list, not locals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemberKind {
     Field(u32),
     EnumVariant(u32),
     Length,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MemberInfo {
     pub owner: TypeId,
     pub kind: MemberKind,
@@ -92,7 +92,7 @@ pub struct MemberInfo {
 
 /// Attach to field accesses, struct initializer fields, and variant selections.
 /// Resolving a member never creates or rewrites a lexical binding.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MemberAnnotation {
     pub resolved: Option<MemberInfo>,
 }

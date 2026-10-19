@@ -1,6 +1,6 @@
 use crate::frontend::analysis_annotation::NameAnnotation;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct QualifiedIdentifier {
     pub segments: Vec<String>,
     pub annotation: NameAnnotation,

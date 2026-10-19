@@ -18,7 +18,7 @@ pub mod variable_declaration;
 
 use statement::Statement;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Ast {
     pub statements: Vec<Statement>,
 }

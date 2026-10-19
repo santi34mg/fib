@@ -6,13 +6,13 @@ use crate::frontend::ast::{
 
 /// A statement together with the source position it starts on, used to point
 /// analysis errors at the relevant spot in the source.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Statement {
     pub kind: StatementKind,
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum StatementKind {
     FunctionDeclaration(FunctionDeclaration),
     VariableDeclaration(VariableDeclaration),

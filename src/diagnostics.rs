@@ -21,7 +21,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 /// 1-based start position of a token or node in the source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub line: usize,
     pub column: usize,
