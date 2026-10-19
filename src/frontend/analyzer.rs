@@ -2,7 +2,7 @@
 //! No pass here executes yet. The only lowering boundary is `AnalyzedProject`
 //! to `Ir`; analysis never manufactures a separate typed AST or emits IR.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, bail};
 
@@ -73,15 +73,29 @@ impl Analyzer {
     /// Validate that compilation-unit IDs match exactly the named build-plan files,
     /// then construct ProjectSymbols. Do not discover additional files.
     pub fn new(plan: BuildPlan, units: Vec<CompilationUnit>) -> anyhow::Result<Self> {
-        let mut files_by_name = HashMap::new();
-        let mut plan_file_iter = plan.files.into_iter();
-        for unit in units.iter() {
-            let file = plan_file_iter
-                // validate the unit exists in the plan
-                .find(|source_file| source_file.id == unit.source_file_id)
-                .context(format!("unit {:?} not found in plan", unit.source_file_id))?;
-            files_by_name.insert(file.name, file.id);
+        let plan_set = plan
+            .files
+            .iter()
+            .map(|file| file.id)
+            .collect::<HashSet<FileId>>();
+        if plan_set.len() != plan.files.len() {
+            bail!("duplicate file IDs in build plan");
         }
+        let unit_set = units
+            .iter()
+            .map(|unit| unit.source_file_id)
+            .collect::<HashSet<FileId>>();
+        if unit_set.len() != units.len() {
+            bail!("duplicate file IDs in compilation units");
+        }
+        if plan_set != unit_set {
+            bail!("compilation-unit IDs do not match build-plan file IDs");
+        }
+        let files_by_name = plan
+            .files
+            .into_iter()
+            .map(|file| (file.name, file.id))
+            .collect();
         Ok(Self {
             units,
             symbols: ProjectSymbols {
@@ -121,6 +135,9 @@ impl Analyzer {
                             span: statement.span,
                             alias_target: None,
                         });
+                        let None = names.get(&var_decl.identifier) else {
+                            bail!("duplicate identifier {}", var_decl.identifier)
+                        };
                         names.insert(
                             var_decl.identifier.clone(),
                             DeclId {
@@ -141,6 +158,9 @@ impl Analyzer {
                             span: statement.span,
                             alias_target: None,
                         });
+                        let None = names.get(&fun_decl.signature.identifier) else {
+                            bail!("duplicate identifier {}", fun_decl.signature.identifier)
+                        };
                         names.insert(
                             fun_decl.signature.identifier.clone(),
                             DeclId {
@@ -154,10 +174,10 @@ impl Analyzer {
                         ref bindings,
                         values: _,
                     } => {
-                        for var_decl in bindings {
+                        for binding in bindings {
                             declarations.push(Declaration {
-                                name: var_decl.identifier.clone(),
-                                visibility: if var_decl.is_pub {
+                                name: binding.identifier.clone(),
+                                visibility: if binding.is_pub {
                                     Visibility::Public
                                 } else {
                                     Visibility::Private
@@ -165,8 +185,11 @@ impl Analyzer {
                                 span: statement.span,
                                 alias_target: None,
                             });
+                            let None = names.get(&binding.identifier) else {
+                                bail!("duplicate identifier {}", binding.identifier)
+                            };
                             names.insert(
-                                var_decl.identifier.clone(),
+                                binding.identifier.clone(),
                                 DeclId {
                                     file_id: unit.source_file_id,
                                     index: idx as u32,
@@ -209,6 +232,10 @@ impl Analyzer {
                         // namespace semantics without a problem
                         if let Some(ref mut fbody) = function_declaration.body {
                             context.lexical.enter_scope(ScopeKind::Function);
+                            Self::resolve_name_signature(
+                                &mut function_declaration.signature,
+                                &mut context,
+                            )?;
                             for fstmt in fbody.statements.iter_mut() {
                                 Self::resolve_name_statement(fstmt, &mut context)?;
                             }
@@ -223,15 +250,13 @@ impl Analyzer {
                         }
                     }
                     StatementKind::MultiVariableDeclaration {
-                        ref mut bindings,
-                        values: _,
+                        bindings: _,
+                        ref mut values,
                     } => {
-                        // the identifiers are already in the namespace
-                        // we only resolve the rhs if any
-                        for variable_declaration in bindings.iter_mut() {
-                            if let Some(ref mut expression) = variable_declaration.expression {
-                                Self::resolve_name_expression(expression, &mut context)?;
-                            }
+                        // the identifiers (bindings) are already in the namespace
+                        // we only resolve the rhs (values) if any
+                        for expression in values.iter_mut() {
+                            Self::resolve_name_expression(expression, &mut context)?;
                         }
                     }
                     _ => {}

@@ -13,7 +13,7 @@ impl From<String> for FileName {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourceFile {
     pub id: FileId,
     pub name: FileName,

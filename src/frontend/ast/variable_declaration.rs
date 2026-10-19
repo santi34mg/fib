@@ -3,7 +3,7 @@ use crate::frontend::{
     ast::{expression::Expression, type_expression::TypeExpression},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VariableDeclaration {
     pub identifier: String,
     /// Also owns the binding identity when nested in a multi-declaration.
