@@ -10,6 +10,8 @@ use super::{ResolveContext, TypeContext, not_implemented};
 impl Analyzer {
     /// Manage block lifetimes, declaration ordering, pattern bindings, and the
     /// separate control-flow label namespace. Do not insert names at use sites.
+    // TODO(review): Return explicit not-implemented errors for pending statement
+    // cases instead of panicking through todo!(), preserving the Result contract.
     pub fn resolve_name_statement(
         statement: &mut Statement,
         context: &mut ResolveContext,

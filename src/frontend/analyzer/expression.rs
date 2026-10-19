@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{Context, bail};
 
 use crate::{
     build_plan::FileName,
@@ -15,6 +15,12 @@ use super::{ResolveContext, TypeContext, not_implemented};
 impl Analyzer {
     /// Resolve name uses, not binding sites. For member access resolve only the
     /// receiver here; never insert a field name or rewrite its source spelling.
+    // TODO(review): For single-segment names, fall back from lexical lookup to
+    // the current file's namespace before reporting an unresolved identifier.
+    // TODO(review): For qualified names, reject missing/private targets and store
+    // the resolved identity in the name annotation; do not discard find's result.
+    // TODO(review): Return explicit not-implemented errors for pending expression
+    // cases instead of panicking through todo!().
     pub fn resolve_name_expression(
         expression: &mut Expression,
         context: &mut ResolveContext<'_>,
@@ -39,26 +45,36 @@ impl Analyzer {
                 }
             }
             ExpressionKind::QualifiedIdentifier(ref mut qualified_identifier) => {
-                // convention is builder sends file names as root::inter::last
-                let mut qi = qualified_identifier.segments.clone();
-                let last_segment = qi.pop().unwrap();
-                let ns_path = qi.join("::");
-                let file_id = context
-                    .symbols
-                    .files_by_name
-                    .get(&FileName(ns_path))
-                    .context("couldn't find referenced root file for namespace")?;
-                let namespace = context
-                    .symbols
-                    .namespaces
-                    .get(file_id)
-                    // this one should never happen because we already verified in the previous pass
-                    // (i think so)
-                    .context("couldn't find referenced namespace")?;
-                namespace
-                    .declarations
-                    .iter()
-                    .find(|decl| decl.name == last_segment);
+                if qualified_identifier.segments.len() == 1 {
+                    let identifier = qualified_identifier.segments.first().unwrap();
+                    if let Some(resolved_name) = context.lexical.resolve_lexical(identifier) {
+                        qualified_identifier.annotation.resolved = Some(resolved_name);
+                    } else {
+                        bail!("unsersolved identifier: {}", identifier)
+                    }
+                } else {
+                    // convention is builder sends file names as root::inter::last
+                    let mut qi = qualified_identifier.segments.clone();
+                    let last_segment = qi.pop().unwrap();
+                    let ns_path = qi.join("::");
+                    let file_id = context
+                        .symbols
+                        .files_by_name
+                        .get(&FileName(ns_path))
+                        .context("couldn't find referenced root file for namespace")?;
+                    let namespace = context
+                        .symbols
+                        .namespaces
+                        .get(file_id)
+                        // this one should never happen because we already verified in the previous pass
+                        // (i think so)
+                        .context("couldn't find referenced namespace")?;
+                    // TODO
+                    namespace
+                        .declarations
+                        .iter()
+                        .find(|decl| decl.name == last_segment);
+                }
             }
             ExpressionKind::CallToBuiltin {
                 ref mut builtin,

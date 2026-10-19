@@ -9,6 +9,9 @@ use super::{ResolveContext, TypeContext, not_implemented};
 impl Analyzer {
     /// Distinguish file declarations from new LocalId bindings and static comp
     /// aliases. A const initializer creates a value, never an alias identity.
+    // TODO(review): After successful insertion, persist BindingId::Local(local_id)
+    // in variable_declaration.annotation.binding so resolved uses can be linked
+    // back to an annotated binding site rather than a pending declaration.
     pub fn resolve_name_variable_declaration(
         variable_declaration: &mut VariableDeclaration,
         context: &mut ResolveContext<'_>,
