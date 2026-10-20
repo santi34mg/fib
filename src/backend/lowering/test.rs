@@ -16,57 +16,47 @@ fn target() -> TargetSpec {
 }
 
 #[test]
-fn emission_is_explicitly_unimplemented_even_for_empty_ir() {
-    let ir = Ir::new();
-    assert_eq!(
-        emit_llvm(&ir, &target()),
-        Err(BackendError::NotImplemented {
-            operation: "emit_llvm",
-        })
-    );
-    assert!(ir.is_empty());
-}
-
-#[test]
-fn declaration_only_ir_does_not_produce_an_empty_artifact() {
+fn malformed_ir_is_rejected_before_emission() {
     let mut ir = Ir::new();
     ir.functions.push(Function {
-        name: "external_function".into(),
+        name: "bad".into(),
         signature: Signature {
-            params: Vec::new(),
-            results: Vec::new(),
+            params: vec![crate::ir::TypeId(99)],
+            results: vec![],
             variadic: false,
             calling_convention: crate::ir::CallingConvention::C,
         },
         linkage: Linkage::External,
         body: FunctionBody::Declaration,
     });
-    assert!(!ir.is_empty());
     assert!(matches!(
         emit_llvm(&ir, &target()),
-        Err(BackendError::NotImplemented { .. })
+        Err(BackendError::Invalid { .. })
     ));
-    assert_eq!(ir.functions.len(), 1);
+    assert!(verify_input(&ir).is_err());
 }
 
 #[test]
-fn verification_and_target_resolution_cannot_claim_success() {
-    assert!(matches!(
-        verify_input(&Ir::new()),
-        Err(BackendError::NotImplemented {
-            operation: "verify_input"
-        })
-    ));
-    for triple in ["x86_64-unknown-linux-gnu", "i686-unknown-linux-gnu", ""] {
-        let mut spec = target();
-        spec.triple = triple.into();
-        assert!(matches!(
-            resolve_target(&spec),
-            Err(BackendError::NotImplemented {
-                operation: "resolve_target"
-            })
-        ));
-    }
+fn input_verification_runs_real_verifier() {
+    let ir = Ir::new();
+    assert!(verify_input(&ir).is_ok());
+    // The older phase-planning API remains an explicit sketch.
+    assert!(resolve_target(&target()).is_err());
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn target_validation_and_llvm_verification_run() {
+    let ir = Ir::new();
+    let artifact = emit_llvm(&ir, &target()).unwrap();
+    assert!(artifact.ir_text().contains("target datalayout"));
+    assert!(!artifact.data_layout().is_empty());
+    let mut spec = target();
+    spec.triple = "invalid-target".into();
+    assert!(emit_llvm(&ir, &spec).is_err());
+    spec = target();
+    spec.features.push("unknown".into());
+    assert!(emit_llvm(&ir, &spec).is_err());
 }
 
 #[test]
@@ -95,4 +85,95 @@ fn errors_identify_the_unfinished_operation() {
     let as_error: &dyn std::error::Error = &error;
     assert!(as_error.to_string().contains("patch_edges"));
     assert!(as_error.to_string().contains("not implemented"));
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn scalar_calls_preserve_parameters_results_and_void_returns() {
+    use crate::ir::*;
+    let mut ir = Ir::new();
+    ir.types.push(IrType::Integer {
+        width: IntegerWidth::Bits(32),
+        signed: true,
+    });
+    for (name, params, results) in [
+        ("identity", vec![TypeId(0)], vec![TypeId(0)]),
+        ("effect", vec![], vec![]),
+        ("main", vec![], vec![TypeId(0)]),
+    ] {
+        ir.functions.push(Function {
+            name: name.into(),
+            signature: Signature {
+                params,
+                results,
+                variadic: false,
+                calling_convention: CallingConvention::C,
+            },
+            linkage: Linkage::External,
+            body: FunctionBody::Declaration,
+        });
+    }
+    ir.constants.push(Constant {
+        ty: TypeId(0),
+        kind: ConstantKind::Integer { bits: 42 },
+    });
+    let mut builder = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let entry = builder.create_block(&[TypeId(0)]).unwrap();
+    let arg = builder.block_params(entry).unwrap()[0];
+    builder
+        .set_terminator(
+            entry,
+            Terminator::Return {
+                values: vec![Operand::Value(arg)],
+            },
+        )
+        .unwrap();
+    builder.finish(entry).unwrap();
+    let mut builder = FunctionBuilder::new(&mut ir, FunctionId(1)).unwrap();
+    let entry = builder.create_block(&[]).unwrap();
+    builder
+        .set_terminator(entry, Terminator::Return { values: vec![] })
+        .unwrap();
+    builder.finish(entry).unwrap();
+    let mut builder = FunctionBuilder::new(&mut ir, FunctionId(2)).unwrap();
+    let entry = builder.create_block(&[]).unwrap();
+    builder
+        .append_instruction(
+            entry,
+            InstructionKind::Call {
+                callee: FunctionId(1),
+                args: vec![],
+            },
+            &[],
+        )
+        .unwrap();
+    let value = builder
+        .append_instruction(
+            entry,
+            InstructionKind::Call {
+                callee: FunctionId(0),
+                args: vec![Operand::Constant(ConstantId(0))],
+            },
+            &[TypeId(0)],
+        )
+        .unwrap()[0];
+    builder
+        .set_terminator(
+            entry,
+            Terminator::Return {
+                values: vec![Operand::Value(value)],
+            },
+        )
+        .unwrap();
+    builder.finish(entry).unwrap();
+    let artifact = emit_llvm(&ir, &target()).unwrap();
+    assert!(artifact.ir_text().contains("call i32 @identity(i32 42)"));
+    assert!(artifact.ir_text().contains("call void @effect()"));
+    ir.functions[0].signature.calling_convention = CallingConvention::Fib;
+    assert!(
+        emit_llvm(&ir, &target())
+            .unwrap_err()
+            .to_string()
+            .contains("ABI")
+    );
 }

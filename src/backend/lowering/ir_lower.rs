@@ -4,7 +4,7 @@ use crate::ir::Ir;
 
 use super::BackendError;
 
-/// Future proof tied to one immutable IR borrow. No public constructor can
+/// Verification proof tied to one immutable IR borrow. No public constructor can
 /// certify unchecked arena records. This does not certify target support.
 #[derive(Debug)]
 pub struct VerifiedIr<'ir> {
@@ -17,10 +17,11 @@ impl<'ir> VerifiedIr<'ir> {
     }
 }
 
-/// Will invoke `crate::ir::verify_ir` and preserve its diagnostics. No local
+/// Invokes `crate::ir::verify_ir` and preserves its diagnostics. No local
 /// partial check, graph repair, or successful empty-module special case.
-pub fn verify_input(_ir: &Ir) -> Result<VerifiedIr<'_>, BackendError> {
-    Err(BackendError::NotImplemented {
-        operation: "verify_input",
-    })
+pub fn verify_input(ir: &Ir) -> Result<VerifiedIr<'_>, BackendError> {
+    crate::ir::verify_ir(ir).map_err(|e| BackendError::Invalid {
+        message: e.to_string(),
+    })?;
+    Ok(VerifiedIr { ir })
 }

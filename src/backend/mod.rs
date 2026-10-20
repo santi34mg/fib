@@ -1,6 +1,6 @@
-//! Backend architecture sketches consuming only the self-owned SSA IR.
+//! LLVM emission of the initial scalar subset, consuming only verified SSA IR.
 //!
-//! No LLVM emission or fallback compiler is implemented. See README.md.
+//! ABI classification is per function; broader representations remain unfinished.
 
 pub mod lowering;
 
