@@ -553,7 +553,7 @@ impl Flow<'_> {
                 else_branch,
             } => {
                 self.read(condition, &state)?;
-                let known = super::evaluation::boolean(condition, &HashMap::new());
+                let known = super::known_boolean(condition);
                 let mut exits = vec![];
                 if known != Some(false) {
                     exits.extend(self.block(then_branch, state.clone())?);

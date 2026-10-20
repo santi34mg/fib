@@ -34,6 +34,8 @@ pub struct AnalyzedProject {
     pub units: Vec<CompilationUnit>,
     pub symbols: ProjectSymbols,
     pub types: SemanticTypes,
+    /// Original plan paths retained for diagnostics after analysis.
+    pub source_paths: HashMap<FileId, std::path::PathBuf>,
 }
 
 /// Name-pass state for one file. File namespaces are shared, never copied into
@@ -154,6 +156,7 @@ impl Analyzer {
             units: self.units,
             symbols: self.symbols,
             types,
+            source_paths: self.paths.clone(),
         };
         validate_analysis_with_paths(&project, Some(&self.paths))?;
         Ok(project)
@@ -455,9 +458,16 @@ pub fn validate_type_annotations(
     typing::validate_annotations(units, symbols, types)
 }
 
+/// The same statically known condition facts used by structured flow checking.
+pub(crate) fn known_boolean(
+    expression: &crate::frontend::ast::expression::Expression,
+) -> Option<bool> {
+    evaluation::boolean(expression, &HashMap::new())
+}
+
 /// Independently validate annotations, definite initialization and structured flow.
 pub fn validate_analysis(project: &AnalyzedProject) -> anyhow::Result<()> {
-    validate_analysis_with_paths(project, None)
+    validate_analysis_with_paths(project, Some(&project.source_paths))
 }
 
 fn validate_analysis_with_paths(

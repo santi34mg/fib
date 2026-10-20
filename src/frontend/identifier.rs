@@ -11,7 +11,7 @@ pub struct DeclId {
 
 /// Unique within one analyzed project, including across functions and files.
 /// Allocation belongs to analysis, not tokenization or scope insertion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LocalId(pub u32);
 
 /// Unique within one analyzed project; never denotes a value or declaration.
