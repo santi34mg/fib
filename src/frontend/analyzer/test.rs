@@ -219,13 +219,18 @@ fn typing_member_and_generic_sketches_fail_without_fabricating_annotations() {
     };
     assert_unimplemented(resolve_generic_instance(&key, &mut context));
     assert_unimplemented(resolve_member(TypeId(0), "field", context.types));
-    assert_unimplemented(check_assignable(TypeId(0), TypeId(0), context.types));
-    assert_unimplemented(resolve_multi_value_types(0, &[], context.types));
-    assert_unimplemented(validate_assignment_target(&ExpressionInfo {
+    assert!(check_assignable(TypeId(0), TypeId(0), context.types).is_err());
+    assert!(
+        resolve_multi_value_types(0, &[], context.types)
+            .unwrap()
+            .is_empty()
+    );
+    validate_assignment_target(&ExpressionInfo {
         ty: TypeId(0),
         category: ValueCategory::MutablePlace,
         type_value: None,
-    }));
+    })
+    .unwrap();
     assert!(context.types.types.is_empty());
     assert!(context.types.declarations.is_empty());
     assert!(context.types.locals.is_empty());
@@ -2562,5 +2567,29 @@ mod name_resolution {
             ExpressionKind::QualifiedIdentifier(QualifiedIdentifier::new(vec![name.into()])),
             Span::new(1, 1),
         )
+    }
+}
+
+mod semantic_type_contract {
+    use super::*;
+    use crate::frontend::{semantic_type::SemanticType, tokens::builtin::BuiltinType};
+    #[test]
+    fn compatibility_is_pure_and_nominal() {
+        use crate::frontend::semantic_type::FieldType;
+        let mut t = SemanticTypes::default();
+        let int = t.intern(SemanticType::Builtin(BuiltinType::Int32));
+        let a = t.intern(SemanticType::Struct(vec![FieldType {
+            spelling: "x".into(),
+            ty: int,
+        }]));
+        let b = t.intern(SemanticType::Struct(vec![FieldType {
+            spelling: "x".into(),
+            ty: int,
+        }]));
+        let before = t.types.clone();
+        check_assignable(a, a, &t).unwrap();
+        assert!(check_assignable(a, b, &t).is_err());
+        assert!(check_assignable(TypeId(999), TypeId(999), &t).is_err());
+        assert_eq!(t.types, before);
     }
 }

@@ -111,16 +111,40 @@ impl Analyzer {
 }
 
 /// Assignment legality uses the resolved place category, not token identity.
-pub fn validate_assignment_target(_target: &ExpressionInfo) -> anyhow::Result<()> {
-    not_implemented("assignment target validation")
+pub fn validate_assignment_target(target: &ExpressionInfo) -> anyhow::Result<()> {
+    match target.category {
+        crate::frontend::analysis_annotation::ValueCategory::MutablePlace => Ok(()),
+        crate::frontend::analysis_annotation::ValueCategory::ImmutablePlace => Err(
+            crate::frontend::semantic_type::type_error("assignment to immutable place"),
+        ),
+        _ => Err(crate::frontend::semantic_type::type_error(
+            "assignment requires a mutable place",
+        )),
+    }
 }
 
 /// Shared contract for multi-assignment and multi-binding: check arity and
 /// tuple unpacking, returning one semantic type per destination.
 pub fn resolve_multi_value_types(
-    _target_count: usize,
-    _values: &[TypeId],
-    _types: &SemanticTypes,
+    target_count: usize,
+    values: &[TypeId],
+    types: &SemanticTypes,
 ) -> anyhow::Result<Vec<TypeId>> {
-    not_implemented("multi-value type resolution")
+    for ty in values {
+        types.validate_type(*ty)?;
+    }
+    if target_count == values.len() {
+        return Ok(values.to_vec());
+    }
+    if values.len() == 1
+        && target_count > 1
+        && let crate::frontend::semantic_type::SemanticType::Tuple(elements) =
+            types.get(values[0])?
+        && elements.len() == target_count
+    {
+        return Ok(elements.clone());
+    }
+    Err(crate::frontend::semantic_type::type_error(
+        "multi-value arity mismatch",
+    ))
 }
