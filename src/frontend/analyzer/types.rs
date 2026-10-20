@@ -1,15 +1,57 @@
-//! Type compatibility pass contracts; semantic data lives in `semantic_type`.
+//! Pure compatibility of already resolved types; no AST, inference or conversions.
+use crate::frontend::semantic_type::{SemanticType as T, SemanticTypes, TypeId, type_error};
+use std::collections::HashSet;
 
-use crate::frontend::semantic_type::{SemanticTypes, TypeId};
-
-use super::not_implemented;
-
-/// Check assignment compatibility after alias normalization and inference.
-/// This sketch does not claim that unequal or unresolved types are compatible.
 pub fn check_assignable(
-    _expected: TypeId,
-    _found: TypeId,
-    _types: &SemanticTypes,
+    expected: TypeId,
+    found: TypeId,
+    types: &SemanticTypes,
 ) -> anyhow::Result<()> {
-    not_implemented("type compatibility checking")
+    types.validate_type(expected)?;
+    types.validate_type(found)?;
+    let mut pending = vec![(expected, found)];
+    let mut seen = HashSet::new();
+    while let Some((a, b)) = pending.pop() {
+        let (a, b) = (types.canonical(a)?, types.canonical(b)?);
+        if a == b || !seen.insert((a, b)) {
+            continue;
+        }
+        match (types.get(a)?, types.get(b)?) {
+            (T::Builtin(a), T::Builtin(b)) if a == b => {}
+            (T::Parameter(a), T::Parameter(b)) if a == b => {}
+            (T::Pointer(a), T::Pointer(b)) | (T::Slice(a), T::Slice(b)) => pending.push((*a, *b)),
+            (
+                T::Array {
+                    element: a,
+                    length: an,
+                },
+                T::Array {
+                    element: b,
+                    length: bn,
+                },
+            ) if an == bn => pending.push((*a, *b)),
+            (T::Tuple(a), T::Tuple(b)) if a.len() == b.len() => {
+                pending.extend(a.iter().copied().zip(b.iter().copied()))
+            }
+            (T::Function(a), T::Function(b))
+                if a.variadic == b.variadic && a.parameters.len() == b.parameters.len() =>
+            {
+                pending.push((a.return_type, b.return_type));
+                pending.extend(
+                    a.parameters
+                        .iter()
+                        .copied()
+                        .zip(b.parameters.iter().copied()),
+                );
+            }
+            _ => {
+                return Err(type_error(format!(
+                    "incompatible types: expected {:?}, found {:?}",
+                    types.get(expected)?,
+                    types.get(found)?
+                )));
+            }
+        }
+    }
+    Ok(())
 }
