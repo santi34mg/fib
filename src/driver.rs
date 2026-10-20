@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use crate::build_plan::{BuildPlan, FileId};
 use crate::driver::compiler_output::CompilationOutput;
 use crate::frontend::analyzer::AnalyzedProject;
@@ -25,14 +27,33 @@ pub fn run_pipeline(_plan: &BuildPlan, _goal: PipelineGoal) -> anyhow::Result<Co
     anyhow::bail!("pipeline orchestration is not implemented")
 }
 
-pub fn run_frontend(_plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
-    // Parse every named file, collect declarations, then resolve names and types.
-    anyhow::bail!("frontend orchestration is not implemented")
+pub fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
+    crate::frontend::analyzer::Analyzer::new(plan.clone(), parse_files(plan)?)?.analyze()
 }
 
-pub fn parse_files(_plan: &BuildPlan) -> anyhow::Result<Vec<CompilationUnit>> {
-    // Read, tokenize, and parse every source file listed in the build plan.
-    anyhow::bail!("build-plan file parsing is not implemented")
+pub fn parse_files(plan: &BuildPlan) -> anyhow::Result<Vec<CompilationUnit>> {
+    anyhow::ensure!(
+        plan.files.iter().any(|file| file.id == plan.entry),
+        "build-plan entry file is missing"
+    );
+    crate::frontend::namespace::ProjectSymbols::from_plan(plan)?;
+    plan.files
+        .iter()
+        .map(|file| {
+            let source = std::fs::read_to_string(&file.path)
+                .with_context(|| format!("reading {}", file.path.display()))?;
+            let ast = crate::frontend::parser::Parser::with_source(
+                crate::frontend::tokenizer::Tokenizer::new(&source),
+                &file.path,
+                &source,
+            )
+            .parse()?;
+            Ok(CompilationUnit {
+                source_file_id: file.id,
+                ast,
+            })
+        })
+        .collect()
 }
 
 /// The sole frontend-to-IR boundary. A future implementation must validate
