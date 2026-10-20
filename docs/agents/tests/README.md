@@ -1,9 +1,8 @@
 # Tests and validation
 
-There is no root `tests/` directory or `tests/e2e.rs`. This legacy documentation
-path is retained for test guidance. Tests live beside implementation under `src/`.
-No `compile_project`, `get_typed_err`, source-override compilation helper, sample
-runner, or integration target should be assumed.
+Unit tests live beside implementation under `src/`. `tests/executable.rs` is an
+LLVM-feature-gated acceptance suite requiring LLVM 21 and host `cc`. Its fixtures
+include `tests/programs/return_42.fib` and `conditionals.fib`; the rest of `samples/` still has parser coverage.
 
 ## What tests actually establish
 
@@ -18,9 +17,12 @@ runner, or integration target should be assumed.
   implemented name resolver. Separate type tests establish semantic typing and
   members; neither suite establishes execution.
 - `diagnostics.rs`: parser conversion and rendering/line extraction.
-- `driver/test.rs`: pipeline and lowering stubs explicitly fail.
-- `ir/test.rs`: raw representation/access/display contracts and unfinished API failure.
-- `backend/lowering/test.rs`: backend sketch boundaries do not fabricate success.
+- `driver/test.rs`: scalar/conditional SSA, scopes/returns, source paths, invalid plans and subset rejection.
+- `ir/test.rs`: raw records, transactional construction, ownership/signature/dominance checks.
+- `backend/lowering/test.rs`: malformed input, scalar calls and LLVM target validation.
+- `backend/lowering/abi/test.rs`: classification without LLVM and invalid boundary maps.
+- `backend/lowering/cfg_test.rs`: executable PHIs/backedges/parallel edges, comparisons and per-function ABI dispatch.
+- `tests/executable.rs`: CLI exits 0/42/127, object linking, unsupported source, source protection and linker failure preserving output.
 
 ## Phased name-resolution specification
 
@@ -89,22 +91,28 @@ type-only fixtures still exercise `resolve_types` independently.
 
 ## Local verification (2026-10-19)
 
-The unfiltered no-default-features suite passes **595 library tests**, including
+The unfiltered no-default-features suite passes **606 library tests**, including
 **236** name-resolution tests and **180** type-resolution/completion tests.
-Binary tests and doctests are empty. No tests are ignored.
-LLVM/default-feature checks were not run.
+Default-feature testing passes 612 library tests and five executable acceptance
+tests. Binary unit tests and doctests are empty. No tests are ignored.
+Both feature configurations pass check/test/Clippy with all targets and warnings denied.
 
 ```sh
 cargo check --offline --no-default-features
 cargo test --offline --no-default-features
 cargo fmt --check
 cargo clippy --offline --no-default-features --all-targets -- -D warnings
+cargo check --offline
+cargo test --offline
+cargo clippy --offline --all-targets -- -D warnings
 ```
 
 The LSP's previously verified 11 tests use `node --test` from `lsp/`. Those
 highlighting/protocol tests do not establish a working compiler pipeline.
-Complete source analysis now succeeds for the implemented subset; lowering,
-verification and execution remain unfinished.
+The scalar/conditional subset runs through verified SSA and multi-block LLVM to
+linked executables. Test-first changes were observed failing at their missing
+phase before implementation. Arithmetic, source loops, storage and production
+Fib ABI remain unfinished.
 
 ## Change guidance
 

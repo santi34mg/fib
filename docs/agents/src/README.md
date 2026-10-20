@@ -2,15 +2,15 @@
 
 | Source under `src/` | Current role |
 | --- | --- |
-| `main.rs`, `cli.rs` | Clap entry and command schema; dispatch is `todo!()` |
+| `main.rs`, `cli.rs` | Clap entry; single-file scalar/conditional builds; other commands error |
 | `lib.rs` | Public modules and `CompilerError` re-export |
-| `build_plan.rs` | File IDs/names, source-file records, build plan; loader stub |
+| `build_plan.rs` | File IDs/names, source-file records, build plan and single-file loader |
 | `builder_object.rs` | Build stages/state; build-file discovery attempt, remaining operations `todo!()` |
-| `driver.rs`, `driver/compiler_output.rs` | Pipeline boundaries, output enum; orchestration errors explicitly |
+| `driver.rs`, `driver/compiler_output.rs` | Analysis, scalar/conditional SSA lowering, LLVM object emission and host linking |
 | `frontend/` | Working tokenizer/parser, names, semantic typing and members; explicit metatype specialization, bounded type-return evaluation and initialization/control-flow completion |
-| `ir/` | Self-owned SSA records; builder/verifier sketches |
+| `ir/` | Owned SSA, transactional builder and scalar verifier |
 | `ir_interpreter.rs` | Build-file interpreter `todo!()` |
-| `backend/` | IR-only backend sketch, available without LLVM |
+| `backend/` | Multi-block LLVM emitter with per-function ABI classification |
 | `diagnostics.rs` | Structured rendering and parser-error conversion |
 
 Details: [CLI](cli.md), [library](lib.md), [driver/build](driver.md),

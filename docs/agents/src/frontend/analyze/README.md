@@ -19,7 +19,8 @@ those original units. The free type entry requires resolved names and fresh stat
 `TypeContext::new` prepares lower-level node helpers. Failed type passes cannot be
 retried. `Analyzer::analyze` runs typing, then validates initialization and
 structured flow before returning `AnalyzedProject`, owning original units,
-symbols, semantic types and cached generic signatures.
+symbols, semantic types, cached generic signatures and original plan paths in
+`source_paths` for diagnostics after analysis.
 
 ## Identity and lookup
 

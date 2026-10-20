@@ -1,22 +1,21 @@
 # Binary and CLI
 
-[`main.rs`](../../../src/main.rs) calls `Command::parse()`, gathers
-`env::vars_os()`, and delegates to `exec_command`. The Clap schema in
-[`cli.rs`](../../../src/cli.rs) accepts:
+`main.rs` parses Clap commands and delegates to `cli::exec_command`.
+The binary target is `fibc`; the Clap tool name is `fib`.
 
 ```sh
-cargo run --no-default-features -- --help
-cargo run --no-default-features -- build --help
-# Accepted syntax only, NOT working compilation:
-cargo run --no-default-features -- build --single-file samples/minimal.fib
+cargo run -- --help
+cargo run -- build --single-file tests/programs/return_42.fib
+./tests/programs/return_42  # exit status 42
 ```
 
-The Rust binary target is `fibc`; the Clap declaration names the tool `fib`.
-Top-level help was verified locally and displays `fibc` from invocation.
-Commands are `build` (optional `--single-file PATH`), `run`, and `test`.
-`exec_command` is `todo!()`; invoking an actual command panics rather than builds,
-runs, or tests Fib code. Help is handled by Clap before dispatch.
+`build --single-file PATH` loads, analyzes, lowers, verifies, emits an LLVM object
+and links an executable beside the source, then prints its path. The current subset supports int32
+helpers/direct calls, initialized int32/bool locals, assignment, comparisons and
+nested if/else with early returns. Arithmetic and source loops remain unsupported. LLVM 21 and a
+host `cc` linker are required. Without the LLVM feature, building reports an
+explicit error. Help and frontend/IR library APIs need no LLVM.
 
-The former positional-file CLI, `-I`, `--check`, `--emit`, `--cc`, `-O`,
-`--release`, output and retained-LLVM switches are not current options. There
-are no CLI unit or subprocess contract tests in the current module.
+Build without a single file (build.fib), `run` and `test` return errors. Historical
+positional-file, include-root, check/emit/link/release and output flags are absent.
+`tests/executable.rs` exercises real CLI builds and executable exit statuses.

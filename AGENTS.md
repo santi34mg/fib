@@ -14,22 +14,31 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   explicit metatype specialization, bounded type-return evaluation, initialization
   and structured flow validation now run. Analysis annotates the original AST; no
   lexer/analyze/typed_ast modules exist.
-- `src/driver.rs` exposes `run_pipeline`, `run_frontend`, `parse_files`,
-  `lower_to_ir`, all unimplemented. No `compile_project`/`check_project` APIs.
-- `BuildPlan` explicitly names files; single-file loading, build.fib interpretation,
-  builder orchestration and IR interpreter are unfinished (`todo!()` or errors).
-- `src/ir/` is an owned SSA representation, not the former flat importer.
-  Builder/verifier always error. Backend is an IR-only sketch, available without
-  LLVM; no emission or direct AST fallback. `backend/lowering/next/` is uncompiled
-  legacy code referencing removed APIs, not a supported route.
-- CLI accepts `build [--single-file PATH]`, `run`, `test`; execution is `todo!()`.
-  Help works. Old positional-file, include-root, check/emit/link/release flags do not.
+- `src/driver.rs` implements parsing, analysis and pipeline stages. `lower_to_ir`
+  supports single-file int32 helpers/direct calls, initialized int32/bool locals,
+  assignment, comparisons, nested if/else and returns. It revalidates analysis,
+  prevalidates the supported subset (including dead branches), and builds SSA.
+  Arithmetic, source loops, uninitialized locals, storage and generics still fail.
+- `BuildPlan::single_file` loads a named file and chooses an executable beside it.
+  build.fib interpretation, builder orchestration and IR interpreter are unfinished.
+- `src/ir/` is owned SSA. The transactional builder allocates blocks/values/slots;
+  verification checks scalar constants/calls/comparisons and jump/branch/return/unreachable,
+  ownership, signatures, reachability and dominance. Storage and other operation/
+  type families fail explicitly. Stack allocation records alone cannot be verified.
+- LLVM 21 emits multi-block SSA with PHIs/backedges and C 32-bit integer/void ABI.
+  ABI classification is per signature; one shared description controls a function
+  and calls to it. `emit_llvm(ir, target)` remains the sole public entry point.
+  Production Fib ABI, broader representations and storage remain unfinished.
+  `backend/lowering/next/` is inactive legacy code, not a supported route.
+- `build --single-file PATH` compiles the scalar/conditional subset through LLVM,
+  object and host `cc` linking. Other build modes, `run` and `test` error explicitly.
+  Old positional-file, include-root, check/emit/link/release flags do not exist.
 
 ## Toolchain and commands
 
 `rust-toolchain.toml` and CI pin 1.98.0 (MSRV policy); bump deliberately together.
 Rust 2024 package; default `llvm` enables Inkwell 0.8 / LLVM 21 dependency builds,
-not working LLVM emission. No-default-features work needs no LLVM installation.
+with limited working LLVM emission. No-default-features work needs no LLVM installation.
 
 Verified on system Cargo/rustc 1.98.0 (offline cache present):
 
@@ -45,7 +54,7 @@ acceptance cases and the added completion regressions. Name resolution still has
 `--all-targets -- -D warnings` pass. All analyzer tests/helpers live in
 `src/frontend/analyzer/test.rs`. Run one phase with
 `cargo test --no-default-features name_resolution::phase_01_files`.
-No integration/e2e suite exists. Offline is optional outside restricted environments.
+`tests/executable.rs` runs LLVM-enabled compile/link/exit-status acceptance tests. Offline is optional outside restricted environments.
 Focus tests with
 `cargo test --no-default-features frontend::parser` or `frontend::tokenizer`.
 See [validation status](docs/agents/tests/README.md) for formatting and limitations.
@@ -71,7 +80,8 @@ See [parser details](docs/agents/src/frontend/parser.md). Samples use current
 syntax and have automatic parser coverage; std sources may still be stale.
 
 `FileId`/`FileName`/paths live in `build_plan.rs`; syntax retains point spans and
-pending analysis slots. There is no central source-map store. Prefer
+pending analysis slots. `AnalyzedProject::source_paths` retains plan paths after analysis; there is no
+central source-text store. Prefer
 `Parser::with_source` for in-memory tests; preserve source context and identities
 when implementing missing passes. See [diagnostics](docs/agents/src/diagnostics.md).
 
@@ -82,7 +92,7 @@ when implementing missing passes. See [diagnostics](docs/agents/src/diagnostics.
   specification phases in `src/frontend/analyzer/test.rs`. The phases pass for
   implemented name resolution; typing/member coverage is in the inline `type_resolution` module, including
   passing `completion_acceptance` and `completion_regressions` cases. Driver/IR/backend tests
-  protect data or explicit stub failure, not successful verification or execution.
+  cover the first verified scalar/executable subset and reject unsupported work.
 - Never turn unfinished operations into successful empty results. Implement the
   root invariant, then add real positive/negative coverage. Assert diagnostic
   category/substrings/locations instead of brittle full rendered strings.

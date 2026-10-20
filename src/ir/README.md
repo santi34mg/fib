@@ -1,18 +1,57 @@
-# SSA IR architecture sketch
+# Owned SSA IR
 
-The intended boundary is **`AnalyzedProject -> Ir -> backend`**. `Ir` is the
-existing module-level object, extended with arenas; there is no parallel
-program representation, resurrected typed AST, or fallback lowering path here.
-The existing `driver::lower_to_ir(&AnalyzedProject) -> anyhow::Result<Ir>` remains
-the lowering entry-point sketch. This directory does not implement it or add a
-duplicate frontend-dependent entry point.
+The executable boundary is `AnalyzedProject -> Ir -> backend`. Arena records
+remain public and unverified until `verify_ir` succeeds. IDs are stable indices
+within one IR; the IR has no frontend or LLVM dependencies.
 
-Only the data model, small lookup/display helpers, and structural unit tests
-are implemented. **Construction and verification are not implemented.** Every
-`FunctionBuilder` method and `verify_ir`, including verification of empty IR,
-returns `IrError::NotImplemented { operation }`. Nothing here certifies an IR as
-valid or executable. Public fields permit hand-authored, potentially invalid
-records while the architecture is being developed.
+## Working construction and verification
+
+`FunctionBuilder` starts from a declaration and stages a cloned IR transaction.
+It allocates IR-wide block, value and stack-slot IDs, records reciprocal owner
+and definition locations, rejects insertion after termination and repeated
+terminators, and requires an explicit entry and every block to be terminated.
+`finish` verifies the complete staged IR before publishing it. Dropping the
+builder or failing any finish check leaves the original IR unchanged. Cloning
+is an initial correctness choice, not an optimized construction strategy.
+
+`verify_ir` supports Bool and fixed-width integers (1..=128), typed bool/integer
+constants, declarations and definitions, block parameters, Constant/direct Call/integer comparison instructions, Jump/Branch/Return/Unreachable terminators. It checks:
+
+- References, unique symbol names, arena membership and function ownership.
+- Unique SSA definitions and reciprocal definition positions.
+- Entry/function signatures; no edge may target entry.
+- Reachability, instruction ordering and dominance, including cyclic CFGs.
+- Branch conditions, edge arguments, instruction results, call arguments and
+  return signatures.
+- Integer widths and raw constant bits; orphan values and blocks are errors.
+
+Empty IR is valid and actually checked. Unsupported types, constants, storage,
+switches and instruction families fail explicitly. Stack-slot allocation exists,
+but verification of storage is unfinished, so a builder containing storage cannot
+publish a body. Unreachable blocks are rejected rather than assigned arbitrary
+values/dominance. `IrError::Invalid` identifies malformed supported IR;
+`NotImplemented` identifies unsupported verification families.
+
+## Representation contracts and remaining work
+
+`Ir` owns functions, globals, types, constants, blocks, values and stack slots.
+`FunctionBody::Declaration` owns no local records; `Definition` lists entry,
+blocks and stack slots. `ValueDefinition` records one block parameter or
+instruction result. Block parameters receive positional edge arguments, with
+entry parameters instead receiving caller arguments. No arena order implies
+fallthrough. Values are immutable; mutable storage requires explicit addresses,
+loads and stores. `Display` remains a diagnostic dump marked unverified.
+
+The broader records describe future support, not executable guarantees:
+pointers, arrays/slices, aggregates, enums, float/raw-byte constants, globals,
+casts, arithmetic, memory operations and switch validation remain unfinished.
+Unit/never/character/string runtime representation, indirect calls, generic body
+specialization and general source lowering still need implementation.
+
+The driver lowers a single-file scalar subset: int32 helpers/direct calls,
+initialized int32/bool locals, assignment, comparisons, conditionals and returns.
+Branch joins use block parameters; mutable local bindings need no storage.
+See `../backend/README.md` for ABI restrictions and executable tests.
 
 ## Backend-facing surface
 
@@ -58,7 +97,7 @@ not part of the consumer contract.
   arrays; there is no implicit allocation, terminator byte or string-to-pointer
   conversion. Numeric constants retain raw bits, including floating point.
 
-## SSA and memory contract (not yet checked)
+## Broader SSA and memory requirements
 
 1. A definition's block list owns every one of its blocks exactly once, includes
    entry, and agrees with owner metadata. Declarations own no local entities.
@@ -91,62 +130,12 @@ not part of the consumer contract.
    function-local values. Switch cases are unique typed constants. Global
    initializers match their stored type. External symbols/signatures must agree.
 
-These are requirements for the future verifier, **not claims that the current
-records enforce them**. Consumers must not treat the presence of `Ir`, a
+The scalar subset above is checked today; unsupported families must gain these
+checks before becoming executable. Public records alone do not enforce them. Consumers must not treat the presence of `Ir`, a
 successful lookup, or a formatted dump as evidence that verification ran.
 
-## Stub signatures
 
-```rust,ignore
-pub type IrResult<T> = Result<T, IrError>;
-pub enum IrError { NotImplemented { operation: &'static str } }
-pub fn verify_ir(ir: &Ir) -> IrResult<()>;
-
-impl<'ir> FunctionBuilder<'ir> {
-    pub fn new(ir: &'ir mut Ir, function: FunctionId) -> IrResult<Self>;
-    pub fn create_block(&mut self, params: &[TypeId]) -> IrResult<BlockId>;
-    pub fn block_params(&self, block: BlockId) -> IrResult<&[ValueId]>;
-    pub fn create_stack_slot(
-        &mut self, ty: TypeId, debug_name: Option<String>,
-    ) -> IrResult<StackSlotId>;
-    pub fn append_instruction(
-        &mut self, block: BlockId, kind: InstructionKind, result_types: &[TypeId],
-    ) -> IrResult<Vec<ValueId>>;
-    pub fn set_terminator(&mut self, block: BlockId, terminator: Terminator) -> IrResult<()>;
-    pub fn finish(self, entry: BlockId) -> IrResult<FunctionId>;
-}
-```
-
-The builder will eventually stage incomplete blocks privately, allocate fresh
-IDs, establish reciprocal definition/owner metadata and publish only terminated
-blocks. There is deliberately no implemented ID allocation, name environment,
-mutable-variable SSA conversion, graph repair, verifier or backend in this work.
-
-## Replaced legacy bodies
-
-- `mod.rs`: removed the removed-frontend imports, typed-AST lowering, partial
-  constant lowering, `Temp`/`Label`/symbol operands and frontend-type predicates.
-- `builder.rs`: replaced name scopes, mutable temporary allocation, defer/loop
-  stacks and flat-stream block splitting with the fallible function API sketch.
-- `expressions.rs`: replaced AST walking, implicit symbol loads and overwriting
-  short-circuit temporaries with operand/value/constant records.
-- `statements.rs`: replaced function/statement/assignment/defer/switch lowering
-  (including incomplete legacy syntax) with block/edge/terminator records.
-- `instruction.rs`: replaced frontend-dependent, flat control/memory operations
-  with IR-owned non-terminating operations and explicit SSA result lists.
-- `display.rs`: replaced obsolete formatting with an unverified diagnostic dump
-  that does not dereference IDs and can therefore display malformed records.
-- `test.rs`: replaced impossible frontend-lowering tests with structural model,
-  accessor, display and explicit-not-implemented tests. No deleted integration
-  tests are recreated. `types.rs` and `verify.rs` hold new architectural pieces.
-
-The driver lowering boundary and LLVM adapter now sketch consumption of this
-contract; neither executes. The interpreter remains unfinished. Compatibility
-aliases for the legacy model would preserve the wrong semantics and are
-intentionally absent. See [the pipeline overview](../../docs/compiler-architecture.md)
-and [the backend plan](../backend/README.md) for the other boundaries.
-
-## Decisions still needed before executable lowering
+## Decisions still needed for broader executable lowering
 
 - Exact arithmetic overflow, shift, division-by-zero, floating comparison and
   cast semantics; trap/check representation and target restrictions.
@@ -158,5 +147,5 @@ and [the backend plan](../backend/README.md) for the other boundaries.
 - Type interning/canonicalization, richer verifier errors, source/debug mapping,
   arena editing/remapping, and how callers will distinguish verified IR later.
 
-These questions do not block the sketch. They must be resolved explicitly
-before a backend can soundly execute this representation.
+These questions must be resolved before executing the corresponding operations;
+they do not block the supported scalar/conditional subset.

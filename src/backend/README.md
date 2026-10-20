@@ -1,83 +1,89 @@
-# Backend architecture sketch
+# LLVM backend
 
-The only compiler boundary is **`AnalyzedProject -> Ir -> backend`**. The
-frontend/driver owns `AnalyzedProject -> Ir`; this directory consumes the
-self-owned SSA model exported by `crate::ir`. There is no typed-AST backend,
-flat `IrProgram` adapter, name-resolution fallback, or direct frontend-to-LLVM
-escape hatch. A future custom machine-code backend will consume the same IR,
-not LLVM text or an LLVM-shaped replacement for the language IR.
+`emit_llvm(&Ir, &TargetSpec)` consumes only owned SSA IR. It runs `verify_ir`,
+creates a target machine with LLVM 21/Inkwell, applies its triple and data layout,
+predeclares functions, emits the supported instructions and returns textual IR
+only after LLVM module verification. There is no frontend-to-LLVM fallback.
 
-**No emission is implemented.** All unfinished operations return
-`BackendError::NotImplemented { operation }`, including verification, target
-resolution, and emission of an empty or declaration-only module. No `todo!`,
-panic, dummy success, empty artifact, or partial output substitutes for a phase.
-The opaque plan records describe dependencies, not working LLVM state machines.
-Their fields and public APIs do not yet implement maps or enforce phase order.
-No code invokes the pipeline yet, including `emit_llvm` itself.
+## Executable subset
 
-## Public contract
+The production ABI subset is C 32-bit integer parameters/results and void returns.
+Definitions support multiple blocks, entry arguments, block parameters/PHIs,
+Constant/direct Call/comparison instructions, and Jump/Branch/Return/Unreachable.
+Comparison ordering uses operand signedness; bool supports equality/inequality.
+Emission traverses reverse postorder, patches PHI inputs after all values exist,
+and splits parallel branch arms into distinct LLVM predecessors. Backedges and
+shuffled body block order are covered by executable hand-built IR tests.
 
-```rust,ignore
-pub fn emit_llvm(ir: &Ir, target: &TargetSpec)
-    -> Result<LlvmArtifact, BackendError>;
+## Per-function ABI interface
 
-pub struct TargetSpec {
-    pub triple: String,
-    pub cpu: String,
-    pub features: Vec<String>,
-}
-```
+`emit_llvm(ir, target)` is the only public emission entry point. The ABI is
+selected by each `Signature::calling_convention`; there is no compilation-wide
+ABI switch or alternative emission entry point. `abi::classify_abis` dispatches
+per signature and creates a `FunctionAbi` indexed by `FunctionId`. Classification
+receives resolved target triple/layout and logical IR types, and works without
+LLVM. Descriptions currently represent direct scalar parameter placement and a
+direct/void result; coercions, aggregate passing and hidden results are deferred.
 
-`backend::{emit_llvm, TargetSpec, LlvmArtifact, BackendError}` is the intended
-caller-facing API. `lowering` exposes architectural phase boundaries for later
-implementation. No signature imports frontend types or LLVM handles. These
-sketches therefore compile with or without `llvm`; actual LLVM machinery may
-be feature-gated later without hiding unfinished operations behind success.
+A function's ABI governs every call to that function and every return from it.
+`llvm_abi` translates descriptions into declarations, incoming argument decoding,
+call argument packing/result decoding and return packing. Logical IR signatures,
+SSA values and PHIs remain independent of physical argument positions. A
+mixed-convention test uses a test-only reversed-argument policy for internal Fib
+functions; this is not a production definition of Fib ABI. Production Fib
+classification fails explicitly, without falling back to C. Source helpers
+currently select C centrally in lowering and retain internal linkage.
 
-`TargetSpec` is an explicit, **unvalidated request**, with no implicit host
-selection. `LlvmArtifact` owns textual LLVM IR and its resolved target triple
-and data-layout string; it is not a path, LLVM context/module borrow, object
-file, executable, or custom-codegen artifact. Its fields are private, with
-`ir_text()`, `target_triple()`, `data_layout()` and `into_ir_text()` accessors.
-Only a future emitter may construct it, after verification; the module text
-and metadata must agree. The driver will separately choose where to write it,
-how to invoke LLVM/object generation, and how to link. This layer does no I/O,
-linking, target autodetection, or optimization today.
+Other ABI widths, varargs, multiple results, storage and unsupported instruction/
+type families still return errors. General Fib ABI policy and source ABI syntax
+remain future work.
 
-## Phase order and ownership
+`TargetSpec` explicitly requests a triple, CPU and features. Only `generic` CPU
+with default features is supported; other CPU/features fail instead of being
+ignored. LLVM resolves the target and data layout. `host_target()` explicitly
+selects the host triple for the driver; invalid targets fail.
 
-| Phase | Sketch API | Required future work |
-| --- | --- | --- |
-| 1. Verify input | `ir_lower::verify_input(&Ir)` | Invoke the shared `crate::ir::verify_ir`; return a borrowed `VerifiedIr` only on success. |
-| 2. Resolve target/layout/types | `types::resolve_target`, `types::plan_types` | Validate the request; derive target data; build storage/value representations keyed by `TypeId`. |
-| 3. Classify ABI | `abi::classify_abis` | Build one signature/legalization plan shared by every boundary crossing. |
-| 4. Predeclare | `context::predeclare` | Create all function/global identities before constants, initializers or bodies. |
-| 5. Blocks and PHIs | `ModulePlan::setup_blocks_and_phis(FunctionId)` | Create every block entry and non-entry block-parameter PHI; bind entry arguments and stack slots. |
-| 6. Emit body | `FunctionPlan::emit_instruction`, `emit_terminator` | Bind SSA results and record unresolved incoming edges, using the final emitted CFG. |
-| 7. Patch edges | `FunctionPlan::patch_edges` | Resolve forward/backedge operands, normalize parallel edges, populate PHIs and check completeness. |
-| 8. Verify and serialize | `ModulePlan::finish` | Require every definition complete, verify LLVM, then produce owned text. |
+`LlvmArtifact` owns verified text plus triple/layout and target request. Its
+private fields prevent constructing unchecked artifacts. `write_object(path)`
+parses/verifies that text and uses LLVM's target machine to emit a PIC object.
+The driver owns output paths, temporary files and linking with host `cc`.
+Optimization and cross-linker orchestration are not implemented.
 
-`TypePlan` retains the verified input and resolved target; `AbiPlan` retains the
-type plan; `ModulePlan` retains the ABI plan; a `FunctionPlan` exclusively
-borrows its module. IDs remain scoped to this immutable IR. Future internal
-state must reject wrong-owner IDs, invalid instruction indices, repeated
-emission, premature finalization, dropped unfinished functions, missing
-results/terminators and unresolved fixups. The sketch deliberately cannot
-construct these opaque plans successfully yet. Implementing one phase must not
-make a later unfinished phase appear successful.
+The API remains callable without the `llvm` feature: input verification works,
+but LLVM emission, object output and host-target selection report explicit errors.
 
-Future failures need structured verification, invalid-target, unsupported-ABI,
-unsupported-instruction, missing-ID, incomplete-emission and LLVM-verification
-diagnostics with function/block/instruction context. Preserve upstream verifier
-errors, including its current explicit unimplemented error. Do not flatten a
-failure into "try the typed AST instead" or guess a value. No legacy error
-aliases or generic string conversions are retained.
+## Future phase APIs
+
+`ir_lower::verify_input` returns a borrowed proof after shared verification.
+The separate `types`, `context`, `expressions` and `statements` planning
+APIs remain explicit-error sketches. They are not used to claim broader support
+than the initial emitter in `llvm_lower`. The inactive `next/ir_lower.rs` still
+references removed APIs and is not compiled.
+
+Future implementation needs target-aware representations for all runtime types,
+broader ABI classification, global initialization, storage and the remaining
+instructions. Parallel edges carrying
+different arguments require distinct LLVM predecessors; backedges need deferred
+SSA resolution. LLVM verification must remain mandatory. Never repair malformed
+IR, infer missing declarations, fabricate layout sizes, invent runtime checks or
+add overflow/alias/fast-math flags without defined and validated IR semantics.
+
+`tests/executable.rs` compiles through the CLI, links and checks real exit codes.
+Fixtures include `return_42.fib` and `conditionals.fib`; cases cover helper calls,
+branches, multiple merged values, bool locals, nested scopes, early returns and
+negative literals. Tests also check object-stage linking, unsupported source,
+source protection and preservation of existing output on linker failure.
+
+## Requirements for extending the backend
+
+The following wider policies remain requirements for future implementation.
+They do not expand the supported subset described above.
 
 ## 1. Verification is a gate, never a repair pass
 
 Raw `Ir` records and successful arena lookups are not proof of validity. The
-shared verifier currently always returns `IrError::NotImplemented`; this work
-does not implement or bypass it. Before emission it must check:
+shared verifier checks the scalar subset described above and rejects unsupported
+families. Extending support requires all applicable checks below:
 
 - Arena references, stable IDs, ownership/body membership, canonical symbol
   uniqueness, declaration/definition consistency, type/constant validity and
@@ -235,46 +241,3 @@ a sound analysis. Known type alignment alone is not proof of alignment for an
 arbitrary pointer operand. Do not add volatile/atomic behavior not represented
 in the IR. Final LLVM verification is mandatory, but does not prove these
 semantic promises are true.
-
-## Replaced files and preserved work
-
-- `lowering/context.rs`: source scopes, defers and LLVM builder helpers replaced
-  by module/function phase ownership and predeclaration sketches.
-- `lowering/expressions.rs`, `statements.rs`: typed-AST walking replaced by SSA
-  instruction/terminator APIs, edge identities and deferred PHI patching.
-- `lowering/ir_lower.rs`: obsolete `IrProgram` consumer replaced by the verified
-  input boundary. No `lower_ir` compatibility adapter remains.
-- `lowering/llvm_lower.rs`: direct typed-AST lowering replaced by `emit_llvm` and
-  the owned text artifact contract. No `lower` fallback remains.
-- `lowering/types.rs`, `error.rs`: frontend/LLVM-dependent types and old errors
-  replaced with target/type plans and explicit unfinished-operation errors.
-- `lowering/abi.rs`: new shared ABI planning boundary.
-- `lowering/mod.rs`, `backend/mod.rs`: expose the new contract without using a
-  feature gate to conceal obsolete implementations.
-- `lowering/test.rs`: old frontend/LLVM integration-like module tests replaced
-  with small contract tests. Deleted repository integration tests stay deleted.
-- **`lowering/next/ir_lower.rs` is preserved byte-for-byte.** This pre-existing,
-  inactive prototype still references obsolete APIs and was already outside
-  the module tree. It is not a fallback, compatibility implementation or part of
-  the new architecture. Its owner must explicitly migrate it before activation.
-
-Only this backend directory is changed. No driver wiring, frontend/IR changes,
-manifest updates or changelog edits accompany this intentionally breaking
-replacement. Current callers must use the new boundary when executable phases
-are ready; the sketch does not claim to compile programs today.
-
-## Validation and implementation checkpoints
-
-Current tests cover explicit failure for empty/declaration-only inputs,
-unimplemented verification/target resolution, distinct successor identities
-and error diagnostics. They do not claim ABI, layout or LLVM correctness.
-
-As phases are implemented, add focused tests for 32/64-bit pointer layouts and
-alignment, aggregate/enum padding, recursive types, declaration/definition/call
-ABI agreement, varargs, forward symbols and raw-bit constants. CFG tests must
-include diamonds, loops, multiple results, same-target branch arms with
-*different* arguments, repeated switch/default targets, and legalization that
-splits the original predecessor. Negative tests must ensure malformed IDs,
-ownership/dominance/type errors, unsupported semantics, unresolved fixups and
-invalid LLVM cannot produce artifacts. Only then add executable backend tests;
-do not resurrect removed legacy integrations to make this sketch look complete.

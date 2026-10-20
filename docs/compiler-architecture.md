@@ -3,52 +3,47 @@
 Analysis/test status updated against the implementation on 2026-10-19. See the
 [current implementation guide](agents/README.md) and [roadmap](roadmap/README.md).
 
-This checkout defines **interfaces and data models**, not a working compilation
-pipeline. Tokenization, parsing, name resolution and semantic typing work independently.
-Name/type passes validate units and annotate declarations, expressions and members;
-initialization and flow completion still prevent a fully analyzed project. `AnalyzedProject -> Ir` lowering, SSA
-construction/verification, and LLVM emission remain explicit-error sketches. Build-file interpretation, object generation, and linking
-remain separate unfinished work.
+The first executable compiler milestone now works: a single-file
+`fn main() int32 { return 42; }` passes source analysis, owned SSA construction
+and verification, LLVM verification, PIC object emission and host `cc` linking.
+The supported subset now includes int32 helpers/calls, initialized int32/bool
+locals, assignment, comparisons and conditionals. Broader runtime representations,
+production Fib ABI, storage, arithmetic, source loops and build.fib are unfinished.
 
 ## Present baseline and orchestration
 
-Working components are tokenization, parsing, source AST construction, lexical
-scope storage, name/type resolution, expression/member checking, diagnostics,
-and raw IR data/access/formatting
-utilities. IR records are not verified SSA.
+`driver::{parse_files, run_frontend, lower_to_ir, run_pipeline}` implement the
+single-file scalar/conditional subset. `BuildPlan` explicitly enumerates files;
+`BuildPlan::single_file` canonicalizes the input and chooses an executable beside
+it. Check and IR goals need no LLVM; object/binary goals need LLVM 21, and binaries
+also need host `cc`. Output is staged and published after success. Source-overwrite
+paths are rejected. Unsupported programs fail explicitly.
 
-`driver::{run_pipeline, run_frontend, parse_files, lower_to_ir}` all return
-explicit unimplemented errors. `BuildPlan` explicitly enumerates named files;
-there is no working recursive import loader. Single-file loading, build.fib
-interpretation, builder orchestration and IR interpretation are unfinished.
-The CLI accepts `build [--single-file PATH]`, `run`, and `test`; help works,
-but command execution is `todo!()`. Historical positional-file, include-root,
-check/emit/link/release options and `compile_project`/`check_project` APIs are
-not available.
+`build --single-file PATH` supports scalar helpers and conditionals with an int32 main.
+Build without that flag, `run`, `test`, build.fib interpretation and IR
+interpretation remain unimplemented. Historical positional-file, include-root,
+check/emit/link/release options and `compile_project`/`check_project` are absent.
 
-## Intended boundaries (not an executable pipeline)
+## Working subset boundaries
 
 ```text
-BuildPlan + parsed SourceUnits
-            |
-       Analyzer passes                 incomplete
-            |
-     AnalyzedProject
-            |
- driver::lower_to_ir                    not implemented
-            |
-       self-owned Ir
-            |
-       verification                    not implemented
-            |
-       LLVM adapter                    not implemented
-       (future native backend)
+BuildPlan -> parse_files -> Analyzer -> AnalyzedProject
+  -> lower_to_ir -> owned Ir -> verify_ir -> LLVM emitter
+  -> LLVM verification -> object -> cc -> executable
 ```
 
-There is no separate typed AST, old `IrProgram`, or direct AST-to-LLVM fallback.
-The current `Ir` is the single backend-independent SSA representation. See the
-[IR contract](../src/ir/README.md) and [LLVM adapter plan](../src/backend/README.md)
-for the significant types, function signatures, invariants, and open decisions.
+The builder stages changes and verifies before publication. The scalar verifier
+checks ownership, definitions, reachability/dominance and signatures across
+blocks. The LLVM emitter supports multi-block SSA/PHIs, backedges, comparisons, direct
+calls and branches/returns. Each signature selects its ABI; a shared description
+controls declarations, incoming arguments, calls to the function and its returns.
+Only C 32-bit integer/void ABI ships. Broader representations/storage and Fib ABI
+remain unsupported.
+
+There is no separate typed AST or direct AST-to-LLVM fallback. See the
+[IR contract](../src/ir/README.md) and [LLVM backend](../src/backend/README.md)
+for exact implemented limits. Broader design sections below describe intended
+contracts and do not imply that all frontend constructs can be emitted.
 
 ## Parser and source identities
 
@@ -70,8 +65,8 @@ are not current working syntax. Generic parameter lists, prefix array types,
 C-string literals, interfaces and constraints remain
 [proposals](roadmap/README.md), not parsed feature guarantees.
 
-`FileId`, `FileName` and paths live in `build_plan.rs`; there is no central
-source-map store. Spans are point locations, not complete byte ranges.
+`FileId`, `FileName` and paths live in `build_plan.rs`; `AnalyzedProject::source_paths` retains original plan paths for later diagnostics;
+there is no central source-text store. Spans are point locations, not complete byte ranges.
 `Parser::with_source` preserves in-memory diagnostic context.
 
 Parsing preserves spelling and source spans. It does not assign resolved names,
@@ -92,7 +87,7 @@ failed passes cannot be retried. No additional project wrapper is introduced.
 3. Resolve semantic types and members on the same AST nodes.
 4. Validate type-pass annotations, definite initialization and structured
    control-flow completion.
-5. Return `AnalyzedProject { units, symbols, types }`.
+5. Return `AnalyzedProject { units, symbols, types, source_paths }`.
 
 `ResolveContext` combines the current file, shared `ProjectSymbols`, and a lexical
 `SymbolTable`; namespaces are not scope stacks. `TypeContext` can resolve members
@@ -199,9 +194,9 @@ completion cases pass, with additional completion regressions. See
 [validation commands](agents/tests/README.md). These name-resolution
 checks do not establish type correctness or executable compilation.
 
-There is no checked-in integration/e2e harness. Samples and the experimental
-standard library may contain stale syntax and are not automatically compiled or
-run. Tests of explicit stub errors do not demonstrate successful analysis,
+`tests/executable.rs` compiles, links and runs the scalar/conditional subset.
+Samples and the experimental standard library are not automatically compiled
+or run. Tests of explicit stub errors do not demonstrate successful analysis,
 construction, verification, interpretation, layout or emission.
 
 Useful checks at this stage (commands, not a claim they all pass):
@@ -219,8 +214,7 @@ cargo test --all-features
 ```
 
 The retained default `llvm` Cargo feature still brings in the existing LLVM 21
-dependency. The adapter sketches themselves contain no LLVM implementation;
-removing or replacing that dependency is not part of this change. Default-feature
+dependency used by the initial scalar LLVM emitter. Default-feature
 checks require the compatible LLVM installation. Offline commands additionally
 require cached dependencies. See the [validation guide](agents/tests/README.md)
 for toolchain, formatting and environment limitations.

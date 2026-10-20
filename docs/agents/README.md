@@ -11,34 +11,36 @@ The name pass validates named units, annotates declarations, and resolves lexica
 names, file paths, visibility, and compile-time aliases. Semantic typing/member
 lookup now execute and validate their annotations. Explicit metatype
 specialization, bounded type-return evaluation, definite initialization and
-structured control-flow checks now run; see [typing](../type-resolution.md). Build-plan loading,
-pipeline orchestration, IR construction/verification, interpretation, and LLVM
-emission are sketches, not a usable compiler pipeline. The name-resolution
-specification has six passing phases in `src/frontend/analyzer/test.rs`; see
-[test commands and results](tests/README.md).
+structured control-flow checks now run; see [typing](../type-resolution.md).
+Single-file compilation supports int32 helpers/direct calls, initialized int32/bool
+locals, assignment, comparisons, nested conditionals and returns through verified
+SSA, multi-block LLVM/PHIs, object emission and host `cc` linking. Each function's
+signature selects its ABI; the production classifier supports C 32-bit integer/
+void boundaries, while Fib ABI remains unsupported. Arithmetic, source loops,
+storage, broader runtime representations and build.fib remain unfinished.
+See [driver](src/driver.md), [IR](src/ir/README.md), [backend](src/backend/README.md)
+and [tests](tests/README.md) for exact limits.
 
 ```text
-main -> Clap Command::parse -> cli::exec_command (todo!)
+build --single-file PATH -> BuildPlan -> parse_files -> Analyzer
+  -> AnalyzedProject -> lower_to_ir -> verified Ir -> verified LLVM
+  -> object -> cc -> executable (scalar/conditional subset)
 
-Directly usable: source -> Tokenizer -> Parser -> Ast (pending annotations)
-
-Planned, not executable:
-BuildPlan -> parse_files -> Analyzer -> AnalyzedProject -> lower_to_ir -> Ir
-         -> verified/target-aware LLVM -> objects/link
-build.fib -> IR interpreter -> project BuildPlan (also unimplemented)
+build.fib -> IR interpreter -> project BuildPlan (unimplemented)
 ```
 
 There is no separate typed AST, direct AST-to-LLVM fallback, recursive import
-loader, `compile_project`, `check_project`, or checked-in integration/e2e suite.
-Public architecture types do not certify successful analysis or verification.
+loader, `compile_project` or `check_project`. `tests/executable.rs` checks real
+compile/link/run behavior. Public architecture records alone do not certify
+successful analysis, verification or support by the emitter.
 
 ## Map
 
 - [Repository and commands](repository.md)
 - [Source ownership](src/README.md)
 - [Tokenizer, parser, AST, and analysis](src/frontend/README.md)
-- [SSA IR sketch](src/ir/README.md)
-- [Backend sketch](src/backend/README.md)
+- [SSA IR](src/ir/README.md)
+- [LLVM backend](src/backend/README.md)
 - [Tests and validation](tests/README.md)
 - [Samples](samples/README.md) and [standard library](std/README.md)
 - [CI](.github/workflows/ci.md)
