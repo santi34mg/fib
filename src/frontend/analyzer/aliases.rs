@@ -101,73 +101,90 @@ pub(super) fn resolve(
     definitions: &HashMap<DeclId, Definition>,
     paths: &HashMap<crate::build_plan::FileId, std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    struct Dependencies<'a> {
-        symbols: &'a ProjectSymbols,
-        definitions: &'a HashMap<DeclId, Definition>,
-        // Absent = unvisited, stack = resolving, targets = resolved.
-        stack: Vec<DeclId>,
-        targets: HashMap<DeclId, Entity>,
-        paths: &'a HashMap<crate::build_plan::FileId, std::path::PathBuf>,
-    }
-    impl Dependencies<'_> {
-        fn normalize(&mut self, entity: Entity) -> anyhow::Result<Entity> {
-            let Entity::Declaration(id) = entity else {
-                return Ok(entity);
-            };
-            let Some(definition) = self.definitions.get(&id) else {
-                return Ok(entity);
-            };
-            if let Some(target) = self.targets.get(&id) {
-                return Ok(*target);
-            }
-            if let Some(start) = self.stack.iter().position(|other| *other == id) {
-                let chain = self.stack[start..]
-                    .iter()
-                    .chain(std::iter::once(&id))
-                    .map(|id| {
-                        let file = self
-                            .symbols
-                            .files_by_name
-                            .iter()
-                            .find_map(|(name, file)| {
-                                (*file == id.file_id).then_some(name.0.as_str())
-                            })
-                            .unwrap_or("<unknown file>");
-                        format!("{file}::{}", self.symbols.declaration(*id).unwrap().name)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" -> ");
-                return Err(with_path(
-                    at_span(name_error(format!("alias cycle: {chain}")), definition.span),
-                    self.paths.get(&id.file_id),
-                ));
-            }
-            self.stack.push(id);
-            let symbols = self.symbols;
-            let result = symbols
-                .resolve_path_using(id.file_id, &definition.path, &mut |e| self.normalize(e));
-            self.stack.pop();
-            let target = result.map_err(|error| {
-                with_path(at_span(error, definition.span), self.paths.get(&id.file_id))
-            })?;
-            self.targets.insert(id, target);
-            Ok(target)
+    // Suspend a path lookup at its first unresolved alias, resolve that alias
+    // with an explicit stack, then resume the original path. No callback recurses.
+    #[derive(Debug)]
+    struct NeedAlias(DeclId);
+    impl std::fmt::Display for NeedAlias {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "pending alias {:?}", self.0)
         }
     }
-    let mut dependencies = Dependencies {
-        symbols,
-        definitions,
-        stack: Vec::new(),
-        targets: HashMap::new(),
-        paths,
-    };
-    // Stable traversal keeps diagnostics independent of HashMap iteration order.
+    impl std::error::Error for NeedAlias {}
+
+    let mut targets = HashMap::new();
+    let mut active = HashMap::new();
+    let mut stack = Vec::new();
     let mut ids = definitions.keys().copied().collect::<Vec<_>>();
     ids.sort_by_key(|id| (id.file_id, id.index));
-    for id in ids {
-        dependencies.normalize(Entity::Declaration(id))?;
+    for root in ids {
+        if targets.contains_key(&root) {
+            continue;
+        }
+        active.insert(root, 0);
+        stack.push(root);
+        while let Some(&id) = stack.last() {
+            let definition = &definitions[&id];
+            let result =
+                symbols.resolve_path_using(
+                    id.file_id,
+                    &definition.path,
+                    &mut |entity| match entity {
+                        Entity::Declaration(dependency)
+                            if definitions.contains_key(&dependency) =>
+                        {
+                            targets
+                                .get(&dependency)
+                                .copied()
+                                .ok_or_else(|| NeedAlias(dependency).into())
+                        }
+                        _ => Ok(entity),
+                    },
+                );
+            match result {
+                Ok(target) => {
+                    targets.insert(id, target);
+                    active.remove(&id);
+                    stack.pop();
+                }
+                Err(error) => {
+                    if let Some(NeedAlias(dependency)) = error.downcast_ref::<NeedAlias>() {
+                        if let Some(&start) = active.get(dependency) {
+                            let chain = stack[start..]
+                                .iter()
+                                .chain(std::iter::once(dependency))
+                                .map(|id| {
+                                    let file = symbols
+                                        .files_by_name
+                                        .iter()
+                                        .find_map(|(name, file)| {
+                                            (*file == id.file_id).then_some(name.0.as_str())
+                                        })
+                                        .unwrap_or("<unknown file>");
+                                    format!("{file}::{}", symbols.declaration(*id).unwrap().name)
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" -> ");
+                            return Err(with_path(
+                                at_span(
+                                    name_error(format!("alias cycle: {chain}")),
+                                    definitions[dependency].span,
+                                ),
+                                paths.get(&root.file_id),
+                            ));
+                        }
+                        active.insert(*dependency, stack.len());
+                        stack.push(*dependency);
+                    } else {
+                        return Err(with_path(
+                            at_span(error, definition.span),
+                            paths.get(&root.file_id),
+                        ));
+                    }
+                }
+            }
+        }
     }
-    let targets = dependencies.targets;
     for (id, target) in targets {
         symbols
             .namespaces
