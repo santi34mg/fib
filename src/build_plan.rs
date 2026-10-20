@@ -30,8 +30,30 @@ pub struct BuildPlan {
 }
 
 impl BuildPlan {
-    pub fn single_file(_path: &Path) -> anyhow::Result<Self> {
-        // Name the input file and make it the only file visible to resolution.
-        todo!()
+    pub fn single_file(path: &Path) -> anyhow::Result<Self> {
+        let path = path.canonicalize()?;
+        anyhow::ensure!(path.is_file(), "source is not a file: {}", path.display());
+        let name = path
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow::anyhow!("source needs a UTF-8 file stem"))?
+            .to_owned();
+        let mut output = path.with_extension("");
+        if cfg!(windows) {
+            output.set_extension("exe");
+        }
+        anyhow::ensure!(
+            output != path,
+            "source must have an extension to choose a distinct output path"
+        );
+        Ok(Self {
+            files: vec![SourceFile {
+                id: FileId(0),
+                name: FileName(name),
+                path,
+            }],
+            entry: FileId(0),
+            output,
+        })
     }
 }
