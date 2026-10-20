@@ -3,8 +3,9 @@
 The name pass runs on the original parsed AST through `Analyzer::new`,
 `collect_declarations`, and `resolve_names`. It resolves bindings, file paths,
 visibility, and compile-time aliases. Successful name resolution is not successful
-compilation: semantic typing, member lookup, initialization validation, lowering,
-and execution remain unfinished.
+compilation: lowering and execution remain unfinished. Complete analysis now
+adds initialization and structured flow validation.
+Semantic typing and members are described in [type resolution](type-resolution.md).
 
 ## Files and identities
 
@@ -75,7 +76,8 @@ binding it fails. Local aliases and inline local types have no forward visibilit
 
 Redeclaring an active enclosing lexical binding is rejected. Sibling blocks and
 separate functions can reuse spellings, and locals can share file-declaration
-spellings. Function signature type names resolve before parameters are inserted;
+spellings. Function signature type names resolve before runtime parameters are inserted;
+metatype parameters participate symbolically in signature lookup;
 bodyless functions also receive parameter annotations. Blocks and switch arms
 restore their scopes on both success and failure.
 
@@ -99,7 +101,7 @@ and owning path. Compilation units do not retain source text, so these diagnosti
 do not invent source lines. Source spellings/spans and later-pass annotations are
 preserved.
 
-`Analyzer::analyze` still errors after the name pass because typing and full
-analysis-completion validation are unfinished. The six inline specification phases
+`Analyzer::analyze` runs type resolution after the name pass, then adds
+initialization and structured flow checks. The six inline specification phases
 in `src/frontend/analyzer/test.rs` exercise the working resolver; see
 [validation](agents/tests/README.md).

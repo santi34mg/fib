@@ -14,22 +14,20 @@ its comments define the pin as MSRV policy. Bump deliberately with CI, not by dr
 
 ## Local validation
 
-The current tests-only verification (2026-10-19) used cached offline dependencies:
+Local validation uses cached offline dependencies:
 
 ```sh
-cargo test --offline --no-default-features --no-run
+cargo check --offline --no-default-features
 cargo test --offline --no-default-features
-cargo test --offline --no-default-features -- --skip frontend::analyzer::test::name_resolution
 cargo fmt --check
+cargo clippy --offline --no-default-features --all-targets -- -D warnings
 ```
 
-Compilation and formatting pass. The full no-default-features library suite passes
-413 tests, including 235 name-resolution tests in six phases, with zero binary
-tests and doctests. No-default Clippy with all targets and warnings denied also
-passes. See [phase commands and validation notes](tests/README.md).
-Earlier check/help verification (2026-10-17) succeeded;
-help lists `build`, `run`, and `test`. Offline mode requires a populated cache
-and is not necessary for normal development.
+The unfiltered no-default-features suite passes, including all six former pending
+acceptance cases. See
+[test commands and measured results](tests/README.md). Offline mode requires a
+populated cache and is optional outside restricted environments. CLI help still
+lists `build`, `run` and `test`; execution remains unfinished.
 
 Useful focused commands: `cargo test --no-default-features frontend::parser`,
 `cargo test --no-default-features frontend::tokenizer`, and

@@ -9,8 +9,10 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   AST construction, lexical scope utilities, diagnostics and raw IR data utilities.
 - `analyzer.rs` + `analyzer/` validate plan/unit IDs, collect and annotate declarations,
   and resolve lexical names, file paths, visibility, and compile-time aliases.
-  Name resolution validates its annotation slots; typing/member lookup and full
-  analysis remain unfinished. Analysis annotates the original AST; no
+  Name resolution validates its annotation slots. The type pass resolves semantic
+  types, expressions and owner-based members and validates applicable annotations;
+  explicit metatype specialization, bounded type-return evaluation, initialization
+  and structured flow validation now run. Analysis annotates the original AST; no
   lexer/analyze/typed_ast modules exist.
 - `src/driver.rs` exposes `run_pipeline`, `run_frontend`, `parse_files`,
   `lower_to_ir`, all unimplemented. No `compile_project`/`check_project` APIs.
@@ -37,8 +39,9 @@ cargo test --offline --no-default-features
 cargo run --offline --no-default-features -- --help
 ```
 
-The current no-default-features suite passes all 413 library tests, including 235
-name-resolution tests in six inline phases. Check, fmt, and no-default Clippy with
+The unfiltered no-default-features suite passes, including the six former pending
+acceptance cases and the added completion regressions. Name resolution still has
+236 passing cases. Check, fmt, and no-default Clippy with
 `--all-targets -- -D warnings` pass. All analyzer tests/helpers live in
 `src/frontend/analyzer/test.rs`. Run one phase with
 `cargo test --no-default-features name_resolution::phase_01_files`.
@@ -61,7 +64,8 @@ Bindings use `[pub] [const | comp] name (: Type = | :=) expression;`, including
 `comp Name: type = struct { field: int32 };`. Analysis requires explicit `comp`
 for type bindings; parsing alone still accepts the unmodified form. Multi-bindings retain independent
 modifiers/types and a shared initializer list. Legacy `type Name ...` is removed.
-Builtin functions retain `@`; legacy `@` types, `var`, `for`, dot-index and imports
+Functions are ordinary identifiers; builtin functions and their `@` forms are removed.
+Legacy `@` types, `var`, `for`, dot-index and imports
 are not the current working grammar. Parsing is not semantic/runtime support.
 See [parser details](docs/agents/src/frontend/parser.md). Samples use current
 syntax and have automatic parser coverage; std sources may still be stale.
@@ -76,7 +80,8 @@ when implementing missing passes. See [diagnostics](docs/agents/src/diagnostics.
 - Add tokenizer/parser success and malformed-input tests for syntax changes.
 - Analyzer tests combine utility/stub contracts with six inline name-resolution
   specification phases in `src/frontend/analyzer/test.rs`. The phases pass for
-  implemented name resolution; typing and member lookup remain separate. Driver/IR/backend tests
+  implemented name resolution; typing/member coverage is in the inline `type_resolution` module, including
+  passing `completion_acceptance` and `completion_regressions` cases. Driver/IR/backend tests
   protect data or explicit stub failure, not successful verification or execution.
 - Never turn unfinished operations into successful empty results. Implement the
   root invariant, then add real positive/negative coverage. Assert diagnostic
