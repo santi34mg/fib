@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserved the unfinished symbol-table and IR rewrite sources from `refactor/modules-and-generic-functions`; the IR interpreter is now exported but remains unimplemented.
 
 ### Changed
+- **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples use ordinary calls.
 - Type bindings now require explicit `comp` during analysis, including local inline types and type aliases. Local aliases follow declaration order and cannot reuse build-plan file names or their roots. Local compile-time type identities remain private to lexical lookup. Collection and name resolution reject invalid stage ordering and repeated attempts; name errors carry structured source locations.
 - LSP semantic highlighting recognizes `pub` and `comp` as declaration keywords, including per-binding modifiers in multi-variable declarations.
 - **Breaking:** unified declarations use `[pub] [const | comp] name (: Type = | :=) expression;`. Type definitions and aliases now use `Name: type = ...;` with a required semicolon and parse as variable bindings with arbitrary expression initializers (`TypeValue` for explicit type syntax; ordinary expressions for names and calls, with semantic discrimination later); the legacy `type Name ...` parser route is removed. Each multi-binding retains independent modifiers and types, with the final `:=` introducing the shared initializer list. Typed declarations without initializers remain supported for compatibility. Parser tests, samples, and parsing/agent references follow the new syntax; semantic typing and arbitrary compile-time evaluation remain unfinished.
@@ -57,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Slice and bounds-check regression tests and a pre-commit validation gate.
 
 ### Changed
+- **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples use ordinary calls.
 - **Breaking:** statements now require trailing semicolons, including block
   statements such as `if`, `while`, and `switch`.
 - **Breaking:** replaced C-style `for` loops with `while (condition)` loops;
@@ -136,6 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uninferred decl, unknown function → `extern`).
 
 ### Changed
+- **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples use ordinary calls.
 - Split `ir`, `analyze`, and lowering into modules mirroring the parser layout.
 - Frontend: generic binary-expression parser; lexer split (`frontend/lexer/`);
   `BinOp` decoupled from lowering.

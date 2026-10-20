@@ -1,38 +1,23 @@
-# Builtins
+# Primitive types and ordinary function calls
 
-> **Verified parser behavior:** The tokenizer/parser recognizes the builtin call spellings below.
+> **Verified parser behavior:** primitive types use bare names; functions use ordinary identifiers.
 
-## Types versus functions
+Types such as `int32`, `string`, `bool`, `usize` and `type` are recognized by the
+compiler. `@int32` and `@void` are rejected. See [Types](types.md).
 
-Builtin **types** are bare names: `int32`, `string`, `bool`, `usize`, etc.
-`@int32` and `@void` are rejected with a diagnostic saying types do not use `@`.
-See [Types](types.md) for widths and migration from old byte-size names.
-
-The three builtin **functions** are recognized in both bare and `@`-prefixed
-form. Both forms produce a `CallToBuiltin` AST node:
+There are no builtin function tokens or builtin-call AST nodes. `concat`,
+`str_len` and `str_eq` are ordinary identifiers and can be declared, referenced,
+passed as function values or used as field names. Calls use the same `Call`
+AST as any other function:
 
 ```fib
-a := concat("hello", " world");
-b := @concat("hello", " world");
-n := str_len(a);
-m := @str_len(b);
-same := str_eq(a, b);
-equal := @str_eq(a, b);
+fn concat(a: int32, b: int32) int32 { return a + b; }
+answer := concat(1, 2);
 ```
 
-| Function | Intended operation, not a checked signature |
-|----------|---------------------------------------------|
-| `concat` / `@concat` | String concatenation |
-| `str_len` / `@str_len` | String byte length |
-| `str_eq` / `@str_eq` | String equality |
-
-Parentheses are required, including for zero arguments. A bare builtin function
-name is not a first-class function reference. These bare spellings are builtin
-tokens, so they cannot be declared as ordinary function/variable/field names.
-Unknown `@name` calls are rejected.
-
-The parser records argument expressions without validating a builtin signature.
-Builtin spelling proposals are tracked in the [roadmap](../roadmap/).
+The compiler does not supply these functions or prescribe their signatures.
+String helpers will be implemented by the standard library. Former `@concat`,
+`@str_len` and `@str_eq` spellings are rejected with source locations.
 
 ## Length member syntax
 
@@ -41,8 +26,9 @@ n := items.len;
 ```
 
 `.len` parses as ordinary member access. `items.@len` and bare `@len` are
-rejected; `len` itself is an ordinary identifier, not a builtin function.
+rejected; `len` is an ordinary identifier. The type pass distinguishes actual
+struct fields from array/slice/string length. See [type resolution](../type-resolution.md).
 
-Parser coverage: `test_builtin_call_shape`, `test_builtin_call_missing_paren_errors`,
-`test_unknown_builtin_surfaces_lexer_message`, `test_len_property_after_dot`, and
-`test_bare_len_property_errors` in [`src/frontend/parser/test.rs`](../../src/frontend/parser/test.rs).
+Coverage includes `former_builtin_function_names_are_identifiers`,
+`former_builtin_functions_are_ordinary_calls`, `removed_builtin_sigils_are_rejected`,
+`test_len_property_after_dot` and `test_bare_len_property_errors`.

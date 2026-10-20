@@ -1688,7 +1688,7 @@ mod name_resolution {
             expected
                 .iter()
                 .map(|name| {
-                    let index = ["x", "y", "z", "T"]
+                    let index = ["x", "y", "z", "T", "concat"]
                         .iter()
                         .position(|candidate| candidate == name)
                         .unwrap();
@@ -1739,7 +1739,11 @@ mod name_resolution {
         expr_ok!(unary_operand, "!x", ["x"]);
         expr_ok!(call_callee_and_arguments, "x(y, z)", ["x", "y", "z"]);
         expr_ok!(zero_argument_call, "x()", ["x"]);
-        expr_ok!(builtin_arguments, "@concat(x, y)", ["x", "y"]);
+        expr_ok!(
+            ordinary_concat_arguments,
+            "concat(x, y)",
+            ["concat", "x", "y"]
+        );
         expr_ok!(member_receiver_only, "x.unknown", ["x"]);
         expr_ok!(nested_member_receivers, "x.first.second", ["x"]);
         expr_ok!(
@@ -1765,8 +1769,8 @@ mod name_resolution {
         expr_bad!(missing_call_callee, "Missing(y, z)");
         expr_bad!(missing_first_call_argument, "x(Missing, z)");
         expr_bad!(missing_last_call_argument, "x(y, Missing)");
-        expr_bad!(missing_first_builtin_argument, "@concat(Missing, y)");
-        expr_bad!(missing_last_builtin_argument, "@concat(x, Missing)");
+        expr_bad!(missing_first_ordinary_argument, "x(Missing, y)");
+        expr_bad!(missing_last_ordinary_argument, "x(y, Missing)");
         expr_bad!(missing_member_receiver, "Missing.field");
         expr_bad!(missing_struct_owner, "Missing { field: x }");
         expr_bad!(
@@ -2345,11 +2349,6 @@ mod name_resolution {
                         self.expr(arg);
                     }
                 }
-                ExpressionKind::CallToBuiltin { args, .. } => {
-                    for arg in args {
-                        self.expr(arg);
-                    }
-                }
                 ExpressionKind::ExprAcess { expr, .. } => self.expr(expr),
                 ExpressionKind::StructConstruct {
                     struct_identifier,
@@ -2540,7 +2539,7 @@ mod name_resolution {
     ) -> ResolveContext<'a> {
         let mut lexical = SymbolTable::new();
         lexical.enter_scope(ScopeKind::Function);
-        for (i, name) in ["x", "y", "z", "T"].iter().enumerate() {
+        for (i, name) in ["x", "y", "z", "T", "concat"].iter().enumerate() {
             lexical
                 .insert_binding((*name).into(), LocalBinding::Local(LocalId(100 + i as u32)))
                 .unwrap();

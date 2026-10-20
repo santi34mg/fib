@@ -1,40 +1,28 @@
-# 01 — Builtin spelling and possible function removal
+# 01 — Primitive spelling and removal of builtin functions
 
 ## Implemented baseline
 
-The tokenizer recognizes bare bit-width types (`int32`, `uint64`, `float32`)
-and default aliases `int`/`uint` = 32 bits. `.len` parses as ordinary member
-selection. Legacy `@` types and byte-width `int4` are not current source syntax.
-Do not repeat the historical bulk rename as an outstanding compiler feature.
-Some `Display` implementations and comments still print legacy sigils; their
-output is not a normative grammar or round-trip guarantee.
+Types use bare bit-width names (`int32`, `uint64`, `float32`); `int`/`uint` are
+32-bit aliases. Legacy `@` types and byte-width `int4` are rejected.
 
-Builtin functions remain: `@str_len`, `@str_eq`, `@concat` parse builtin calls.
-The bare-name tokenizer branch also recognizes those names; audit reservation
-and diagnostics before specifying a stricter surface. Analysis and runtime
-behavior are unimplemented. `@` still tokenizes; it has not been removed from
-the language or adopted as a working attribute system.
+Builtin functions have been removed from tokens, syntax and analysis. `concat`,
+`str_len` and `str_eq` are ordinary identifiers; their former `@` spellings fail.
+String operations will be ordinary standard-library functions. No replacement
+library signatures, allocation contracts or runtime implementations are provided
+by this compiler change. `@` is still tokenized for diagnostics, not a working
+attribute system.
 
-## Retained proposal (not implemented)
+`.len` remains ordinary member syntax. Semantic lookup distinguishes a struct's
+field from the array/slice/string length member and returns symbolic `usize` for
+the latter. See [implemented typing](../type-resolution.md).
 
-Replace these functions with ordinary library operations, potentially alongside
-[the string redesign](05-remove-string.md). This is not a consequence of bare
-type spelling and is not required before every generic parser change.
+## Library follow-up
 
-- [ ] Specify replacement APIs, allocation/failure/ownership behavior and a
-      migration path before removing builtin call syntax/AST forms.
-- [ ] Specify array/slice `.len` semantics and result type. Member selection
-      must depend on the resolved receiver type: a struct field named `len`
-      remains a field, not a magic name recognized before typing.
-- [ ] Audit actual std/sample syntax and module-name collisions; old counts,
-      the proposed `std/string.fib` rename and old e2e outputs are historical
-      migration notes, not verified facts about supported code.
-- [ ] Reconcile formatting, diagnostics and editor highlighting with accepted
-      syntax, without using inactive backend code as an implementation route.
+Define string APIs, allocation/failure/ownership contracts and executable library
+coverage alongside [the string redesign](05-remove-string.md). The historical
+std wrapper around `@concat` has been retired. Samples of ordinary string helper
+calls contain declarations only and do not claim working implementations.
 
-## Acceptance tests
-
-Test bare type tokens, aliases, obsolete spellings, `.len` member syntax and
-malformed builtin calls now. Add semantic tests for struct `len` versus array
-and slice length only when typing exists; add library/runtime equivalence tests
-only when the execution pipeline works. See the [baseline](README.md).
+Tokenizer/parser, type-resolution and editor-highlighting tests cover the
+compiler-side removal. Library equivalence/runtime tests require the future
+standard library and execution pipeline.

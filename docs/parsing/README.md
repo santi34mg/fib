@@ -12,7 +12,7 @@ throughout these pages, analysis work is tracked in the
 ## Syntax inventory
 
 - [Types](types.md)
-- [Builtin calls](builtins.md)
+- [Primitive types and ordinary calls](builtins.md)
 - [Literals, identifiers, and comments](literals.md)
 - [Bindings](variables.md)
 - [Operators and assignments](operators.md)
