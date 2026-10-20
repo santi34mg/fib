@@ -55,8 +55,6 @@ const builtinTypes = new Set([
   "usize",
 ]);
 
-const builtinFunctions = new Set(["concat", "str_len", "str_eq"]);
-
 const twoCharacterOperators = new Set([
   "==",
   "!=",
@@ -196,8 +194,7 @@ function rawTokens(text) {
       if (character === "@") {
         offset += width;
         const end = offset < line.length && identifierStart.test(codePointAt(line, offset)[0]) ? scanIdentifier(line, offset) : offset;
-        const name = line.slice(offset, end);
-        const type = builtinFunctions.has(name) ? "function" : "macro";
+        const type = "macro";
         tokens.push({ line: lineNumber, start, length: end - start, type, text: line.slice(start, end) });
         offset = end;
         continue;
@@ -206,7 +203,7 @@ function rawTokens(text) {
       if (identifierStart.test(character)) {
         const end = scanIdentifier(line, start);
         const word = line.slice(start, end);
-        tokens.push({ line: lineNumber, start, length: end - start, type: builtinTypes.has(word) ? "type" : keywords.has(word) ? "keyword" : builtinFunctions.has(word) ? "function" : null, text: word });
+        tokens.push({ line: lineNumber, start, length: end - start, type: builtinTypes.has(word) ? "type" : keywords.has(word) ? "keyword" : null, text: word });
         offset = end;
         continue;
       }

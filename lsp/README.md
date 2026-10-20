@@ -11,7 +11,7 @@ Highlighting follows the current tokenizer/parser syntax: bare builtin types
 (`int32`, `uint64`, `string`), `[pub] [const | comp]` binding modifiers,
 `name := value` bindings, and `.len`. Modifiers are highlighted independently
 for each binding in multi-variable declarations.
-Builtin calls retain the `@` prefix (`@concat`, `@str_len`, `@str_eq`).
+String helpers are ordinary library functions; `concat`, `str_len`, and `str_eq` are ordinary identifiers. Their former `@` spellings are rejected by the compiler.
 Legacy `var`/`import` keywords and `@int4`-style types are not supported.
 Identifier classification is syntax-based, not compiler-backed name resolution;
 the server does not provide parsing or type-checking diagnostics.
