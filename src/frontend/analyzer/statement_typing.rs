@@ -55,7 +55,13 @@ impl TypeContext<'_> {
             self.store_binding(binding, false, var.is_const, info)?;
         }
         let info = if let Some(expr) = &mut var.expression {
-            self.expression(expr, expected)?
+            let info = self.expression(expr, expected)?;
+            if var.is_comp && matches!(expr.kind, E::Call { .. }) && info.type_value.is_none() {
+                return Err(type_error(
+                    "computed comp initializer must produce a type value",
+                ));
+            }
+            info
         } else {
             let ty =
                 expected.ok_or_else(|| type_error("binding requires a type or initializer"))?;

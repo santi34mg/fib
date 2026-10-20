@@ -3213,4 +3213,210 @@ mod type_resolution {
         exact_large_integer_divisor,
         "x: uint128 = 1 / (18446744073709551615 - 18446744073709551614);"
     );
+    mod specialization {
+        use super::*;
+        use crate::frontend::{
+            analysis_annotation::BindingId, analyzer::validate_type_annotations,
+        };
+        macro_rules! pass {
+            ($name:ident, $source:expr) => {
+                #[test]
+                fn $name() {
+                    good($source);
+                }
+            };
+        }
+        pass!(
+            specialized_pointer,
+            "fn identity(T: type, x: *T) *T { return x; } x := 1; p := identity(int32, x&);"
+        );
+        pass!(
+            specialized_array,
+            "fn identity(T: type, x: T[2]) T[2] { return x; } a := identity(int8, [1, 2]);"
+        );
+        pass!(
+            specialized_function,
+            "fn identity(T: type, f: fn(T) -> T) fn(T) -> T { return f; } fn inc(x: int32) int32 { return x + 1; } result := identity(int32, inc)(2);"
+        );
+        pass!(
+            forwarding_generic,
+            "fn identity(T: type, x: T) T { return x; } fn forward(U: type, x: U) U { return identity(U, x); } result := forward(int32, 1);"
+        );
+        pass!(
+            recursive_generic,
+            "fn recur(T: type, x: T) T { return recur(T, x); } result := recur(int32, 1);"
+        );
+        pass!(
+            computed_local_type,
+            "fn choose() type { return int32; } fn f() int32 { comp T := choose(); x: T = 1; return x; }"
+        );
+        pass!(
+            computed_type_parameter,
+            "fn choose(T: type) type { return T; } comp T := choose(int8); value: T = 127;"
+        );
+        pass!(
+            computed_bool_branch,
+            "fn choose(b: bool) type { if b { return int8; } else { return int32; }; } comp T := choose(true); value: T = 127;"
+        );
+        pass!(
+            computed_aggregate_types_are_distinct,
+            "fn box(T: type) type { return struct { x: T }; } comp A := box(int8); comp B := box(int32); a: A = A { x: 1 }; b: B = B { x: 2 };"
+        );
+        pass!(
+            computed_bool_forwarding,
+            "fn choose(b: bool) type { if b { return int8; } else { return int32; }; } fn forward(b: bool) type { return choose(b); } comp T := forward(true); x: T = 1;"
+        );
+        err!(
+            specialized_argument_mismatch,
+            "fn identity(T: type, x: T) T { return x; } result := identity(int32, true);",
+            "incompatible"
+        );
+        err!(
+            specialized_literal_range,
+            "fn identity(T: type, x: T) T { return x; } result := identity(int8, 128);",
+            "range"
+        );
+        err!(
+            computed_no_body,
+            "fn choose() type; comp T := choose();",
+            "body"
+        );
+        err!(
+            computed_recursion_limit,
+            "fn choose() type { return choose(); } comp T := choose();",
+            "limit"
+        );
+        pass!(
+            computed_local_alias,
+            "fn choose() type { return int32; } fn f() int32 { comp T := choose(); comp U := T; x: U = 1; return x; }"
+        );
+        pass!(
+            computed_multi_binding,
+            "fn choose() type { return int32; } comp A, comp B := choose(), choose(); a: A = 1; b: B = 2;"
+        );
+        pass!(
+            computed_named_local_aggregate,
+            "fn box(T: type) type { comp Box: type = struct { x: T }; return Box; } comp A := box(int8); comp B := box(int32); a: A = A { x: 1 }; b: B = B { x: 2 };"
+        );
+        pass!(
+            computed_cache_preserves_nominal_identity,
+            "fn box(T: type) type { return struct { x: T }; } comp A := box(int8); comp B := box(int8); a: A = A { x: 1 }; b: B = a;"
+        );
+        err!(
+            computed_runtime_call_is_rejected,
+            "fn f() int32 { return 1; } comp value := f();",
+            "type value"
+        );
+        err!(
+            computed_side_effect_is_rejected,
+            "fn side() bool; fn choose() type { b := side(); return int32; } comp T := choose();",
+            "known type or bool"
+        );
+        err!(
+            computed_uninitialized_local_is_rejected,
+            "fn choose() type { b: bool; return int32; } comp T := choose();",
+            "known type or bool"
+        );
+        #[test]
+        fn computed_cross_file_type_and_generic_alias() {
+            let mut lib = analyzer("fn identity(T: type, x: T) T { return x; } fn box(T: type) type { return struct { x: T }; }").units.remove(0);
+            lib.source_file_id = FileId(1);
+            for node in &mut lib.ast.statements {
+                if let StatementKind::FunctionDeclaration(f) = &mut node.kind {
+                    f.is_pub = true;
+                }
+            }
+            let main = analyzer("comp ident := lib::identity; a := ident(int8, 1); comp Box := lib::box(int32); b: Box = Box { x: 1 };").units.remove(0);
+            let mut a = Analyzer::new(
+                BuildPlan {
+                    files: vec![
+                        SourceFile {
+                            id: FileId(0),
+                            name: "main".to_string().into(),
+                            path: "main.fib".into(),
+                        },
+                        SourceFile {
+                            id: FileId(1),
+                            name: "lib".to_string().into(),
+                            path: "lib.fib".into(),
+                        },
+                    ],
+                    entry: FileId(0),
+                    output: "unused".into(),
+                },
+                vec![main, lib],
+            )
+            .unwrap();
+            a.collect_declarations().unwrap();
+            a.resolve_names().unwrap();
+            a.resolve_types().unwrap();
+        }
+        #[test]
+        fn corrupt_cached_signature_is_rejected() {
+            let (mut a, mut types) =
+                run("fn identity(T: type, x: T) T { return x; } a := identity(int8, 1);").unwrap();
+            let wrong = types.builtin(BuiltinType::Boolean);
+            types
+                .generic_instances
+                .values_mut()
+                .next()
+                .unwrap()
+                .signature = wrong;
+            assert!(validate_type_annotations(&mut a.units, &a.symbols, &types).is_err());
+        }
+        #[test]
+        fn corrupt_call_result_is_rejected() {
+            let (mut a, mut types) =
+                run("fn identity(T: type, x: T) T { return x; } a := identity(int8, 1);").unwrap();
+            let wrong = types.builtin(BuiltinType::Boolean);
+            let StatementKind::VariableDeclaration(v) = &mut a.units[0].ast.statements[1].kind
+            else {
+                panic!()
+            };
+            v.expression
+                .as_mut()
+                .unwrap()
+                .annotation
+                .resolved
+                .as_mut()
+                .unwrap()
+                .ty = wrong;
+            assert!(validate_type_annotations(&mut a.units, &a.symbols, &types).is_err());
+        }
+        #[test]
+        fn corrupt_parameter_metadata_is_rejected() {
+            let (mut a, mut types) = run("fn identity(T: type, x: T) T { return x; }").unwrap();
+            types
+                .generic_parameters
+                .values_mut()
+                .next()
+                .unwrap()
+                .clear();
+            assert!(validate_type_annotations(&mut a.units, &a.symbols, &types).is_err());
+        }
+        #[test]
+        fn instances_cache_by_template_and_type_identity() {
+            let (_, types) = run("fn identity(T: type, x: T) T { return x; } a := identity(int32, 1); b := identity(int32, 2); c := identity(int8, 3);").unwrap();
+            assert_eq!(types.generic_instances.len(), 2);
+            assert_ne!(
+                types.generic_instances.values().next().unwrap().signature,
+                types.bindings[&BindingId::Declaration(DeclId {
+                    file_id: FileId(0),
+                    index: 0
+                })]
+                    .ty
+            );
+        }
+    }
+    mod completion_acceptance {
+        use super::*;
+        #[test]
+        fn generic_specialization() {
+            good("fn identity(T: type, x: T) T { return x; } result := identity(int32, 7);");
+        }
+        #[test]
+        fn compile_time_function_evaluation() {
+            good("fn choose() type { return int32; } comp T := choose(); value: T = 1;");
+        }
+    }
 }

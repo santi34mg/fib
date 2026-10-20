@@ -40,6 +40,10 @@ pub(super) struct TypeState {
     pub return_type: Option<TypeId>,
     pub depth: usize,
     pub paths: HashMap<FileId, std::path::PathBuf>,
+    pub functions: HashMap<DeclId, crate::frontend::ast::function_declaration::FunctionDeclaration>,
+    pub evaluation_depth: usize,
+    pub evaluated_types: HashMap<(DeclId, Vec<super::evaluation::Argument>), TypeId>,
+    pub evaluation_booleans: HashMap<BindingId, bool>,
 }
 
 pub(super) fn resolve_project(
@@ -127,6 +131,13 @@ pub(super) fn resolve_project_with_paths(
     }
     for unit in units.iter() {
         collect(&unit.ast.statements, &mut context.state.definitions);
+        for node in &unit.ast.statements {
+            if let S::FunctionDeclaration(fun) = &node.kind
+                && let Some(BindingId::Declaration(id)) = fun.signature.annotation.binding
+            {
+                context.state.functions.insert(id, fun.clone());
+            }
+        }
     }
     // Function signatures and named type definitions are available before bodies.
     let mut ids: Vec<_> = context.state.definitions.keys().copied().collect();
@@ -310,7 +321,23 @@ impl TypeContext<'_> {
             .annotation
             .binding
             .ok_or_else(|| type_error("pending function binding"))?;
-
+        if let BindingId::Declaration(id) = binding {
+            let parameters = signature
+                .parameters
+                .iter()
+                .filter_map(|p| {
+                    if matches!(p.parameter_type.kind, K::Builtin(B::MetaType)) {
+                        match p.annotation.binding {
+                            Some(BindingId::Local(id)) => Some(id),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            self.types.generic_parameters.insert(id, parameters);
+        }
         let info = self.value(ty);
         self.types.bind(binding, info);
         Ok(ty)

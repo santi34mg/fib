@@ -132,8 +132,15 @@ impl Analyzer {
             };
             return Ok(Some(Entity::Declaration(id)));
         }
+        // Computed values retain their own binding; typing evaluates the call.
+        if matches!(expr.map(|e| &e.kind), Some(ExpressionKind::Call { .. })) {
+            return Ok(None);
+        }
         match reference {
             Some(ResolvedName::Entity(entity)) => Ok(Some(entity)),
+            Some(ResolvedName::Local(_)) if matches!(expr.map(|e| &e.kind), Some(ExpressionKind::QualifiedIdentifier(name)) if name.segments.len() == 1 && context.lexical.is_comptime_local(&name.segments[0])) => {
+                Ok(None)
+            }
             Some(ResolvedName::Local(_)) => Err(name_error(format!(
                 "comp '{}' cannot alias runtime local or parameter '{}'",
                 var.identifier,
@@ -164,7 +171,11 @@ impl Analyzer {
             None => {
                 let id = context.local_ids.allocate()?;
                 var.annotation.binding = Some(BindingId::Local(id));
-                LocalBinding::Local(id)
+                if var.is_comp {
+                    LocalBinding::CompValue(id)
+                } else {
+                    LocalBinding::Local(id)
+                }
             }
         };
         context

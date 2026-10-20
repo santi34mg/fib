@@ -50,6 +50,12 @@ pub(super) fn validate(
                 .declaration(*id)
                 .map_err(|_| type_error("invalid declared-type identity"))?;
         }
+        if let T::TypeResult { function, file, .. } = ty
+            && (!types.generic_parameters.contains_key(function)
+                || !symbols.namespaces.contains_key(file))
+        {
+            return Err(type_error("invalid symbolic type computation"));
+        }
         if let T::Parameter(id) = ty {
             let binding = BindingId::Local(*id);
             if !v.bindings.contains(&binding)
@@ -57,6 +63,17 @@ pub(super) fn validate(
             {
                 return Err(type_error("invalid type parameter identity"));
             }
+        }
+    }
+    for (key, instance) in &types.generic_instances {
+        if key != &instance.key {
+            return Err(type_error("generic instance cache key mismatch"));
+        }
+        super::generics::validate_instance(instance, types)?;
+    }
+    for id in types.generic_parameters.keys() {
+        if !v.bindings.contains(&BindingId::Declaration(*id)) {
+            return Err(type_error("unknown generic template identity"));
         }
     }
     for (&(owner, index), &constructor) in &types.variant_constructors {
@@ -434,9 +451,44 @@ impl Validator<'_> {
                     self.expression(&b.right)?;
                 }
                 E::Call { callee, args } => {
-                    self.expression(callee)?;
-                    for arg in args {
-                        self.expression(arg)?;
+                    let callable = self.expression(callee)?;
+                    let T::Function(mut signature) = self.types.get(callable.ty)?.clone() else {
+                        return Err(type_error("call annotation has a non-function callee"));
+                    };
+                    if args.len() != signature.parameters.len() {
+                        return Err(type_error("call annotation argument arity mismatch"));
+                    }
+                    let mut arguments = vec![];
+                    for (arg, ty) in args.iter().zip(&signature.parameters) {
+                        let value = self.expression(arg)?;
+                        if matches!(self.types.get(*ty)?, T::Builtin(B::MetaType)) {
+                            arguments.push(self.types.canonical(value.type_value.ok_or_else(
+                                || type_error("generic argument has no denoted type"),
+                            )?)?);
+                        }
+                    }
+                    if !arguments.is_empty() {
+                        let template = super::evaluation::function_id(callee)
+                            .ok_or_else(|| type_error("missing generic call template"))?;
+                        let key = super::generics::GenericInstanceKey {
+                            template,
+                            arguments,
+                        };
+                        let instance = self
+                            .types
+                            .generic_instances
+                            .get(&key)
+                            .ok_or_else(|| type_error("missing generic call instance"))?;
+                        let T::Function(f) = self.types.get(instance.signature)? else {
+                            return Err(type_error("invalid generic call signature"));
+                        };
+                        signature = f.clone();
+                    }
+                    for (arg, ty) in args.iter().zip(&signature.parameters) {
+                        check_assignable(*ty, self.expression(arg)?.ty, self.types)?;
+                    }
+                    if info.ty != signature.return_type {
+                        return Err(type_error("call result annotation mismatch"));
                     }
                 }
                 E::Cast { expr, target_type } => {
@@ -535,6 +587,29 @@ impl Validator<'_> {
                 let info = self
                     .binding(fun.signature.annotation)?
                     .ok_or_else(|| type_error("missing function type"))?;
+                let Some(BindingId::Declaration(id)) = fun.signature.annotation.binding else {
+                    return Err(type_error("function has no declaration identity"));
+                };
+                let expected_parameters: Vec<_> = fun
+                    .signature
+                    .parameters
+                    .iter()
+                    .filter_map(|p| {
+                        if matches!(p.parameter_type.kind, K::Builtin(B::MetaType)) {
+                            match p.annotation.binding {
+                                Some(BindingId::Local(id)) => Some(id),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if self.types.generic_parameters.get(&id) != Some(&expected_parameters) {
+                    return Err(type_error(
+                        "generic parameter table disagrees with function signature",
+                    ));
+                }
                 let T::Function(signature) = self.types.get(info.ty)? else {
                     return Err(type_error("function binding is not callable"));
                 };

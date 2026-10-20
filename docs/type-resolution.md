@@ -61,7 +61,21 @@ runtime expression types. Reserved label syntax has no applicable slots.
 - `type` is admitted in `comp` bindings, function parameters and returns. Signature
   references to metatype parameters use symbolic identities. Bodies such as
   `fn identity(T: type, x: T) T { return x; }` can be checked symbolically;
-  Calls requiring compile-time evaluation or specialization report errors.
+  Explicit metatype arguments specialize signatures, including pointers, slices,
+  arrays, tuples and function types. Instances are cached by defining declaration
+  and canonical type arguments; aliases share the template identity. Bodies are
+  checked symbolically, so operations requiring constraints on an unknown type
+  parameter still error. Generic calls require a named template; indirect generic
+  function values and variadic typing remain unsupported.
+- Type-returning functions evaluate type values, local declarations, nested calls
+  and branches on known bool values, with type/bool arguments and a recursion
+  limit of 64. Repeated calls preserve nominal aggregate identity, while distinct
+  argument lists own distinct definition sites. Computed `comp` calls must produce type values. Numeric computation, mutation,
+  loops, side effects and general compile-time execution remain unsupported and
+  return diagnostics. Calls depending on runtime bool parameters retain symbolic
+  type-result identities while checking their defining body. Concrete type calls
+  require known arguments. Computed local `comp` bindings retain lexical identity
+  and can be aliased without permitting aliases of runtime locals.
 - `usize` remains symbolic, independent of the host's pointer width. It is the
   `.len` result for arrays, slices and strings (byte count for strings). A struct
   field named `len` remains an ordinary field.
@@ -118,6 +132,6 @@ calls with a diagnostic, rather than promising unbounded analysis resources.
 
 ## Acceptance coverage
 
-Type-only acceptance tests cover semantic identities, members, annotations and
-source diagnostics. Initialization, flow, specialization and type-return evaluation
+Type-only acceptance tests cover specialization, cached identities, bounded
+computed types, members, annotations and diagnostics. Initialization and flow
 remain separate work; `Analyzer::analyze` cannot yet return a complete project.

@@ -322,37 +322,7 @@ impl TypeContext<'_> {
                     _ => return Err(type_error("invalid binary operand types")),
                 }
             }
-            E::Call { callee, args } => {
-                let info = self.expression(callee, None)?;
-                let T::Function(signature) = self.types.get(info.ty)?.clone() else {
-                    return Err(type_error("expression is not callable"));
-                };
-                if signature.variadic {
-                    return Err(type_error("variadic calls are not implemented"));
-                }
-                if signature
-                    .parameters
-                    .iter()
-                    .chain(std::iter::once(&signature.return_type))
-                    .any(|t| {
-                        matches!(
-                            self.types.get(*t),
-                            Ok(T::Builtin(B::MetaType) | T::Parameter(_))
-                        )
-                    })
-                {
-                    return Err(type_error(
-                        "compile-time type calls and specialization are not implemented",
-                    ));
-                }
-                if args.len() != signature.parameters.len() {
-                    return Err(type_error("call argument arity mismatch"));
-                }
-                for (arg, ty) in args.iter_mut().zip(signature.parameters) {
-                    self.expression(arg, Some(ty))?;
-                }
-                signature.return_type
-            }
+            E::Call { callee, args } => return self.call(callee, args),
             E::ExprAcess {
                 expr: receiver,
                 accessed_identifier,
