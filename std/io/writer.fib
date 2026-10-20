@@ -1,0 +1,1 @@
+pub comp Writer: type = struct { };
