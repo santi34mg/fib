@@ -5,7 +5,7 @@
 [`Cargo.toml`](../../Cargo.toml) defines one Rust 2024 package, `fibc` 0.1.1,
 with library and binary. Default feature `llvm` enables optional Inkwell 0.8
 (`llvm21-1`); default dependency builds therefore require LLVM 21 even though
-active backend code emits nothing. No-default-features builds avoid LLVM.
+the initial scalar backend emits LLVM objects. No-default-features builds avoid LLVM.
 Dependencies also include anyhow, serde, toml, clap, regex, walkdir, petgraph,
 either, indextree, and tempfile; do not remove them based on old usage inventories.
 
@@ -26,8 +26,8 @@ cargo clippy --offline --no-default-features --all-targets -- -D warnings
 The unfiltered no-default-features suite passes, including all six former pending
 acceptance cases. See
 [test commands and measured results](tests/README.md). Offline mode requires a
-populated cache and is optional outside restricted environments. CLI help still
-lists `build`, `run` and `test`; execution remains unfinished.
+populated cache and is optional outside restricted environments. The CLI builds the single-file scalar/conditional subset with LLVM and host `cc`;
+other commands remain unfinished.
 
 Useful focused commands: `cargo test --no-default-features frontend::parser`,
 `cargo test --no-default-features frontend::tokenizer`, and
@@ -42,7 +42,7 @@ compilation.
 - [`samples/`](../../samples): current-syntax examples with automatic parser coverage,
   not an executable regression suite.
 - [`std/`](../../std): experimental Fib sources, not automatically checked.
-- No root `tests/` directory exists; [test guidance](tests/README.md) retains its old URL.
+- `tests/executable.rs` compiles, links and executes the initial milestone with LLVM.
 - [`CI`](.github/workflows/ci.md) records configured gates, not proof they pass.
 - [`.githooks/pre-commit`](../../.githooks/pre-commit) is opt-in; it skips docs-only
   staged changes and runs `cargo deny check` as well as frontend/full gates.
@@ -50,4 +50,4 @@ compilation.
 
 The planned project model uses explicitly named files in `BuildPlan`, optionally
 produced by interpreting `build.fib`. It is not the former include-root/recursive
-import model and is not implemented yet.
+import model; build.fib interpretation is not implemented yet.

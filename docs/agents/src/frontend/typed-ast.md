@@ -18,11 +18,13 @@ annotations and table entries. Namespace aliases have no fabricated value types.
 
 `Analyzer::resolve_types` returns the semantic table after annotating the source
 units; `Analyzer::units` exposes those units. `AnalyzedProject` is returned by
-`Analyzer::analyze` after initialization and structured flow checks. Generic
+`Analyzer::analyze` after initialization and structured flow checks, retaining
+original plan paths in `source_paths` for downstream diagnostics. Generic
 signature instances are cached by declaration/type arguments; symbolic type
 parameters and type-result computations remain represented in template bodies.
-Planned lowering translates frontend identities into owned SSA IDs/types and
-never falls back to direct AST emission.
+The supported scalar/conditional lowering translates frontend identities into
+owned SSA IDs/types and never falls back to direct AST emission. General source
+lowering remains unfinished.
 
 See [type-resolution behavior](../../../type-resolution.md),
 [analyzer](analyze/README.md) and [validation](../../tests/README.md).

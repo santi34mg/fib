@@ -10,7 +10,9 @@ type workspace. No file discovery occurs.
 This pass is separate from complete analysis: `Analyzer::analyze` runs typing,
 then validates definite initialization and structured control flow before returning
 `AnalyzedProject`. `validate_analysis` independently rechecks the public AST and
-semantic tables. The pipeline, IR and backend remain unfinished.
+semantic tables. `AnalyzedProject::source_paths` retains original plan paths for
+downstream diagnostics. A scalar/conditional subset now compiles through verified
+SSA and LLVM; broader lowering and runtime representations remain unfinished.
 
 ## Semantic identities
 
