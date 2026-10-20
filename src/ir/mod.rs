@@ -1,9 +1,9 @@
-//! Self-owned SSA IR architecture, not an implemented lowering pipeline.
+//! Self-owned SSA IR with transactional construction and scalar verification.
 //!
 //! The intended boundary is `AnalyzedProject -> Ir`; the driver owns that
 //! lowering entry point. All runtime types, identities and constants here are
 //! independent of the frontend and of any backend. See README.md for invariants
-//! that a future verifier must enforce. Public records are deliberately raw,
+//! and the currently verified subset. Public records are deliberately raw,
 //! unverified data; neither construction nor formatting certifies validity.
 
 mod builder;
@@ -167,9 +167,10 @@ pub struct StackSlot {
     pub debug_name: Option<String>,
 }
 
-/// Sketch operations must fail explicitly rather than certify or emit IR.
+/// Invalid inputs and unsupported verification families fail explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IrError {
+    Invalid { message: &'static str },
     NotImplemented { operation: &'static str },
 }
 
@@ -178,6 +179,7 @@ pub type IrResult<T> = Result<T, IrError>;
 impl std::fmt::Display for IrError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Invalid { message } => write!(f, "invalid IR: {message}"),
             Self::NotImplemented { operation } => write!(f, "{operation} is not implemented"),
         }
     }
