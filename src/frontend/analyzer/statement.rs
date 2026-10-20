@@ -5,7 +5,7 @@ use crate::frontend::{
     semantic_type::{SemanticTypes, TypeId},
 };
 
-use super::{ResolveContext, TypeContext, not_implemented};
+use super::{ResolveContext, TypeContext};
 
 impl Analyzer {
     /// Manage block lifetimes, declaration ordering, pattern bindings, and the
@@ -105,8 +105,11 @@ impl Analyzer {
         Ok(())
     }
 
-    pub fn resolve_type_statement(_context: &mut TypeContext<'_>) -> anyhow::Result<()> {
-        not_implemented("statement type resolution")
+    pub fn resolve_type_statement(
+        statement: &mut Statement,
+        context: &mut TypeContext<'_>,
+    ) -> anyhow::Result<()> {
+        context.statement(statement)
     }
 }
 

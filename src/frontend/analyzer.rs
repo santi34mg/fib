@@ -1,5 +1,6 @@
-//! Analysis architecture sketch: parsed source units are enriched in place.
-//! The name pass executes; typing and full completion validation remain unfinished.
+//! Staged name/type analysis enriches parsed source units in place.
+//! Names, expressions and members resolve; initialization and structured flow
+//! validation remain unfinished.
 //! The only lowering boundary is `AnalyzedProject` to `Ir`; analysis never
 //! manufactures a separate typed AST or emits IR.
 
@@ -64,6 +65,18 @@ pub struct TypeContext<'a> {
     pub file: FileId,
     pub symbols: &'a ProjectSymbols,
     pub types: &'a mut SemanticTypes,
+    state: typing::TypeState,
+}
+
+impl<'a> TypeContext<'a> {
+    pub fn new(file: FileId, symbols: &'a ProjectSymbols, types: &'a mut SemanticTypes) -> Self {
+        Self {
+            file,
+            symbols,
+            types,
+            state: typing::TypeState::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -100,6 +113,8 @@ enum NamePhase {
     Collected,
     Resolving,
     Resolved,
+    Typing,
+    Typed,
 }
 
 impl Analyzer {
@@ -134,7 +149,14 @@ impl Analyzer {
         // types/members, validate initialization and annotations, then hand off.
         self.collect_declarations()?;
         self.resolve_names()?;
-        not_implemented("project analysis")
+        let types = self.resolve_types()?;
+        let project = AnalyzedProject {
+            units: self.units,
+            symbols: self.symbols,
+            types,
+        };
+        validate_analysis(&project)?;
+        Ok(project)
     }
 
     /// Predeclare file bindings for forward references; do not resolve uses or
@@ -250,6 +272,28 @@ impl Analyzer {
         }
         self.phase = NamePhase::Resolved;
         Ok(())
+    }
+    /// Resolve and validate semantic annotations, without claiming flow or initialization safety.
+    pub fn resolve_types(&mut self) -> anyhow::Result<SemanticTypes> {
+        if self.phase != NamePhase::Resolved {
+            return Err(crate::frontend::semantic_type::type_error(
+                "resolve_types requires completed names and may only run once",
+            ));
+        }
+        self.phase = NamePhase::Typing;
+        let mut types = SemanticTypes::default();
+        typing::resolve_project_with_paths(
+            &mut self.units,
+            &self.symbols,
+            &mut types,
+            self.paths.clone(),
+        )?;
+        self.phase = NamePhase::Typed;
+        Ok(types)
+    }
+
+    pub fn units(&self) -> &[CompilationUnit] {
+        &self.units
     }
 }
 
@@ -386,16 +430,23 @@ pub fn get_namespace(filename: String, symbols: &mut ProjectSymbols) -> anyhow::
 }
 
 pub fn resolve_types(
-    _units: &mut [CompilationUnit],
-    _symbols: &ProjectSymbols,
-    _types: &mut SemanticTypes,
+    units: &mut [CompilationUnit],
+    symbols: &ProjectSymbols,
+    types: &mut SemanticTypes,
 ) -> anyhow::Result<()> {
-    // TypeContext annotates the same syntax, including deferred member lookup.
-    not_implemented("project type resolution")
+    typing::resolve_project(units, symbols, types)
 }
 
-/// A successful handoff must not contain pending annotations or illegal reads
-/// of later, uninitialized file variables. This is distinct from name lookup.
+/// Validate the type pass independently from initialization and control flow.
+pub fn validate_type_annotations(
+    units: &mut [CompilationUnit],
+    symbols: &ProjectSymbols,
+    types: &SemanticTypes,
+) -> anyhow::Result<()> {
+    typing::validate_annotations(units, symbols, types)
+}
+
+/// Initialization and complete flow validation remain separate from typing.
 pub fn validate_analysis(_project: &AnalyzedProject) -> anyhow::Result<()> {
     not_implemented("analysis completion and initialization validation")
 }
@@ -406,14 +457,19 @@ pub(super) fn not_implemented<T>(operation: &str) -> anyhow::Result<T> {
 
 mod aliases;
 pub mod ast;
+mod constant;
 pub mod expression;
 pub mod function_declaration;
 pub mod function_signature;
 pub mod generics;
 pub mod statement;
+mod statement_typing;
 pub mod swtich_arm;
 pub mod type_expression;
 pub mod types;
+mod typing;
+mod validation;
+mod value_typing;
 pub mod variable_declaration;
 mod walk;
 

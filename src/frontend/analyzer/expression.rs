@@ -1,4 +1,4 @@
-use super::{ResolveContext, TypeContext, at_span, not_implemented};
+use super::{ResolveContext, TypeContext, at_span};
 use crate::frontend::{
     analysis_annotation::{ExpressionInfo, MemberInfo},
     analyzer::Analyzer,
@@ -134,20 +134,20 @@ impl Analyzer {
 
     /// Infer/check a value and annotate its type and place category in situ.
     pub fn resolve_type_expression(
-        _expression: &mut Expression,
-        _context: &mut TypeContext<'_>,
-        _expected: Option<TypeId>,
+        expression: &mut Expression,
+        context: &mut TypeContext<'_>,
+        expected: Option<TypeId>,
     ) -> anyhow::Result<ExpressionInfo> {
-        not_implemented("expression type resolution")
+        context.expression(expression, expected)
     }
 }
 
 /// Used for selection and initializer-field validation after the owner type is
 /// known. Deliberately has no mutable lexical table or source spelling access.
 pub fn resolve_member(
-    _owner: TypeId,
-    _spelling: &str,
-    _types: &SemanticTypes,
+    owner: TypeId,
+    spelling: &str,
+    types: &SemanticTypes,
 ) -> anyhow::Result<MemberInfo> {
-    not_implemented("type member resolution")
+    super::value_typing::member(owner, spelling, types)
 }

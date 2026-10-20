@@ -40,12 +40,6 @@ fn symbols() -> ProjectSymbols {
     }
 }
 
-fn assert_unimplemented<T>(result: anyhow::Result<T>) {
-    assert!(result.is_err());
-    let Err(error) = result else { return };
-    assert!(error.to_string().contains("not implemented"));
-}
-
 #[test]
 fn default_and_new_keep_the_root_scope() {
     for mut table in [SymbolTable::new(), SymbolTable::default()] {
@@ -154,7 +148,7 @@ fn annotation_defaults_are_explicitly_pending() {
 }
 
 #[test]
-fn unfinished_analysis_and_typing_never_report_fake_success() {
+fn type_resolution_remains_separate_from_complete_analysis() {
     let analyzer = Analyzer {
         units: Vec::new(),
         symbols: symbols(),
@@ -162,17 +156,19 @@ fn unfinished_analysis_and_typing_never_report_fake_success() {
         paths: HashMap::new(),
         phase: super::NamePhase::New,
     };
-    assert_unimplemented(analyzer.analyze());
+    assert!(analyzer.analyze().is_err());
 
     let registry = symbols();
     let mut units = Vec::new();
     let mut types = SemanticTypes::default();
-    assert_unimplemented(resolve_types(&mut units, &registry, &mut types));
-    assert_unimplemented(validate_analysis(&AnalyzedProject {
+    resolve_types(&mut units, &registry, &mut types).unwrap();
+    assert!(resolve_types(&mut units, &registry, &mut types).is_err());
+    validate_analysis(&AnalyzedProject {
         units,
         symbols: registry,
         types,
-    }));
+    })
+    .unwrap_err();
 }
 
 #[test]
@@ -192,24 +188,17 @@ fn empty_ast_name_resolution_preserves_scopes() {
 }
 
 #[test]
-fn typing_member_and_generic_sketches_fail_without_fabricating_annotations() {
+fn standalone_typing_and_invalid_generic_keys_are_checked() {
     let registry = symbols();
     let mut types = SemanticTypes::default();
-    let mut context = TypeContext {
-        file: FileId(0),
-        symbols: &registry,
-        types: &mut types,
-    };
-    assert_unimplemented(Ast::new().resolve_type(&mut context));
+    let mut context = TypeContext::new(FileId(0), &registry, &mut types);
+    Ast::new().resolve_type(&mut context).unwrap();
     let mut expression = Expression::at(
         ExpressionKind::VoidExpression,
         crate::diagnostics::Span::new(1, 1),
     );
-    assert_unimplemented(Analyzer::resolve_type_expression(
-        &mut expression,
-        &mut context,
-        None,
-    ));
+    let unit = Analyzer::resolve_type_expression(&mut expression, &mut context, None).unwrap();
+    assert_eq!(expression.annotation.resolved, Some(unit));
     let key = GenericInstanceKey {
         template: DeclId {
             file_id: FileId(0),
@@ -217,9 +206,9 @@ fn typing_member_and_generic_sketches_fail_without_fabricating_annotations() {
         },
         arguments: vec![TypeId(0)],
     };
-    assert_unimplemented(resolve_generic_instance(&key, &mut context));
-    assert_unimplemented(resolve_member(TypeId(0), "field", context.types));
-    assert!(check_assignable(TypeId(0), TypeId(0), context.types).is_err());
+    assert!(resolve_generic_instance(&key, &mut context).is_err());
+    assert!(resolve_member(unit.ty, "field", context.types).is_err());
+    check_assignable(unit.ty, unit.ty, context.types).unwrap();
     assert!(
         resolve_multi_value_types(0, &[], context.types)
             .unwrap()
@@ -231,7 +220,6 @@ fn typing_member_and_generic_sketches_fail_without_fabricating_annotations() {
         type_value: None,
     })
     .unwrap();
-    assert!(context.types.types.is_empty());
     assert!(context.types.declarations.is_empty());
     assert!(context.types.locals.is_empty());
 }
@@ -2570,9 +2558,402 @@ mod name_resolution {
     }
 }
 
-mod semantic_type_contract {
+/// Acceptance tests are written against the original AST and public pass seam.
+mod type_resolution {
     use super::*;
-    use crate::frontend::{semantic_type::SemanticType, tokens::builtin::BuiltinType};
+    use crate::{
+        build_plan::{BuildPlan, SourceFile},
+        diagnostics::{CompilerError, ErrorKind},
+        driver::CompilationUnit,
+        frontend::{
+            ast::statement::StatementKind, parser::Parser, semantic_type::SemanticType,
+            tokenizer::Tokenizer, tokens::builtin::BuiltinType,
+        },
+    };
+    use std::path::Path;
+
+    fn analyzer(source: &str) -> Analyzer {
+        let ast = Parser::with_source(Tokenizer::new(source), Path::new("types.fib"), source)
+            .parse()
+            .unwrap_or_else(|e| panic!("fixture did not parse: {source}\n{e:#}"));
+        Analyzer::new(
+            BuildPlan {
+                files: vec![SourceFile {
+                    id: FileId(0),
+                    name: "main".to_string().into(),
+                    path: "types.fib".into(),
+                }],
+                entry: FileId(0),
+                output: "unused".into(),
+            },
+            vec![CompilationUnit {
+                source_file_id: FileId(0),
+                ast,
+            }],
+        )
+        .unwrap()
+    }
+    fn run(source: &str) -> anyhow::Result<(Analyzer, SemanticTypes)> {
+        let mut a = analyzer(source);
+        a.collect_declarations()?;
+        a.resolve_names()?;
+        let types = a.resolve_types()?;
+        Ok((a, types))
+    }
+    fn good(source: &str) {
+        run(source).unwrap_or_else(|e| panic!("expected successful typing: {source}\n{e:#}"));
+    }
+    fn bad(source: &str, fragment: &str) {
+        let e = run(source).err().expect("invalid program accepted");
+        let d = e
+            .downcast_ref::<CompilerError>()
+            .unwrap_or_else(|| panic!("expected structured type diagnostic, got {e:#}"));
+        assert_eq!(d.kind, ErrorKind::Type, "{e:#}");
+        assert!(d.span.is_some(), "missing location: {e:#}");
+        assert!(d.message.contains(fragment), "expected {fragment:?}: {e:#}");
+        assert!(
+            !d.message.contains("not implemented"),
+            "stub is not a semantic diagnostic"
+        );
+    }
+
+    macro_rules! ok {
+        ($name:ident, $source:expr) => {
+            #[test]
+            fn $name() {
+                good($source);
+            }
+        };
+    }
+    macro_rules! err {
+        ($name:ident, $source:expr, $fragment:expr) => {
+            #[test]
+            fn $name() {
+                bad($source, $fragment);
+            }
+        };
+    }
+
+    ok!(
+        inference_and_context,
+        "small: int8 = 127; negative: int8 = -128; count := 1; fraction := 1.5; flag := true;"
+    );
+    ok!(
+        recursive_pointer,
+        "comp Node: type = struct { next: *Node }; node: Node;"
+    );
+    ok!(
+        recursive_slice,
+        "comp Node: type = struct { children: Node[] }; node: Node;"
+    );
+    ok!(
+        recursive_function_type,
+        "comp Node: type = struct { visit: fn(Node) -> Node }; node: Node;"
+    );
+    ok!(
+        unit_storage,
+        "unit: void; comp Box: type = struct { unit: void }; box: Box; fn f(x: void) void { return; }"
+    );
+    ok!(
+        forward_calls,
+        "answer := add(1, 2); fn add(a: int32, b: int32) int32 { return a + b; }"
+    );
+    ok!(
+        function_values,
+        "fn f(x: int32) int32 { return x; } callable := f; result := callable(2);"
+    );
+    ok!(recursive_calls, "fn f(x: int32) int32 { return f(x); }");
+    ok!(
+        tuple_results,
+        "fn pair() (int32, string) { return 1, \"x\"; } a, b := pair();"
+    );
+    ok!(
+        independent_multi_binding,
+        "const a: int8, b: string = 1, \"x\";"
+    );
+    ok!(
+        numeric_casts,
+        "small: int8 = 1; wide := small as int64; fraction := wide as float64;"
+    );
+    ok!(
+        pointer_operations,
+        "fn f() { x := 1; p := x&; n := p*; opaque := p as *void; back := opaque as *int32; same := back == null; }"
+    );
+    ok!(
+        const_pointer_pointee,
+        "comp S: type = struct { value: int32 }; fn f() { value: S; const p := value&; item := (p*).value; }"
+    );
+    ok!(
+        arrays_and_slices,
+        "items: int8[2] = [1, 2]; first := items[0]; view := items[..]; size := view.len;"
+    );
+    ok!(
+        empty_array_context,
+        "empty: int32[0] = []; view := empty[..];"
+    );
+    ok!(
+        struct_construction,
+        "comp P: type = struct { x: int8, y: int32 }; p := P { y: 2, x: 1 }; value := p.x;"
+    );
+    ok!(
+        enum_constructors,
+        "comp E: type = enum { Empty, Number { value: int32 }, Unit {} }; a := E.Empty; b := E.Number(7); c := E.Unit();"
+    );
+    ok!(
+        payload_pattern,
+        "comp E: type = enum { Number { value: int32 }, Empty }; fn f(e: E) { switch (e) { when .Number(p) { x := p.value; } when else {} }; }"
+    );
+    ok!(
+        real_len_field,
+        "comp S: type = struct { len: bool }; s := S { len: true }; result: bool = s.len;"
+    );
+    ok!(
+        type_parameters_and_returns,
+        "fn identity(T: type, x: T) T { return x; } fn choose(T: type) type { return T; }"
+    );
+    ok!(
+        ordinary_former_builtins,
+        "fn concat(a: int32, b: int32) int32 { return a + b; } fn str_len(x: bool) bool { return x; } fn str_eq() int32 { return 3; } n := concat(1, str_eq()); flag := str_len(true);"
+    );
+
+    err!(integer_overflow, "x: int8 = 128;", "range");
+    err!(negative_overflow, "x: int8 = -129;", "range");
+    err!(
+        typed_integer_mismatch,
+        "a: int32 = 1; b: int8 = a;",
+        "incompatible"
+    );
+    err!(value_in_type_position, "value := 1; x: value;", "type");
+    err!(
+        direct_size_cycle,
+        "comp Node: type = struct { next: Node };",
+        "cycle"
+    );
+    err!(
+        zero_array_cycle,
+        "comp Node: type = struct { next: Node[0] };",
+        "cycle"
+    );
+    err!(
+        nominal_mismatch,
+        "comp A: type = struct { x: int32 }; comp B: type = struct { x: int32 }; a: A; b: B = a;",
+        "incompatible"
+    );
+    err!(
+        duplicate_field,
+        "comp A: type = struct { x: int32, x: int32 };",
+        "duplicate"
+    );
+    err!(
+        duplicate_variant,
+        "comp E: type = enum { X, X };",
+        "duplicate"
+    );
+    err!(never_storage, "x: never;", "never");
+    err!(null_without_context, "x := null;", "context");
+    err!(empty_without_context, "x := [];", "context");
+    err!(bad_arithmetic, "x := true + 1;", "operand");
+    err!(
+        mixed_numbers,
+        "a: int8 = 1; b: int32 = 2; c := a + b;",
+        "incompatible"
+    );
+    err!(division_zero, "x := 1 / 0;", "zero");
+    err!(shift_range, "x := 1 << 32;", "shift");
+    err!(constant_overflow, "x: int8 = 127 + 1;", "range");
+    err!(
+        immutable_write,
+        "fn f() { const x := 1; x = 2; }",
+        "immutable"
+    );
+    err!(
+        immutable_address,
+        "fn f() { const x := 1; p := x&; }",
+        "immutable"
+    );
+    err!(opaque_dereference, "p: *void; x := p*;", "opaque");
+    err!(pointer_index, "p: *int32; x := p[0];", "index");
+    err!(pointer_cast, "p: *int32; x := p as *bool;", "cast");
+    err!(pointer_integer_cast, "p: *int32; x := p as usize;", "cast");
+    err!(call_non_function, "x := 1; y := x();", "callable");
+    err!(call_arity, "fn f(x: int32) {} x := f();", "argument");
+    err!(
+        call_argument,
+        "fn f(x: int32) {} x := f(true);",
+        "incompatible"
+    );
+    err!(
+        return_type,
+        "fn f() int32 { return false; }",
+        "incompatible"
+    );
+    err!(return_arity, "fn f() int32 { return 1, 2; }", "return");
+    err!(binding_arity, "a, b := 1;", "arity");
+    err!(
+        missing_member,
+        "comp S: type = struct { x: int32 }; s: S; x := s.missing;",
+        "member"
+    );
+    err!(invalid_len, "x := 1; n := x.len;", "member");
+    err!(
+        missing_field,
+        "comp S: type = struct { x: int32 }; s := S {};",
+        "missing"
+    );
+    err!(
+        duplicate_initializer,
+        "comp S: type = struct { x: int32 }; s := S { x: 1, x: 2 };",
+        "duplicate"
+    );
+    err!(
+        unknown_initializer,
+        "comp S: type = struct { x: int32 }; s := S { other: 1 };",
+        "member"
+    );
+    err!(array_size, "items: int32[2] = [1];", "length");
+    err!(heterogeneous_array, "items := [1, true];", "incompatible");
+    err!(index_bounds, "items := [1, 2]; x := items[2];", "bounds");
+    err!(negative_index, "items := [1, 2]; x := items[-1];", "bounds");
+    err!(
+        reversed_slice,
+        "items := [1, 2]; x := items[1..0];",
+        "bounds"
+    );
+    err!(
+        inclusive_bounds,
+        "items := [1, 2]; x := items[0.=2];",
+        "bounds"
+    );
+    err!(condition_boolean, "fn f() { if 1 {} ; }", "incompatible");
+
+    #[test]
+    fn inferred_types_and_member_identity_are_observable() {
+        let (a, t) =
+            run("comp S: type = struct { x: int32 }; s: S; x := s.x; n := \"hi\".len;").unwrap();
+        let StatementKind::VariableDeclaration(x) = &a.units[0].ast.statements[2].kind else {
+            panic!()
+        };
+        let expr = x.expression.as_ref().unwrap();
+        let ExpressionKind::ExprAcess { member, .. } = &expr.kind else {
+            panic!()
+        };
+        let info = expr.annotation.resolved.unwrap();
+        assert_eq!(
+            t.types[info.ty.0 as usize],
+            SemanticType::Builtin(BuiltinType::Int32)
+        );
+        assert_eq!(member.resolved.unwrap().ty, info.ty);
+        let StatementKind::VariableDeclaration(n) = &a.units[0].ast.statements[3].kind else {
+            panic!()
+        };
+        assert_eq!(
+            t.types[n
+                .expression
+                .as_ref()
+                .unwrap()
+                .annotation
+                .resolved
+                .unwrap()
+                .ty
+                .0 as usize],
+            SemanticType::Builtin(BuiltinType::Usize)
+        );
+    }
+
+    ok!(
+        mutual_recursion,
+        "comp A: type = struct { other: *B }; comp B: type = struct { other: *A }; a: A;"
+    );
+    ok!(
+        struct_alias_identity,
+        "comp A: type = struct { x: int32 }; comp Alias := A; a: A; b: Alias = a;"
+    );
+    ok!(
+        local_type_and_alias,
+        "fn f() { comp A: type = struct { x: int32 }; comp Alias := A; a: Alias; x := a.x; }"
+    );
+    ok!(
+        nested_mutable_field,
+        "comp A: type = struct { x: int32 }; fn f() { a: A; a.x = 2; }"
+    );
+    ok!(
+        slice_pointee_mutability,
+        "fn f() { items := [1, 2]; const view := items[..]; view[0] = 3; }"
+    );
+    ok!(context_from_right_operand, "a: int8 = 1; b := 2 + a;");
+    ok!(contextual_null_comparison, "p: *int32; yes := null == p;");
+    ok!(unit_equality, "a: void; b: void; same := a == b;");
+    ok!(
+        unsigned_128_constant,
+        "x: uint128 = 18446744073709551615 * 18446744073709551615;"
+    );
+    ok!(
+        typed_forward_multi_binding,
+        "value := later; later: int8, other: int32 = 1, 2;"
+    );
+    ok!(
+        forward_tuple_binding,
+        "value := first; first, second := pair(); fn pair() (int32, int32) { return 1, 2; }"
+    );
+    err!(
+        immutable_field,
+        "comp A: type = struct { x: int32 }; fn f() { const a: A = A { x: 1 }; a.x = 2; }",
+        "immutable"
+    );
+    err!(
+        immutable_array_index,
+        "fn f() { const a := [1]; a[0] = 2; }",
+        "immutable"
+    );
+    err!(
+        constant_float_overflow,
+        "x: float16 = 65504.0 + 65504.0;",
+        "range"
+    );
+    err!(negative_float_cast_range, "x := -300.0 as int8;", "range");
+    #[test]
+    fn nonfinite_float_arithmetic() {
+        let large = format!("1{}.0", "0".repeat(308));
+        bad(&format!("x := {large} * {large};"), "range");
+    }
+    err!(
+        aggregate_equality,
+        "comp A: type = struct { x: int32 }; a: A; b: A; equal := a == b;",
+        "operand"
+    );
+    err!(
+        wrong_variant_receiver,
+        "comp E: type = enum { A }; e: E; x := e.A;",
+        "type value"
+    );
+    err!(
+        field_on_metatype,
+        "comp A: type = struct { x: int32 }; x := A.x;",
+        "receiver"
+    );
+    err!(
+        array_to_slice_cast,
+        "a := [1]; view := a as int32[];",
+        "cast"
+    );
+    err!(bool_numeric_cast, "x := true as int32;", "cast");
+    err!(
+        bad_payload_argument,
+        "comp E: type = enum { N { value: int32 } }; x := E.N(true);",
+        "incompatible"
+    );
+    err!(
+        payloadless_binding,
+        "comp E: type = enum { Empty }; fn f(e: E) { switch (e) { when .Empty(p) {} }; }",
+        "payload"
+    );
+    err!(
+        missing_pattern_variant,
+        "comp E: type = enum { Empty }; fn f(e: E) { switch (e) { when .Missing {} }; }",
+        "member"
+    );
+    err!(bad_index_type, "a := [1]; x := a[true];", "integer");
+
     #[test]
     fn compatibility_is_pure_and_nominal() {
         use crate::frontend::semantic_type::FieldType;
@@ -2592,4 +2973,244 @@ mod semantic_type_contract {
         assert!(check_assignable(TypeId(999), TypeId(999), &t).is_err());
         assert_eq!(t.types, before);
     }
+    #[test]
+    fn complete_type_annotations_validate() {
+        let (mut a, t) = run("comp S: type = struct { x: int32 }; s: S; x := s.x;").unwrap();
+        crate::frontend::analyzer::validate_type_annotations(&mut a.units, &a.symbols, &t).unwrap();
+    }
+    #[test]
+    fn corrupted_annotations_are_rejected() {
+        let (a, t) = run("comp S: type = struct { x: int32 }; s: S; x := s.x;").unwrap();
+        for corruption in 0..6 {
+            let mut a = a.clone();
+            let StatementKind::VariableDeclaration(v) = &mut a.units[0].ast.statements[2].kind
+            else {
+                panic!()
+            };
+            let expr = v.expression.as_mut().unwrap();
+            match corruption {
+                0 => expr.annotation.resolved = None,
+                1 => expr.annotation.resolved.as_mut().unwrap().ty = TypeId(999),
+                2 => v.annotation.binding = None,
+                3 => {
+                    if let ExpressionKind::ExprAcess { member, .. } = &mut expr.kind {
+                        member.resolved = None;
+                    }
+                }
+                4 => {
+                    if let ExpressionKind::ExprAcess { member, .. } = &mut expr.kind {
+                        member.resolved.as_mut().unwrap().owner = TypeId(999);
+                    }
+                }
+                5 => {
+                    if let ExpressionKind::ExprAcess { expr, .. } = &mut expr.kind
+                        && let ExpressionKind::QualifiedIdentifier(name) = &mut expr.kind
+                    {
+                        name.annotation.resolved = Some(ResolvedName::Local(LocalId(999)));
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let error =
+                crate::frontend::analyzer::validate_type_annotations(&mut a.units, &a.symbols, &t)
+                    .unwrap_err();
+            assert!(
+                !error.to_string().contains("not implemented"),
+                "validator is still a stub"
+            );
+            assert!(error.downcast_ref::<CompilerError>().is_some());
+        }
+    }
+
+    ok!(
+        typed_initialization_cycle_is_not_type_inference_cycle,
+        "a: int32 = b; b: int32 = a;"
+    );
+    err!(inference_cycle, "a := b; b := a;", "cycle");
+    err!(
+        float_constant_division_zero,
+        "x := 1.0 / (2.0 - 2.0);",
+        "zero"
+    );
+    err!(unsigned_constant_underflow, "x: uint8 = 0 - 1;", "range");
+    err!(unsigned_constant_overflow, "x: uint8 = 255 + 1;", "range");
+    ok!(unsigned_complement, "x: uint8 = ~1;");
+    err!(shift_result_overflow, "x: int8 = 1 << 7;", "range");
+    ok!(
+        zero_length_full_slice,
+        "items: int32[0] = []; x := items[..];"
+    );
+    err!(
+        empty_inclusive_slice,
+        "items: int32[0] = []; x := items[0.=0];",
+        "bounds"
+    );
+    #[test]
+    fn extended_float_exponent_does_not_use_host_range() {
+        let large = format!("1{}.0", "0".repeat(308));
+        good(&format!("x: float128 = {large} * {large};"));
+    }
+    #[test]
+    fn pass_order_and_failed_retry_are_enforced() {
+        let mut a = analyzer("x: int8 = 300;");
+        assert!(
+            a.resolve_types()
+                .unwrap_err()
+                .to_string()
+                .contains("completed names")
+        );
+        a.collect_declarations().unwrap();
+        a.resolve_names().unwrap();
+        let error = a.resolve_types().unwrap_err();
+        let error = error.downcast_ref::<CompilerError>().unwrap();
+        assert_eq!(error.filename.as_deref(), Some(Path::new("types.fib")));
+        assert!(error.span.is_some());
+        assert!(
+            a.resolve_types()
+                .unwrap_err()
+                .to_string()
+                .contains("only run once")
+        );
+    }
+    #[test]
+    fn type_slots_and_semantic_tables_cannot_be_fabricated() {
+        let (a, t) =
+            run("comp S: type = struct { x: int32 }; s: S; fn f(p: int32) int32 { return p; }")
+                .unwrap();
+        for corruption in 0..5 {
+            let mut a = a.clone();
+            let mut t = t.clone();
+            let StatementKind::VariableDeclaration(var) = &mut a.units[0].ast.statements[1].kind
+            else {
+                panic!()
+            };
+            match corruption {
+                0 => var.ty.as_mut().unwrap().annotation.resolved = None,
+                1 => var.ty.as_mut().unwrap().annotation.resolved = Some(TypeId(999)),
+                2 => {
+                    t.locals.insert(LocalId(999), TypeId(0));
+                }
+                3 => {
+                    let id = var.annotation.binding.unwrap();
+                    t.bindings.get_mut(&id).unwrap().type_value = Some(TypeId(0));
+                }
+                4 => {
+                    let StatementKind::FunctionDeclaration(f) =
+                        &mut a.units[0].ast.statements[2].kind
+                    else {
+                        panic!()
+                    };
+                    f.signature.parameters[0].annotation.binding = None;
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                crate::frontend::analyzer::validate_type_annotations(&mut a.units, &a.symbols, &t)
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn node_entrypoint_checks_function_body() {
+        let mut a = analyzer("fn f(x: int32) int32 { return x; }");
+        a.collect_declarations().unwrap();
+        a.resolve_names().unwrap();
+        let mut t = SemanticTypes::default();
+        resolve_types(&mut a.units, &a.symbols, &mut t).unwrap();
+        let StatementKind::FunctionDeclaration(fun) = &mut a.units[0].ast.statements[0].kind else {
+            panic!()
+        };
+        let BindingAnnotation { binding: Some(id) } = fun.signature.annotation else {
+            panic!()
+        };
+        let signature = t.bindings[&id].ty;
+        fun.resolve_type(
+            &mut TypeContext::new(FileId(0), &a.symbols, &mut t),
+            signature,
+        )
+        .unwrap();
+    }
+
+    fn run_files(files: &[(&str, &str)]) -> anyhow::Result<(Analyzer, SemanticTypes)> {
+        use crate::build_plan::{BuildPlan, SourceFile};
+        use crate::driver::CompilationUnit;
+        let plan = BuildPlan {
+            files: files
+                .iter()
+                .enumerate()
+                .map(|(i, (name, _))| SourceFile {
+                    id: FileId(i as u32),
+                    name: (*name).to_string().into(),
+                    path: format!("{name}.fib").into(),
+                })
+                .collect(),
+            entry: FileId(0),
+            output: "unused".into(),
+        };
+        let units = files
+            .iter()
+            .enumerate()
+            .map(|(i, (name, source))| {
+                let path = format!("{name}.fib");
+                CompilationUnit {
+                    source_file_id: FileId(i as u32),
+                    ast: Parser::with_source(Tokenizer::new(source), Path::new(&path), source)
+                        .parse()
+                        .expect("valid multi-file fixture"),
+                }
+            })
+            .collect();
+        let mut a = Analyzer::new(plan, units)?;
+        a.collect_declarations()?;
+        a.resolve_names()?;
+        let t = a.resolve_types()?;
+        Ok((a, t))
+    }
+    #[test]
+    fn qualified_types_aliases_and_ordinary_calls() {
+        run_files(&[("main","comp util := lib; item: util::Item; value := item.value; result := util::concat(value);"),("lib","pub comp Item: type = struct { value: int32 }; pub concat: fn(int32) -> int32;")]).unwrap();
+    }
+    #[test]
+    fn namespace_aliases_have_no_fake_runtime_annotations() {
+        run_files(&[("main","comp util := lib; fn f() { comp alias := lib; comp a, comp b := lib, lib; value: alias::Item; }"),("lib","pub comp Item: type = struct { value: int32 };")]).unwrap();
+    }
+    #[test]
+    fn cross_file_diagnostic_retains_owning_path() {
+        let error = run_files(&[
+            ("main", "value: lib::Item;"),
+            (
+                "lib",
+                "pub comp Item: type = struct { x: int32, x: int32 };",
+            ),
+        ])
+        .err()
+        .unwrap();
+        let error = error.downcast_ref::<CompilerError>().unwrap();
+        assert_eq!(error.filename.as_deref(), Some(Path::new("lib.fib")));
+        assert!(error.span.is_some());
+    }
+    #[test]
+    fn validation_is_read_only() {
+        let (mut a, t) =
+            run("comp E: type = enum { Value { x: int32 }, Empty }; value := E.Value(1);").unwrap();
+        let before_units = a.units.clone();
+        let before_types = t.types.clone();
+        crate::frontend::analyzer::validate_type_annotations(&mut a.units, &a.symbols, &t).unwrap();
+        assert_eq!(a.units[0].ast, before_units[0].ast);
+        assert_eq!(t.types, before_types);
+    }
+    #[test]
+    fn variant_constructor_table_is_validated_even_without_calls() {
+        let (mut a, mut t) = run("comp E: type = enum { Value { x: int32 } };").unwrap();
+        let key = *t.variant_constructors.keys().next().unwrap();
+        t.variant_constructors.insert(key, TypeId(999));
+        assert!(
+            crate::frontend::analyzer::validate_type_annotations(&mut a.units, &a.symbols, &t)
+                .is_err()
+        );
+    }
+    ok!(
+        exact_large_integer_divisor,
+        "x: uint128 = 1 / (18446744073709551615 - 18446744073709551614);"
+    );
 }
