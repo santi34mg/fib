@@ -1,0 +1,13 @@
+fn choose(x: int32) int32 {
+    result := 7;
+    if (x < 10) {
+        result = 42;
+    } else {
+        result = x;
+    };
+    return result;
+}
+
+fn main() int32 {
+    return choose(5);
+}

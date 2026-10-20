@@ -22,9 +22,16 @@ pub struct CompilationUnit {
 }
 
 /// Compile only the files explicitly enumerated and named by the plan.
-pub fn run_pipeline(_plan: &BuildPlan, _goal: PipelineGoal) -> anyhow::Result<CompilationOutput> {
-    // Run the frontend, then stop at the requested stage or emit and link.
-    anyhow::bail!("pipeline orchestration is not implemented")
+pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<CompilationOutput> {
+    let project = run_frontend(plan)?;
+    if goal == PipelineGoal::Check {
+        return Ok(CompilationOutput::Checked);
+    }
+    let ir = lower_to_ir(&project)?;
+    if goal == PipelineGoal::Ir {
+        return Ok(CompilationOutput::Ir(ir));
+    }
+    anyhow::bail!("artifact orchestration is not implemented")
 }
 
 pub fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
@@ -56,13 +63,12 @@ pub fn parse_files(plan: &BuildPlan) -> anyhow::Result<Vec<CompilationUnit>> {
         .collect()
 }
 
-/// The sole frontend-to-IR boundary. A future implementation must validate
-/// analysis completeness, translate semantic types and identities into owned
-/// IR records, and construct SSA before invoking IR verification. It must not
-/// fall back to direct AST-to-backend emission.
-pub fn lower_to_ir(_project: &AnalyzedProject) -> anyhow::Result<Ir> {
-    anyhow::bail!("AnalyzedProject to SSA IR lowering is not implemented")
+/// Lower the supported scalar/conditional subset after independent analysis validation.
+pub fn lower_to_ir(project: &AnalyzedProject) -> anyhow::Result<Ir> {
+    lowering::lower(project)
 }
+
+mod lowering;
 
 pub mod compiler_output;
 #[cfg(test)]
