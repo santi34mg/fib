@@ -5,7 +5,7 @@ use crate::{
     ir::Ir,
 };
 
-/// What `compile()` produced. The CLI prints a short summary; library users
+/// What `run_pipeline` produced. The CLI prints the binary path; library users
 /// inspect the paths directly instead of parsing stdout.
 #[derive(Debug)]
 pub enum CompilationOutput {
