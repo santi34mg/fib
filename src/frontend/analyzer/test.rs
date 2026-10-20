@@ -167,6 +167,7 @@ fn complete_analysis_validates_an_empty_type_pass() {
         units,
         symbols: registry,
         types,
+        source_paths: HashMap::new(),
     })
     .unwrap();
 }

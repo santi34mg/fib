@@ -42,6 +42,7 @@ fn lowering_sketch_does_not_return_an_empty_success() {
             namespaces: Default::default(),
         },
         types: SemanticTypes::default(),
+        source_paths: Default::default(),
     };
     let result = lower_to_ir(&project);
     assert!(result.is_err());
