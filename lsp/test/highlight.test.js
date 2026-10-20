@@ -6,7 +6,7 @@ test("highlights Fib syntax and contextual identifiers", () => {
   const source = `// greeting
 type Message struct { value: string }
 fn greet(name: Message) void {
-  libc::printf(@concat("hi ", name.value));
+  libc::printf(concat("hi ", name.value));
   return null;
 }`;
   const tokens = highlight(source);
@@ -21,7 +21,7 @@ fn greet(name: Message) void {
   ]);
   assert.ok(pairs.some(([text, type]) => text === "greet" && type === "function"));
   assert.ok(pairs.some(([text, type]) => text === "string" && type === "type"));
-  assert.ok(pairs.some(([text, type]) => text === "@concat" && type === "function"));
+  assert.ok(pairs.some(([text, type]) => text === "concat" && type === "function"));
   assert.ok(pairs.some(([text, type]) => text === "value" && type === "property"));
   assert.ok(pairs.some(([text, type]) => text === '"hi "' && type === "string"));
 });
@@ -101,4 +101,12 @@ test("does not include CRLF line endings in token ranges", () => {
   assert.equal(tokens[0].length, "// comment".length);
   assert.equal(tokens[1].line, 1);
   assert.equal(tokens[1].start, 0);
+});
+
+test("former builtin functions follow ordinary identifier contexts", () => {
+  const tokens = highlight("concat := 1; str_len := 2; str_eq := 3; @concat(1);");
+  for (const name of ["concat", "str_len", "str_eq"]) {
+    assert.ok(tokens.some(({text,type}) => text === name && type === "variable"));
+  }
+  assert.ok(tokens.some(({text,type}) => text === "@concat" && type === "macro"));
 });
