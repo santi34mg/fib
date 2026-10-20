@@ -33,6 +33,13 @@ pub enum SemanticType {
     Declared(DeclId),
     /// Generic parameters are identified by bindings, not their spelling.
     Parameter(LocalId),
+    /// Symbolic result of a type-returning call while checking its caller's body.
+    /// Evaluation replaces it with an actual denoted type at a concrete call.
+    TypeResult {
+        function: DeclId,
+        file: crate::build_plan::FileId,
+        span: crate::diagnostics::Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -65,6 +72,12 @@ pub struct SemanticTypes {
     pub bindings: HashMap<BindingId, ExpressionInfo>,
     pub type_values: HashMap<BindingId, TypeId>,
     pub variant_constructors: HashMap<(TypeId, u32), TypeId>,
+    /// Metatype parameters in source order, owned by the defining function.
+    pub generic_parameters: HashMap<DeclId, Vec<LocalId>>,
+    pub generic_instances: HashMap<
+        crate::frontend::analyzer::generics::GenericInstanceKey,
+        crate::frontend::analyzer::generics::GenericInstance,
+    >,
     pub(crate) started: bool,
     pub(crate) complete: bool,
     interned: HashMap<SemanticType, TypeId>,

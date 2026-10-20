@@ -9,6 +9,7 @@ pub use crate::frontend::identifier::LabelId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalBinding {
     Local(LocalId),
+    CompValue(LocalId),
     CompAlias(Entity),
 }
 
@@ -37,9 +38,18 @@ impl SymbolTable {
             .chain(std::iter::once(&self.root))
             .find_map(|scope| scope.lookup_binding(spelling))
             .map(|binding| match binding {
-                LocalBinding::Local(id) => ResolvedName::Local(id),
+                LocalBinding::Local(id) | LocalBinding::CompValue(id) => ResolvedName::Local(id),
                 LocalBinding::CompAlias(entity) => ResolvedName::Entity(entity),
             })
+    }
+
+    pub(super) fn is_comptime_local(&self, spelling: &str) -> bool {
+        self.scopes
+            .iter()
+            .rev()
+            .chain(std::iter::once(&self.root))
+            .find_map(|scope| scope.lookup_binding(spelling))
+            .is_some_and(|binding| matches!(binding, LocalBinding::CompValue(_)))
     }
 
     pub fn resolve_label(&self, spelling: &str) -> Option<LabelId> {

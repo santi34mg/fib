@@ -40,7 +40,10 @@ pub(super) fn definitions(
             ));
         };
         let ExpressionKind::QualifiedIdentifier(name) = &expr.kind else {
-            if matches!(expr.kind, ExpressionKind::TypeValue(_)) {
+            if matches!(
+                expr.kind,
+                ExpressionKind::TypeValue(_) | ExpressionKind::Call { .. }
+            ) {
                 return Ok(());
             }
             return Err(at_span(

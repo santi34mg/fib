@@ -1,6 +1,6 @@
 //! Staged name/type analysis enriches parsed source units in place.
-//! Names, expressions and members resolve; initialization and structured flow
-//! validation remain unfinished.
+//! Names, types, members and explicit metatype calls resolve. Initialization
+//! and structured flow validation remain unfinished.
 //! The only lowering boundary is `AnalyzedProject` to `Ir`; analysis never
 //! manufactures a separate typed AST or emits IR.
 
@@ -180,7 +180,8 @@ impl Analyzer {
                     match &mut statement.kind {
                         StatementKind::VariableDeclaration(var) => {
                             let inline = inline_type(var.expression.as_ref());
-                            collect_variable(&mut namespace, var, span, inline)?;
+                            let computed = computed_type(var.expression.as_ref());
+                            collect_variable(&mut namespace, var, span, inline, computed)?;
                         }
                         StatementKind::FunctionDeclaration(fun) => {
                             fun.signature.annotation.binding =
@@ -200,6 +201,7 @@ impl Analyzer {
                                     binding,
                                     span,
                                     inline_type(values.get(i)),
+                                    computed_type(values.get(i)),
                                 )?;
                             }
                         }
@@ -338,15 +340,22 @@ fn inline_type(expr: Option<&crate::frontend::ast::expression::Expression>) -> b
     matches!(expr.map(|e| &e.kind), Some(ExpressionKind::TypeValue(_)))
 }
 
+fn computed_type(expr: Option<&crate::frontend::ast::expression::Expression>) -> bool {
+    matches!(expr.map(|e| &e.kind), Some(ExpressionKind::Call { .. }))
+}
+
 fn collect_variable(
     ns: &mut Namespace,
     var: &mut VariableDeclaration,
     span: Span,
     inline: bool,
+    computed: bool,
 ) -> anyhow::Result<()> {
     let kind = if var.is_comp {
         if inline {
             DeclarationKind::Type
+        } else if computed {
+            DeclarationKind::Value
         } else {
             DeclarationKind::Alias
         }
@@ -458,6 +467,7 @@ pub(super) fn not_implemented<T>(operation: &str) -> anyhow::Result<T> {
 mod aliases;
 pub mod ast;
 mod constant;
+mod evaluation;
 pub mod expression;
 pub mod function_declaration;
 pub mod function_signature;
