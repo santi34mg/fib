@@ -148,7 +148,7 @@ fn annotation_defaults_are_explicitly_pending() {
 }
 
 #[test]
-fn type_resolution_remains_separate_from_complete_analysis() {
+fn complete_analysis_validates_an_empty_type_pass() {
     let analyzer = Analyzer {
         units: Vec::new(),
         symbols: symbols(),
@@ -156,7 +156,7 @@ fn type_resolution_remains_separate_from_complete_analysis() {
         paths: HashMap::new(),
         phase: super::NamePhase::New,
     };
-    assert!(analyzer.analyze().is_err());
+    analyzer.analyze().unwrap();
 
     let registry = symbols();
     let mut units = Vec::new();
@@ -168,7 +168,7 @@ fn type_resolution_remains_separate_from_complete_analysis() {
         symbols: registry,
         types,
     })
-    .unwrap_err();
+    .unwrap();
 }
 
 #[test]
@@ -2616,7 +2616,17 @@ mod type_resolution {
             "stub is not a semantic diagnostic"
         );
     }
-
+    fn analysis_bad(source: &str, fragment: &str) {
+        let e = analyzer(source)
+            .analyze()
+            .expect_err("invalid analysis accepted");
+        let d = e
+            .downcast_ref::<CompilerError>()
+            .expect("structured diagnostic");
+        assert_eq!(d.kind, ErrorKind::Type);
+        assert!(d.span.is_some(), "{e:#}");
+        assert!(d.message.contains(fragment), "expected {fragment}: {e:#}");
+    }
     macro_rules! ok {
         ($name:ident, $source:expr) => {
             #[test]
@@ -3213,19 +3223,157 @@ mod type_resolution {
         exact_large_integer_divisor,
         "x: uint128 = 1 / (18446744073709551615 - 18446744073709551614);"
     );
-    mod specialization {
+    mod completion_regressions {
         use super::*;
-        use crate::frontend::{
-            analysis_annotation::BindingId, analyzer::validate_type_annotations,
-        };
+        use crate::frontend::analysis_annotation::BindingId;
+        use crate::frontend::analyzer::validate_type_annotations;
         macro_rules! pass {
             ($name:ident, $source:expr) => {
                 #[test]
                 fn $name() {
-                    good($source);
+                    analyzer($source).analyze().unwrap();
                 }
             };
         }
+        macro_rules! fail {
+            ($name:ident, $source:expr, $message:expr) => {
+                #[test]
+                fn $name() {
+                    analysis_bad($source, $message);
+                }
+            };
+        }
+        pass!(
+            aggregate_join_preserves_full_initialization,
+            "comp S: type = struct { x: int32 }; fn f(b: bool) S { s: S; if b { s = S { x: 1 }; } else { s.x = 2; }; return s; }"
+        );
+        pass!(
+            aggregate_join_preserves_initialized_field,
+            "comp S: type = struct { x: int32, y: int32 }; fn f(b: bool) int32 { s: S; if b { s = S { x: 1, y: 1 }; } else { s.x = 2; }; return s.x; }"
+        );
+        pass!(
+            assigned_local,
+            "fn f() int32 { x: int32; x = 1; return x; }"
+        );
+        pass!(
+            both_branches_initialize,
+            "fn f(b: bool) int32 { x: int32; if b { x = 1; } else { x = 2; }; return x; }"
+        );
+        pass!(
+            returning_branch_is_not_joined,
+            "fn f(b: bool) int32 { x: int32; if b { return 1; } else { x = 2; }; return x; }"
+        );
+        pass!(
+            both_branches_return,
+            "fn f(b: bool) int32 { if b { return 1; } else { return 2; }; }"
+        );
+        pass!(
+            infinite_loop_diverges,
+            "fn f() int32 { while (true) { continue; }; }"
+        );
+        pass!(
+            break_carries_initialization,
+            "fn f() int32 { x: int32; while (true) { x = 2; break; }; return x; }"
+        );
+        pass!(
+            partial_field_initialization,
+            "comp S: type = struct { x: int32, y: int32 }; fn f() S { s: S; s.x = 1; s.y = 2; return s; }"
+        );
+        pass!(
+            array_element_initialization,
+            "fn f() int32[2] { a: int32[2]; a[0] = 1; a[1] = 2; return a; }"
+        );
+        pass!(
+            defer_reads_at_exit,
+            "fn use(x: int32); fn f() { x: int32; defer use(x); x = 1; }"
+        );
+        pass!(
+            defer_reverse_order,
+            "fn use(x: int32); fn f() { x: int32; defer use(x); defer x = 1; }"
+        );
+        pass!(
+            inner_defer_initializes_outer,
+            "fn f() int32 { x: int32; if true { defer x = 1; }; return x; }"
+        );
+        pass!(
+            loop_exit_defer,
+            "fn use(x: int32); fn f() { x: int32; while (true) { defer use(x); x = 1; break; }; }"
+        );
+        pass!(
+            exhaustive_enum_return,
+            "comp E: type = enum { A, B }; fn f(e: E) int32 { switch(e) { when .A { return 1; } when .B { return 2; } }; }"
+        );
+        pass!(
+            enum_payload_initialized,
+            "comp E: type = enum { A { x: int32 } }; fn f(e: E) int32 { switch(e) { when .A(p) { return p.x; } }; }"
+        );
+        fail!(
+            branch_may_not_initialize,
+            "fn f(b: bool) int32 { x: int32; if b { x = 1; }; return x; }",
+            "uninitialized"
+        );
+        fail!(
+            loop_may_not_run,
+            "fn f(b: bool) int32 { x: int32; while (b) { x = 1; }; return x; }",
+            "uninitialized"
+        );
+        fail!(
+            return_before_defer_write,
+            "fn f() int32 { x: int32; defer x = 1; return x; }",
+            "uninitialized"
+        );
+        fail!(
+            defer_before_assignment_exit,
+            "fn use(x: int32); fn f(b: bool) { x: int32; defer use(x); if b { return; }; x = 1; }",
+            "uninitialized"
+        );
+        fail!(
+            defer_wrong_order,
+            "fn use(x: int32); fn f() { x: int32; defer x = 1; defer use(x); }",
+            "uninitialized"
+        );
+        fail!(
+            nested_defer_rejected,
+            "fn f() { defer defer f(); }",
+            "defer"
+        );
+        fail!(
+            deferred_break_rejected,
+            "fn f() { while (true) { defer break; }; }",
+            "defer"
+        );
+        fail!(break_outside_loop, "fn f() { break; }", "loop");
+        fail!(continue_outside_loop, "fn f() { continue; }", "loop");
+        fail!(
+            missing_enum_path,
+            "comp E: type = enum { A, B }; fn f(e: E) int32 { switch(e) { when .A { return 1; } }; }",
+            "return"
+        );
+        fail!(
+            duplicate_enum_arm,
+            "comp E: type = enum { A }; fn f(e: E) { switch(e) { when .A {} when .A {} }; }",
+            "duplicate"
+        );
+        fail!(
+            partially_initialized_struct,
+            "comp S: type = struct { x: int32, y: int32 }; fn f() S { s: S; s.x = 1; return s; }",
+            "uninitialized"
+        );
+        fail!(
+            partially_initialized_array,
+            "fn f() int32[2] { a: int32[2]; a[0] = 1; return a; }",
+            "uninitialized"
+        );
+        fail!(
+            file_forward_read,
+            "first := second; second := 1;",
+            "uninitialized"
+        );
+        fail!(
+            file_initialization_cycle,
+            "first: int32 = second; second: int32 = first;",
+            "uninitialized"
+        );
         pass!(
             specialized_pointer,
             "fn identity(T: type, x: *T) *T { return x; } x := 1; p := identity(int32, x&);"
@@ -3302,20 +3450,15 @@ mod type_resolution {
             computed_cache_preserves_nominal_identity,
             "fn box(T: type) type { return struct { x: T }; } comp A := box(int8); comp B := box(int8); a: A = A { x: 1 }; b: B = a;"
         );
-        err!(
-            computed_runtime_call_is_rejected,
-            "fn f() int32 { return 1; } comp value := f();",
-            "type value"
+        fail!(
+            unreachable_break_is_invalid,
+            "fn f() { return; break; }",
+            "loop"
         );
-        err!(
-            computed_side_effect_is_rejected,
-            "fn side() bool; fn choose() type { b := side(); return int32; } comp T := choose();",
-            "known type or bool"
-        );
-        err!(
-            computed_uninitialized_local_is_rejected,
-            "fn choose() type { b: bool; return int32; } comp T := choose();",
-            "known type or bool"
+        fail!(
+            false_branch_break_is_invalid,
+            "fn f() { if false { break; }; }",
+            "loop"
         );
         #[test]
         fn computed_cross_file_type_and_generic_alias() {
@@ -3395,6 +3538,68 @@ mod type_resolution {
             assert!(validate_type_annotations(&mut a.units, &a.symbols, &types).is_err());
         }
         #[test]
+        fn full_analysis_revalidates_public_ast() {
+            let mut project = analyzer("fn f() int32 { x := 1; return x; }")
+                .analyze()
+                .unwrap();
+            let StatementKind::FunctionDeclaration(fun) =
+                &mut project.units[0].ast.statements[0].kind
+            else {
+                panic!()
+            };
+            let StatementKind::VariableDeclaration(v) =
+                &mut fun.body.as_mut().unwrap().statements[0].kind
+            else {
+                panic!()
+            };
+            v.expression = None;
+            let error = validate_analysis(&project).unwrap_err();
+            assert!(error.to_string().contains("uninitialized"));
+        }
+        #[test]
+        fn flow_diagnostics_keep_source_paths() {
+            let error = analyzer("fn f() int32 { x: int32; return x; }")
+                .analyze()
+                .unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<CompilerError>()
+                    .unwrap()
+                    .filename
+                    .as_deref(),
+                Some(Path::new("types.fib"))
+            );
+        }
+        fail!(
+            initializer_function_reads_later_global,
+            "fn f() int32 { return late; } early := f(); late := 1;",
+            "uninitialized"
+        );
+        fail!(
+            initializer_function_chain_reads_later_global,
+            "fn f() int32 { return g(); } fn g() int32 { return late; } early := f(); late := 1;",
+            "uninitialized"
+        );
+        pass!(
+            initializer_function_reads_earlier_global,
+            "late := 1; fn f() int32 { return late; } early := f();"
+        );
+        err!(
+            computed_runtime_call_is_rejected,
+            "fn f() int32 { return 1; } comp value := f();",
+            "type value"
+        );
+        err!(
+            computed_side_effect_is_rejected,
+            "fn side() bool; fn choose() type { b := side(); return int32; } comp T := choose();",
+            "known type or bool"
+        );
+        err!(
+            computed_uninitialized_local_is_rejected,
+            "fn choose() type { b: bool; return int32; } comp T := choose();",
+            "known type or bool"
+        );
+        #[test]
         fn instances_cache_by_template_and_type_identity() {
             let (_, types) = run("fn identity(T: type, x: T) T { return x; } a := identity(int32, 1); b := identity(int32, 2); c := identity(int8, 3);").unwrap();
             assert_eq!(types.generic_instances.len(), 2);
@@ -3417,6 +3622,27 @@ mod type_resolution {
         #[test]
         fn compile_time_function_evaluation() {
             good("fn choose() type { return int32; } comp T := choose(); value: T = 1;");
+        }
+        #[test]
+        fn definite_initialization() {
+            analysis_bad(
+                "fn f() int32 { value: int32; return value; }",
+                "uninitialized",
+            );
+        }
+        #[test]
+        fn all_return_paths() {
+            analysis_bad("fn f(x: bool) int32 { if x { return 1; }; }", "return");
+        }
+        #[test]
+        fn defer_semantics() {
+            bad("fn f() { defer return; }", "defer");
+        }
+        #[test]
+        fn complete_project_analysis() {
+            analyzer("fn f() int32 { return 1; }")
+                .analyze()
+                .expect("complete semantic analysis remains required");
         }
     }
 }

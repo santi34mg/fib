@@ -8,7 +8,9 @@ The free `resolve_types` entry requires collected, name-resolved units and a fre
 type workspace. No file discovery occurs.
 
 This pass is separate from complete analysis: `Analyzer::analyze` runs typing,
-then reports that initialization and complete flow checks are unfinished. The pipeline, IR and backend remain unfinished.
+then validates definite initialization and structured control flow before returning
+`AnalyzedProject`. `validate_analysis` independently rechecks the public AST and
+semantic tables. The pipeline, IR and backend remain unfinished.
 
 ## Semantic identities
 
@@ -116,7 +118,7 @@ aggregate, enum/integer and array/slice conversions are rejected.
 
 Ordinary, forward, recursive and indirect calls check callee type, argument count,
 argument types and result type. Returns check the containing signature and result
-arity/types; path completeness remains separate. Variadic typing explicitly errors.
+arity/types; complete analysis additionally checks path completeness. Variadic typing explicitly errors.
 There are no builtin functions: string helpers will be ordinary standard-library
 functions; the compiler defines no signatures or dispatch by their spelling.
 
@@ -130,8 +132,41 @@ Pattern payload bindings are typed and scoped to their arms; conditions are bool
 Expression inference currently rejects nesting beyond 256 recursive expression
 calls with a diagnostic, rather than promising unbounded analysis resources.
 
-## Acceptance coverage
+## Initialization and structured flow
 
-Type-only acceptance tests cover specialization, cached identities, bounded
-computed types, members, annotations and diagnostics. Initialization and flow
-remain separate work; `Analyzer::analyze` cannot yet return a complete project.
+`resolve_types` does not certify initialization or return-path safety. This keeps
+forward type inference independent of evaluation order. `analyze` adds a read-only
+flow pass: parameters start initialized, assignments initialize destinations,
+and reads require initialized bindings or fields. Struct fields and known array
+elements can be initialized separately. Only continuing branches participate in
+joins; loops that may execute zero times do not establish initialization. Infinite
+loops and `never` expression statements can complete a non-returning path.
+Enum switches account for all variants or a wildcard; duplicate variants and arms
+after a wildcard are rejected. Break/continue require an enclosing loop, including
+in unreachable syntax.
+
+File initializers are checked in compilation-unit/source order. Function bodies
+are checked with globals having initializers available; direct function calls
+from file initializers additionally check their bodies against the current
+initialization state, including recursive call chains. Call effects are not
+propagated back to callers. Raw-pointer/slice aliasing and indirect-call effects
+are not an ownership or interprocedural initialization proof; code relying on
+initialization through aliases or call effects is outside this pass's guarantees.
+
+Defer requires function scope and rejects nested defer and control transfers.
+Deferred statements are checked at each lexical scope exit in reverse order;
+return expressions are read before deferred work. Conditional exits, loop breaks
+and continues run the defers belonging to scopes they leave. Deferred work must
+complete normally under this implementation.
+
+## Acceptance boundary
+
+All analyzer tests and helpers live in `src/frontend/analyzer/test.rs`.
+The six former pending cases now pass under `completion_acceptance`; initialization
+and return-path cases exercise `Analyzer::analyze`, while type-only fixtures retain
+the separate `resolve_types` contract. `completion_regressions` adds positive and
+negative tests for specialization/cache identities, computed types, source paths,
+annotation corruption, partial initialization, joins, loops, switches and defer
+ordering. No acceptance cases are ignored or marked `should_panic`. The unfiltered
+no-default-features suite passes. See [validation](agents/tests/README.md) and the
+linked [analysis issues](agents/issues/README.md) for broader compiler work.
