@@ -1,0 +1,18 @@
+// Vector type
+pub comp Vector: type = struct {
+    T: type,
+    // maybe
+    // data: []T,
+    data: *T,
+    length: usize,
+    capacity: usize,
+    new := fn(capacity: usize) Vector {
+        // TODO: implement
+    },
+    push := fn(self, value: T) void {
+        // TODO: implement
+    },
+    get := fn(self, index: usize) ?*T {
+        // TODO: implement
+    },
+}
