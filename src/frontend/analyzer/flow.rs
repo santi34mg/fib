@@ -1,0 +1,641 @@
+//! Definite initialization and structured flow over the annotated source AST.
+//! Each lexical block executes its defers, in reverse order, on every exit.
+use super::{AnalyzedProject, at_span};
+use crate::frontend::{
+    analysis_annotation::{BindingId, MemberKind, ValueCategory},
+    ast::{
+        expression::{Expression, ExpressionKind as E},
+        pattern::Pattern,
+        statement::{Statement, StatementKind as S},
+        variable_declaration::VariableDeclaration,
+    },
+    identifier::{Entity, ResolvedName},
+    semantic_type::{SemanticType as T, SemanticTypes, TypeId, type_error},
+    tokens::{Operator as O, builtin::BuiltinType as B},
+};
+use std::collections::{HashMap, HashSet};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Projection {
+    Field(u32),
+    Index(u64),
+}
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct Place {
+    binding: BindingId,
+    path: Vec<Projection>,
+}
+type State = HashSet<Place>;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExitKind {
+    Next,
+    Return,
+    Break,
+    Continue,
+    Diverge,
+}
+struct Exit {
+    kind: ExitKind,
+    state: State,
+}
+struct Flow<'a> {
+    types: &'a SemanticTypes,
+    loops: usize,
+    functions: HashMap<
+        crate::frontend::identifier::DeclId,
+        &'a crate::frontend::ast::function_declaration::FunctionDeclaration,
+    >,
+    checking_initializers: bool,
+    active_calls: HashSet<crate::frontend::identifier::DeclId>,
+}
+
+pub(super) fn validate(
+    project: &AnalyzedProject,
+    paths: Option<&HashMap<crate::build_plan::FileId, std::path::PathBuf>>,
+) -> anyhow::Result<()> {
+    let mut flow = Flow {
+        types: &project.types,
+        loops: 0,
+        functions: project
+            .units
+            .iter()
+            .flat_map(|u| &u.ast.statements)
+            .filter_map(|node| {
+                if let S::FunctionDeclaration(f) = &node.kind
+                    && let Some(BindingId::Declaration(id)) = f.signature.annotation.binding
+                {
+                    Some((id, f))
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        checking_initializers: false,
+        active_calls: HashSet::new(),
+    };
+    let mut initialized = State::new();
+    let mut globals = State::new();
+    for unit in &project.units {
+        for node in &unit.ast.statements {
+            match &node.kind {
+                S::VariableDeclaration(v) if v.expression.is_some() || v.is_comp => {
+                    flow.initialize(v, &mut globals)?;
+                }
+                S::MultiVariableDeclaration { bindings, values } if !values.is_empty() => {
+                    for v in bindings {
+                        flow.initialize(v, &mut globals)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    for unit in &project.units {
+        for node in &unit.ast.statements {
+            let result = (|| {
+                if let S::FunctionDeclaration(fun) = &node.kind {
+                    if let Some(body) = &fun.body {
+                        let mut state = globals.clone();
+                        for param in &fun.signature.parameters {
+                            state.insert(root(
+                                param
+                                    .annotation
+                                    .binding
+                                    .ok_or_else(|| type_error("pending parameter"))?,
+                            ));
+                        }
+                        let exits = flow.block(&body.statements, state)?;
+                        let ret = fun
+                            .signature
+                            .return_type
+                            .annotation
+                            .resolved
+                            .ok_or_else(|| type_error("pending return type"))?;
+                        if !matches!(flow.types.get(ret)?, T::Builtin(B::Void))
+                            && exits.iter().any(|e| e.kind == ExitKind::Next)
+                        {
+                            return Err(type_error(
+                                "function does not return a value on all paths",
+                            ));
+                        }
+                    }
+                } else {
+                    flow.checking_initializers = true;
+                    let result = flow.statement(node, initialized.clone());
+                    flow.checking_initializers = false;
+                    let exits = result?;
+                    if let Some(exit) = exits.into_iter().find(|e| e.kind == ExitKind::Next) {
+                        initialized = exit.state;
+                    }
+                }
+                Ok(())
+            })();
+            result.map_err(|e| {
+                super::with_path(
+                    at_span(e, node.span),
+                    paths.and_then(|paths| paths.get(&unit.source_file_id)),
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+fn root(binding: BindingId) -> Place {
+    Place {
+        binding,
+        path: vec![],
+    }
+}
+fn binding(expr: &Expression) -> Option<BindingId> {
+    if let E::QualifiedIdentifier(n) = &expr.kind {
+        match n.annotation.resolved? {
+            ResolvedName::Local(id) => Some(BindingId::Local(id)),
+            ResolvedName::Entity(Entity::Declaration(id)) => Some(BindingId::Declaration(id)),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+fn place(expr: &Expression, types: &SemanticTypes) -> anyhow::Result<Option<Place>> {
+    if let Some(id) = binding(expr) {
+        return Ok(Some(root(id)));
+    }
+    match &expr.kind {
+        E::ExprAcess { expr, member, .. } => {
+            if let Some(mut p) = place(expr, types)?
+                && let Some(info) = member.resolved
+                && let MemberKind::Field(index) = info.kind
+            {
+                p.path.push(Projection::Field(index));
+                return Ok(Some(p));
+            }
+        }
+        E::IndexAccess { object, index } => {
+            if matches!(
+                object
+                    .annotation
+                    .resolved
+                    .and_then(|i| types.get(i.ty).ok()),
+                Some(T::Array { .. })
+            ) && let Some(mut p) = place(object, types)?
+                && let Some(index) = super::constant::integer_as_i128(index, types)?
+                && let Ok(index) = u64::try_from(index)
+            {
+                p.path.push(Projection::Index(index));
+                return Ok(Some(p));
+            }
+        }
+        _ => {}
+    }
+    Ok(None)
+}
+impl Flow<'_> {
+    fn initialize(&self, v: &VariableDeclaration, state: &mut State) -> anyhow::Result<()> {
+        state.insert(root(
+            v.annotation
+                .binding
+                .ok_or_else(|| type_error("pending binding"))?,
+        ));
+        Ok(())
+    }
+    fn ready(&self, p: &Place, ty: TypeId, state: &State) -> anyhow::Result<bool> {
+        if (0..=p.path.len()).any(|n| {
+            state.contains(&Place {
+                binding: p.binding,
+                path: p.path[..n].to_vec(),
+            })
+        }) {
+            return Ok(true);
+        }
+        match self.types.get(ty)? {
+            T::Struct(fs) => {
+                for (i, f) in fs.iter().enumerate() {
+                    let mut field = p.clone();
+                    field.path.push(Projection::Field(i as u32));
+                    if !self.ready(&field, f.ty, state)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            T::Array { element, length } => {
+                // Every element needs a written descendant; avoid iterating huge arrays.
+                let indices = state
+                    .iter()
+                    .filter(|q| q.binding == p.binding && q.path.starts_with(&p.path))
+                    .filter_map(|q| match q.path.get(p.path.len()) {
+                        Some(Projection::Index(i)) => Some(*i),
+                        _ => None,
+                    })
+                    .collect::<HashSet<_>>();
+                if indices.len() as u64 != *length {
+                    return Ok(false);
+                }
+                for index in indices {
+                    let mut item = p.clone();
+                    item.path.push(Projection::Index(index));
+                    if !self.ready(&item, *element, state)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+    fn read(&mut self, expr: &Expression, state: &State) -> anyhow::Result<()> {
+        let result = (|| {
+            if let Some(info) = expr.annotation.resolved
+                && matches!(
+                    info.category,
+                    ValueCategory::MutablePlace | ValueCategory::ImmutablePlace
+                )
+                && let Some(p) = place(expr, self.types)?
+            {
+                self.address(expr, state)?;
+                if !self.ready(&p, info.ty, state)? {
+                    return Err(type_error("read of uninitialized binding or member"));
+                }
+                return Ok(());
+            }
+            match &expr.kind {
+                E::UnaryExpression(u) if u.operator == O::AddressOf => {
+                    self.address(&u.expression, state)?
+                }
+                E::UnaryExpression(u) => self.read(&u.expression, state)?,
+                E::BinaryExpresison(b) => {
+                    self.read(&b.left, state)?;
+                    let known = super::evaluation::boolean(&b.left, &HashMap::new());
+                    if !matches!(
+                        (b.operator, known),
+                        (O::LogicalAnd, Some(false)) | (O::LogicalOr, Some(true))
+                    ) {
+                        self.read(&b.right, state)?;
+                    }
+                }
+                E::Call { callee, args } => {
+                    self.read(callee, state)?;
+                    for a in args {
+                        self.read(a, state)?;
+                    }
+                    if self.checking_initializers
+                        && !expr.annotation.resolved.is_some_and(|i| {
+                            matches!(self.types.get(i.ty), Ok(T::Builtin(B::MetaType)))
+                        })
+                        && let Some(id) = super::evaluation::function_id(callee)
+                        && let Some(fun) = self.functions.get(&id).copied()
+                        && let Some(body) = &fun.body
+                        && self.active_calls.insert(id)
+                    {
+                        if self.active_calls.len() > 64 {
+                            return Err(type_error(
+                                "file-initializer call analysis depth limit exceeded",
+                            ));
+                        }
+                        let mut state = state.clone();
+                        for p in &fun.signature.parameters {
+                            state.insert(root(
+                                p.annotation
+                                    .binding
+                                    .ok_or_else(|| type_error("pending parameter"))?,
+                            ));
+                        }
+                        let loops = self.loops;
+                        self.loops = 0;
+                        let result = self.block(&body.statements, state);
+                        self.loops = loops;
+                        self.active_calls.remove(&id);
+                        result?;
+                    }
+                }
+                E::ExprAcess { expr, .. } => self.read(expr, state)?,
+                E::StructConstruct { fields, .. } => {
+                    for f in fields {
+                        self.read(&f.expression, state)?;
+                    }
+                }
+                E::Cast { expr, .. } => self.read(expr, state)?,
+                E::IndexAccess { object, index } => {
+                    self.read(object, state)?;
+                    self.read(index, state)?;
+                }
+                E::SliceLiteral {
+                    object, start, end, ..
+                } => {
+                    self.read(object, state)?;
+                    for e in start.iter().chain(end) {
+                        self.read(e, state)?;
+                    }
+                }
+                E::ArrayLiteral { elements } => {
+                    for e in elements {
+                        self.read(e, state)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        })();
+        result.map_err(|e| at_span(e, expr.span))
+    }
+    fn address(&mut self, expr: &Expression, state: &State) -> anyhow::Result<()> {
+        match &expr.kind {
+            E::QualifiedIdentifier(_) => Ok(()),
+            E::ExprAcess { expr, .. } => self.address(expr, state),
+            E::IndexAccess { object, index } => {
+                self.read(index, state)?;
+                if matches!(
+                    object
+                        .annotation
+                        .resolved
+                        .and_then(|i| self.types.get(i.ty).ok()),
+                    Some(T::Array { .. })
+                ) {
+                    self.address(object, state)
+                } else {
+                    self.read(object, state)
+                }
+            }
+            E::UnaryExpression(u) if u.operator == O::Dereference => {
+                self.read(&u.expression, state)
+            }
+            _ => self.read(expr, state),
+        }
+    }
+    fn write(&mut self, expr: &Expression, state: &mut State) -> anyhow::Result<()> {
+        self.address(expr, state)?;
+        if let Some(p) = place(expr, self.types)? {
+            state.insert(p);
+        }
+        Ok(())
+    }
+    fn block(&mut self, nodes: &[Statement], state: State) -> anyhow::Result<Vec<Exit>> {
+        let mut active = Some(state);
+        let mut exits = vec![];
+        let mut defers = vec![];
+        for node in nodes {
+            let Some(state) = active.take() else {
+                break;
+            };
+            if let S::Defer(deferred) = &node.kind {
+                defers.push(deferred.as_ref());
+                active = Some(state);
+                continue;
+            }
+            let mut next = vec![];
+            for mut exit in self
+                .statement(node, state)
+                .map_err(|e| at_span(e, node.span))?
+            {
+                if exit.kind == ExitKind::Next {
+                    next.push(exit.state);
+                } else {
+                    if exit.kind != ExitKind::Diverge {
+                        self.defers(&defers, &mut exit.state)?;
+                    }
+                    exits.push(exit);
+                }
+            }
+            active = self.merge(next)?;
+        }
+        if let Some(mut state) = active {
+            self.defers(&defers, &mut state)?;
+            exits.push(Exit {
+                kind: ExitKind::Next,
+                state,
+            });
+        }
+        Ok(exits)
+    }
+    fn defers(&mut self, nodes: &[&Statement], state: &mut State) -> anyhow::Result<()> {
+        for node in nodes.iter().rev() {
+            let exits = self
+                .statement(node, state.clone())
+                .map_err(|e| at_span(e, node.span))?;
+            *state = self
+                .merge(
+                    exits
+                        .into_iter()
+                        .filter(|e| e.kind == ExitKind::Next)
+                        .map(|e| e.state)
+                        .collect(),
+                )?
+                .ok_or_else(|| type_error("defer must complete normally"))?;
+        }
+        Ok(())
+    }
+    fn merge(&self, states: Vec<State>) -> anyhow::Result<Option<State>> {
+        if states.is_empty() {
+            return Ok(None);
+        }
+        let candidates = states
+            .iter()
+            .flat_map(|s| s.iter())
+            .flat_map(|p| {
+                (0..=p.path.len()).map(|n| Place {
+                    binding: p.binding,
+                    path: p.path[..n].to_vec(),
+                })
+            })
+            .collect::<HashSet<_>>();
+        let mut result = State::new();
+        for place in candidates {
+            let mut ty = self.types.bindings.get(&place.binding).map(|i| i.ty);
+            for projection in &place.path {
+                ty = match (ty.map(|t| self.types.get(t)).transpose()?, projection) {
+                    (Some(T::Struct(fs)), Projection::Field(index)) => {
+                        fs.get(*index as usize).map(|f| f.ty)
+                    }
+                    (Some(T::Array { element, .. }), Projection::Index(_)) => Some(*element),
+                    _ => None,
+                };
+            }
+            let mut initialized = true;
+            for state in &states {
+                if !(if let Some(ty) = ty {
+                    self.ready(&place, ty, state)?
+                } else {
+                    state.contains(&place)
+                }) {
+                    initialized = false;
+                    break;
+                }
+            }
+            if initialized {
+                result.insert(place);
+            }
+        }
+        Ok(Some(result))
+    }
+    fn statement(&mut self, node: &Statement, mut state: State) -> anyhow::Result<Vec<Exit>> {
+        let mut kind = ExitKind::Next;
+        match &node.kind {
+            S::VariableDeclaration(v) => {
+                if let Some(expr) = &v.expression {
+                    self.read(expr, &state)?;
+                    self.initialize(v, &mut state)?;
+                }
+            }
+            S::MultiVariableDeclaration { bindings, values } => {
+                for value in values {
+                    self.read(value, &state)?;
+                }
+                if !values.is_empty() {
+                    for v in bindings {
+                        self.initialize(v, &mut state)?;
+                    }
+                }
+            }
+            S::ExpressionStatement(e) => {
+                self.read(e, &state)?;
+                if e.annotation
+                    .resolved
+                    .is_some_and(|i| matches!(self.types.get(i.ty), Ok(T::Builtin(B::Never))))
+                {
+                    kind = ExitKind::Diverge;
+                }
+            }
+            S::Assignment { left, right } => {
+                self.read(right, &state)?;
+                self.write(left, &mut state)?;
+            }
+            S::MultiAssignment { targets, values } => {
+                for e in values {
+                    self.read(e, &state)?;
+                }
+                // All destination addresses are evaluated before any writes.
+                for t in targets {
+                    self.address(t, &state)?;
+                }
+                for t in targets {
+                    self.write(t, &mut state)?;
+                }
+            }
+            S::DerefAssign { pointer, expr } => {
+                self.read(pointer, &state)?;
+                self.read(expr, &state)?;
+            }
+            S::IndexAssign {
+                object,
+                index,
+                expr,
+            } => {
+                self.read(expr, &state)?;
+                let target = Expression::at(
+                    E::IndexAccess {
+                        object: Box::new(object.clone()),
+                        index: Box::new(index.clone()),
+                    },
+                    node.span,
+                );
+                self.write(&target, &mut state)?;
+            }
+            S::Return(values) => {
+                for e in values.iter().flatten() {
+                    self.read(e, &state)?;
+                }
+                kind = ExitKind::Return;
+            }
+            S::Break | S::Continue => {
+                if self.loops == 0 {
+                    return Err(type_error("break/continue requires an enclosing loop"));
+                }
+                kind = if matches!(node.kind, S::Break) {
+                    ExitKind::Break
+                } else {
+                    ExitKind::Continue
+                };
+            }
+            S::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.read(condition, &state)?;
+                let known = super::evaluation::boolean(condition, &HashMap::new());
+                let mut exits = vec![];
+                if known != Some(false) {
+                    exits.extend(self.block(then_branch, state.clone())?);
+                }
+                if known != Some(true) {
+                    exits.extend(self.block(else_branch.as_deref().unwrap_or(&[]), state)?);
+                }
+                return Ok(exits);
+            }
+            S::While { condition, body } => {
+                if let Some(e) = condition {
+                    self.read(e, &state)?;
+                }
+                let known = condition
+                    .as_ref()
+                    .map(|e| super::evaluation::boolean(e, &HashMap::new()))
+                    .unwrap_or(Some(true));
+                if known == Some(false) {
+                    return Ok(vec![Exit { kind, state }]);
+                }
+                self.loops += 1;
+                let result = self.block(body, state.clone());
+                self.loops -= 1;
+                let mut exits = vec![];
+                if known != Some(true) {
+                    exits.push(Exit { kind, state });
+                }
+                for mut exit in result? {
+                    match exit.kind {
+                        ExitKind::Break => {
+                            exit.kind = ExitKind::Next;
+                            exits.push(exit);
+                        }
+                        ExitKind::Next | ExitKind::Continue => {}
+                        _ => exits.push(exit),
+                    }
+                }
+                return Ok(exits);
+            }
+            S::Switch { subject, arms } => {
+                self.read(subject, &state)?;
+                let mut exits = vec![];
+                let mut seen = HashSet::new();
+                let mut wildcard = false;
+                for arm in arms {
+                    let mut state = state.clone();
+                    if wildcard {
+                        return Err(type_error("switch arm after wildcard is unreachable"));
+                    }
+                    match &arm.pattern {
+                        Pattern::EnumVariant {
+                            variant, binding, ..
+                        } => {
+                            if !seen.insert(variant) {
+                                return Err(type_error("duplicate switch variant"));
+                            }
+                            if let Some(b) = binding {
+                                state.insert(root(
+                                    b.annotation
+                                        .binding
+                                        .ok_or_else(|| type_error("pending pattern binding"))?,
+                                ));
+                            }
+                        }
+                        Pattern::Wildcard => wildcard = true,
+                    }
+                    exits.extend(self.block(&arm.body, state)?);
+                }
+                let ty = subject
+                    .annotation
+                    .resolved
+                    .ok_or_else(|| type_error("pending switch subject"))?
+                    .ty;
+                let complete = matches!(self.types.get(ty)?, T::Enum(vs) if vs.len() == seen.len());
+                if !wildcard && !complete {
+                    exits.push(Exit { kind, state });
+                }
+                return Ok(exits);
+            }
+            S::FunctionDeclaration(_) => {}
+            S::Defer(_) => return Err(type_error("defer requires a lexical function block")),
+        }
+        Ok(vec![Exit { kind, state }])
+    }
+}

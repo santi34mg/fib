@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Definite initialization, return-path validation, enum-switch flow and reverse-order scope-exit defer checks. `Analyzer::analyze` now returns a validated project.
 - Explicit metatype signature specialization and caching, plus bounded type-return evaluation with known type/bool arguments and computed local aliases.
 - Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
 - Canonical semantic types, nominal aggregate identities and read-only type/place/multi-value compatibility checks.
@@ -49,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-10-14
 
 ### Added
+- Definite initialization, return-path validation, enum-switch flow and reverse-order scope-exit defer checks. `Analyzer::analyze` now returns a validated project.
 - Explicit metatype signature specialization and caching, plus bounded type-return evaluation with known type/bool arguments and computed local aliases.
 - Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
 - Canonical semantic types, nominal aggregate identities and read-only type/place/multi-value compatibility checks.
@@ -95,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-09-18
 
 ### Added
+- Definite initialization, return-path validation, enum-switch flow and reverse-order scope-exit defer checks. `Analyzer::analyze` now returns a validated project.
 - Explicit metatype signature specialization and caching, plus bounded type-return evaluation with known type/bool arguments and computed local aliases.
 - Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
 - Canonical semantic types, nominal aggregate identities and read-only type/place/multi-value compatibility checks.

@@ -1,6 +1,6 @@
 //! Staged name/type analysis enriches parsed source units in place.
-//! Names, types, members and explicit metatype calls resolve. Initialization
-//! and structured flow validation remain unfinished.
+//! Names, expressions and members resolve; complete analysis checks definite
+//! initialization and structured control flow before handing off the source AST.
 //! The only lowering boundary is `AnalyzedProject` to `Ir`; analysis never
 //! manufactures a separate typed AST or emits IR.
 
@@ -155,7 +155,7 @@ impl Analyzer {
             symbols: self.symbols,
             types,
         };
-        validate_analysis(&project)?;
+        validate_analysis_with_paths(&project, Some(&self.paths))?;
         Ok(project)
     }
 
@@ -455,13 +455,23 @@ pub fn validate_type_annotations(
     typing::validate_annotations(units, symbols, types)
 }
 
-/// Initialization and complete flow validation remain separate from typing.
-pub fn validate_analysis(_project: &AnalyzedProject) -> anyhow::Result<()> {
-    not_implemented("analysis completion and initialization validation")
+/// Independently validate annotations, definite initialization and structured flow.
+pub fn validate_analysis(project: &AnalyzedProject) -> anyhow::Result<()> {
+    validate_analysis_with_paths(project, None)
 }
 
-pub(super) fn not_implemented<T>(operation: &str) -> anyhow::Result<T> {
-    anyhow::bail!("{operation} is not implemented")
+fn validate_analysis_with_paths(
+    project: &AnalyzedProject,
+    paths: Option<&HashMap<FileId, std::path::PathBuf>>,
+) -> anyhow::Result<()> {
+    if !project.types.complete {
+        return Err(crate::frontend::semantic_type::type_error(
+            "analysis requires completed type resolution",
+        ));
+    }
+    let mut units = project.units.clone();
+    validate_type_annotations(&mut units, &project.symbols, &project.types)?;
+    flow::validate(project, paths)
 }
 
 mod aliases;
@@ -469,6 +479,7 @@ pub mod ast;
 mod constant;
 mod evaluation;
 pub mod expression;
+mod flow;
 pub mod function_declaration;
 pub mod function_signature;
 pub mod generics;

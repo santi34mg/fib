@@ -106,6 +106,16 @@ impl TypeContext<'_> {
             .map_err(|e| self.diagnostic(e, Some(node.span), self.file))
     }
     fn statement_inner(&mut self, node: &mut Statement) -> anyhow::Result<()> {
+        if self.state.in_defer
+            && matches!(
+                node.kind,
+                S::Defer(_) | S::Return(_) | S::Break | S::Continue
+            )
+        {
+            return Err(type_error(
+                "defer cannot contain nested defer or control transfer",
+            ));
+        }
         match &mut node.kind {
             S::VariableDeclaration(var) => self.variable(var)?,
             S::MultiVariableDeclaration { bindings, values } => {
@@ -265,7 +275,10 @@ impl TypeContext<'_> {
                     let ty = self.types.builtin(B::Boolean);
                     self.expression(condition, Some(ty))?;
                 }
-                self.statements(body)?;
+                self.state.loop_depth += 1;
+                let result = self.statements(body);
+                self.state.loop_depth -= 1;
+                result?;
             }
             S::Switch { subject, arms } => {
                 let info = self.expression(subject, None)?;
@@ -273,8 +286,20 @@ impl TypeContext<'_> {
                     self.switch_arm(arm, info.ty, Some(node.span))?;
                 }
             }
-            S::Defer(_) => return Err(type_error("defer analysis is not implemented")),
-            S::Break | S::Continue => {}
+            S::Defer(node) => {
+                if self.state.return_type.is_none() {
+                    return Err(type_error("defer requires a function scope"));
+                }
+                self.state.in_defer = true;
+                let result = self.statement(node);
+                self.state.in_defer = false;
+                result?;
+            }
+            S::Break | S::Continue => {
+                if self.state.loop_depth == 0 {
+                    return Err(type_error("break/continue requires an enclosing loop"));
+                }
+            }
         }
         Ok(())
     }

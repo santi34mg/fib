@@ -44,6 +44,8 @@ pub(super) struct TypeState {
     pub evaluation_depth: usize,
     pub evaluated_types: HashMap<(DeclId, Vec<super::evaluation::Argument>), TypeId>,
     pub evaluation_booleans: HashMap<BindingId, bool>,
+    pub in_defer: bool,
+    pub loop_depth: usize,
 }
 
 pub(super) fn resolve_project(
