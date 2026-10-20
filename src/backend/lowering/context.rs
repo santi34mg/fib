@@ -8,7 +8,7 @@ use super::{BackendError, abi::AbiPlan, llvm_lower::LlvmArtifact};
 /// from the shared ABI plan; missing identities cannot trigger declarations.
 #[derive(Debug)]
 pub struct ModulePlan<'plan> {
-    _abi: &'plan AbiPlan<'plan>,
+    _abi: &'plan AbiPlan,
 }
 
 /// Future value/stack-slot/block/PHI maps and pending edge fixups. A function
@@ -20,7 +20,7 @@ pub struct FunctionPlan<'module, 'plan> {
 
 /// Will predeclare all functions/globals before resolving constants and bodies,
 /// supporting recursion and forward global/function address constants.
-pub fn predeclare<'plan>(_abi: &'plan AbiPlan<'plan>) -> Result<ModulePlan<'plan>, BackendError> {
+pub fn predeclare<'plan>(_abi: &'plan AbiPlan) -> Result<ModulePlan<'plan>, BackendError> {
     Err(BackendError::NotImplemented {
         operation: "predeclare",
     })
