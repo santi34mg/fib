@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced obsolete typed-AST/flat-IR lowering bodies with coherent SSA and backend API sketches; no direct AST-to-LLVM fallback or compatibility `IrProgram` is retained.
 
 ### Fixed
+- Compile-time alias dependencies use an iterative stack, preserving canonical identities and cycle diagnostics while resolving the 8,000-alias regression on a 2 MiB stack.
 - Migrated all 15 sample programs to current syntax while preserving their operations and numeric widths; output remains intended/unverified. Fibonacci benchmark results now use `int64` so `fib(50)` fits, and linked-list cleanup is registered after constructing the list.
 - Aligned LSP highlighting with the current tokenizer/parser: bare bit-width types, `const` bindings, `.len`, declaration contexts, and decimal-prefixed floats; removed legacy `var`/`import` keyword and `@`-type highlighting.
 - Migrated parser identifier handling to string-based `Identifier` tokens and qualified identifier expressions; type declarations consume the metatype builtin, and member accesses consistently use `accessed_identifier`.
@@ -66,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated maintained samples to use mandatory semicolons and `while` loops.
 
 ### Fixed
+- Compile-time alias dependencies use an iterative stack, preserving canonical identities and cycle diagnostics while resolving the 8,000-alias regression on a 2 MiB stack.
 - Added the missing `cargo-deny` license policy and package MIT license metadata,
   and included dependency policy checks in the pre-commit hook.
 - Prefer Clang 21 when linking LLVM 21 IR, avoiding failures when an incompatible
