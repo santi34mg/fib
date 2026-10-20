@@ -21,7 +21,8 @@ historical positional-file or `-I` commands.
 See the [sample guide](../../../samples/README.md) for dependency and semantic
 limitations. In particular, a future build plan must supply a `libc` file, the
 historical standard-library bindings are not migrated by this sample update,
-and parsed enum member calls are not implemented payload constructors. Preserve
+and parsed enum member calls now receive payload-constructor type checks when
+passed through the type resolver; the sample sweep itself only parses them. Preserve
 example operations when migrating syntax; do not remove behavior just to parse.
 
 For new syntax, retain positive/malformed in-memory parser tests as well as sample

@@ -4,16 +4,17 @@ Analysis/test status updated against the implementation on 2026-10-19. See the
 [current implementation guide](agents/README.md) and [roadmap](roadmap/README.md).
 
 This checkout defines **interfaces and data models**, not a working compilation
-pipeline. Tokenization, parsing, and name resolution work independently. The name
-pass validates named units, annotates declarations, and resolves names/aliases,
-but typing and completion cannot yet produce a fully analyzed project. `AnalyzedProject -> Ir` lowering, SSA
+pipeline. Tokenization, parsing, name resolution and semantic typing work independently.
+Name/type passes validate units and annotate declarations, expressions and members;
+initialization and flow completion still prevent a fully analyzed project. `AnalyzedProject -> Ir` lowering, SSA
 construction/verification, and LLVM emission remain explicit-error sketches. Build-file interpretation, object generation, and linking
 remain separate unfinished work.
 
 ## Present baseline and orchestration
 
 Working components are tokenization, parsing, source AST construction, lexical
-scope storage, name resolution, diagnostics, and raw IR data/access/formatting
+scope storage, name/type resolution, expression/member checking, diagnostics,
+and raw IR data/access/formatting
 utilities. IR records are not verified SSA.
 
 `driver::{run_pipeline, run_frontend, parse_files, lower_to_ir}` all return
@@ -61,7 +62,8 @@ mean 32-bit), `x := 1;`, `const x := 1;`, `x: int32;`, and
 `fn f(x: int32) int32 { return x; }`. Loops use `while (condition) { ... };`.
 Array/slice **types** still use suffixes (`int32[8]`, `int32[]`); value access
 uses `a[i]`, `a[a..b]`, `.len` and postfix pointer operations (`p*`, `x&`).
-Builtin calls retain `@`, and builtin type values still parse in expressions.
+Functions are ordinary identifiers; builtin functions and their `@` calls have
+been removed. Primitive type values still parse in expressions.
 Some display helpers/comments retain old spellings and are not grammar authority.
 Legacy `@` types, byte-width `int4`, `var`, `for`, dot-index and import declarations
 are not current working syntax. Generic parameter lists, prefix array types,
@@ -81,21 +83,24 @@ infer even builtin expression types, or turn fields into lexical bindings.
 `ProjectSymbols::from_plan` and retains paths for diagnostics. Collection annotates
 source-ordered file bindings and reserves private local compile-time type slots.
 `resolve_names` resolves file aliases, traverses names on the original AST, and
-validates name/binding completeness. Both staged methods run once in order;
+validates name/binding completeness. The name stages and `resolve_types` run once in order;
 failed passes cannot be retried. No additional project wrapper is introduced.
-`Analyzer::analyze` still cannot complete successfully. The pass order is:
+`Analyzer::analyze` returns the validated source project. The pass order is:
 
 1. Register only files named in the build plan and collect file declarations.
 2. Resolve lexical names, file paths, visibility, and compile-time aliases.
 3. Resolve semantic types and members on the same AST nodes.
-4. Validate annotation completeness and initialization dependencies.
+4. Validate type-pass annotations, definite initialization and structured
+   control-flow completion.
 5. Return `AnalyzedProject { units, symbols, types }`.
 
 `ResolveContext` combines the current file, shared `ProjectSymbols`, and a lexical
 `SymbolTable`; namespaces are not scope stacks. `TypeContext` can resolve members
 without inserting their spellings into lexical scopes. The name pass enforces
 lexical order, scope lifetime, file fallback, alias visibility, and cycle detection.
-Member lookup and semantic typing remain unfinished.
+Semantic typing, contextual expression inference and owner-based member lookup
+now execute, along with explicit metatype specialization, bounded type-return
+evaluation, initialization and structured flow; see [type-resolution rules](type-resolution.md).
 
 Identities live separately from source strings:
 
@@ -189,8 +194,9 @@ All analyzer tests and helpers are in
 [`src/frontend/analyzer/test.rs`](../src/frontend/analyzer/test.rs). Its inline
 `name_resolution` module has six independently runnable phases for files,
 parameters/locals, references/functions, aliases, type/member names and traversal.
-All 235 tests in those phases pass, alongside the rest of the 413-test library
-suite. See [validation commands](agents/tests/README.md). These name-resolution
+The name phases, type-resolution acceptance cases and all six former pending
+completion cases pass, with additional completion regressions. See
+[validation commands](agents/tests/README.md). These name-resolution
 checks do not establish type correctness or executable compilation.
 
 There is no checked-in integration/e2e harness. Samples and the experimental

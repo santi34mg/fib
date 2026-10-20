@@ -9,7 +9,9 @@ Working components are the tokenizer, parser, AST construction, lexical scope
 utilities, diagnostic rendering, and raw IR data/access/formatting utilities.
 The name pass validates named units, annotates declarations, and resolves lexical
 names, file paths, visibility, and compile-time aliases. Semantic typing/member
-lookup and full analysis completion remain unfinished. Build-plan loading,
+lookup now execute and validate their annotations. Explicit metatype
+specialization, bounded type-return evaluation, definite initialization and
+structured control-flow checks now run; see [typing](../type-resolution.md). Build-plan loading,
 pipeline orchestration, IR construction/verification, interpretation, and LLVM
 emission are sketches, not a usable compiler pipeline. The name-resolution
 specification has six passing phases in `src/frontend/analyzer/test.rs`; see
@@ -54,7 +56,8 @@ Distinguish working behavior, raw representation contracts, and intended future
 passes. Do not turn a stub into successful empty output to satisfy tests. Preserve
 source spellings/spans and stable identity through future passes. Add positive
 and negative tests for implemented invariants. The phased name-resolution suite
-covers names and identities, not semantic typing or executable programs. Update these pages with
+covers names and identities. Separate type-resolution acceptance tests cover types,
+expressions and members; all six former pending completion cases now pass. Update these pages with
 subsystem changes; avoid line-number links and unverified runtime claims. Keep observed syntax in `docs/parsing/`;
 parser limitations are not design decisions. Report analysis gaps as actionable
 GitHub issues rather than embedding implementation backlogs in user-facing

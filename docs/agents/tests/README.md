@@ -12,10 +12,11 @@ runner, or integration target should be assumed.
   `samples_parse_with_current_frontend` discovers and parses every top-level
   `samples/*.fib` file; this is not semantic or runtime sample coverage.
 - [`frontend/analyzer/test.rs`](../../../src/frontend/analyzer/test.rs): lexical
-  scope/identity utilities, name resolution, and unfinished typing contracts,
-  and the inline `name_resolution` module with six specification phases. All
+  scope/identity utilities, six inline `name_resolution` specification phases,
+  and `type_resolution` acceptance/annotation-corruption cases. All
   analyzer tests and helpers live in this one file. The six phases pass for the
-  implemented name resolver; they do not establish semantic typing or execution.
+  implemented name resolver. Separate type tests establish semantic typing and
+  members; neither suite establishes execution.
 - `diagnostics.rs`: parser conversion and rendering/line extraction.
 - `driver/test.rs`: pipeline and lowering stubs explicitly fail.
 - `ir/test.rs`: raw representation/access/display contracts and unfinished API failure.
@@ -43,7 +44,7 @@ variants; direct contexts isolate expression/statement traversal.
 | `phase_01_files` | Registration, declaration identities, API ordering, diagnostics | 26 | 0 |
 | `phase_02_locals` | Parameters, locals, multi-bindings, scope lifetime | 32 | 0 |
 | `phase_03_references` | File fallback, functions, qualified names, access checks | 20 | 0 |
-| `phase_04_aliases` | Compile-time aliases, canonical targets, cycles, file collisions | 29 | 0 |
+| `phase_04_aliases` | Compile-time aliases, canonical targets, cycles, file collisions | 30 | 0 |
 | `phase_05_types` | Explicit comp types, local type aliases, separate member namespaces | 32 | 0 |
 | `phase_06_traversal` | Expression/statement children, payloads, labels, scope cleanup | 96 | 0 |
 
@@ -68,14 +69,30 @@ cannot reuse build-plan file names/roots. Nested redeclarations of enclosing fun
 parameters/locals are rejected; sibling scopes may reuse spellings. Initialization
 validity, typing, and source-label/generic syntax are outside this specification.
 
+## Type-resolution acceptance
+
+`type_resolution` covers canonical/nominal identities, recursion, contextual
+literals, expressions, places, calls/returns, aggregate construction, members,
+bounds, patterns, multiple files, source diagnostics and completion corruption.
+All analyzer fixtures/helpers remain in the inline test file. Acceptance cases
+were run red before their corresponding implementation was added.
+
+The pure compatibility tests use already resolved semantic IDs. Literal/context,
+place and cast tests exercise resolvers instead; compatibility does not infer or
+mutate syntax. Empty type workspaces and standalone helpers have real positive
+contracts. Generic instance caches and call annotations receive independent
+corruption checks. `completion_acceptance` covers the six former pending cases;
+`completion_regressions` covers substitution, nominal identities, bounded type
+computation, partial initialization, branch joins, loops, enum switches and defer
+ordering. Initialization/return completeness use the complete `analyze` seam;
+type-only fixtures still exercise `resolve_types` independently.
+
 ## Local verification (2026-10-19)
 
-The full no-default-features library suite passes **413 tests**, with zero binary
-tests and zero doctests. The six name-resolution phases contribute **235 tests**.
-No cases are ignored. Typing/member/generic and driver/IR/backend failure contracts
-remain explicit tests of unfinished work.
-
-Verified commands:
+The unfiltered no-default-features suite passes **595 library tests**, including
+**236** name-resolution tests and **180** type-resolution/completion tests.
+Binary tests and doctests are empty. No tests are ignored.
+LLVM/default-feature checks were not run.
 
 ```sh
 cargo check --offline --no-default-features
@@ -84,8 +101,10 @@ cargo fmt --check
 cargo clippy --offline --no-default-features --all-targets -- -D warnings
 ```
 
-LLVM/default-feature checks were not run. These results do not establish a green
-CI run or successful complete analysis, lowering, or execution.
+The LSP's previously verified 11 tests use `node --test` from `lsp/`. Those
+highlighting/protocol tests do not establish a working compiler pipeline.
+Complete source analysis now succeeds for the implemented subset; lowering,
+verification and execution remain unfinished.
 
 ## Change guidance
 

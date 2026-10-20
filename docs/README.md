@@ -19,6 +19,8 @@ testing instructions, and contributor guidance.
 
 - [Name resolution](name-resolution.md): namespace, alias, visibility, and lookup
   design, with its implementation status explicitly identified.
+- [Type resolution](type-resolution.md): semantic rules implemented by the type
+  pass and the boundary with unfinished full analysis.
 - [Roadmap](roadmap/README.md): proposals, dependencies, open decisions, and
   acceptance criteria. Proposed syntax is not necessarily parsed today.
 

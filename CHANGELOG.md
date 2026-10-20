@@ -8,28 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Definite initialization, return-path validation, enum-switch flow and reverse-order scope-exit defer checks. `Analyzer::analyze` now returns a validated project.
-- Explicit metatype signature specialization and caching, plus bounded type-return evaluation with known type/bool arguments and computed local aliases.
 - Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
-- Canonical semantic types, nominal aggregate identities and read-only type/place/multi-value compatibility checks.
-- Working name resolution through the existing staged analyzer API: annotated declarations, parameters/locals, qualified build-plan paths, visibility, canonical compile-time aliases, cycle diagnostics, and name-slot completion. Six independently runnable specification phases cover identities, traversal, declaration order, source preservation, and error cleanup. Type inference and member lookup remain unfinished.
+- Explicit metatype signature specialization and caching, bounded type-return evaluation with known type/bool arguments, definite initialization, return-path validation, enum-switch flow and reverse-order scope-exit defer checks. `Analyzer::analyze` now returns a validated project. All six former pending acceptance cases and added positive/negative completion regressions pass in the unfiltered no-default-features suite.
+- Working name resolution through the existing staged analyzer API: annotated declarations, parameters/locals, qualified build-plan paths, visibility, canonical compile-time aliases, cycle diagnostics, and name-slot completion. Six independently runnable specification phases cover identities, traversal, declaration order, source preservation, and error cleanup. Initialization and structured control-flow validation now run separately from name/type resolution.
 - A local Zed extension in `lsp/editors/zed` registers `.fib` files without a Tree-sitter grammar and launches the existing JS highlighting server via `fib-lsp` on PATH or a configurable binary override; setup documents semantic-token opt-in and Rust/Wasm requirements.
 - Backend-independent SSA `Ir` contracts with explicit function ownership, block parameters and edge arguments, typed values, memory operations, and fallible builder/verifier sketches.
-- In-place AST analysis annotations, semantic type and resolver-context contracts, plus an LLVM adapter phase plan covering verification, target layout, ABI classification, and SSA edge translation. Semantic typing, lowering, verification, and code generation remain unimplemented.
+- In-place AST analysis annotations, semantic type and resolver-context contracts, plus an LLVM adapter phase plan covering verification, target layout, ABI classification, and SSA edge translation. Lowering, IR verification, and code generation remain unfinished.
 - Parser and architecture-contract regression tests; deleted integration tests remain deleted.
 - An automatic parser regression test discovers every top-level `samples/*.fib` file; it does not perform semantic analysis or execution.
-- Documented file namespaces, `comp` aliases, visibility, lexical lookup, and planned plain function-pointer semantics; function-pointer typing remains unfinished.
+- Documented file namespaces, `comp` aliases, visibility, lexical lookup, and planned plain function-pointer semantics; ordinary function-pointer calls now have type checks; complete analysis now adds initialization/flow checks.
 - An unfinished `BuilderObject` build-file pipeline with build stages; compilation and interpretation of build files, object emission, and linking are not yet implemented end-to-end.
 - Split tokenizer and token shapes used by the current parser and its tests; there is no separate production lexer module.
 - Current parser and AST support bare bit-width builtin type names, per-binding types and `const` in multi-variable declarations, and qualified identifier syntax. Import declarations are not implemented; name resolution uses explicitly named build-plan files and aliases.
-- Lexical scope utilities and declaration-identity contracts; semantic type checking remains unfinished.
+- Lexical scope utilities and declaration-identity contracts; semantic completion now includes initialization/flow validation.
 - Preserved the unfinished symbol-table and IR rewrite sources from `refactor/modules-and-generic-functions`; the IR interpreter is now exported but remains unimplemented.
 
 ### Changed
-- **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples use ordinary calls.
+- **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples/editor highlighting use ordinary calls.
 - Type bindings now require explicit `comp` during analysis, including local inline types and type aliases. Local aliases follow declaration order and cannot reuse build-plan file names or their roots. Local compile-time type identities remain private to lexical lookup. Collection and name resolution reject invalid stage ordering and repeated attempts; name errors carry structured source locations.
 - LSP semantic highlighting recognizes `pub` and `comp` as declaration keywords, including per-binding modifiers in multi-variable declarations.
-- **Breaking:** unified declarations use `[pub] [const | comp] name (: Type = | :=) expression;`. Type definitions and aliases now use `Name: type = ...;` with a required semicolon and parse as variable bindings with arbitrary expression initializers (`TypeValue` for explicit type syntax; ordinary expressions for names and calls, with semantic discrimination later); the legacy `type Name ...` parser route is removed. Each multi-binding retains independent modifiers and types, with the final `:=` introducing the shared initializer list. Typed declarations without initializers remain supported for compatibility. Parser tests, samples, and parsing/agent references follow the new syntax; semantic typing and arbitrary compile-time evaluation remain unfinished.
+- **Breaking:** unified declarations use `[pub] [const | comp] name (: Type = | :=) expression;`. Type definitions and aliases now use `Name: type = ...;` with a required semicolon and parse as variable bindings with arbitrary expression initializers (`TypeValue` for explicit type syntax; ordinary expressions for names and calls, with semantic discrimination later); the legacy `type Name ...` parser route is removed. Each multi-binding retains independent modifiers and types, with the final `:=` introducing the shared initializer list. Typed declarations without initializers remain supported for compatibility. Parser tests, samples, and parsing/agent references follow the new syntax; arbitrary compile-time evaluation remains unfinished.
 - Builtin numeric type variants and canonical source names use bit widths (`Int32`, `int32`); bare `int` and `uint` denote 32-bit types. The current parser rejects legacy `@`-prefixed types.
 - The current parser uses restricted postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of legacy dotted access forms.
 - Aligned language references, roadmap baselines, repository instructions, and agent guides with the implemented syntax and explicit unfinished compiler boundaries.
@@ -47,10 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-10-14
 
 ### Added
-- Definite initialization, return-path validation, enum-switch flow and reverse-order scope-exit defer checks. `Analyzer::analyze` now returns a validated project.
-- Explicit metatype signature specialization and caching, plus bounded type-return evaluation with known type/bool arguments and computed local aliases.
-- Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
-- Canonical semantic types, nominal aggregate identities and read-only type/place/multi-value compatibility checks.
 - Slice types (`T[]`), explicit array views and sub-slicing, inclusive and
   exclusive ranges, indexed reads and writes, and slice arguments and returns.
 - `@usize` and the `.@len` property for arrays and slices.
@@ -66,7 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Slice and bounds-check regression tests and a pre-commit validation gate.
 
 ### Changed
-- **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples use ordinary calls.
 - **Breaking:** statements now require trailing semicolons, including block
   statements such as `if`, `while`, and `switch`.
 - **Breaking:** replaced C-style `for` loops with `while (condition)` loops;
@@ -74,7 +67,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated maintained samples to use mandatory semicolons and `while` loops.
 
 ### Fixed
-- Compile-time alias dependencies use an iterative stack, preserving canonical identities and cycle diagnostics while resolving the 8,000-alias regression on a 2 MiB stack.
 - Added the missing `cargo-deny` license policy and package MIT license metadata,
   and included dependency policy checks in the pre-commit hook.
 - Prefer Clang 21 when linking LLVM 21 IR, avoiding failures when an incompatible
@@ -94,10 +86,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-09-18
 
 ### Added
-- Definite initialization, return-path validation, enum-switch flow and reverse-order scope-exit defer checks. `Analyzer::analyze` now returns a validated project.
-- Explicit metatype signature specialization and caching, plus bounded type-return evaluation with known type/bool arguments and computed local aliases.
-- Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
-- Canonical semantic types, nominal aggregate identities and read-only type/place/multi-value compatibility checks.
 - End-to-end regression net (`tests/e2e.rs`): compiles every `samples/*.fib`
   through the library API and executes the result, with exact-stdout asserts
   for deterministic samples (`fib_bench` is compile-only).
@@ -150,7 +138,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uninferred decl, unknown function → `extern`).
 
 ### Changed
-- **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples use ordinary calls.
 - Split `ir`, `analyze`, and lowering into modules mirroring the parser layout.
 - Frontend: generic binary-expression parser; lexer split (`frontend/lexer/`);
   `BinOp` decoupled from lowering.

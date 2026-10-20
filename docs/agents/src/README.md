@@ -7,7 +7,7 @@
 | `build_plan.rs` | File IDs/names, source-file records, build plan; loader stub |
 | `builder_object.rs` | Build stages/state; build-file discovery attempt, remaining operations `todo!()` |
 | `driver.rs`, `driver/compiler_output.rs` | Pipeline boundaries, output enum; orchestration errors explicitly |
-| `frontend/` | Working tokenizer/parser, scope utilities, and name resolution; semantic typing/member and full analysis passes remain unfinished |
+| `frontend/` | Working tokenizer/parser, names, semantic typing and members; explicit metatype specialization, bounded type-return evaluation and initialization/control-flow completion |
 | `ir/` | Self-owned SSA records; builder/verifier sketches |
 | `ir_interpreter.rs` | Build-file interpreter `todo!()` |
 | `backend/` | IR-only backend sketch, available without LLVM |

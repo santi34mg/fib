@@ -11,8 +11,10 @@ Analysis requires explicit `comp` for type bindings (`comp Name: type = ...;`).
 Working name resolution: plan/unit validation, annotated declaration collection,
 lexical lookup/order, qualified paths, visibility, and compile-time aliases with
 cycle detection. Lexical scope utilities also provide separate label storage.
-Type/member resolution, generics, initialization and full completion validation
-remain sketches. All analyzer tests/helpers are in
+Semantic types, expressions and owner-based members are resolved and validated on
+the original AST; see [type resolution](../../../type-resolution.md). Explicit metatype
+specialization, bounded type-return evaluation, definite initialization and
+structured flow checks run through `Analyzer::analyze`. All analyzer tests/helpers are in
 [`analyzer/test.rs`](../../../../src/frontend/analyzer/test.rs), including six
 passing inline phases under `name_resolution`; see [validation](../../tests/README.md).
 
