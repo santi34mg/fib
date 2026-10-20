@@ -19,7 +19,22 @@ pub enum Command {
     Test,
 }
 
-pub fn exec_command(_command: Command, _env_vars: env::VarsOs) -> anyhow::Result<()> {
-    // Select a one-file plan for --single-file or interpret build.fib, then run the pipeline.
-    todo!()
+pub fn exec_command(command: Command, _env_vars: env::VarsOs) -> anyhow::Result<()> {
+    match command {
+        Command::Build {
+            single_file: Some(path),
+        } => {
+            let plan = crate::build_plan::BuildPlan::single_file(&path)?;
+            let output = crate::driver::run_pipeline(&plan, crate::driver::PipelineGoal::Binary)?;
+            if let crate::driver::compiler_output::CompilationOutput::Binary(path) = output {
+                println!("{}", path.display());
+            }
+            Ok(())
+        }
+        Command::Build { single_file: None } => anyhow::bail!(
+            "build.fib interpretation is not implemented; use build --single-file PATH"
+        ),
+        Command::Run => anyhow::bail!("run is not implemented"),
+        Command::Test => anyhow::bail!("test is not implemented"),
+    }
 }
