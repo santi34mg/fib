@@ -1,6 +1,6 @@
 use crate::frontend::{ast::switch::SwitchArm, semantic_type::TypeId};
 
-use super::{ResolveContext, TypeContext, not_implemented};
+use super::{ResolveContext, TypeContext};
 
 impl SwitchArm {
     /// Payload bindings are locals in an arm scope; variant names are members.
@@ -31,9 +31,11 @@ impl SwitchArm {
 
     pub fn resolve_type(
         &mut self,
-        _context: &mut TypeContext<'_>,
-        _subject: TypeId,
+        context: &mut TypeContext<'_>,
+        subject: TypeId,
     ) -> anyhow::Result<()> {
-        not_implemented("switch arm type resolution")
+        context
+            .switch_arm(self, subject, None)
+            .map_err(|e| context.diagnostic(e, None, context.file))
     }
 }

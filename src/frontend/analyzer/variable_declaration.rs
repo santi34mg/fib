@@ -1,4 +1,4 @@
-use super::{ResolveContext, TypeContext, inline_type, not_implemented};
+use super::{ResolveContext, TypeContext, inline_type};
 use crate::frontend::{
     analysis_annotation::BindingId,
     analyzer::Analyzer,
@@ -173,9 +173,16 @@ impl Analyzer {
     }
 
     pub fn resolve_type_variable_declaration(
-        &mut self,
-        _context: &mut TypeContext<'_>,
+        variable: &mut VariableDeclaration,
+        context: &mut TypeContext<'_>,
     ) -> anyhow::Result<()> {
-        not_implemented("variable declaration type resolution")
+        let span = variable
+            .ty
+            .as_ref()
+            .map(|t| t.span)
+            .or_else(|| variable.expression.as_ref().map(|e| e.span));
+        context
+            .variable(variable)
+            .map_err(|e| context.diagnostic(e, span, context.file))
     }
 }

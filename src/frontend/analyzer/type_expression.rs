@@ -1,6 +1,6 @@
 use crate::frontend::{ast::type_expression::TypeExpression, semantic_type::TypeId};
 
-use super::{ResolveContext, TypeContext, not_implemented};
+use super::{ResolveContext, TypeContext};
 
 impl TypeExpression {
     /// Resolve referenced types without registering field or variant spellings
@@ -51,7 +51,7 @@ impl TypeExpression {
         result.map_err(|e| super::at_span(e, self.span))
     }
 
-    pub fn resolve_type(&mut self, _context: &mut TypeContext<'_>) -> anyhow::Result<TypeId> {
-        not_implemented("type expression resolution")
+    pub fn resolve_type(&mut self, context: &mut TypeContext<'_>) -> anyhow::Result<TypeId> {
+        context.type_expression(self, false, false)
     }
 }

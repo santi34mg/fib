@@ -65,6 +65,8 @@ pub struct SemanticTypes {
     pub bindings: HashMap<BindingId, ExpressionInfo>,
     pub type_values: HashMap<BindingId, TypeId>,
     pub variant_constructors: HashMap<(TypeId, u32), TypeId>,
+    pub(crate) started: bool,
+    pub(crate) complete: bool,
     interned: HashMap<SemanticType, TypeId>,
 }
 
@@ -119,7 +121,20 @@ impl SemanticTypes {
             SemanticType::Builtin(BuiltinType::Void)
         ))
     }
-
+    pub(crate) fn bind(&mut self, binding: BindingId, info: ExpressionInfo) {
+        match binding {
+            BindingId::Declaration(id) => {
+                self.declarations.insert(id, info.ty);
+            }
+            BindingId::Local(id) => {
+                self.locals.insert(id, info.ty);
+            }
+        }
+        if let Some(ty) = info.type_value {
+            self.type_values.insert(binding, ty);
+        }
+        self.bindings.insert(binding, info);
+    }
     pub fn validate_type(&self, root: TypeId) -> anyhow::Result<()> {
         let mut stack = vec![root];
         let mut seen = HashSet::new();

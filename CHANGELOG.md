@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
 - Canonical semantic types, nominal aggregate identities and read-only type/place/multi-value compatibility checks.
 - Working name resolution through the existing staged analyzer API: annotated declarations, parameters/locals, qualified build-plan paths, visibility, canonical compile-time aliases, cycle diagnostics, and name-slot completion. Six independently runnable specification phases cover identities, traversal, declaration order, source preservation, and error cleanup. Type inference and member lookup remain unfinished.
 - A local Zed extension in `lsp/editors/zed` registers `.fib` files without a Tree-sitter grammar and launches the existing JS highlighting server via `fib-lsp` on PATH or a configurable binary override; setup documents semantic-token opt-in and Rust/Wasm requirements.
@@ -44,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-10-14
 
 ### Added
+- Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
 - Canonical semantic types, nominal aggregate identities and read-only type/place/multi-value compatibility checks.
 - Slice types (`T[]`), explicit array views and sub-slicing, inclusive and
   exclusive ranges, indexed reads and writes, and slice arguments and returns.
@@ -88,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-09-18
 
 ### Added
+- Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
 - Canonical semantic types, nominal aggregate identities and read-only type/place/multi-value compatibility checks.
 - End-to-end regression net (`tests/e2e.rs`): compiles every `samples/*.fib`
   through the library API and executes the result, with exact-stdout asserts

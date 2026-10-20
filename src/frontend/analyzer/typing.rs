@@ -1,0 +1,534 @@
+//! Type-resolution state and declaration dependencies. Recipes are read-only
+//! source snapshots; all successful annotations are written to the original AST.
+use super::{TypeContext, at_span};
+use crate::{
+    build_plan::FileId,
+    diagnostics::Span,
+    driver::CompilationUnit,
+    frontend::{
+        analysis_annotation::{BindingId, ExpressionInfo, MemberInfo, MemberKind, ValueCategory},
+        ast::{
+            expression::ExpressionKind as E,
+            function_signature::FunctionSignature,
+            statement::{Statement, StatementKind as S},
+            structl_field::StructField,
+            type_expression::{TypeExpression, TypeExpressionKind as K},
+            variable_declaration::VariableDeclaration,
+        },
+        identifier::{DeclId, Entity, ResolvedName},
+        namespace::ProjectSymbols,
+        semantic_type::{
+            FieldType, FunctionType, SemanticType as T, SemanticTypes, TypeId, VariantType,
+            type_error,
+        },
+        tokens::builtin::BuiltinType as B,
+    },
+};
+use std::collections::{HashMap, HashSet};
+
+#[derive(Clone)]
+pub(super) enum Definition {
+    Variable(VariableDeclaration),
+    Function(FunctionSignature, bool),
+    Multi(Statement),
+}
+#[derive(Default)]
+pub(super) struct TypeState {
+    pub definitions: HashMap<DeclId, Definition>,
+    pub resolving: HashSet<DeclId>,
+    pub sites: HashMap<(FileId, Span), TypeId>,
+    pub return_type: Option<TypeId>,
+    pub depth: usize,
+    pub paths: HashMap<FileId, std::path::PathBuf>,
+}
+
+pub(super) fn resolve_project(
+    units: &mut [CompilationUnit],
+    symbols: &ProjectSymbols,
+    types: &mut SemanticTypes,
+) -> anyhow::Result<()> {
+    resolve_project_with_paths(units, symbols, types, HashMap::new())
+}
+
+pub(super) fn resolve_project_with_paths(
+    units: &mut [CompilationUnit],
+    symbols: &ProjectSymbols,
+    types: &mut SemanticTypes,
+    paths: HashMap<FileId, std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    if types.started {
+        return Err(type_error(
+            "type resolution may only run once; failed passes cannot be retried",
+        ));
+    }
+    types.started = true;
+    for unit in units.iter_mut() {
+        super::validate_names(&mut unit.ast)?;
+    }
+    let mut context = TypeContext::new(FileId(0), symbols, types);
+    context.state.paths = paths;
+    fn collect(nodes: &[Statement], definitions: &mut HashMap<DeclId, Definition>) {
+        fn variable(
+            var: &VariableDeclaration,
+            value: Option<&crate::frontend::ast::expression::Expression>,
+            definitions: &mut HashMap<DeclId, Definition>,
+        ) {
+            if let Some(BindingId::Declaration(id)) = var.annotation.binding {
+                let mut recipe = var.clone();
+                if let Some(value) = value {
+                    recipe.expression = Some(value.clone());
+                }
+                definitions.insert(id, Definition::Variable(recipe));
+            }
+        }
+        for node in nodes {
+            match &node.kind {
+                S::VariableDeclaration(v) => variable(v, None, definitions),
+                S::MultiVariableDeclaration { bindings, values } => {
+                    for (i, v) in bindings.iter().enumerate() {
+                        if !values.is_empty() && values.len() != bindings.len() {
+                            if let Some(BindingId::Declaration(id)) = v.annotation.binding {
+                                definitions.insert(id, Definition::Multi(node.clone()));
+                            }
+                        } else {
+                            variable(v, values.get(i), definitions);
+                        }
+                    }
+                }
+                S::FunctionDeclaration(f) => {
+                    if let Some(BindingId::Declaration(id)) = f.signature.annotation.binding {
+                        definitions
+                            .insert(id, Definition::Function(f.signature.clone(), f.is_variadic));
+                    }
+                    if let Some(body) = &f.body {
+                        collect(&body.statements, definitions);
+                    }
+                }
+                S::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    collect(then_branch, definitions);
+                    if let Some(b) = else_branch {
+                        collect(b, definitions);
+                    }
+                }
+                S::While { body, .. } => collect(body, definitions),
+                S::Switch { arms, .. } => {
+                    for arm in arms {
+                        collect(&arm.body, definitions);
+                    }
+                }
+                S::Defer(node) => collect(std::slice::from_ref(node), definitions),
+                _ => {}
+            }
+        }
+    }
+    for unit in units.iter() {
+        collect(&unit.ast.statements, &mut context.state.definitions);
+    }
+    // Function signatures and named type definitions are available before bodies.
+    let mut ids: Vec<_> = context.state.definitions.keys().copied().collect();
+    ids.sort_by_key(|id| (id.file_id.0, id.index));
+    for id in ids {
+        if matches!(&context.state.definitions[&id], Definition::Function(..))
+            || symbols.declaration(id)?.kind == crate::frontend::namespace::DeclarationKind::Type
+        {
+            context.ensure_declaration(id)?;
+        }
+    }
+    for unit in units.iter_mut() {
+        context.file = unit.source_file_id;
+        context.statements(&mut unit.ast.statements)?;
+    }
+    context.validate_layouts()?;
+    validate_annotations(units, symbols, context.types)?;
+    context.types.complete = true;
+    Ok(())
+}
+
+impl TypeContext<'_> {
+    pub(super) fn value(&mut self, ty: TypeId) -> ExpressionInfo {
+        ExpressionInfo {
+            ty,
+            category: ValueCategory::Value,
+            type_value: None,
+        }
+    }
+    pub(super) fn metatype(&mut self, ty: TypeId) -> ExpressionInfo {
+        ExpressionInfo {
+            ty: self.types.builtin(B::MetaType),
+            category: ValueCategory::Value,
+            type_value: Some(ty),
+        }
+    }
+    pub(super) fn ensure_declaration(&mut self, id: DeclId) -> anyhow::Result<()> {
+        if self
+            .types
+            .bindings
+            .contains_key(&BindingId::Declaration(id))
+        {
+            return Ok(());
+        }
+        if !self.state.resolving.insert(id) {
+            if self
+                .types
+                .type_values
+                .contains_key(&BindingId::Declaration(id))
+            {
+                return Ok(());
+            }
+            return Err(type_error("type inference dependency cycle"));
+        }
+        let recipe = self
+            .state
+            .definitions
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| type_error(format!("missing type definition for {id:?}")))?;
+        let previous = self.file;
+        self.file = id.file_id;
+        let result = match recipe {
+            Definition::Variable(mut v) => {
+                if v.is_comp
+                    && let Some(expr) = &v.expression
+                    && let E::TypeValue(ty) = &expr.kind
+                    && matches!(ty.kind, K::Struct { .. } | K::Enum { .. })
+                {
+                    let key = (self.file, ty.span);
+                    let owner = *self
+                        .state
+                        .sites
+                        .entry(key)
+                        .or_insert_with(|| self.types.intern(T::Pending));
+                    self.types
+                        .type_values
+                        .insert(BindingId::Declaration(id), owner);
+                }
+                self.variable(&mut v)
+            }
+            Definition::Function(mut signature, variadic) => {
+                self.signature(&mut signature, variadic).map(|_| ())
+            }
+            Definition::Multi(mut statement) => self.statement(&mut statement),
+        };
+        self.file = previous;
+        self.state.resolving.remove(&id);
+        result.map_err(|e| {
+            self.diagnostic(
+                e,
+                self.symbols.declaration(id).ok().map(|d| d.span),
+                id.file_id,
+            )
+        })
+    }
+    pub(super) fn diagnostic(
+        &self,
+        error: anyhow::Error,
+        span: Option<Span>,
+        file: FileId,
+    ) -> anyhow::Error {
+        let error = if let Some(span) = span {
+            at_span(error, span)
+        } else {
+            error
+        };
+        match error.downcast::<crate::diagnostics::CompilerError>() {
+            Ok(mut error) => {
+                if error.filename.is_none() {
+                    error.filename = self.state.paths.get(&file).cloned();
+                }
+                error.into()
+            }
+            Err(error) => error,
+        }
+    }
+    pub(super) fn name_info(&mut self, name: ResolvedName) -> anyhow::Result<ExpressionInfo> {
+        let binding = match name {
+            ResolvedName::Local(id) => BindingId::Local(id),
+            ResolvedName::Entity(Entity::Declaration(id)) => {
+                self.ensure_declaration(id)?;
+                BindingId::Declaration(id)
+            }
+            ResolvedName::Entity(Entity::File(_)) => {
+                return Err(type_error("file namespace is not a value or type"));
+            }
+        };
+        if let Some(info) = self.types.bindings.get(&binding) {
+            return Ok(*info);
+        }
+        if let Some(&ty) = self.types.type_values.get(&binding) {
+            return Ok(self.metatype(ty));
+        }
+        Err(type_error(format!("missing type for binding {binding:?}")))
+    }
+    pub(super) fn signature(
+        &mut self,
+        signature: &mut FunctionSignature,
+        variadic: bool,
+    ) -> anyhow::Result<TypeId> {
+        if variadic {
+            return Err(type_error("variadic function typing is not implemented"));
+        }
+        for p in &signature.parameters {
+            if matches!(p.parameter_type.kind, K::Builtin(B::MetaType)) {
+                let Some(BindingId::Local(id)) = p.annotation.binding else {
+                    return Err(type_error("pending parameter binding"));
+                };
+                let denoted = self.types.intern(T::Parameter(id));
+                let info = self.metatype(denoted);
+                self.types.bind(BindingId::Local(id), info);
+            }
+        }
+        let mut parameters = Vec::new();
+        for p in &mut signature.parameters {
+            let ty = self.type_expression(&mut p.parameter_type, true, false)?;
+            let id = p
+                .annotation
+                .binding
+                .ok_or_else(|| type_error("pending parameter binding"))?;
+            if !matches!(self.types.get(ty)?, T::Builtin(B::MetaType)) {
+                self.types.bind(
+                    id,
+                    ExpressionInfo {
+                        ty,
+                        category: ValueCategory::MutablePlace,
+                        type_value: None,
+                    },
+                );
+            }
+            parameters.push(ty);
+        }
+        let return_type = self.type_expression(&mut signature.return_type, true, true)?;
+        let ty = self.types.intern(T::Function(FunctionType {
+            parameters,
+            return_type,
+            variadic,
+        }));
+        let binding = signature
+            .annotation
+            .binding
+            .ok_or_else(|| type_error("pending function binding"))?;
+
+        let info = self.value(ty);
+        self.types.bind(binding, info);
+        Ok(ty)
+    }
+    pub(super) fn type_expression(
+        &mut self,
+        node: &mut TypeExpression,
+        allow_meta: bool,
+        allow_never: bool,
+    ) -> anyhow::Result<TypeId> {
+        let result = self.type_expression_inner(node, allow_meta, allow_never);
+        result.map_err(|e| self.diagnostic(e, Some(node.span), self.file))
+    }
+    fn type_expression_inner(
+        &mut self,
+        node: &mut TypeExpression,
+        allow_meta: bool,
+        allow_never: bool,
+    ) -> anyhow::Result<TypeId> {
+        // Revisit cached syntax to validate position-specific restrictions as well.
+        let ty = match &mut node.kind {
+            K::Builtin(b) => self.types.builtin(b.clone()),
+            K::QualifiedIdentifier(name) => {
+                let info = self.name_info(
+                    name.annotation
+                        .resolved
+                        .ok_or_else(|| type_error("pending type name"))?,
+                )?;
+                info.type_value.ok_or_else(|| {
+                    type_error(format!(
+                        "value '{}' used as a type",
+                        name.segments.join("::")
+                    ))
+                })?
+            }
+            K::Pointer { pointed_type } => {
+                let t = self.type_expression(pointed_type, false, false)?;
+                self.types.intern(T::Pointer(t))
+            }
+            K::Array { element_type, size } => {
+                let element = self.type_expression(element_type, false, false)?;
+                self.types.intern(T::Array {
+                    element,
+                    length: *size,
+                })
+            }
+            K::Slice { element_type } => {
+                let t = self.type_expression(element_type, false, false)?;
+                self.types.intern(T::Slice(t))
+            }
+            K::Tuple { elements } => {
+                let ts = elements
+                    .iter_mut()
+                    .map(|t| self.type_expression(t, false, false))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                self.types.intern(T::Tuple(ts))
+            }
+            K::Function {
+                argument_types,
+                return_type,
+            } => {
+                let parameters = argument_types
+                    .iter_mut()
+                    .map(|t| self.type_expression(t, true, false))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let return_type = self.type_expression(return_type, true, true)?;
+                self.types.intern(T::Function(FunctionType {
+                    parameters,
+                    return_type,
+                    variadic: false,
+                }))
+            }
+            K::Struct { fields } => {
+                let owner = self.aggregate_site(node.span);
+                let fs = self.field_definitions(fields, owner)?;
+                self.types.types[owner.0 as usize] = T::Struct(fs);
+                owner
+            }
+            K::Enum { variants } => {
+                let owner = self.aggregate_site(node.span);
+                let mut seen = HashSet::new();
+                let mut vs = Vec::new();
+                for (index, v) in variants.iter_mut().enumerate() {
+                    if !seen.insert(v.identifier.clone()) {
+                        return Err(type_error(format!("duplicate variant '{}'", v.identifier)));
+                    }
+                    let payload = if let Some(fields) = &mut v.payload {
+                        let existing = match self.types.types.get(owner.0 as usize) {
+                            Some(T::Enum(vs)) => vs.get(index).and_then(|v| v.payload),
+                            _ => None,
+                        };
+                        let payload = existing.unwrap_or_else(|| self.types.intern(T::Pending));
+                        let fs = self.field_definitions(fields, payload)?;
+                        let constructor = self.types.intern(T::Function(FunctionType {
+                            parameters: fs.iter().map(|f| f.ty).collect(),
+                            return_type: owner,
+                            variadic: false,
+                        }));
+                        self.types
+                            .variant_constructors
+                            .insert((owner, index as u32), constructor);
+                        self.types.types[payload.0 as usize] = T::Struct(fs);
+                        Some(payload)
+                    } else {
+                        None
+                    };
+                    vs.push(VariantType {
+                        spelling: v.identifier.clone(),
+                        payload,
+                    });
+                }
+                self.types.types[owner.0 as usize] = T::Enum(vs);
+                owner
+            }
+        };
+        if let Some(T::Builtin(b)) = self.types.types.get(ty.0 as usize) {
+            if *b == B::Never && !allow_never {
+                return Err(type_error("never is only permitted as a return type"));
+            }
+            if *b == B::MetaType && !allow_meta {
+                return Err(type_error(
+                    "type requires a comp binding, parameter or return position",
+                ));
+            }
+        }
+        node.annotation.resolved = Some(ty);
+        Ok(ty)
+    }
+    fn aggregate_site(&mut self, span: Span) -> TypeId {
+        *self
+            .state
+            .sites
+            .entry((self.file, span))
+            .or_insert_with(|| self.types.intern(T::Pending))
+    }
+    fn field_definitions(
+        &mut self,
+        fields: &mut [StructField],
+        owner: TypeId,
+    ) -> anyhow::Result<Vec<FieldType>> {
+        let mut seen = HashSet::new();
+        fields
+            .iter_mut()
+            .enumerate()
+            .map(|(index, field)| {
+                if !seen.insert(field.field_identifier.clone()) {
+                    return Err(at_span(
+                        type_error(format!("duplicate field '{}'", field.field_identifier)),
+                        field.expression.span,
+                    ));
+                }
+                let info = self.expression(&mut field.expression, None)?;
+                let ty = info
+                    .type_value
+                    .ok_or_else(|| type_error("field definition requires a type value"))?;
+                if matches!(
+                    self.types.types.get(ty.0 as usize),
+                    Some(T::Builtin(B::Never | B::MetaType))
+                ) {
+                    return Err(type_error("never/type cannot be stored in a field"));
+                }
+                field.annotation.resolved = Some(MemberInfo {
+                    owner,
+                    kind: MemberKind::Field(index as u32),
+                    ty,
+                });
+                Ok(FieldType {
+                    spelling: field.field_identifier.clone(),
+                    ty,
+                })
+            })
+            .collect()
+    }
+    fn validate_layouts(&self) -> anyhow::Result<()> {
+        let mut done = HashSet::new();
+        for index in 0..self.types.types.len() {
+            let mut active = HashSet::new();
+            let mut stack = vec![(TypeId(index as u32), false)];
+            while let Some((id, exit)) = stack.pop() {
+                if exit {
+                    active.remove(&id);
+                    done.insert(id);
+                    continue;
+                }
+                if done.contains(&id) {
+                    continue;
+                }
+                if !active.insert(id) {
+                    let error = type_error("illegal by-value type size cycle");
+                    return Err(
+                        if let Some(((file, span), _)) =
+                            self.state.sites.iter().find(|(_, ty)| **ty == id)
+                        {
+                            self.diagnostic(error, Some(*span), *file)
+                        } else {
+                            error
+                        },
+                    );
+                }
+                stack.push((id, true));
+                let children: Vec<_> = match self.types.get(id)? {
+                    T::Struct(fs) => fs.iter().map(|f| f.ty).collect(),
+                    T::Enum(vs) => vs.iter().filter_map(|v| v.payload).collect(),
+                    T::Array { element, .. } => vec![*element],
+                    T::Tuple(ts) => ts.clone(),
+                    _ => vec![],
+                };
+                stack.extend(children.into_iter().map(|id| (id, false)));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn validate_annotations(
+    units: &mut [CompilationUnit],
+    symbols: &ProjectSymbols,
+    types: &SemanticTypes,
+) -> anyhow::Result<()> {
+    super::validation::validate(units, symbols, types)
+}

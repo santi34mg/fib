@@ -1,9 +1,8 @@
-use super::{ResolveContext, TypeContext, at_span, not_implemented};
+use super::{ResolveContext, TypeContext, at_span};
 use crate::frontend::{
     analyzer::Analyzer,
     ast::{Ast, statement::StatementKind},
     namespace::name_error,
-    scope_kind::ScopeKind,
 };
 
 impl Ast {
@@ -11,17 +10,7 @@ impl Ast {
     pub fn resolve_name(&mut self, context: &mut ResolveContext<'_>) -> anyhow::Result<()> {
         for statement in &mut self.statements {
             let result = match &mut statement.kind {
-                StatementKind::FunctionDeclaration(fun) => {
-                    context.scoped(ScopeKind::Function, |context| {
-                        Analyzer::resolve_name_signature(&mut fun.signature, context)?;
-                        if let Some(body) = &mut fun.body {
-                            for stmt in &mut body.statements {
-                                Analyzer::resolve_name_statement(stmt, context)?;
-                            }
-                        }
-                        Ok(())
-                    })
-                }
+                StatementKind::FunctionDeclaration(fun) => fun.resolve_name(context),
                 StatementKind::VariableDeclaration(var) => (|| {
                     if let Some(ty) = &mut var.ty {
                         ty.resolve_name(context)?;
@@ -42,7 +31,7 @@ impl Ast {
         Ok(())
     }
 
-    pub fn resolve_type(&mut self, _context: &mut TypeContext<'_>) -> anyhow::Result<()> {
-        not_implemented("file type resolution")
+    pub fn resolve_type(&mut self, context: &mut TypeContext<'_>) -> anyhow::Result<()> {
+        context.statements(&mut self.statements)
     }
 }
