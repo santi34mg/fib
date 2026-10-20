@@ -1,76 +1,165 @@
-//! Function-scoped construction API sketch. No ID allocation, SSA algorithm,
-//! mutation, block sealing, or validation is implemented here.
+//! Transactional function construction. Dropping an unfinished builder changes no arenas.
+use super::*;
+use std::collections::HashSet;
 
-use super::{
-    BlockId, FunctionId, InstructionKind, Ir, IrError, IrResult, StackSlotId, Terminator, TypeId,
-    ValueId,
-};
-
-/// A future builder borrows one IR and owns construction of one definition.
-/// Its private state is intentionally unavailable until `new` is implemented.
 #[derive(Debug)]
 pub struct FunctionBuilder<'ir> {
-    _ir: &'ir mut Ir,
-    _function: FunctionId,
+    ir: &'ir mut Ir,
+    working: Ir,
+    function: FunctionId,
+    blocks: Vec<BlockId>,
+    slots: Vec<StackSlotId>,
+    terminated: HashSet<BlockId>,
 }
 
 impl<'ir> FunctionBuilder<'ir> {
-    /// Start a body for an existing function declaration. Must eventually reject
-    /// an already defined function and keep unfinished blocks out of final IR.
-    pub fn new(_ir: &'ir mut Ir, _function: FunctionId) -> IrResult<Self> {
-        Err(IrError::NotImplemented {
-            operation: "FunctionBuilder::new",
+    pub fn new(ir: &'ir mut Ir, function: FunctionId) -> IrResult<Self> {
+        if !matches!(
+            ir.function(function).map(|f| &f.body),
+            Some(FunctionBody::Declaration)
+        ) {
+            return Err(IrError::Invalid {
+                message: "builder requires an existing declaration",
+            });
+        }
+        Ok(Self {
+            working: ir.clone(),
+            ir,
+            function,
+            blocks: vec![],
+            slots: vec![],
+            terminated: HashSet::new(),
         })
     }
 
-    /// Reserve a block with typed parameter definitions. No entry block is
-    /// chosen implicitly; `finish` receives the entry explicitly.
-    pub fn create_block(&mut self, _params: &[TypeId]) -> IrResult<BlockId> {
-        Err(IrError::NotImplemented {
-            operation: "FunctionBuilder::create_block",
-        })
+    pub fn create_block(&mut self, params: &[TypeId]) -> IrResult<BlockId> {
+        self.check_types(params)?;
+        let block = BlockId(self.working.blocks.len());
+        let params = params
+            .iter()
+            .enumerate()
+            .map(|(index, &ty)| {
+                let id = ValueId(self.working.values.len());
+                self.working.values.push(Value {
+                    owner: self.function,
+                    ty,
+                    definition: ValueDefinition::BlockParameter { block, index },
+                });
+                id
+            })
+            .collect();
+        self.working.blocks.push(BasicBlock {
+            owner: self.function,
+            params,
+            instructions: vec![],
+            terminator: Terminator::Unreachable,
+        });
+        self.blocks.push(block);
+        Ok(block)
     }
 
-    pub fn block_params(&self, _block: BlockId) -> IrResult<&[ValueId]> {
-        Err(IrError::NotImplemented {
-            operation: "FunctionBuilder::block_params",
-        })
+    fn check_types(&self, types: &[TypeId]) -> IrResult<()> {
+        if types.iter().any(|&ty| self.working.ty(ty).is_none()) {
+            return Err(IrError::Invalid {
+                message: "unknown type",
+            });
+        }
+        Ok(())
+    }
+
+    fn check_block(&self, block: BlockId) -> IrResult<()> {
+        if !self.blocks.contains(&block) {
+            return Err(IrError::Invalid {
+                message: "block belongs to another function",
+            });
+        }
+        Ok(())
+    }
+
+    pub fn block_params(&self, block: BlockId) -> IrResult<&[ValueId]> {
+        self.check_block(block)?;
+        Ok(&self.working.blocks[block.0].params)
     }
 
     pub fn create_stack_slot(
         &mut self,
-        _ty: TypeId,
-        _debug_name: Option<String>,
+        ty: TypeId,
+        debug_name: Option<String>,
     ) -> IrResult<StackSlotId> {
-        Err(IrError::NotImplemented {
-            operation: "FunctionBuilder::create_stack_slot",
-        })
+        self.check_types(&[ty])?;
+        let id = StackSlotId(self.working.stack_slots.len());
+        self.working.stack_slots.push(StackSlot {
+            owner: self.function,
+            ty,
+            debug_name,
+        });
+        self.slots.push(id);
+        Ok(id)
     }
 
-    /// Allocate fresh result IDs; never assign an existing value ID. Must
-    /// eventually reject insertion after the block's terminator.
     pub fn append_instruction(
         &mut self,
-        _block: BlockId,
-        _kind: InstructionKind,
-        _result_types: &[TypeId],
+        block: BlockId,
+        kind: InstructionKind,
+        result_types: &[TypeId],
     ) -> IrResult<Vec<ValueId>> {
-        Err(IrError::NotImplemented {
-            operation: "FunctionBuilder::append_instruction",
-        })
+        self.check_block(block)?;
+        self.check_types(result_types)?;
+        if self.terminated.contains(&block) {
+            return Err(IrError::Invalid {
+                message: "insertion after terminator",
+            });
+        }
+        let instruction = self.working.blocks[block.0].instructions.len();
+        let results: Vec<_> = result_types
+            .iter()
+            .enumerate()
+            .map(|(result, &ty)| {
+                let id = ValueId(self.working.values.len());
+                self.working.values.push(Value {
+                    owner: self.function,
+                    ty,
+                    definition: ValueDefinition::InstructionResult {
+                        block,
+                        instruction,
+                        result,
+                    },
+                });
+                id
+            })
+            .collect();
+        self.working.blocks[block.0].instructions.push(Instruction {
+            results: results.clone(),
+            kind,
+        });
+        Ok(results)
     }
 
-    pub fn set_terminator(&mut self, _block: BlockId, _terminator: Terminator) -> IrResult<()> {
-        Err(IrError::NotImplemented {
-            operation: "FunctionBuilder::set_terminator",
-        })
+    pub fn set_terminator(&mut self, block: BlockId, terminator: Terminator) -> IrResult<()> {
+        self.check_block(block)?;
+        if !self.terminated.insert(block) {
+            return Err(IrError::Invalid {
+                message: "block already terminated",
+            });
+        }
+        self.working.blocks[block.0].terminator = terminator;
+        Ok(())
     }
 
-    /// Publish the completed body, requiring every block to be terminated and
-    /// entry parameters to match the signature. Does not stand in for verify_ir.
-    pub fn finish(self, _entry: BlockId) -> IrResult<FunctionId> {
-        Err(IrError::NotImplemented {
-            operation: "FunctionBuilder::finish",
-        })
+    pub fn finish(mut self, entry: BlockId) -> IrResult<FunctionId> {
+        self.check_block(entry)?;
+        if self.blocks.len() != self.terminated.len() {
+            return Err(IrError::Invalid {
+                message: "unterminated block",
+            });
+        }
+        self.working.functions[self.function.0].body = FunctionBody::Definition {
+            entry,
+            blocks: self.blocks,
+            stack_slots: self.slots,
+        };
+        verify_ir(&self.working)?;
+        *self.ir = self.working;
+        Ok(self.function)
     }
 }

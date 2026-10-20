@@ -203,29 +203,201 @@ fn storage_and_ssa_values_are_distinct() {
 }
 
 #[test]
-fn unfinished_apis_error_even_on_empty_ir_without_mutation() {
+fn verifier_accepts_scalar_graph_and_rejects_corruption() {
+    let mut valid = sample_ir();
+    valid.types.truncate(2);
+    verify_ir(&valid).unwrap();
+    let bad: Vec<fn(&mut Ir)> = vec![
+        |ir| ir.blocks[1].owner = FunctionId(1),
+        |ir| ir.values[2].owner = FunctionId(1),
+        |ir| {
+            ir.values[2].definition = ValueDefinition::BlockParameter {
+                block: BlockId(1),
+                index: 0,
+            }
+        },
+        |ir| ir.blocks[1].instructions[0].results.push(ValueId(2)),
+        |ir| ir.functions[0].signature.results.clear(),
+        |ir| ir.functions[1].signature.params.clear(),
+        |ir| ir.blocks[1].instructions[0].results.clear(),
+        |ir| ir.blocks[1].instructions[0].kind = InstructionKind::Constant(ConstantId(99)),
+        |ir| {
+            ir.blocks[1].terminator = Terminator::Return {
+                values: vec![Operand::Value(ValueId(99))],
+            }
+        },
+        |ir| {
+            ir.blocks[0].terminator = Terminator::Jump(Edge {
+                target: BlockId(0),
+                args: vec![],
+            })
+        },
+        |ir| {
+            ir.blocks[0].terminator = Terminator::Jump(Edge {
+                target: BlockId(1),
+                args: vec![],
+            })
+        },
+        |ir| {
+            ir.blocks[0].terminator = Terminator::Branch {
+                condition: Operand::Value(ValueId(0)),
+                then_edge: Edge {
+                    target: BlockId(1),
+                    args: vec![Operand::Value(ValueId(0))],
+                },
+                else_edge: Edge {
+                    target: BlockId(1),
+                    args: vec![Operand::Value(ValueId(0))],
+                },
+            }
+        },
+        |ir| ir.functions[1].name = "example".into(),
+    ];
+    for mutate in bad {
+        let mut ir = valid.clone();
+        mutate(&mut ir);
+        assert!(verify_ir(&ir).is_err(), "accepted {ir:?}");
+    }
+    verify_ir(&Ir::new()).unwrap();
+}
+
+fn declaration_ir() -> Ir {
     let mut ir = Ir::new();
-    assert_eq!(
-        verify_ir(&ir),
-        Err(IrError::NotImplemented {
-            operation: "verify_ir"
-        })
+    ir.types.push(IrType::Integer {
+        width: IntegerWidth::Bits(32),
+        signed: true,
+    });
+    ir.functions.push(Function {
+        name: "f".into(),
+        signature: Signature {
+            params: vec![],
+            results: vec![TypeId(0)],
+            variadic: false,
+            calling_convention: CallingConvention::Fib,
+        },
+        linkage: Linkage::Internal,
+        body: FunctionBody::Declaration,
+    });
+    ir.constants.push(Constant {
+        ty: TypeId(0),
+        kind: ConstantKind::Integer { bits: 42 },
+    });
+    ir
+}
+
+#[test]
+fn builder_allocates_and_publishes_only_terminated_verified_bodies() {
+    let mut ir = declaration_ir();
+    {
+        let mut builder = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+        let block = builder.create_block(&[]).unwrap();
+        assert!(builder.finish(block).is_err());
+    }
+    assert!(ir.blocks.is_empty());
+    assert!(ir.values.is_empty());
+    let mut builder = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let block = builder.create_block(&[]).unwrap();
+    let value = builder
+        .append_instruction(
+            block,
+            InstructionKind::Constant(ConstantId(0)),
+            &[TypeId(0)],
+        )
+        .unwrap()[0];
+    builder
+        .set_terminator(
+            block,
+            Terminator::Return {
+                values: vec![Operand::Value(value)],
+            },
+        )
+        .unwrap();
+    assert!(
+        builder
+            .append_instruction(
+                block,
+                InstructionKind::Constant(ConstantId(0)),
+                &[TypeId(0)]
+            )
+            .is_err()
     );
-    assert_eq!(
-        verify_ir(&sample_ir()),
-        Err(IrError::NotImplemented {
-            operation: "verify_ir"
-        })
+    assert!(
+        builder
+            .set_terminator(block, Terminator::Unreachable)
+            .is_err()
     );
-    let error = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap_err();
-    assert_eq!(
-        error,
-        IrError::NotImplemented {
-            operation: "FunctionBuilder::new"
-        }
+    builder.finish(block).unwrap();
+    verify_ir(&ir).unwrap();
+    assert!(FunctionBuilder::new(&mut ir, FunctionId(0)).is_err());
+}
+
+#[test]
+fn verifier_rejects_forward_uses_and_non_dominating_values() {
+    let mut ir = declaration_ir();
+    ir.types.push(IrType::Bool);
+    ir.constants.push(Constant {
+        ty: TypeId(1),
+        kind: ConstantKind::Bool(true),
+    });
+    let mut builder = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let entry = builder.create_block(&[]).unwrap();
+    let left = builder.create_block(&[]).unwrap();
+    let right = builder.create_block(&[]).unwrap();
+    let join = builder.create_block(&[]).unwrap();
+    let value = builder
+        .append_instruction(left, InstructionKind::Constant(ConstantId(0)), &[TypeId(0)])
+        .unwrap()[0];
+    builder
+        .set_terminator(
+            entry,
+            Terminator::Branch {
+                condition: Operand::Constant(ConstantId(1)),
+                then_edge: Edge {
+                    target: left,
+                    args: vec![],
+                },
+                else_edge: Edge {
+                    target: right,
+                    args: vec![],
+                },
+            },
+        )
+        .unwrap();
+    for block in [left, right] {
+        builder
+            .set_terminator(
+                block,
+                Terminator::Jump(Edge {
+                    target: join,
+                    args: vec![],
+                }),
+            )
+            .unwrap();
+    }
+    builder
+        .set_terminator(
+            join,
+            Terminator::Return {
+                values: vec![Operand::Value(value)],
+            },
+        )
+        .unwrap();
+    assert!(
+        builder
+            .finish(entry)
+            .unwrap_err()
+            .to_string()
+            .contains("dominate")
     );
-    assert!(error.to_string().contains("not implemented"));
-    assert!(ir.is_empty());
+    assert!(ir.blocks.is_empty());
+
+    let mut ir = sample_ir();
+    ir.types.truncate(2);
+    let InstructionKind::Call { args, .. } = &mut ir.blocks[1].instructions[0].kind else {
+        unreachable!()
+    };
+    *args = vec![Operand::Value(ValueId(2))];
+    assert!(verify_ir(&ir).unwrap_err().to_string().contains("dominate"));
 }
 
 #[test]
@@ -249,4 +421,160 @@ fn display_is_diagnostic_and_does_not_require_valid_references() {
     });
     assert!(invalid.to_string().contains("99"));
     assert!(verify_ir(&invalid).is_err());
+}
+
+#[test]
+fn verifier_accepts_loop_parameters_and_backedge_arguments() {
+    let mut ir = declaration_ir();
+    ir.types.push(IrType::Bool);
+    ir.constants.push(Constant {
+        ty: TypeId(1),
+        kind: ConstantKind::Bool(false),
+    });
+    let mut builder = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let entry = builder.create_block(&[]).unwrap();
+    let header = builder.create_block(&[TypeId(0)]).unwrap();
+    let body = builder.create_block(&[]).unwrap();
+    let exit = builder.create_block(&[TypeId(0)]).unwrap();
+    let parameter = builder.block_params(header).unwrap()[0];
+    let result = builder.block_params(exit).unwrap()[0];
+    builder
+        .set_terminator(
+            entry,
+            Terminator::Jump(Edge {
+                target: header,
+                args: vec![Operand::Constant(ConstantId(0))],
+            }),
+        )
+        .unwrap();
+    builder
+        .set_terminator(
+            header,
+            Terminator::Branch {
+                condition: Operand::Constant(ConstantId(1)),
+                then_edge: Edge {
+                    target: body,
+                    args: vec![],
+                },
+                else_edge: Edge {
+                    target: exit,
+                    args: vec![Operand::Value(parameter)],
+                },
+            },
+        )
+        .unwrap();
+    builder
+        .set_terminator(
+            body,
+            Terminator::Jump(Edge {
+                target: header,
+                args: vec![Operand::Value(parameter)],
+            }),
+        )
+        .unwrap();
+    builder
+        .set_terminator(
+            exit,
+            Terminator::Return {
+                values: vec![Operand::Value(result)],
+            },
+        )
+        .unwrap();
+    builder.finish(entry).unwrap();
+    verify_ir(&ir).unwrap();
+}
+
+#[test]
+fn comparisons_validate_operands_and_boolean_result() {
+    for op in [
+        BinaryOp::Eq,
+        BinaryOp::Ne,
+        BinaryOp::Lt,
+        BinaryOp::Le,
+        BinaryOp::Gt,
+        BinaryOp::Ge,
+    ] {
+        let mut ir = declaration_ir();
+        ir.types.push(IrType::Bool);
+        ir.functions[0].signature.results = vec![TypeId(1)];
+        let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+        let entry = b.create_block(&[]).unwrap();
+        let value = b
+            .append_instruction(
+                entry,
+                InstructionKind::Binary {
+                    op,
+                    lhs: Operand::Constant(ConstantId(0)),
+                    rhs: Operand::Constant(ConstantId(0)),
+                },
+                &[TypeId(1)],
+            )
+            .unwrap()[0];
+        b.set_terminator(
+            entry,
+            Terminator::Return {
+                values: vec![Operand::Value(value)],
+            },
+        )
+        .unwrap();
+        b.finish(entry).unwrap();
+        verify_ir(&ir).unwrap();
+        let mut bad = ir.clone();
+        bad.values[0].ty = TypeId(0);
+        assert!(verify_ir(&bad).is_err());
+        let mut bad = ir.clone();
+        bad.blocks[0].instructions[0].results.clear();
+        assert!(verify_ir(&bad).is_err());
+        let mut bad = ir.clone();
+        bad.constants.push(Constant {
+            ty: TypeId(1),
+            kind: ConstantKind::Bool(true),
+        });
+        let InstructionKind::Binary { rhs, .. } = &mut bad.blocks[0].instructions[0].kind else {
+            unreachable!()
+        };
+        *rhs = Operand::Constant(ConstantId(1));
+        assert!(verify_ir(&bad).is_err());
+        let mut bad = ir.clone();
+        bad.blocks[0].instructions[0].kind = InstructionKind::Binary {
+            op: BinaryOp::Add,
+            lhs: Operand::Constant(ConstantId(0)),
+            rhs: Operand::Constant(ConstantId(0)),
+        };
+        assert!(verify_ir(&bad).is_err());
+    }
+    for op in [BinaryOp::Eq, BinaryOp::Ne, BinaryOp::Lt] {
+        let mut ir = declaration_ir();
+        ir.types.push(IrType::Bool);
+        ir.constants.push(Constant {
+            ty: TypeId(1),
+            kind: ConstantKind::Bool(true),
+        });
+        ir.functions[0].signature.results = vec![TypeId(1)];
+        let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+        let entry = b.create_block(&[]).unwrap();
+        let value = b
+            .append_instruction(
+                entry,
+                InstructionKind::Binary {
+                    op,
+                    lhs: Operand::Constant(ConstantId(1)),
+                    rhs: Operand::Constant(ConstantId(1)),
+                },
+                &[TypeId(1)],
+            )
+            .unwrap()[0];
+        b.set_terminator(
+            entry,
+            Terminator::Return {
+                values: vec![Operand::Value(value)],
+            },
+        )
+        .unwrap();
+        if op == BinaryOp::Lt {
+            assert!(b.finish(entry).is_err());
+        } else {
+            b.finish(entry).unwrap();
+        }
+    }
 }
