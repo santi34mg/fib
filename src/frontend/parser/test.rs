@@ -1544,36 +1544,6 @@ mod tests {
     }
 
     #[test]
-    fn test_builtin_call_shape() {
-        let ast = get_ast("x := @str_len(\"hi\");");
-        let stmts = module_statements(&ast);
-        if let StatementKind::VariableDeclaration(decl) = stmts[0] {
-            let init = decl.expression.as_ref().expect("initializer");
-            if let Expression {
-                kind: ExpressionKind::CallToBuiltin { builtin, args },
-                ..
-            } = init
-            {
-                assert!(matches!(
-                    builtin,
-                    crate::frontend::tokens::builtin::BuiltinFunction::StrLen
-                ));
-                assert_eq!(args.len(), 1);
-            } else {
-                panic!("unexpected init: {:#?}", init);
-            }
-        } else {
-            panic!("unexpected AST: {:#?}", stmts[0]);
-        }
-    }
-
-    #[test]
-    fn test_builtin_call_missing_paren_errors() {
-        let err = get_ast_err("x := @str_len;");
-        assert!(err.contains("expected '('"), "unexpected error: {}", err);
-    }
-
-    #[test]
     fn test_struct_construction_is_an_expression_statement() {
         let ast = get_ast("MyStruct { my_field: 10 };");
         let stmts = module_statements(&ast);
@@ -2403,5 +2373,47 @@ mod tests {
             .parse_qualified_name()
             .expect_err("missing segment must fail");
         assert!(error.to_string().contains("must be followed by symbol"));
+    }
+}
+
+#[test]
+fn former_builtin_functions_are_ordinary_calls() {
+    use crate::frontend::{
+        ast::{expression::ExpressionKind, statement::StatementKind},
+        parser::Parser,
+        tokenizer::Tokenizer,
+    };
+    let source = "fn concat(a: int32) int32 { return a; } x := concat(1);";
+    let ast = Parser::with_source(
+        Tokenizer::new(source),
+        std::path::Path::new("ordinary.fib"),
+        source,
+    )
+    .parse()
+    .expect("builtin names must be ordinary identifiers");
+    let StatementKind::VariableDeclaration(v) = &ast.statements[1].kind else {
+        panic!()
+    };
+    assert!(matches!(
+        v.expression.as_ref().unwrap().kind,
+        ExpressionKind::Call { .. }
+    ));
+}
+
+#[test]
+fn removed_builtin_sigils_are_rejected() {
+    use crate::frontend::{parser::Parser, tokenizer::Tokenizer};
+    for name in ["concat", "str_len", "str_eq"] {
+        let source = format!("x := @{name}(1);");
+        assert!(
+            Parser::with_source(
+                Tokenizer::new(&source),
+                std::path::Path::new("removed.fib"),
+                &source
+            )
+            .parse()
+            .is_err(),
+            "accepted removed builtin {name}"
+        );
     }
 }

@@ -46,7 +46,7 @@ analysis work is tracked in [GitHub issues](../docs/agents/issues/README.md).
 - `bitwise_ops.fib`, `unsigned_ops.fib`: arithmetic and bitwise operations.
 - `enums.fib`, `switch_enum.fib`, `tagged_union.fib`: enum and pattern examples.
 - `sorting.fib`, `slices.fib`: generic sorting and slice design examples.
-- `string_builtins.fib`, `multiple_returns.fib`: builtin calls and return shapes.
+- `string_functions.fib`, `multiple_returns.fib`: ordinary function declarations/calls and return shapes; string helper implementations are not provided.
 - `nested_assign.fib`: nested field assignment.
 - `linked_list.fib`, `memory_pool.fib`: allocation and cleanup design examples.
 - `fib_bench.fib`: recursive Fibonacci benchmark intent, with 64-bit results

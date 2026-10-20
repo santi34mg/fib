@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_builtins() {
-        use crate::frontend::tokens::builtin::{Builtin, BuiltinFunction, BuiltinType};
+        use crate::frontend::tokens::builtin::{Builtin, BuiltinType};
 
         // Bare builtin type names are recognized without an `@` prefix.
         let toks: Vec<_> = Tokenizer::new("int8 string bool").collect();
@@ -544,21 +544,6 @@ mod tests {
                 "{old_spelling}"
             );
         }
-
-        // resolves to a builtin function.
-        let toks: Vec<_> = Tokenizer::new("concat str_len str_eq").collect();
-        assert_eq!(
-            toks[0].kind,
-            TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::Concat))
-        );
-        assert_eq!(
-            toks[1].kind,
-            TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::StrLen))
-        );
-        assert_eq!(
-            toks[2].kind,
-            TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::StrEq))
-        );
 
         // An unknown `@name` is two tokens
         let toks: Vec<_> = Tokenizer::new("@nope").collect();
@@ -783,5 +768,14 @@ mod tests {
         } else {
             panic!("expected Error, got {:?}", toks[0].kind);
         }
+    }
+}
+
+#[test]
+fn former_builtin_function_names_are_identifiers() {
+    use crate::frontend::{tokenizer::Tokenizer, tokens::TokenKind};
+    let tokens: Vec<_> = Tokenizer::new("concat str_len str_eq").collect();
+    for (token, name) in tokens.iter().zip(["concat", "str_len", "str_eq"]) {
+        assert_eq!(token.kind, TokenKind::Identifier(name.into()));
     }
 }

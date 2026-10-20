@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::frontend::ast::Ast;
 use crate::frontend::ast::statement::{Statement, StatementKind};
 use crate::frontend::tokens::Keyword;
-use crate::frontend::tokens::builtin::{Builtin, BuiltinFunction};
+use crate::frontend::tokens::builtin::Builtin;
 use crate::frontend::tokens::{Punctuation, Token, TokenKind};
 
 #[derive(Debug, Clone)]
@@ -109,18 +109,14 @@ where
                                 _ => None,
                             };
                             if let Some(name) = name {
-                                BuiltinFunction::from_name(&name)
-                                    .map(Builtin::BuiltinFunction)
-                                    .map(TokenKind::Builtin)
-                                    .unwrap_or_else(|| {
-                                        if name == "len" {
-                                            TokenKind::Error(
-                                                "use '.len' instead of '@len'".to_owned(),
-                                            )
-                                        } else {
-                                            TokenKind::Error(format!("unknown builtin '@{}'", name))
-                                        }
-                                    })
+                                if name == "len" {
+                                    TokenKind::Error("use '.len' instead of '@len'".to_owned())
+                                } else {
+                                    TokenKind::Error(format!(
+                                        "unknown builtin '@{}'; functions use ordinary names",
+                                        name
+                                    ))
+                                }
                             } else {
                                 t.kind
                             }

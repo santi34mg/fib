@@ -2,7 +2,7 @@ use crate::frontend::{
     tokenizer::Tokenizer,
     tokens::{
         Keyword, Literal, TokenKind,
-        builtin::{Builtin, BuiltinFunction, BuiltinType},
+        builtin::{Builtin, BuiltinType},
     },
 };
 
@@ -37,10 +37,6 @@ impl<'input> Tokenizer<'input> {
             "null" => TokenKind::Literal(Literal::Null),
 
             "type" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::MetaType)),
-
-            "concat" => TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::Concat)),
-            "str_len" => TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::StrLen)),
-            "str_eq" => TokenKind::Builtin(Builtin::BuiltinFunction(BuiltinFunction::StrEq)),
 
             _ => {
                 if let Some(ty) = BuiltinType::from_name(identifier) {

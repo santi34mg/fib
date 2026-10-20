@@ -87,11 +87,6 @@ impl Analyzer {
                     Self::resolve_name_expression(arg, context)?;
                 }
             }
-            ExpressionKind::CallToBuiltin { args, .. } => {
-                for arg in args {
-                    Self::resolve_name_expression(arg, context)?;
-                }
-            }
             ExpressionKind::ExprAcess { expr, .. } => Self::resolve_name_expression(expr, context)?,
             ExpressionKind::StructConstruct {
                 struct_identifier,

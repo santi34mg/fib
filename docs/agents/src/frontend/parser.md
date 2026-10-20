@@ -17,7 +17,7 @@ This is parsing only. It does not type-check or compile the function.
 ## Grammar currently exercised
 
 - Bare builtin types: `int32`, `uint64`, `bool`, `string`, `usize`, `type`;
-  `@int32` is rejected. Builtin calls retain `@`, e.g. `@str_len(s)`.
+  `@int32` is rejected. Functions are ordinary identifiers; former builtin `@` calls are rejected.
 - Unified bindings: `[pub] [const | comp] name (: Type = | :=) expression;`.
   `pub` precedes the optional, mutually exclusive `const`/`comp`. No `var` prefix.
   For compatibility, typed declarations without initializers (`x: int32;`) remain

@@ -6,10 +6,9 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
-    /// Parse `(arg, ...)` argument lists shared by builtin calls
-    /// (`@concat(a, b)`) and postfix calls (`f(a, b)`).
+    /// Parse `(arg, ...)` argument lists for ordinary postfix calls.
     /// Assumes `(` was already consumed; consumes the closing `)`.
-    /// `close_what` completes the error message (`"builtin function
+    /// `close_what` completes the error message (`"function
     /// arguments"`, `"function call arguments"`).
     pub fn parse_call_arguments(&mut self, close_what: &str) -> anyhow::Result<Vec<Expression>> {
         use crate::frontend::tokens::{Punctuation, TokenKind};

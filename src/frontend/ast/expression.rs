@@ -6,7 +6,7 @@ use crate::frontend::ast::unary_expression::UnaryExpression;
 use crate::frontend::{
     analysis_annotation::{ExpressionAnnotation, MemberAnnotation},
     ast::type_expression::TypeExpression,
-    tokens::{Literal, builtin::BuiltinFunction},
+    tokens::Literal,
 };
 
 /// An expression together with the source position it starts on. The
@@ -43,12 +43,6 @@ pub enum ExpressionKind {
         args: Vec<Expression>,
     },
     QualifiedIdentifier(QualifiedIdentifier),
-    // FIXME: this should probably be integrated with normal calls
-    /// A call to a builtin function, e.g. `@concat(a, b)`.
-    CallToBuiltin {
-        builtin: BuiltinFunction,
-        args: Vec<Expression>,
-    },
     /// Access to an expression's inner constructs. This can work for (`my_struct.my_field`)
     ExprAcess {
         expr: Box<Expression>,

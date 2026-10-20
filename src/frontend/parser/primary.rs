@@ -88,7 +88,7 @@ where
     }
 
     /// Parse a primary expression: literals, identifiers (including qualified names),
-    /// array literals, grouping, builtin type values, builtin calls, and `null`.
+    /// array literals, grouping, builtin type values, and `null`.
     /// Postfix operators (calls, field access, ...) are handled by
     /// [`Parser::parse_postfix`].
     pub fn parse_primary(&mut self) -> anyhow::Result<Expression> {
@@ -172,20 +172,6 @@ where
                     "parse_atom: expected ')'",
                 )?;
                 Ok(inner_expr)
-            }
-
-            // A builtin function call, e.g. `@concat(a, b)`. The parentheses are
-            // mandatory — a bare `@concat` is an error.
-            TokenKind::Builtin(Builtin::BuiltinFunction(bf)) => {
-                self.expect_token(
-                    TokenKind::Punctuation(Punctuation::OpeningParenthesis),
-                    "parse_atom: expected '(' after builtin function",
-                )?;
-                let args = self.parse_call_arguments("builtin function arguments")?;
-                Ok(Expression::at(
-                    ExpressionKind::CallToBuiltin { builtin: bf, args },
-                    span,
-                ))
             }
 
             // Surface lexer diagnostics verbatim (e.g. unterminated

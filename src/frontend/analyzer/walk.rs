@@ -177,11 +177,6 @@ fn expression(v: &mut impl Visitor, expr: &mut Expression) -> Result {
                 expression(v, arg)?;
             }
         }
-        E::CallToBuiltin { args, .. } => {
-            for arg in args {
-                expression(v, arg)?;
-            }
-        }
         E::ExprAcess { expr, .. } => expression(v, expr)?,
         E::StructConstruct {
             struct_identifier,

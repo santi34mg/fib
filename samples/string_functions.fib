@@ -1,0 +1,11 @@
+// Ordinary function declarations and calls; implementations are not provided.
+// String helpers will be implemented by the standard library.
+fn concat(a: string, b: string) string;
+fn str_len(value: string) usize;
+fn str_eq(a: string, b: string) bool;
+fn main() int32 {
+    greeting := concat("Hello, ", "fib!");
+    length := str_len(greeting);
+    equal := str_eq(greeting, greeting);
+    return 0;
+}

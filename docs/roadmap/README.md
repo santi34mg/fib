@@ -33,7 +33,7 @@ release notes, samples, and earlier roadmap decisions. See the
 - Qualified names retain arbitrary `::` segments. Name resolution selects registered
   build-plan files and aliases without filesystem import loading; legacy `import`
   declarations are not working grammar.
-- Builtin calls retain `@` (for example `@str_len(s)`). Builtin type values
+- Functions use ordinary identifiers; builtin functions are removed. Primitive type values
   still parse in expression position. Neither fact implements generic analysis.
 
 See the [parser audit](../agents/src/frontend/parser.md) for details and limits.

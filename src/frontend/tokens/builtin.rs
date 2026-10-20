@@ -3,7 +3,6 @@ use core::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Builtin {
     BuiltinType(BuiltinType),
-    BuiltinFunction(BuiltinFunction),
     /// A comptime property queried on a value, e.g. `arr.@len`. Only valid
     /// immediately after a `.`; a bare `@len` is a parse error.
     BuiltinProperty(BuiltinProperty),
@@ -15,9 +14,6 @@ impl Builtin {
     pub fn from_name(name: &str) -> Option<Builtin> {
         if let Some(ty) = BuiltinType::from_legacy_name(name) {
             return Some(Builtin::BuiltinType(ty));
-        }
-        if let Some(func) = BuiltinFunction::from_name(name) {
-            return Some(Builtin::BuiltinFunction(func));
         }
         if let Some(prop) = BuiltinProperty::from_name(name) {
             return Some(Builtin::BuiltinProperty(prop));
@@ -51,7 +47,7 @@ pub enum BuiltinType {
     String,
     Never,
     /// Pointer-width unsigned integer. Maps to `uint64` (i64) on 64-bit
-    /// targets; the length type returned by `@str_len`, `.len`, and `.@len`.
+    /// targets; the symbolic length type returned by `.len`.
     Usize,
 }
 
@@ -140,44 +136,6 @@ impl BuiltinType {
 impl fmt::Display for BuiltinType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Builtins are spelled with a leading `@` in fib source.
-        write!(f, "@{}", self.name())
-    }
-}
-
-/// Builtin functions, primarily for string building. Spelled `@name` in source.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum BuiltinFunction {
-    /// `@concat(a: string, b: string) string` — heap-allocate the concatenation.
-    Concat,
-    /// `@str_len(s: string) uint8` — byte length of a string.
-    StrLen,
-    /// `@str_eq(a: string, b: string) bool` — byte-wise string equality.
-    StrEq,
-}
-
-impl BuiltinFunction {
-    /// The bare name of this function (without the leading `@`).
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Concat => "concat",
-            Self::StrLen => "str_len",
-            Self::StrEq => "str_eq",
-        }
-    }
-
-    /// Resolve a bare function name (without `@`) to a `BuiltinFunction`.
-    pub fn from_name(name: &str) -> Option<BuiltinFunction> {
-        Some(match name {
-            "concat" => Self::Concat,
-            "str_len" => Self::StrLen,
-            "str_eq" => Self::StrEq,
-            _ => return None,
-        })
-    }
-}
-
-impl fmt::Display for BuiltinFunction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "@{}", self.name())
     }
 }
