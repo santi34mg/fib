@@ -1,11 +1,15 @@
 //! Read-only validation of the type pass. It checks references and annotations,
 //! without rerunning inference or claiming initialization/control-flow safety.
+
 use super::{at_span, types::check_assignable, value_typing::member};
 use crate::{
     diagnostics::Span,
     driver::CompilationUnit,
     frontend::{
-        analysis_annotation::{BindingAnnotation, BindingId, ExpressionInfo, MemberAnnotation},
+        analysis_annotation::{
+            BindingAnnotation, BindingId, ExpressionInfo, MemberAnnotation, MemberKind,
+            ValueCategory as C,
+        },
         ast::{
             expression::{Expression, ExpressionKind as E},
             pattern::Pattern,
@@ -18,7 +22,7 @@ use crate::{
         identifier::{Entity, ResolvedName},
         namespace::ProjectSymbols,
         semantic_type::{SemanticType as T, SemanticTypes, TypeId, type_error},
-        tokens::builtin::BuiltinType as B,
+        tokens::{Literal, Operator as O, builtin::BuiltinType as B},
     },
 };
 use std::collections::HashSet;
@@ -33,6 +37,7 @@ pub(super) fn validate(
         types,
         bindings: HashSet::new(),
         namespaces: HashSet::new(),
+        return_type: None,
     };
     let mut files = HashSet::new();
     for unit in units {
@@ -50,9 +55,9 @@ pub(super) fn validate(
                 .declaration(*id)
                 .map_err(|_| type_error("invalid declared-type identity"))?;
         }
-        if let T::TypeResult { function, file, .. } = ty
+        if let T::TypeResult { function, .. } = ty
             && (!types.generic_parameters.contains_key(function)
-                || !symbols.namespaces.contains_key(file))
+                || !matches!(types.declarations.get(function).and_then(|id| types.get(*id).ok()), Some(T::Function(f)) if f.is_comp))
         {
             return Err(type_error("invalid symbolic type computation"));
         }
@@ -65,11 +70,150 @@ pub(super) fn validate(
             }
         }
     }
+    for ty in &types.types {
+        if let T::TypeResult {
+            function,
+            arguments,
+        } = ty
+        {
+            let T::Function(signature) = types.get(
+                *types
+                    .declarations
+                    .get(function)
+                    .ok_or_else(|| type_error("missing computation function"))?,
+            )?
+            else {
+                return Err(type_error("type computation is not callable"));
+            };
+            if arguments.len() != signature.parameters.len() {
+                return Err(type_error("type computation argument arity mismatch"));
+            }
+            for (argument, parameter) in arguments.iter().zip(&signature.parameters) {
+                use crate::frontend::semantic_type::ComputationArgument as A;
+                let valid = match argument {
+                    A::Type(t) => {
+                        types.validate_type(*t)?;
+                        matches!(types.get(*parameter)?, T::Builtin(B::MetaType))
+                    }
+                    A::Bool(_) => matches!(types.get(*parameter)?, T::Builtin(B::Boolean)),
+                    A::Expression(e) => {
+                        matches!(types.get(*parameter)?, T::Builtin(B::Boolean))
+                            && matches!(types.get(v.expression(e)?.ty)?, T::Builtin(B::Boolean))
+                    }
+                };
+                if !valid {
+                    return Err(type_error("invalid retained computation argument"));
+                }
+            }
+        }
+    }
+    for ((function, arguments), result) in &types.computation_results {
+        let Some(signature) = types.declarations.get(function) else {
+            return Err(type_error("unknown computed result function"));
+        };
+        let T::Function(signature) = types.get(*signature)? else {
+            return Err(type_error("invalid computed result function"));
+        };
+        if !signature.is_comp
+            || arguments.len() != signature.parameters.len()
+            || (types.is_dependent(*result)? && !arguments.iter().any(|a| matches!(a, crate::frontend::semantic_type::ComputationArgument::Type(t) if types.is_dependent(*t).unwrap_or(false))))
+        {
+            return Err(type_error("invalid concrete computation result"));
+        }
+        for argument in arguments {
+            use crate::frontend::semantic_type::ComputationArgument as A;
+            match argument {
+                A::Type(t) => types.validate_type(*t)?,
+                A::Bool(_) => {}
+                _ => return Err(type_error("unresolved concrete computation argument")),
+            }
+        }
+    }
     for (key, instance) in &types.generic_instances {
         if key != &instance.key {
             return Err(type_error("generic instance cache key mismatch"));
         }
         super::generics::validate_instance(instance, types)?;
+        if let Some(fun) = &instance.body {
+            if fun.signature.annotation.binding != Some(BindingId::Declaration(key.template)) {
+                return Err(type_error("instance body has the wrong template identity"));
+            }
+            let template = units.iter().flat_map(|u| &u.ast.statements).find(|node| matches!(&node.kind, S::FunctionDeclaration(f) if f.signature.annotation.binding == fun.signature.annotation.binding))
+                .ok_or_else(|| type_error("instance has no source template"))?;
+            let source = Statement {
+                kind: S::FunctionDeclaration(fun.clone()),
+                span: template.span,
+            };
+            let (source, owned) = instance_source(source)?;
+            if source != instance_source(template.clone())?.0 {
+                return Err(type_error(
+                    "instance body disagrees with its source template",
+                ));
+            }
+            let expected: HashSet<_> = owned
+                .into_iter()
+                .filter(|id| {
+                    *id != BindingId::Declaration(key.template) && !v.namespaces.contains(id)
+                })
+                .collect();
+            if instance.bindings.keys().copied().collect::<HashSet<_>>() != expected {
+                return Err(type_error(
+                    "instance environment does not match its owned bindings",
+                ));
+            }
+            let mut environment = types.clone();
+            for (id, info) in &instance.bindings {
+                if !v.bindings.contains(id)
+                    || *id == BindingId::Declaration(key.template)
+                    || environment.is_dependent(info.ty)?
+                    || (!fun.signature.is_comp
+                        && info
+                            .type_value
+                            .is_some_and(|t| environment.is_dependent(t).unwrap_or(true)))
+                {
+                    return Err(type_error("invalid concrete instance binding"));
+                }
+                environment.type_values.remove(id);
+                environment.bind(*id, *info);
+            }
+
+            let validator = Validator {
+                symbols,
+                types: &environment,
+                bindings: v.bindings.clone(),
+                namespaces: v.namespaces.clone(),
+                return_type: None,
+            };
+            let T::Function(signature) = types.get(instance.signature)? else {
+                return Err(type_error("invalid instance signature"));
+            };
+            if signature.is_comp != fun.signature.is_comp
+                || signature.parameters.len() != fun.signature.parameters.len()
+                || signature.return_type != validator.ty(&fun.signature.return_type)?
+            {
+                return Err(type_error("instance signature annotation mismatch"));
+            }
+            for (parameter, ty) in fun.signature.parameters.iter().zip(&signature.parameters) {
+                let id = parameter
+                    .annotation
+                    .binding
+                    .ok_or_else(|| type_error("pending instance parameter"))?;
+                if !instance.bindings.contains_key(&id)
+                    || validator.ty(&parameter.parameter_type)? != *ty
+                    || validator
+                        .binding(parameter.annotation)?
+                        .is_none_or(|info| info.ty != *ty)
+                {
+                    return Err(type_error("instance parameter environment mismatch"));
+                }
+            }
+            if let Some(body) = &fun.body {
+                validator
+                    .with_return_type(signature.return_type)
+                    .statements(&body.statements)?;
+            }
+            super::flow::validate_specialization(fun, &environment)?;
+        }
     }
     for id in types.generic_parameters.keys() {
         if !v.bindings.contains(&BindingId::Declaration(*id)) {
@@ -91,7 +235,6 @@ pub(super) fn validate(
             return Err(type_error("variant constructor is not callable"));
         };
         if signature.return_type != owner
-            || signature.variadic
             || signature.parameters != fields.iter().map(|f| f.ty).collect::<Vec<_>>()
         {
             return Err(type_error("variant constructor signature mismatch"));
@@ -139,13 +282,87 @@ pub(super) fn validate(
     }
     Ok(())
 }
+/// Compare instance recipes with source while ignoring only type-pass output.
+fn instance_source(mut node: Statement) -> anyhow::Result<(Statement, HashSet<BindingId>)> {
+    struct Source(HashSet<BindingId>);
+    impl super::walk::Visitor for Source {
+        fn binding(
+            &mut self,
+            _: &str,
+            slot: &mut BindingAnnotation,
+            _: Span,
+        ) -> anyhow::Result<()> {
+            if let Some(id) = slot.binding {
+                self.0.insert(id);
+            }
+            Ok(())
+        }
+        fn statement(&mut self, node: &mut Statement) -> anyhow::Result<()> {
+            if let S::Switch { arms, .. } = &mut node.kind {
+                for arm in arms {
+                    if let Pattern::EnumVariant { member, .. } = &mut arm.pattern {
+                        *member = MemberAnnotation::default();
+                    }
+                }
+            }
+            Ok(())
+        }
+        fn expression(&mut self, node: &mut Expression) -> anyhow::Result<()> {
+            node.annotation.resolved = None;
+            match &mut node.kind {
+                E::ExprAcess { member, .. } => *member = MemberAnnotation::default(),
+                E::StructConstruct { fields, .. } => {
+                    for f in fields {
+                        f.annotation = MemberAnnotation::default();
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        fn ty(&mut self, node: &mut TypeExpression) -> anyhow::Result<()> {
+            node.annotation.resolved = None;
+            match &mut node.kind {
+                K::Struct { fields } => {
+                    for f in fields {
+                        f.annotation = MemberAnnotation::default();
+                    }
+                }
+                K::Enum { variants } => {
+                    for v in variants {
+                        if let Some(fields) = &mut v.payload {
+                            for f in fields {
+                                f.annotation = MemberAnnotation::default();
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+    }
+    let mut source = Source(HashSet::new());
+    super::walk::statements(&mut source, std::slice::from_mut(&mut node), false)?;
+    Ok((node, source.0))
+}
+
+#[derive(Clone)]
 struct Validator<'a> {
     symbols: &'a ProjectSymbols,
     types: &'a SemanticTypes,
     bindings: HashSet<BindingId>,
     namespaces: HashSet<BindingId>,
+    return_type: Option<TypeId>,
 }
 impl Validator<'_> {
+    fn with_return_type(&self, ty: TypeId) -> Self {
+        Self {
+            return_type: Some(ty),
+            ..self.clone()
+        }
+    }
+
     fn register(&mut self, slot: BindingAnnotation, span: Span) -> anyhow::Result<BindingId> {
         let id = slot
             .binding
@@ -330,6 +547,7 @@ impl Validator<'_> {
                 (K::QualifiedIdentifier(name), _) => {
                     self.name(name)?.and_then(|info| info.type_value) == Some(id)
                 }
+                (K::Readonly(inner), T::Readonly(t)) => self.ty(inner)? == *t,
                 (K::Pointer { pointed_type }, T::Pointer(t)) => self.ty(pointed_type)? == *t,
                 (K::Array { element_type, size }, T::Array { element, length }) => {
                     self.ty(element_type)? == *element && *size == *length
@@ -347,12 +565,14 @@ impl Validator<'_> {
                 }
                 (
                     K::Function {
+                        is_comp,
                         argument_types,
                         return_type,
                     },
                     T::Function(f),
                 ) => {
-                    argument_types.len() == f.parameters.len()
+                    *is_comp == f.is_comp
+                        && argument_types.len() == f.parameters.len()
                         && self.ty(return_type)? == f.return_type
                         && argument_types
                             .iter()
@@ -395,13 +615,82 @@ impl Validator<'_> {
         })();
         result.map_err(|e| at_span(e, node.span))
     }
+    fn contextual_expression(
+        &self,
+        node: &Expression,
+        expected: Option<TypeId>,
+    ) -> anyhow::Result<ExpressionInfo> {
+        let info = self.expression(node)?;
+        let literal = match &node.kind {
+            E::Literal(literal) => Some(literal),
+            E::UnaryExpression(u) if u.operator == O::Minus => match &u.expression.kind {
+                E::Literal(literal @ Literal::Integer(_)) => Some(literal),
+                _ => None,
+            },
+            _ => None,
+        };
+        let numeric_context =
+            expected.filter(|ty| self.types.get(*ty).is_ok_and(super::value_typing::numeric));
+        let float_context = numeric_context.filter(|ty| {
+            matches!(
+                self.types.get(*ty),
+                Ok(T::Builtin(
+                    B::Float16 | B::Float32 | B::Float64 | B::Float128
+                ))
+            )
+        });
+        let consistent = match literal {
+            Some(Literal::Integer(_)) => numeric_context.map_or_else(
+                || matches!(self.types.get(info.ty), Ok(T::Builtin(B::Int32))),
+                |ty| info.ty == ty,
+            ),
+            Some(Literal::Float(_)) => float_context.map_or_else(
+                || matches!(self.types.get(info.ty), Ok(T::Builtin(B::Float64))),
+                |ty| info.ty == ty,
+            ),
+            Some(Literal::Null) => expected.is_some_and(|ty| {
+                ty == info.ty && matches!(self.types.container(ty), Ok((T::Pointer(_), _)))
+            }),
+            _ => true,
+        };
+        if !consistent {
+            return Err(at_span(
+                type_error("literal context annotation mismatch"),
+                node.span,
+            ));
+        }
+        if let Some(expected) = expected {
+            check_assignable(expected, info.ty, self.types).map_err(|e| at_span(e, node.span))?;
+        }
+        Ok(info)
+    }
+
     fn expression(&self, node: &Expression) -> anyhow::Result<ExpressionInfo> {
+        self.expression_checked(node, false)
+    }
+
+    // The positive token in -128 is annotated int8 by typing, but only the
+    // complete negation must fit int8. Do not range-check that token in isolation.
+    fn expression_checked(
+        &self,
+        node: &Expression,
+        negated_literal: bool,
+    ) -> anyhow::Result<ExpressionInfo> {
         let result = (|| {
             let info = node
                 .annotation
                 .resolved
                 .ok_or_else(|| type_error("pending expression annotation"))?;
             self.info(info)?;
+            if super::value_typing::diverges(node, self.types)
+                && (!matches!(self.types.get(info.ty)?, T::Builtin(B::Never))
+                    || info.category != crate::frontend::analysis_annotation::ValueCategory::Value
+                    || info.type_value.is_some())
+            {
+                return Err(type_error(
+                    "diverging expression must have never value type",
+                ));
+            }
             match &node.kind {
                 E::QualifiedIdentifier(name) => {
                     if self.name(name)? != Some(info) {
@@ -429,6 +718,18 @@ impl Validator<'_> {
                     if member.resolved.unwrap().ty != info.ty {
                         return Err(type_error("member result type mismatch"));
                     }
+                    let category = if matches!(
+                        member.resolved.unwrap().kind,
+                        MemberKind::Field(_) | MemberKind::Dependent
+                    ) {
+                        receiver.category
+                    } else {
+                        C::Value
+                    };
+                    if !super::value_typing::diverges(node, self.types) && info.category != category
+                    {
+                        return Err(type_error("member mutability annotation mismatch"));
+                    }
                 }
                 E::StructConstruct {
                     struct_identifier,
@@ -438,17 +739,136 @@ impl Validator<'_> {
                         .name(struct_identifier)?
                         .and_then(|i| i.type_value)
                         .ok_or_else(|| type_error("missing struct owner type"))?;
-                    if info.ty != owner {
+                    if info.ty != owner && !super::value_typing::diverges(node, self.types) {
                         return Err(type_error("struct construction owner mismatch"));
                     }
                     self.fields(fields, owner, false)?;
                 }
                 E::UnaryExpression(u) => {
-                    self.expression(&u.expression)?;
+                    let negative_literal = u.operator == O::Minus
+                        && matches!(u.expression.kind, E::Literal(Literal::Integer(_)));
+                    let operand = self.expression_checked(&u.expression, negative_literal)?;
+                    if negative_literal
+                        && (info.ty != operand.ty
+                            || info.category != C::Value
+                            || info.type_value.is_some())
+                    {
+                        return Err(type_error("negated literal annotation mismatch"));
+                    }
+                    if !super::value_typing::diverges(node, self.types) {
+                        match u.operator {
+                            O::Dereference => {
+                                let (T::Pointer(pointee), readonly) =
+                                    self.types.container(operand.ty)?
+                                else {
+                                    return Err(type_error(
+                                        "dereference annotation requires a pointer",
+                                    ));
+                                };
+                                let category = if readonly {
+                                    C::ReadonlyPlace
+                                } else {
+                                    C::MutablePlace
+                                };
+                                if info.ty != *pointee || info.category != category {
+                                    return Err(type_error(
+                                        "dereference mutability annotation mismatch",
+                                    ));
+                                }
+                            }
+                            O::AddressOf => {
+                                let (T::Pointer(pointee), readonly) =
+                                    self.types.container(info.ty)?
+                                else {
+                                    return Err(type_error(
+                                        "address annotation requires a pointer",
+                                    ));
+                                };
+                                if operand.category == C::Value
+                                    || *pointee != operand.ty
+                                    || readonly != (operand.category != C::MutablePlace)
+                                    || info.category != C::Value
+                                {
+                                    return Err(type_error(
+                                        "address mutability annotation mismatch",
+                                    ));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 E::BinaryExpresison(b) => {
-                    self.expression(&b.left)?;
-                    self.expression(&b.right)?;
+                    let left = self.expression(&b.left)?;
+                    let right = self.expression(&b.right)?;
+                    if !super::value_typing::diverges(node, self.types) {
+                        let comparison = matches!(
+                            b.operator,
+                            O::DoubleEquals
+                                | O::Different
+                                | O::GreaterThan
+                                | O::GreaterEqual
+                                | O::LesserThan
+                                | O::LesserEqual
+                        );
+                        let logical = matches!(b.operator, O::LogicalAnd | O::LogicalOr);
+                        let shift = matches!(b.operator, O::LeftShift | O::RightShift);
+                        for operand in [left.ty, right.ty] {
+                            if self.types.is_symbolic(operand)?
+                                || matches!(self.types.get(operand)?, T::Builtin(B::Never))
+                            {
+                                continue;
+                            }
+                            let ty = self.types.get(operand)?;
+                            let valid = if logical {
+                                matches!(ty, T::Builtin(B::Boolean))
+                            } else if shift
+                                || matches!(
+                                    b.operator,
+                                    O::Percent | O::Ampersand | O::Pipe | O::Caret
+                                )
+                            {
+                                super::value_typing::integral(ty)
+                            } else if matches!(b.operator, O::DoubleEquals | O::Different) {
+                                super::value_typing::numeric(ty)
+                                    || matches!(
+                                        ty,
+                                        T::Builtin(B::Boolean | B::Char | B::String | B::Void)
+                                    )
+                                    || matches!(self.types.container(operand)?, (T::Pointer(_), _))
+                            } else if comparison {
+                                super::value_typing::numeric(ty)
+                                    || matches!(ty, T::Builtin(B::Char))
+                            } else {
+                                super::value_typing::numeric(ty)
+                            };
+                            if !valid {
+                                return Err(type_error("invalid binary operand annotation"));
+                            }
+                        }
+                        if comparison || logical {
+                            if !matches!(self.types.get(info.ty)?, T::Builtin(B::Boolean)) {
+                                return Err(type_error("binary result annotation mismatch"));
+                            }
+                        } else {
+                            let expected = if self.types.is_symbolic(left.ty)? {
+                                left.ty
+                            } else if self.types.is_symbolic(right.ty)? {
+                                right.ty
+                            } else {
+                                left.ty
+                            };
+                            if expected != info.ty {
+                                return Err(type_error("binary result annotation mismatch"));
+                            }
+                        }
+                        if !shift {
+                            check_assignable(left.ty, right.ty, self.types)?;
+                        }
+                        if info.category != C::Value || info.type_value.is_some() {
+                            return Err(type_error("binary value annotation mismatch"));
+                        }
+                    }
                 }
                 E::Call { callee, args } => {
                     let callable = self.expression(callee)?;
@@ -484,34 +904,152 @@ impl Validator<'_> {
                         };
                         signature = f.clone();
                     }
+                    if matches!(
+                        self.types.get(signature.return_type)?,
+                        T::Builtin(B::MetaType)
+                    ) && (!signature.is_comp || super::evaluation::function_id(callee).is_none())
+                    {
+                        return Err(type_error(
+                            "type computation requires a known comp function",
+                        ));
+                    }
+                    if matches!(
+                        self.types.get(signature.return_type)?,
+                        T::Builtin(B::MetaType)
+                    ) {
+                        use crate::frontend::semantic_type::ComputationArgument as A;
+                        let function = super::evaluation::function_id(callee)
+                            .ok_or_else(|| type_error("missing computation identity"))?;
+                        let arguments: Vec<_> = args
+                            .iter()
+                            .map(|arg| {
+                                if let Some(t) = arg.annotation.resolved.and_then(|i| i.type_value)
+                                {
+                                    A::Type(t)
+                                } else if let Some(b) = super::evaluation::boolean(
+                                    arg,
+                                    &std::collections::HashMap::new(),
+                                ) {
+                                    A::Bool(b)
+                                } else {
+                                    A::Expression(Box::new(arg.clone()))
+                                }
+                            })
+                            .collect();
+                        let symbolic = arguments.iter().any(|a| matches!(a, A::Expression(_)));
+                        let result = info
+                            .type_value
+                            .ok_or_else(|| type_error("computed call has no denoted type"))?;
+                        if symbolic {
+                            if self.types.get(result)?
+                                != &(T::TypeResult {
+                                    function,
+                                    arguments,
+                                })
+                            {
+                                return Err(type_error(
+                                    "symbolic computed call lost its argument dependencies",
+                                ));
+                            }
+                        } else if self
+                            .types
+                            .computation_results
+                            .get(&(function, arguments))
+                            .copied()
+                            != Some(result)
+                        {
+                            return Err(type_error(
+                                "computed call result disagrees with retained computation",
+                            ));
+                        }
+                    }
                     for (arg, ty) in args.iter().zip(&signature.parameters) {
                         check_assignable(*ty, self.expression(arg)?.ty, self.types)?;
                     }
-                    if info.ty != signature.return_type {
+                    let result_matches = if args
+                        .iter()
+                        .any(|a| super::value_typing::diverges(a, self.types))
+                    {
+                        matches!(self.types.get(info.ty)?, T::Builtin(B::Never))
+                    } else {
+                        info.ty == signature.return_type
+                    };
+                    if !result_matches {
                         return Err(type_error("call result annotation mismatch"));
                     }
                 }
                 E::Cast { expr, target_type } => {
-                    self.expression(expr)?;
-                    if self.ty(target_type)? != info.ty {
+                    let target = self.ty(target_type)?;
+                    let source = self.contextual_expression(
+                        expr,
+                        if matches!(expr.kind, E::Literal(Literal::Null)) {
+                            Some(target)
+                        } else {
+                            None
+                        },
+                    )?;
+                    if !super::value_typing::cast_allowed(source.ty, target, self.types)? {
+                        return Err(type_error("unsupported cast annotation"));
+                    }
+                    super::constant::check_cast(expr, target, self.types)?;
+                    if info.category != C::Value || info.type_value.is_some() {
+                        return Err(type_error("cast value annotation mismatch"));
+                    }
+                    if target != info.ty && !super::value_typing::diverges(expr, self.types) {
                         return Err(type_error("cast result annotation mismatch"));
                     }
                 }
                 E::IndexAccess { object, index } => {
-                    self.expression(object)?;
+                    let receiver = self.expression(object)?;
                     self.expression(index)?;
+                    if !super::value_typing::diverges(node, self.types) {
+                        let (element, _, category) =
+                            super::value_typing::indexed(receiver, self.types)?;
+                        if info.ty != element || info.category != category {
+                            return Err(type_error("index mutability annotation mismatch"));
+                        }
+                    }
                 }
                 E::SliceLiteral {
                     object, start, end, ..
                 } => {
-                    self.expression(object)?;
+                    let receiver = self.expression(object)?;
                     for bound in start.iter().chain(end) {
                         self.expression(bound)?;
                     }
+                    if !super::value_typing::diverges(node, self.types) {
+                        let (element, _, category) =
+                            super::value_typing::indexed(receiver, self.types)?;
+                        let (T::Slice(actual), readonly) = self.types.container(info.ty)? else {
+                            return Err(type_error("slice annotation requires a slice"));
+                        };
+                        if *actual != element
+                            || readonly != (category == C::ReadonlyPlace)
+                            || info.category != C::Value
+                        {
+                            return Err(type_error("slice mutability annotation mismatch"));
+                        }
+                    }
                 }
                 E::ArrayLiteral { elements } => {
-                    for element in elements {
-                        self.expression(element)?;
+                    if super::value_typing::diverges(node, self.types) {
+                        for element in elements {
+                            self.expression(element)?;
+                        }
+                    } else {
+                        let (T::Array { element, length }, _) = self.types.container(info.ty)?
+                        else {
+                            return Err(type_error("array literal annotation requires an array"));
+                        };
+                        if *length != elements.len() as u64
+                            || info.category != C::Value
+                            || info.type_value.is_some()
+                        {
+                            return Err(type_error("array literal annotation mismatch"));
+                        }
+                        for value in elements {
+                            self.contextual_expression(value, Some(*element))?;
+                        }
                     }
                 }
                 E::QualifiedAccess { .. } => {
@@ -519,7 +1057,36 @@ impl Validator<'_> {
                         "legacy qualified access cannot be type-complete",
                     ));
                 }
-                E::Literal(_) | E::VoidExpression => {}
+                E::Literal(literal) => {
+                    let ty = self.types.get(info.ty)?;
+                    let valid = match literal {
+                        Literal::Integer(_) => super::value_typing::numeric(ty),
+                        Literal::Float(_) => matches!(
+                            ty,
+                            T::Builtin(B::Float16 | B::Float32 | B::Float64 | B::Float128)
+                        ),
+                        Literal::Boolean(_) => matches!(ty, T::Builtin(B::Boolean)),
+                        Literal::Character(_) => matches!(ty, T::Builtin(B::Char)),
+                        Literal::String(_) => matches!(ty, T::Builtin(B::String)),
+                        Literal::Null => {
+                            matches!(self.types.container(info.ty)?.0, T::Pointer(_))
+                        }
+                    };
+                    if !valid || info.category != C::Value || info.type_value.is_some() {
+                        return Err(type_error("literal kind annotation mismatch"));
+                    }
+                }
+                E::VoidExpression => {
+                    if !matches!(self.types.get(info.ty)?, T::Builtin(B::Void))
+                        || info.category != C::Value
+                        || info.type_value.is_some()
+                    {
+                        return Err(type_error("void expression annotation mismatch"));
+                    }
+                }
+            }
+            if !negated_literal {
+                super::constant::validate(node, info.ty, self.types)?;
             }
             Ok(info)
         })();
@@ -531,6 +1098,18 @@ impl Validator<'_> {
         value: Option<&Expression>,
     ) -> anyhow::Result<()> {
         let info = self.binding(var.annotation)?;
+        if !var.is_comp
+            && let Some(info) = info
+        {
+            let category = if var.is_const {
+                C::ImmutablePlace
+            } else {
+                C::MutablePlace
+            };
+            if info.category != category {
+                return Err(type_error("binding mutability annotation mismatch"));
+            }
+        }
         if let Some(ty) = &var.ty {
             let declared = self.ty(ty)?;
             if info.is_none_or(|info| info.ty != declared) {
@@ -613,8 +1192,25 @@ impl Validator<'_> {
                 let T::Function(signature) = self.types.get(info.ty)? else {
                     return Err(type_error("function binding is not callable"));
                 };
-                if signature.parameters.len() != fun.signature.parameters.len()
-                    || signature.variadic != fun.is_variadic
+                if signature.is_comp {
+                    let body = fun
+                        .body
+                        .as_ref()
+                        .ok_or_else(|| type_error("comp function requires a body"))?;
+                    if fun.is_extern
+                        || !matches!(
+                            self.types.get(signature.return_type)?,
+                            T::Builtin(B::MetaType)
+                        )
+                    {
+                        return Err(type_error(
+                            "bounded comp function must be non-extern and return type",
+                        ));
+                    }
+                    super::evaluation::validate_comp_body(&body.statements)?;
+                }
+                if signature.is_comp != fun.signature.is_comp
+                    || signature.parameters.len() != fun.signature.parameters.len()
                     || signature.return_type != self.ty(&fun.signature.return_type)?
                 {
                     return Err(type_error("function signature annotation mismatch"));
@@ -629,37 +1225,71 @@ impl Validator<'_> {
                     }
                 }
                 if let Some(body) = &fun.body {
-                    self.statements(&body.statements)?;
+                    self.with_return_type(signature.return_type)
+                        .statements(&body.statements)?;
                 }
             }
             S::ExpressionStatement(expr) => {
                 self.expression(expr)?;
             }
             S::Assignment { left, right } => {
-                self.expression(left)?;
-                self.expression(right)?;
+                let target = self.expression(left)?;
+                super::statement::validate_assignment_target(&target)?;
+                check_assignable(target.ty, self.expression(right)?.ty, self.types)?;
             }
             S::DerefAssign { pointer, expr } => {
-                self.expression(pointer)?;
-                self.expression(expr)?;
+                let pointer = self.expression(pointer)?;
+                let (T::Pointer(pointee), false) = self.types.container(pointer.ty)? else {
+                    return Err(type_error("assignment requires a mutable pointer"));
+                };
+                check_assignable(*pointee, self.expression(expr)?.ty, self.types)?;
             }
             S::IndexAssign {
                 object,
                 index,
                 expr,
             } => {
-                self.expression(object)?;
+                let receiver = self.expression(object)?;
                 self.expression(index)?;
-                self.expression(expr)?;
+                let (element, _, category) = super::value_typing::indexed(receiver, self.types)?;
+                if category != C::MutablePlace {
+                    return Err(type_error("assignment requires mutable elements"));
+                }
+                check_assignable(element, self.expression(expr)?.ty, self.types)?;
             }
             S::MultiAssignment { targets, values } => {
-                for expr in targets.iter().chain(values) {
-                    self.expression(expr)?;
+                for target in targets {
+                    super::statement::validate_assignment_target(&self.expression(target)?)?;
+                }
+                for value in values {
+                    self.expression(value)?;
                 }
             }
             S::Return(values) => {
-                for expr in values.iter().flatten() {
-                    self.expression(expr)?;
+                let expected = self
+                    .return_type
+                    .ok_or_else(|| type_error("return outside function"))?;
+                let values = values.as_deref().unwrap_or(&[]);
+                if values.is_empty() {
+                    if !matches!(
+                        self.types.get(self.types.canonical(expected)?)?,
+                        T::Builtin(B::Void)
+                    ) && !self.types.is_symbolic(expected)?
+                    {
+                        return Err(type_error("empty return requires void return type"));
+                    }
+                } else if values.len() == 1 {
+                    self.contextual_expression(&values[0], Some(expected))?;
+                } else {
+                    let T::Tuple(elements) = self.types.get(expected)? else {
+                        return Err(type_error("return arity mismatch"));
+                    };
+                    if elements.len() != values.len() {
+                        return Err(type_error("return arity mismatch"));
+                    }
+                    for (value, ty) in values.iter().zip(elements) {
+                        self.contextual_expression(value, Some(*ty))?;
+                    }
                 }
             }
             S::If {
