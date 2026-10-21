@@ -89,13 +89,14 @@ computation, partial initialization, branch joins, loops, enum switches and defe
 ordering. Initialization/return completeness use the complete `analyze` seam;
 type-only fixtures still exercise `resolve_types` independently.
 
-## Local verification (2026-10-19)
+## Local verification (2026-10-21)
 
-The unfiltered no-default-features suite passes **606 library tests**, including
-**236** name-resolution tests and **180** type-resolution/completion tests.
-Default-feature testing passes 612 library tests and five executable acceptance
-tests. Binary unit tests and doctests are empty. No tests are ignored.
-Both feature configurations pass check/test/Clippy with all targets and warnings denied.
+The completed semantic-reconstruction pre-commit run passed all blocking checks,
+including the no-default suite, formatting, check/Clippy, **677 LLVM-enabled library
+tests** and **five executable acceptance tests**. This run includes the final
+review fixes for generic template flow, recursive cache rollback and
+return/literal/cast validation, plus the `void` type-value parser regression.
+Earlier terminal-access restrictions were lifted for the requested commits.
 
 ```sh
 cargo check --offline --no-default-features

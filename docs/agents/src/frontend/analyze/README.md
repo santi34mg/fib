@@ -19,7 +19,7 @@ those original units. The free type entry requires resolved names and fresh stat
 `TypeContext::new` prepares lower-level node helpers. Failed type passes cannot be
 retried. `Analyzer::analyze` runs typing, then validates initialization and
 structured flow before returning `AnalyzedProject`, owning original units,
-symbols, semantic types, cached generic signatures and original plan paths in
+symbols, semantic types, cached concrete generic bodies/environments and original plan paths in
 `source_paths` for diagnostics after analysis.
 
 ## Identity and lookup
@@ -48,8 +48,13 @@ Type/member checking is separate: name traversal does not insert fields/variants
 into lexical scopes or fill semantic type, expression, or member slots. Scopes
 restore on errors. Unsupported nested functions, generic declarations, legacy
 qualified-access nodes, and unsupported compile-time computations return errors.
-Explicit metatype arguments specialize signatures; bounded type-returning calls
-accept known type/bool arguments, declarations, nested calls and branches.
+Explicit metatype arguments specialize signatures and recheck dependent operations
+in concrete bodies without replacing symbolic template annotations. Bounded
+`comp fn` type-returning calls accept known type/bool arguments, declarations,
+nested eligible calls and branches. Runtime function identity does not confer
+compile-time eligibility. Deferred computations retain arguments/dependencies;
+failed recursive instance groups roll back new cache entries. Type qualifiers
+separate binding and element mutability; `never` coercion is directional.
 
 `SymbolTable`/`Scope` remain mechanical lexical utilities, including separate label
 storage. Scope policy is enforced by the resolver. `ResolveContext` and `TypeContext`
