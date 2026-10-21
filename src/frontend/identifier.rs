@@ -1,6 +1,6 @@
 //! Semantic identities, never source spellings or parser-assigned token IDs.
 
-use crate::build_plan::FileId;
+use crate::plan::FileId;
 
 /// A declaration's stable slot in its owning file namespace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
