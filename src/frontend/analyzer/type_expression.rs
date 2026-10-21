@@ -15,6 +15,7 @@ impl TypeExpression {
                 T::Function {
                     argument_types,
                     return_type,
+                    ..
                 } => {
                     for ty in argument_types {
                         ty.resolve_name(context)?;
@@ -26,6 +27,7 @@ impl TypeExpression {
                         ty.resolve_name(context)?;
                     }
                 }
+                T::Readonly(inner) => inner.resolve_name(context)?,
                 T::Pointer { pointed_type } => pointed_type.resolve_name(context)?,
                 T::Array { element_type, .. } | T::Slice { element_type } => {
                     element_type.resolve_name(context)?

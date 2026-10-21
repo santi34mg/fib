@@ -61,7 +61,13 @@ impl TypeContext<'_> {
                     "computed comp initializer must produce a type value",
                 ));
             }
-            info
+            if let Some(expected) = expected
+                && matches!(self.types.get(info.ty)?, T::Builtin(B::Never))
+            {
+                self.value(expected)
+            } else {
+                info
+            }
         } else {
             let ty =
                 expected.ok_or_else(|| type_error("binding requires a type or initializer"))?;
@@ -164,7 +170,7 @@ impl TypeContext<'_> {
                 }
             }
             S::FunctionDeclaration(fun) => {
-                let signature = self.signature(&mut fun.signature, fun.is_variadic)?;
+                let signature = self.signature(&mut fun.signature)?;
                 fun.resolve_type(self, signature)?;
             }
             S::ExpressionStatement(expr) => {
@@ -177,7 +183,11 @@ impl TypeContext<'_> {
             }
             S::DerefAssign { pointer, expr } => {
                 let p = self.expression(pointer, None)?;
-                let T::Pointer(ty) = self.types.get(p.ty)? else {
+                let (container, readonly) = self.types.container(p.ty)?;
+                if readonly {
+                    return Err(type_error("cannot assign through readonly pointer"));
+                }
+                let T::Pointer(ty) = container else {
                     return Err(type_error("assignment requires a pointer"));
                 };
                 if self.types.is_opaque(*ty)? {

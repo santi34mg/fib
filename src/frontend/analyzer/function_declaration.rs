@@ -26,11 +26,27 @@ impl FunctionDeclaration {
         signature: TypeId,
     ) -> anyhow::Result<()> {
         use crate::frontend::semantic_type::{SemanticType, type_error};
-        let resolved = context.signature(&mut self.signature, self.is_variadic)?;
+        let resolved = context.signature(&mut self.signature)?;
         super::types::check_assignable(signature, resolved, context.types)?;
         let SemanticType::Function(function) = context.types.get(signature)? else {
             return Err(type_error("expected a function signature"));
         };
+        if self.signature.is_comp {
+            if self.is_extern || self.body.is_none() {
+                return Err(type_error(
+                    "comp function requires a non-extern function body",
+                ));
+            }
+            if !matches!(
+                context.types.get(function.return_type)?,
+                SemanticType::Builtin(crate::frontend::tokens::builtin::BuiltinType::MetaType)
+            ) {
+                return Err(type_error("bounded comp function must return type"));
+            }
+            super::evaluation::validate_comp_body(&self.body.as_ref().unwrap().statements)?;
+        }
+        let previous_comp =
+            std::mem::replace(&mut context.state.comp_function, self.signature.is_comp);
         let previous = context.state.return_type.replace(function.return_type);
         let result = if let Some(body) = &mut self.body {
             context.statements(&mut body.statements)
@@ -38,6 +54,7 @@ impl FunctionDeclaration {
             Ok(())
         };
         context.state.return_type = previous;
+        context.state.comp_function = previous_comp;
         result
     }
 }

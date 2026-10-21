@@ -29,7 +29,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone)]
 pub(super) enum Definition {
     Variable(VariableDeclaration),
-    Function(FunctionSignature, bool),
+    Function(FunctionSignature),
     Multi(Statement),
 }
 #[derive(Default)]
@@ -38,14 +38,17 @@ pub(super) struct TypeState {
     pub resolving: HashSet<DeclId>,
     pub sites: HashMap<(FileId, Span), TypeId>,
     pub return_type: Option<TypeId>,
+    pub comp_function: bool,
     pub depth: usize,
     pub paths: HashMap<FileId, std::path::PathBuf>,
     pub functions: HashMap<DeclId, crate::frontend::ast::function_declaration::FunctionDeclaration>,
     pub evaluation_depth: usize,
-    pub evaluated_types: HashMap<(DeclId, Vec<super::evaluation::Argument>), TypeId>,
+
     pub evaluation_booleans: HashMap<BindingId, bool>,
     pub in_defer: bool,
     pub loop_depth: usize,
+    pub specialization: HashMap<crate::frontend::identifier::LocalId, TypeId>,
+    pub active_instances: HashMap<super::generics::GenericInstanceKey, TypeId>,
 }
 
 pub(super) fn resolve_project(
@@ -103,8 +106,7 @@ pub(super) fn resolve_project_with_paths(
                 }
                 S::FunctionDeclaration(f) => {
                     if let Some(BindingId::Declaration(id)) = f.signature.annotation.binding {
-                        definitions
-                            .insert(id, Definition::Function(f.signature.clone(), f.is_variadic));
+                        definitions.insert(id, Definition::Function(f.signature.clone()));
                     }
                     if let Some(body) = &f.body {
                         collect(&body.statements, definitions);
@@ -221,9 +223,7 @@ impl TypeContext<'_> {
                 }
                 self.variable(&mut v)
             }
-            Definition::Function(mut signature, variadic) => {
-                self.signature(&mut signature, variadic).map(|_| ())
-            }
+            Definition::Function(mut signature) => self.signature(&mut signature).map(|_| ()),
             Definition::Multi(mut statement) => self.statement(&mut statement),
         };
         self.file = previous;
@@ -279,17 +279,17 @@ impl TypeContext<'_> {
     pub(super) fn signature(
         &mut self,
         signature: &mut FunctionSignature,
-        variadic: bool,
     ) -> anyhow::Result<TypeId> {
-        if variadic {
-            return Err(type_error("variadic function typing is not implemented"));
-        }
         for p in &signature.parameters {
             if matches!(p.parameter_type.kind, K::Builtin(B::MetaType)) {
                 let Some(BindingId::Local(id)) = p.annotation.binding else {
                     return Err(type_error("pending parameter binding"));
                 };
-                let denoted = self.types.intern(T::Parameter(id));
+                let denoted = if let Some(ty) = self.state.specialization.get(&id) {
+                    *ty
+                } else {
+                    self.types.intern(T::Parameter(id))
+                };
                 let info = self.metatype(denoted);
                 self.types.bind(BindingId::Local(id), info);
             }
@@ -315,9 +315,9 @@ impl TypeContext<'_> {
         }
         let return_type = self.type_expression(&mut signature.return_type, true, true)?;
         let ty = self.types.intern(T::Function(FunctionType {
+            is_comp: signature.is_comp,
             parameters,
             return_type,
-            variadic,
         }));
         let binding = signature
             .annotation
@@ -340,8 +340,10 @@ impl TypeContext<'_> {
                 .collect();
             self.types.generic_parameters.insert(id, parameters);
         }
-        let info = self.value(ty);
-        self.types.bind(binding, info);
+        if self.state.specialization.is_empty() {
+            let info = self.value(ty);
+            self.types.bind(binding, info);
+        }
         Ok(ty)
     }
     pub(super) fn type_expression(
@@ -375,6 +377,18 @@ impl TypeContext<'_> {
                     ))
                 })?
             }
+            K::Readonly(inner) => {
+                let t = self.type_expression(inner, false, false)?;
+                if !matches!(
+                    self.types.get(t)?,
+                    T::Pointer(_) | T::Slice(_) | T::Array { .. }
+                ) {
+                    return Err(type_error(
+                        "const type qualifier requires a pointer, slice or array",
+                    ));
+                }
+                self.types.intern(T::Readonly(t))
+            }
             K::Pointer { pointed_type } => {
                 let t = self.type_expression(pointed_type, false, false)?;
                 self.types.intern(T::Pointer(t))
@@ -398,6 +412,7 @@ impl TypeContext<'_> {
                 self.types.intern(T::Tuple(ts))
             }
             K::Function {
+                is_comp,
                 argument_types,
                 return_type,
             } => {
@@ -407,9 +422,9 @@ impl TypeContext<'_> {
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 let return_type = self.type_expression(return_type, true, true)?;
                 self.types.intern(T::Function(FunctionType {
+                    is_comp: *is_comp,
                     parameters,
                     return_type,
-                    variadic: false,
                 }))
             }
             K::Struct { fields } => {
@@ -434,9 +449,9 @@ impl TypeContext<'_> {
                         let payload = existing.unwrap_or_else(|| self.types.intern(T::Pending));
                         let fs = self.field_definitions(fields, payload)?;
                         let constructor = self.types.intern(T::Function(FunctionType {
+                            is_comp: false,
                             parameters: fs.iter().map(|f| f.ty).collect(),
                             return_type: owner,
-                            variadic: false,
                         }));
                         self.types
                             .variant_constructors
@@ -543,6 +558,7 @@ impl TypeContext<'_> {
                 let children: Vec<_> = match self.types.get(id)? {
                     T::Struct(fs) => fs.iter().map(|f| f.ty).collect(),
                     T::Enum(vs) => vs.iter().filter_map(|v| v.payload).collect(),
+                    T::Readonly(t) => vec![*t],
                     T::Array { element, .. } => vec![*element],
                     T::Tuple(ts) => ts.clone(),
                     _ => vec![],

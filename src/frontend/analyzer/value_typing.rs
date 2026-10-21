@@ -28,10 +28,10 @@ pub(super) fn integer(b: &B) -> Option<(bool, Option<u32>)> {
 fn float(b: &B) -> bool {
     matches!(b, B::Float16 | B::Float32 | B::Float64 | B::Float128)
 }
-fn numeric(t: &T) -> bool {
+pub(super) fn numeric(t: &T) -> bool {
     matches!(t,T::Builtin(b) if integer(b).is_some() || float(b))
 }
-fn integral(t: &T) -> bool {
+pub(super) fn integral(t: &T) -> bool {
     matches!(t,T::Builtin(b) if integer(b).is_some())
 }
 fn fits_integer(value: i128, ty: &T) -> anyhow::Result<()> {
@@ -72,13 +72,124 @@ fn fits_float(value: f64, ty: &T) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Binding constness does not restrict array/slice elements. A readonly access
+/// path does restrict inline array storage, but does not requalify a slice's view.
+pub(super) fn indexed(
+    receiver: ExpressionInfo,
+    types: &SemanticTypes,
+) -> anyhow::Result<(TypeId, Option<u64>, C)> {
+    let (container, readonly) = types.container(receiver.ty)?;
+    let (element, length, inherited) = match container {
+        T::Array { element, length } => (
+            *element,
+            Some(*length),
+            receiver.category == C::ReadonlyPlace,
+        ),
+        T::Slice(element) => (*element, None, false),
+        T::Parameter(_) | T::TypeResult { .. } | T::MemberResult { .. } | T::IndexResult { .. } => {
+            let recipe = T::IndexResult {
+                owner: types.canonical(receiver.ty)?,
+            };
+            let index = types
+                .types
+                .iter()
+                .position(|t| *t == recipe)
+                .ok_or_else(|| type_error("missing dependent index recipe"))?;
+            (
+                TypeId(index as u32),
+                None,
+                receiver.category == C::ReadonlyPlace,
+            )
+        }
+        _ => return Err(type_error("receiver is not indexable")),
+    };
+    Ok((
+        element,
+        length,
+        if readonly || inherited {
+            C::ReadonlyPlace
+        } else if length.is_some() && receiver.category == C::Value {
+            C::Value
+        } else {
+            C::MutablePlace
+        },
+    ))
+}
+
+/// The same resolved-type cast policy is used by inference and validation.
+pub(super) fn cast_allowed(
+    from: TypeId,
+    to: TypeId,
+    types: &SemanticTypes,
+) -> anyhow::Result<bool> {
+    Ok(matches!(types.get(from)?, T::Builtin(B::Never))
+        || (numeric(types.get(from)?) && numeric(types.get(to)?))
+        || pointer_cast(from, to, types)?
+        || check_assignable(to, from, types).is_ok())
+}
+
+pub(super) fn pointer_cast(
+    from: TypeId,
+    to: TypeId,
+    types: &SemanticTypes,
+) -> anyhow::Result<bool> {
+    let (T::Pointer(a), ar) = types.container(from)? else {
+        return Ok(false);
+    };
+    let (T::Pointer(b), br) = types.container(to)? else {
+        return Ok(false);
+    };
+    if ar != br {
+        return Ok(false);
+    }
+    if super::types::check_assignable(*a, *b, types).is_ok() {
+        return Ok(true);
+    }
+    // Opaque casts must not erase nested readonly qualifications and later
+    // reconstruct a mutable pointer. No general reinterpretation policy exists.
+    fn qualified(
+        root: TypeId,
+        types: &SemanticTypes,
+        seen: &mut HashSet<TypeId>,
+    ) -> anyhow::Result<bool> {
+        let root = types.canonical(root)?;
+        if !seen.insert(root) {
+            return Ok(false);
+        }
+        let children = match types.get(root)? {
+            T::Readonly(_) => return Ok(true),
+            T::Pointer(t) | T::Slice(t) => vec![*t],
+            T::Array { element, .. } => vec![*element],
+            T::Tuple(ts) => ts.clone(),
+            T::Struct(fs) => fs.iter().map(|f| f.ty).collect(),
+            T::Enum(vs) => vs.iter().filter_map(|v| v.payload).collect(),
+            T::Function(f) => f
+                .parameters
+                .iter()
+                .copied()
+                .chain([f.return_type])
+                .collect(),
+            _ => vec![],
+        };
+        for child in children {
+            if qualified(child, types, seen)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    Ok((types.is_opaque(*a)? || types.is_opaque(*b)?)
+        && !qualified(*a, types, &mut HashSet::new())?
+        && !qualified(*b, types, &mut HashSet::new())?)
+}
+
 pub(super) fn member(
     owner: TypeId,
     spelling: &str,
     types: &SemanticTypes,
 ) -> anyhow::Result<MemberInfo> {
     let owner = types.canonical(owner)?;
-    let (kind, ty) = match types.get(owner)? {
+    let (kind, ty) = match types.container(owner)?.0 {
         T::Struct(fields) => {
             let (i, f) = fields
                 .iter()
@@ -111,9 +222,54 @@ pub(super) fn member(
                 .ok_or_else(|| type_error("missing semantic usize type"))?;
             (MemberKind::Length, TypeId(i as u32))
         }
+        T::Parameter(_) | T::TypeResult { .. } | T::MemberResult { .. } | T::IndexResult { .. } => {
+            let recipe = T::MemberResult {
+                owner,
+                spelling: spelling.to_owned(),
+            };
+            let index = types
+                .types
+                .iter()
+                .position(|t| *t == recipe)
+                .ok_or_else(|| type_error("missing dependent member recipe"))?;
+            (MemberKind::Dependent, TypeId(index as u32))
+        }
         _ => return Err(type_error(format!("inapplicable member '{spelling}'"))),
     };
     Ok(MemberInfo { owner, kind, ty })
+}
+
+/// Whether evaluation is guaranteed not to complete. A short-circuit RHS is
+/// mandatory only when the LHS is known to select it.
+pub(super) fn diverges(expr: &Expression, types: &SemanticTypes) -> bool {
+    let child = |e: &Expression| diverges(e, types);
+    match &expr.kind {
+        E::BinaryExpresison(b) => {
+            child(&b.left)
+                || match b.operator {
+                    O::LogicalAnd => super::known_boolean(&b.left) == Some(true) && child(&b.right),
+                    O::LogicalOr => super::known_boolean(&b.left) == Some(false) && child(&b.right),
+                    _ => child(&b.right),
+                }
+        }
+        E::UnaryExpression(u) => child(&u.expression),
+        E::Call { callee, args } => {
+            child(callee)
+                || args.iter().any(child)
+                || expr
+                    .annotation
+                    .resolved
+                    .is_some_and(|i| matches!(types.get(i.ty), Ok(T::Builtin(B::Never))))
+        }
+        E::ExprAcess { expr, .. } | E::Cast { expr, .. } => child(expr),
+        E::StructConstruct { fields, .. } => fields.iter().any(|f| child(&f.expression)),
+        E::ArrayLiteral { elements } => elements.iter().any(child),
+        E::IndexAccess { object, index } => child(object) || child(index),
+        E::SliceLiteral {
+            object, start, end, ..
+        } => child(object) || start.iter().chain(end).any(|e| child(e)),
+        _ => false,
+    }
 }
 
 impl TypeContext<'_> {
@@ -131,7 +287,12 @@ impl TypeContext<'_> {
         self.state.depth += 1;
         let result = self.expression_inner(expr, expected);
         self.state.depth -= 1;
-        let info = result.map_err(|e| self.diagnostic(e, Some(expr.span), self.file))?;
+        let mut info = result.map_err(|e| self.diagnostic(e, Some(expr.span), self.file))?;
+        expr.annotation.resolved = Some(info);
+        if diverges(expr, self.types) {
+            let never = self.types.builtin(B::Never);
+            info = self.value(never);
+        }
         if let Some(expected) = expected {
             check_assignable(expected, info.ty, self.types)
                 .map_err(|e| self.diagnostic(e, Some(expr.span), self.file))?;
@@ -170,7 +331,7 @@ impl TypeContext<'_> {
                 Literal::Character(_) => self.types.builtin(B::Char),
                 Literal::String(_) => self.types.builtin(B::String),
                 Literal::Null => expected
-                    .filter(|t| matches!(self.types.get(*t), Ok(T::Pointer(_))))
+                    .filter(|t| matches!(self.types.container(*t), Ok((T::Pointer(_), _))))
                     .ok_or_else(|| type_error("null requires a pointer context"))?,
             },
             E::QualifiedIdentifier(name) => {
@@ -206,6 +367,19 @@ impl TypeContext<'_> {
                     None
                 };
                 let info = self.expression(&mut u.expression, hint)?;
+                if matches!(self.types.get(info.ty)?, T::Builtin(B::Never)) {
+                    return Ok(info);
+                }
+                if self.types.is_symbolic(info.ty)?
+                    && matches!(u.operator, O::Minus | O::Tilde | O::LogicalNot)
+                {
+                    let ty = if u.operator == O::LogicalNot {
+                        self.types.builtin(B::Boolean)
+                    } else {
+                        info.ty
+                    };
+                    return Ok(self.value(ty));
+                }
                 match u.operator {
                     O::Minus if numeric(self.types.get(info.ty)?) => info.ty,
                     O::Tilde if integral(self.types.get(info.ty)?) => info.ty,
@@ -213,15 +387,19 @@ impl TypeContext<'_> {
                         info.ty
                     }
                     O::AddressOf => {
-                        if info.category != C::MutablePlace {
-                            return Err(type_error(
-                                "address requires a mutable place; immutable values cannot be addressed",
-                            ));
+                        if info.category == C::Value {
+                            return Err(type_error("address requires a place"));
                         }
-                        self.types.intern(T::Pointer(info.ty))
+                        let pointer = self.types.intern(T::Pointer(info.ty));
+                        if info.category == C::MutablePlace {
+                            pointer
+                        } else {
+                            self.types.intern(T::Readonly(pointer))
+                        }
                     }
                     O::Dereference => {
-                        let T::Pointer(pointee) = self.types.get(info.ty)? else {
+                        let (container, readonly) = self.types.container(info.ty)?;
+                        let T::Pointer(pointee) = container else {
                             return Err(type_error("dereference operand must be a pointer"));
                         };
                         if self.types.is_opaque(*pointee)? {
@@ -229,7 +407,11 @@ impl TypeContext<'_> {
                         }
                         return Ok(ExpressionInfo {
                             ty: *pointee,
-                            category: C::MutablePlace,
+                            category: if readonly {
+                                C::ReadonlyPlace
+                            } else {
+                                C::MutablePlace
+                            },
                             type_value: None,
                         });
                     }
@@ -247,7 +429,31 @@ impl TypeContext<'_> {
                         | O::LesserEqual
                 );
                 let shift = matches!(b.operator, O::LeftShift | O::RightShift);
-                let hint = if comparison { None } else { expected };
+                let logical = matches!(b.operator, O::LogicalAnd | O::LogicalOr);
+                let hint = if comparison {
+                    None
+                } else if logical {
+                    Some(self.types.builtin(B::Boolean))
+                } else {
+                    let integer_only = matches!(
+                        b.operator,
+                        O::Percent
+                            | O::Ampersand
+                            | O::Pipe
+                            | O::Caret
+                            | O::LeftShift
+                            | O::RightShift
+                    );
+                    expected.filter(|t| {
+                        self.types.get(*t).is_ok_and(|ty| {
+                            if integer_only {
+                                integral(ty)
+                            } else {
+                                numeric(ty)
+                            }
+                        })
+                    })
+                };
                 // Obtain context from a typed right operand when the left is a literal.
                 let contextual_left = matches!(b.left.kind, E::Literal(_))
                     || matches!(&b.left.kind,E::UnaryExpression(u) if matches!(u.expression.kind,E::Literal(_)));
@@ -257,7 +463,9 @@ impl TypeContext<'_> {
                     && !shift
                 {
                     let right = self.expression(&mut b.right, None)?;
-                    let left = self.expression(&mut b.left, Some(right.ty))?;
+                    let context = (!matches!(self.types.get(right.ty)?, T::Builtin(B::Never)))
+                        .then_some(right.ty);
+                    let left = self.expression(&mut b.left, context)?;
                     (left, right)
                 } else {
                     let left = self.expression(&mut b.left, hint)?;
@@ -265,31 +473,89 @@ impl TypeContext<'_> {
                         b.operator,
                         O::Plus | O::Minus | O::Star | O::Slash | O::Percent
                     ) && !numeric(self.types.get(left.ty)?)
+                        && !matches!(self.types.get(left.ty)?, T::Builtin(B::Never))
+                        && !self.types.is_symbolic(left.ty)?
                     {
                         return Err(type_error("invalid binary operand type"));
                     }
-                    let right =
-                        self.expression(&mut b.right, if shift { None } else { Some(left.ty) })?;
+                    let context = if shift {
+                        None
+                    } else if matches!(self.types.get(left.ty)?, T::Builtin(B::Never)) {
+                        hint
+                    } else {
+                        Some(left.ty)
+                    };
+                    let right = self.expression(&mut b.right, context)?;
                     (left, right)
                 };
-                let lt = self.types.get(left.ty)?;
-                if matches!(lt, T::Parameter(_)) {
-                    return Err(type_error(
-                        "operations requiring type specialization are not implemented",
-                    ));
+                let left_never = matches!(self.types.get(left.ty)?, T::Builtin(B::Never));
+                let right_never = matches!(self.types.get(right.ty)?, T::Builtin(B::Never));
+                if left_never && right_never {
+                    return Ok(left);
+                }
+                let operand = if left_never { right.ty } else { left.ty };
+                let lt = self.types.get(operand)?;
+                if matches!(b.operator, O::Percent | O::Slash)
+                    && super::constant::is_zero(&b.right, self.types)?
+                {
+                    return Err(type_error(if b.operator == O::Percent {
+                        "constant remainder by zero"
+                    } else {
+                        "constant division by zero"
+                    }));
+                }
+                if shift
+                    && super::constant::integer_as_i128(&b.right, self.types)?
+                        .is_some_and(|n| n < 0)
+                {
+                    return Err(type_error("shift count is out of range"));
+                }
+                if self.types.is_symbolic(left.ty)? || self.types.is_symbolic(right.ty)? {
+                    for operand in [left.ty, right.ty] {
+                        if !self.types.is_symbolic(operand)?
+                            && !matches!(self.types.get(operand)?, T::Builtin(B::Never))
+                        {
+                            let ty = self.types.get(operand)?;
+                            let valid = if logical {
+                                matches!(ty, T::Builtin(B::Boolean))
+                            } else if shift
+                                || matches!(
+                                    b.operator,
+                                    O::Percent | O::Ampersand | O::Pipe | O::Caret
+                                )
+                            {
+                                integral(ty)
+                            } else if matches!(b.operator, O::DoubleEquals | O::Different) {
+                                numeric(ty)
+                                    || matches!(
+                                        ty,
+                                        T::Builtin(B::Char | B::Boolean | B::String | B::Void)
+                                    )
+                                    || matches!(self.types.container(operand)?, (T::Pointer(_), _))
+                            } else if comparison {
+                                numeric(ty) || matches!(ty, T::Builtin(B::Char))
+                            } else {
+                                numeric(ty)
+                            };
+                            if !valid {
+                                return Err(type_error("invalid binary operand type"));
+                            }
+                        }
+                    }
+                    let ty = if comparison || logical {
+                        self.types.builtin(B::Boolean)
+                    } else if self.types.is_symbolic(left.ty)? {
+                        left.ty
+                    } else {
+                        right.ty
+                    };
+                    return Ok(self.value(ty));
                 }
                 match b.operator {
-                    O::Plus | O::Minus | O::Star | O::Slash if numeric(lt) => {
-                        if b.operator == O::Slash
-                            && (super::constant::is_zero(&b.right, self.types)?)
-                        {
-                            return Err(type_error("constant division by zero"));
-                        }
-                        left.ty
-                    }
+                    O::Plus | O::Minus | O::Star | O::Slash if numeric(lt) => left.ty,
                     O::Percent | O::Ampersand | O::Pipe | O::Caret if integral(lt) => left.ty,
                     O::LeftShift | O::RightShift
-                        if integral(lt) && integral(self.types.get(right.ty)?) =>
+                        if integral(lt) && (right_never || integral(self.types.get(right.ty)?)) =>
                     {
                         if let Some(count) = super::constant::integer_as_i128(&b.right, self.types)?
                         {
@@ -315,7 +581,8 @@ impl TypeContext<'_> {
                                 lt,
                                 T::Builtin(B::Boolean | B::Char | B::String | B::Void)
                                     | T::Pointer(_)
-                            ) =>
+                            )
+                            || matches!(self.types.container(operand)?, (T::Pointer(_), _)) =>
                     {
                         self.types.builtin(B::Boolean)
                     }
@@ -331,6 +598,19 @@ impl TypeContext<'_> {
                 let info = self.expression(receiver, None)?;
                 let owner = info.type_value.unwrap_or(info.ty);
                 self.types.builtin(B::Usize);
+                let canonical = self.types.canonical(owner)?;
+                if matches!(
+                    self.types.get(canonical)?,
+                    T::Parameter(_)
+                        | T::TypeResult { .. }
+                        | T::MemberResult { .. }
+                        | T::IndexResult { .. }
+                ) {
+                    self.types.intern(T::MemberResult {
+                        owner: canonical,
+                        spelling: accessed_identifier.clone(),
+                    });
+                }
                 let selected = member(owner, accessed_identifier, self.types)?;
                 match selected.kind {
                     MemberKind::EnumVariant(_) if info.type_value.is_none() => {
@@ -346,7 +626,10 @@ impl TypeContext<'_> {
                 };
                 return Ok(ExpressionInfo {
                     ty: selected.ty,
-                    category: if matches!(selected.kind, MemberKind::Field(_)) {
+                    category: if matches!(
+                        selected.kind,
+                        MemberKind::Field(_) | MemberKind::Dependent
+                    ) {
                         info.category
                     } else {
                         C::Value
@@ -389,8 +672,8 @@ impl TypeContext<'_> {
                 owner
             }
             E::ArrayLiteral { elements } => {
-                let contextual = expected.and_then(|t| match self.types.get(t) {
-                    Ok(T::Array { element, length }) => Some((*element, *length)),
+                let contextual = expected.and_then(|t| match self.types.container(t) {
+                    Ok((T::Array { element, length }, _)) => Some((*element, *length)),
                     _ => None,
                 });
                 if let Some((_, length)) = contextual
@@ -400,26 +683,42 @@ impl TypeContext<'_> {
                 }
                 let element = if let Some((element, _)) = contextual {
                     element
-                } else if let Some(first) = elements.first_mut() {
-                    self.expression(first, None)?.ty
+                } else if !elements.is_empty() {
+                    let mut inferred = None;
+                    for value in elements.iter_mut() {
+                        let info = self.expression(value, None)?;
+                        if !matches!(self.types.get(info.ty)?, T::Builtin(B::Never)) {
+                            inferred = Some(info.ty);
+                            break;
+                        }
+                    }
+                    let Some(element) = inferred else {
+                        let never = self.types.builtin(B::Never);
+                        return Ok(self.value(never));
+                    };
+                    element
                 } else {
                     return Err(type_error("empty array requires a context"));
                 };
                 for value in elements.iter_mut() {
                     self.expression(value, Some(element))?;
                 }
-                self.types.intern(T::Array {
+                let array = self.types.intern(T::Array {
                     element,
                     length: elements.len() as u64,
-                })
+                });
+                if expected
+                    .is_some_and(|t| self.types.container(t).is_ok_and(|(_, readonly)| readonly))
+                {
+                    self.types.intern(T::Readonly(array))
+                } else {
+                    array
+                }
             }
             E::IndexAccess { object, index } => {
                 let receiver = self.expression(object, None)?;
-                let (element, length, category) = match self.types.get(receiver.ty)? {
-                    T::Array { element, length } => (*element, Some(*length), receiver.category),
-                    T::Slice(element) => (*element, None, C::MutablePlace),
-                    _ => return Err(type_error("receiver is not indexable")),
-                };
+                self.prepare_index(receiver.ty)?;
+                let (element, length, category) = indexed(receiver, self.types)?;
                 self.index(index, length, false)?;
                 return Ok(ExpressionInfo {
                     ty: element,
@@ -434,11 +733,8 @@ impl TypeContext<'_> {
                 inclusive,
             } => {
                 let receiver = self.expression(object, None)?;
-                let (element, length) = match self.types.get(receiver.ty)? {
-                    T::Array { element, length } => (*element, Some(*length)),
-                    T::Slice(element) => (*element, None),
-                    _ => return Err(type_error("receiver does not support slicing")),
-                };
+                self.prepare_index(receiver.ty)?;
+                let (element, length, category) = indexed(receiver, self.types)?;
                 let from = if let Some(start) = start {
                     self.index(start, length, true)?;
                     super::constant::integer_as_i128(start, self.types)?
@@ -448,7 +744,15 @@ impl TypeContext<'_> {
                 let to = if let Some(end) = end {
                     self.index(end, length, !*inclusive)?;
                     super::constant::integer_as_i128(end, self.types)?
-                        .map(|n| if *inclusive { n + 1 } else { n })
+                        .map(|n| {
+                            if *inclusive {
+                                n.checked_add(1)
+                                    .ok_or_else(|| type_error("inclusive slice bound overflows"))
+                            } else {
+                                Ok(n)
+                            }
+                        })
+                        .transpose()?
                 } else {
                     length.map(|n| n as i128)
                 };
@@ -457,7 +761,12 @@ impl TypeContext<'_> {
                 {
                     return Err(type_error("slice bounds are reversed"));
                 }
-                self.types.intern(T::Slice(element))
+                let slice = self.types.intern(T::Slice(element));
+                if category == C::ReadonlyPlace {
+                    self.types.intern(T::Readonly(slice))
+                } else {
+                    slice
+                }
             }
             E::Cast {
                 expr: source,
@@ -474,14 +783,10 @@ impl TypeContext<'_> {
                     },
                 )?;
                 let from = self.types.get(info.ty)?;
-                let to = self.types.get(target)?;
-                let allowed = (numeric(from) && numeric(to))
-                    || match (from, to) {
-                        (T::Pointer(a), T::Pointer(b)) => {
-                            a == b || self.types.is_opaque(*a)? || self.types.is_opaque(*b)?
-                        }
-                        _ => info.ty == target,
-                    };
+                let allowed = cast_allowed(info.ty, target, self.types)?;
+                if matches!(from, T::Builtin(B::Never)) {
+                    return Ok(info);
+                }
                 if !allowed {
                     return Err(type_error("unsupported cast"));
                 }
@@ -496,6 +801,16 @@ impl TypeContext<'_> {
         };
         Ok(self.value(ty))
     }
+    fn prepare_index(&mut self, owner: TypeId) -> anyhow::Result<()> {
+        let owner = self.types.canonical(owner)?;
+        if matches!(
+            self.types.get(owner)?,
+            T::Parameter(_) | T::TypeResult { .. } | T::MemberResult { .. } | T::IndexResult { .. }
+        ) {
+            self.types.intern(T::IndexResult { owner });
+        }
+        Ok(())
+    }
     fn index(
         &mut self,
         expr: &mut Expression,
@@ -503,7 +818,10 @@ impl TypeContext<'_> {
         allow_end: bool,
     ) -> anyhow::Result<()> {
         let info = self.expression(expr, None)?;
-        if !integral(self.types.get(info.ty)?) {
+        if !integral(self.types.get(info.ty)?)
+            && !matches!(self.types.get(info.ty)?, T::Builtin(B::Never))
+            && !self.types.is_symbolic(info.ty)?
+        {
             return Err(at_span(
                 type_error("index/bound requires an integer"),
                 expr.span,
