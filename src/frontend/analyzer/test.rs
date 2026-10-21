@@ -2299,6 +2299,7 @@ mod name_resolution {
                 TypeExpressionKind::Function {
                     argument_types,
                     return_type,
+                    ..
                 } => {
                     for ty in argument_types {
                         self.ty(ty);
@@ -2310,6 +2311,7 @@ mod name_resolution {
                         self.ty(ty);
                     }
                 }
+                TypeExpressionKind::Readonly(inner) => self.ty(inner),
                 TypeExpressionKind::Pointer { pointed_type } => self.ty(pointed_type),
                 TypeExpressionKind::Array { element_type, .. }
                 | TypeExpressionKind::Slice { element_type } => self.ty(element_type),
@@ -2777,10 +2779,9 @@ mod type_resolution {
         "fn f() { const x := 1; x = 2; }",
         "immutable"
     );
-    err!(
-        immutable_address,
-        "fn f() { const x := 1; p := x&; }",
-        "immutable"
+    ok!(
+        immutable_address_is_readonly,
+        "fn f() { const x := 1; p: const *int32 = x&; }"
     );
     err!(opaque_dereference, "p: *void; x := p*;", "opaque");
     err!(pointer_index, "p: *int32; x := p[0];", "index");
@@ -2911,10 +2912,9 @@ mod type_resolution {
         "comp A: type = struct { x: int32 }; fn f() { const a: A = A { x: 1 }; a.x = 2; }",
         "immutable"
     );
-    err!(
-        immutable_array_index,
-        "fn f() { const a := [1]; a[0] = 2; }",
-        "immutable"
+    ok!(
+        const_binding_mutable_array_elements,
+        "fn f() { const a := [1]; a[0] = 2; }"
     );
     err!(
         constant_float_overflow,
@@ -2964,6 +2964,301 @@ mod type_resolution {
         "member"
     );
     err!(bad_index_type, "a := [1]; x := a[true];", "integer");
+
+    mod independent_mutability {
+        use super::*;
+
+        fn pass(source: &str) {
+            analyzer(source)
+                .analyze()
+                .unwrap_or_else(|e| panic!("{source}\n{e:#}"));
+        }
+
+        #[test]
+        fn pointer_binding_and_pointee_matrix() {
+            for binding in ["", "const "] {
+                pass(&format!(
+                    "fn f() {{ x := 1; {binding}a: *int32 = x&; (a*) = 2; }}"
+                ));
+                pass(&format!(
+                    "fn f() {{ const x := 1; {binding}a: const *int32 = x&; y := a*; }}"
+                ));
+                bad(
+                    &format!("fn f() {{ const x := 1; {binding}a: const *int32 = x&; (a*) = 2; }}"),
+                    "immutable",
+                );
+            }
+            pass("fn f() { const x := 1; const y := 2; a: const *int32 = x&; a = y&; }");
+            bad(
+                "fn f() { x := 1; const a: *int32 = x&; a = x&; }",
+                "immutable",
+            );
+            bad(
+                "fn f() { const x := 1; const a: const *int32 = x&; a = x&; }",
+                "immutable",
+            );
+        }
+
+        #[test]
+        fn array_binding_and_element_matrix() {
+            for binding in ["", "const "] {
+                pass(&format!(
+                    "fn f() {{ {binding}a: int32[2] = [1, 2]; a[0] = 3; v := a[..]; v[0] = 4; }}"
+                ));
+                pass(&format!(
+                    "fn f() {{ {binding}a: const int32[2] = [1, 2]; v: const int32[] = a[..]; x := v[0]; n := a.len; }}"
+                ));
+                bad(
+                    &format!("fn f() {{ {binding}a: const int32[2] = [1, 2]; a[0] = 3; }}"),
+                    "immutable",
+                );
+            }
+            pass("fn f() { a: const int32[1] = [1]; a = [2]; }");
+            bad(
+                "fn f() { const a: const int32[1] = [1]; a = [2]; }",
+                "immutable",
+            );
+            bad("fn f() { const a: int32[1] = [1]; a = [2]; }", "immutable");
+        }
+
+        #[test]
+        fn slice_binding_and_element_matrix() {
+            for binding in ["", "const "] {
+                pass(&format!(
+                    "fn f() {{ a := [1]; {binding}v: int32[] = a[..]; v[0] = 2; }}"
+                ));
+                pass(&format!(
+                    "fn f() {{ a: const int32[1] = [1]; {binding}v: const int32[] = a[..]; x := v[0]; n := v.len; }}"
+                ));
+                bad(
+                    &format!(
+                        "fn f() {{ a: const int32[1] = [1]; {binding}v: const int32[] = a[..]; v[0] = 2; }}"
+                    ),
+                    "immutable",
+                );
+            }
+            pass("fn f() { a: const int32[1] = [1]; v := a[..]; v = a[..]; }");
+            bad(
+                "fn f() { a := [1]; const v := a[..]; v = a[..]; }",
+                "immutable",
+            );
+        }
+
+        #[test]
+        fn readonly_paths_and_addressing() {
+            pass("comp S: type = struct { x: int32 }; fn f(p: const *S) int32 { return (p*).x; }");
+            pass("fn f() { a: const int32[1] = [1]; p: const *int32 = a[0]&; x := p*; }");
+            pass(
+                "fn f() { a: const int32[1] = [1]; v := a[..]; w: const int32[] = v[..]; x := w[0]; }",
+            );
+            for source in [
+                "comp S: type = struct { x: int32 }; fn f(p: const *S) { (p*).x = 2; }",
+                "fn f() { a: const int32[1] = [1]; v := a[..]; w := v[..]; w[0] = 2; }",
+                "fn f(p: const *int32[1]) { (p*)[0] = 2; }",
+                "fn f(p: const *int32[1]) { v := (p*)[..]; v[0] = 2; }",
+                "comp S: type = struct { a: int32[1] }; fn f(p: const *S) { (p*).a[0] = 2; }",
+                "comp S: type = struct { x: int32 }; fn f() { a: const S[1] = [S { x: 1 }]; a[0].x = 2; }",
+                "fn f() { a: const int32[1][1] = [[1]]; a[0][0] = 2; }",
+            ] {
+                bad(source, "immutable");
+            }
+            bad(
+                "fn f() { a: const int32[1] = [1]; p: *int32 = a[0]&; }",
+                "incompatible",
+            );
+            bad(
+                "fn f(p: const *int32[1]) { v: int32[] = (p*)[..]; }",
+                "incompatible",
+            );
+        }
+
+        #[test]
+        fn qualifications_are_layer_local() {
+            // Readonly outer storage does not requalify a pointer/slice value it contains.
+            pass("fn f(p: const **int32) { q := p*; (q*) = 2; }");
+            pass("fn f(p: const *int32[]) { v := p*; v[0] = 2; }");
+            bad("fn f(p: *const *int32) { q := p*; (q*) = 2; }", "immutable");
+            bad(
+                "fn f(p: *const int32[]) { v := p*; v[0] = 2; }",
+                "immutable",
+            );
+            pass("fn f(p: const *const *int32) { q: const *int32 = p*; x := q*; }");
+        }
+
+        #[test]
+        fn exact_compatibility_at_all_boundaries() {
+            for source in [
+                "fn f(p: const *int32) { q: *int32 = p; }",
+                "fn f(p: *int32) { q: const *int32 = p; }",
+                "fn f(p: const int32[]) { q: int32[] = p; }",
+                "fn f(p: int32[]) { q: const int32[] = p; }",
+                "fn f() { p: const int32[1] = [1]; q: int32[1] = p; }",
+                "fn f() { p: int32[1] = [1]; q: const int32[1] = p; }",
+                "fn f(p: const *int32) *int32 { return p; }",
+                "fn take(p: *int32) {} fn f(p: const *int32) { take(p); }",
+                "fn f(p: *const *int32) { q: **int32 = p; }",
+                "fn f(p: *int32) { q: const *int32 = null; q = p; }",
+            ] {
+                bad(source, "incompatible");
+            }
+        }
+
+        #[test]
+        fn casts_cannot_erase_qualifiers() {
+            for source in [
+                "fn f(p: const *int32) { q := p as *int32; }",
+                "fn f(p: *int32) { q := p as const *int32; }",
+                "fn f(p: const *int32) { q := p as *void; }",
+                "fn f(p: *const *int32) { q := p as *void; }",
+                "fn f(p: const int32[]) { q := p as int32[]; }",
+                "fn f(p: const int32[1]) { q := p as int32[1]; }",
+                "comp S: type = struct { p: const *int32 }; fn f(p: *S) { q := p as *void; }",
+            ] {
+                bad(source, "cast");
+            }
+            pass(
+                "fn f(p: const *int32) { q := p as const *void; r := q as const *int32; x := r*; }",
+            );
+            pass("fn f(p: const *int32) { q := p as const *int32; same := q == null; }");
+        }
+
+        #[test]
+        fn aliases_generics_and_type_evaluation_preserve_qualification() {
+            pass("comp P: type = const *int32; fn id(p: P) const *int32 { return p; }");
+            pass(
+                "fn id(T: type, p: const *T) const *T { return p; } fn f() { const x := 1; p := id(int32, x&); y := p*; }",
+            );
+            pass(
+                "fn id(T: type, p: T) T { return p; } fn f(p: const int32[]) { q := id(const int32[], p); x := q[0]; }",
+            );
+            pass(
+                "comp fn View(T: type) type { return const T[]; } comp V: type = View(int32); fn f(v: V) const int32[] { return v; }",
+            );
+            bad(
+                "fn id(T: type, p: const *T) const *T { return p; } fn f() { const x := 1; p := id(int32, x&); (p*) = 2; }",
+                "immutable",
+            );
+            bad("comp A: type = struct { a: const A[1] };", "cycle");
+        }
+
+        #[test]
+        fn qualification_does_not_bypass_initialization() {
+            for source in [
+                "fn f() { a: const int32[1]; x := a[0]; }",
+                "fn f() { a: const int32[1]; v := a[..]; }",
+                "fn f() { a: const int32[1]; p := a[0]&; x := a[0]; }",
+                "fn f() { a: const int32[1]; const p := a&; x := a[0]; }",
+            ] {
+                analysis_bad(source, "uninitialized");
+            }
+            pass("fn f() { a: const int32[1]; a = [1]; x := a[0]; }");
+            pass("fn f() { const a: int32[1] = [1]; a[0] = 2; x := a[0]; }");
+        }
+
+        #[test]
+        fn readonly_annotation_corruption_is_rejected() {
+            use crate::frontend::analysis_annotation::ValueCategory as C;
+            for source in [
+                "p: const *int32; p*;",
+                "a: const int32[1] = [1]; a[0];",
+                "comp S: type = struct { x: int32 }; p: const *S; (p*).x;",
+            ] {
+                let (mut a, types) = run(&format!("fn f() {{ {source} }}")).unwrap();
+                let StatementKind::FunctionDeclaration(fun) =
+                    &mut a.units[0].ast.statements[0].kind
+                else {
+                    panic!()
+                };
+                let StatementKind::ExpressionStatement(expr) = &mut fun
+                    .body
+                    .as_mut()
+                    .unwrap()
+                    .statements
+                    .last_mut()
+                    .unwrap()
+                    .kind
+                else {
+                    panic!()
+                };
+                expr.annotation.resolved.as_mut().unwrap().category = C::MutablePlace;
+                let e = crate::frontend::analyzer::validate_type_annotations(
+                    &mut a.units,
+                    &a.symbols,
+                    &types,
+                )
+                .unwrap_err();
+                assert!(e.to_string().contains("mutability"), "{e:#}");
+            }
+            for source in [
+                "const x := 1; x&;",
+                "a: const int32[1] = [1]; a[..];",
+                "p: const *int32; p as const *int32;",
+            ] {
+                let (mut a, types) = run(&format!("fn f() {{ {source} }}")).unwrap();
+                let StatementKind::FunctionDeclaration(fun) =
+                    &mut a.units[0].ast.statements[0].kind
+                else {
+                    panic!()
+                };
+                let StatementKind::ExpressionStatement(expr) = &mut fun
+                    .body
+                    .as_mut()
+                    .unwrap()
+                    .statements
+                    .last_mut()
+                    .unwrap()
+                    .kind
+                else {
+                    panic!()
+                };
+                let info = expr.annotation.resolved.as_mut().unwrap();
+                let SemanticType::Readonly(mutable) = types.get(info.ty).unwrap() else {
+                    panic!()
+                };
+                info.ty = *mutable;
+                let invalid_cast = matches!(expr.kind, ExpressionKind::Cast { .. });
+                if let ExpressionKind::Cast { target_type, .. } = &mut expr.kind {
+                    let crate::frontend::ast::type_expression::TypeExpressionKind::Readonly(inner) =
+                        &target_type.kind
+                    else {
+                        panic!()
+                    };
+                    *target_type = (**inner).clone();
+                }
+                let e = crate::frontend::analyzer::validate_type_annotations(
+                    &mut a.units,
+                    &a.symbols,
+                    &types,
+                )
+                .unwrap_err();
+                let expected = if invalid_cast {
+                    "unsupported cast"
+                } else {
+                    "mutability"
+                };
+                assert!(e.to_string().contains(expected), "{e:#}");
+            }
+        }
+
+        #[test]
+        fn semantic_identity_and_raw_validation() {
+            let mut types = SemanticTypes::default();
+            let int = types.builtin(BuiltinType::Int32);
+            let pointer = types.intern(SemanticType::Pointer(int));
+            let readonly = types.intern(SemanticType::Readonly(pointer));
+            assert_eq!(readonly, types.intern(SemanticType::Readonly(pointer)));
+            assert_ne!(readonly, pointer);
+            assert_eq!(types.canonical(readonly).unwrap(), readonly);
+            types.validate_type(readonly).unwrap();
+            for (a, b) in [(readonly, pointer), (pointer, readonly)] {
+                assert!(check_assignable(a, b, &types).is_err());
+            }
+            let invalid = types.intern(SemanticType::Readonly(int));
+            assert!(types.validate_type(invalid).is_err());
+            let invalid = types.intern(SemanticType::Readonly(TypeId(999)));
+            assert!(types.validate_type(invalid).is_err());
+        }
+    }
 
     #[test]
     fn compatibility_is_pure_and_nominal() {
@@ -3224,6 +3519,204 @@ mod type_resolution {
         exact_large_integer_divisor,
         "x: uint128 = 1 / (18446744073709551615 - 18446744073709551614);"
     );
+    mod never_regressions {
+        use super::*;
+        use crate::frontend::semantic_type::{FunctionType, SemanticType as T};
+
+        #[test]
+        fn bottom_is_directional_and_not_recursive() {
+            let mut types = SemanticTypes::default();
+            let int = types.builtin(BuiltinType::Int32);
+            let never = types.builtin(BuiltinType::Never);
+            check_assignable(int, never, &types).unwrap();
+            assert!(check_assignable(never, int, &types).is_err());
+            assert!(check_assignable(TypeId(999), never, &types).is_err());
+            let pairs = [
+                (T::Pointer(int), T::Pointer(never)),
+                (T::Slice(int), T::Slice(never)),
+                (
+                    T::Array {
+                        element: int,
+                        length: 1,
+                    },
+                    T::Array {
+                        element: never,
+                        length: 1,
+                    },
+                ),
+                (T::Tuple(vec![int]), T::Tuple(vec![never])),
+                (
+                    T::Function(FunctionType {
+                        is_comp: false,
+                        parameters: vec![],
+                        return_type: int,
+                    }),
+                    T::Function(FunctionType {
+                        is_comp: false,
+                        parameters: vec![],
+                        return_type: never,
+                    }),
+                ),
+                (
+                    T::Function(FunctionType {
+                        is_comp: false,
+                        parameters: vec![int],
+                        return_type: int,
+                    }),
+                    T::Function(FunctionType {
+                        is_comp: false,
+                        parameters: vec![never],
+                        return_type: int,
+                    }),
+                ),
+            ];
+            for (a, b) in pairs {
+                let a = types.intern(a);
+                let b = types.intern(b);
+                assert!(check_assignable(a, b, &types).is_err());
+                assert!(check_assignable(b, a, &types).is_err());
+            }
+        }
+
+        #[test]
+        fn contextual_bottom_and_eager_operands_diverge() {
+            let prefix = "fn stop() never { while (true) {}; } fn take(x: int32, y: int32) int32 { return x; } ";
+            for body in [
+                "x: int32 = stop();",
+                "x: int32; x = stop();",
+                "return stop();",
+                "return -stop();",
+                "return stop() + 1;",
+                "return 1 + stop();",
+                "return stop() && true;",
+                "return true && stop();",
+                "return take(stop(), 1);",
+                "x: int32; take(stop(), x);",
+                "x: int32; return stop() + x;",
+                "if stop() {};",
+                "while (stop()) {};",
+                "a: int32[1] = [stop()];",
+                "a: int32[1] = [1]; return a[stop()];",
+                "a: int32[1]; return a[stop()];",
+                "return stop() as int32;",
+                "[stop(), 1];",
+                "[1, stop()];",
+                "a: int32[1] = [1]; a[stop()..];",
+                "a: int32[1] = [1]; a[0..stop()];",
+                "comp S: type = struct { x: int32 }; s: S = S { x: stop() };",
+                "x: int32; defer take(x, x); return stop();",
+                "x: int32; if true { x = stop(); } else { x = 1; }; return x;",
+                "x: int32; take(1, stop()); return x;",
+            ] {
+                let source = format!("{prefix} fn f() int32 {{ {body} }}");
+                analyzer(&source)
+                    .analyze()
+                    .unwrap_or_else(|e| panic!("{source}\n{e:#}"));
+            }
+        }
+
+        #[test]
+        fn bottom_operators_do_not_adopt_unrelated_result_context() {
+            for result in ["bool", "int32", "float64", "never"] {
+                for value in [
+                    "1 + stop()",
+                    "stop() + 1",
+                    "1 << stop()",
+                    "1 & stop()",
+                    "true && stop()",
+                    "stop() == 1",
+                ] {
+                    let source = format!("fn stop() never; fn f() {result} {{ return {value}; }}");
+                    analyzer(&source)
+                        .analyze()
+                        .unwrap_or_else(|e| panic!("{source}\n{e:#}"));
+                }
+            }
+        }
+
+        #[test]
+        fn never_returns_and_normal_returns_are_distinct() {
+            for source in ["fn f() never { return; }", "fn f() never { return 1; }"] {
+                bad(source, "incompatible types");
+            }
+            analysis_bad("fn f() never {}", "never function cannot return normally");
+            analyzer("fn stop() never { while (true) {}; } fn f() never { return stop(); }")
+                .analyze()
+                .unwrap();
+            bad("fn stop() never; x := stop();", "never cannot be stored");
+        }
+
+        #[test]
+        fn short_circuit_divergence_is_conditional() {
+            for body in ["true && stop();", "false || stop();"] {
+                analyzer(&format!("fn stop() never; fn f() int32 {{ {body} }}"))
+                    .analyze()
+                    .unwrap();
+            }
+            for body in [
+                "false && stop();",
+                "true || stop();",
+                "b && stop();",
+                "b || stop();",
+            ] {
+                analysis_bad(
+                    &format!("fn stop() never; fn f(b: bool) int32 {{ {body} }}"),
+                    "all paths",
+                );
+            }
+            analysis_bad(
+                "fn stop() never; fn f(b: bool) int32 { x: int32; take(b && stop(), x); } fn take(b: bool, x: int32);",
+                "uninitialized",
+            );
+            analysis_bad(
+                "fn stop() never; fn f() int32 { x: int32; return x + stop(); }",
+                "uninitialized",
+            );
+            bad(
+                "fn stop() never; fn f() { take(stop(), true); } fn take(x: int32, y: int32);",
+                "incompatible types",
+            );
+        }
+
+        #[test]
+        fn divergent_annotations_are_validated() {
+            let (mut a, mut types) =
+                run("fn stop() never; fn take(x: int32) int32; fn f() { take(stop()); }").unwrap();
+            let StatementKind::FunctionDeclaration(f) = &mut a.units[0].ast.statements[2].kind
+            else {
+                panic!()
+            };
+            let StatementKind::ExpressionStatement(expr) =
+                &mut f.body.as_mut().unwrap().statements[0].kind
+            else {
+                panic!()
+            };
+            expr.annotation.resolved.as_mut().unwrap().ty = types.builtin(BuiltinType::Int32);
+            crate::frontend::analyzer::validate_type_annotations(&mut a.units, &a.symbols, &types)
+                .expect_err("diverging call cannot be annotated with its nominal return type");
+        }
+
+        #[test]
+        fn runtime_remainder_zero_and_inclusive_overflow() {
+            bad(
+                "fn f(x: int32) int32 { return x % 0; }",
+                "remainder by zero",
+            );
+            bad(
+                "fn f(x: int32) int32 { return x % (2 - 2); }",
+                "remainder by zero",
+            );
+            good("fn f(x: int32) int32 { return x % 2; }");
+            let max = "(((1 as int128) << 126) - 1 + ((1 as int128) << 126))";
+            bad(
+                &format!("fn f(a: int32[]) {{ a[0.={max}]; }}"),
+                "inclusive slice bound overflows",
+            );
+            good(&format!("fn f(a: int32[]) {{ a[0..{max}]; }}"));
+            good(&format!("fn f(a: int32[]) {{ a[0.=({max} - 1)]; }}"));
+        }
+    }
+
     mod completion_regressions {
         use super::*;
         use crate::frontend::analysis_annotation::BindingId;
@@ -3397,23 +3890,23 @@ mod type_resolution {
         );
         pass!(
             computed_local_type,
-            "fn choose() type { return int32; } fn f() int32 { comp T := choose(); x: T = 1; return x; }"
+            "comp fn choose() type { return int32; } fn f() int32 { comp T := choose(); x: T = 1; return x; }"
         );
         pass!(
             computed_type_parameter,
-            "fn choose(T: type) type { return T; } comp T := choose(int8); value: T = 127;"
+            "comp fn choose(T: type) type { return T; } comp T := choose(int8); value: T = 127;"
         );
         pass!(
             computed_bool_branch,
-            "fn choose(b: bool) type { if b { return int8; } else { return int32; }; } comp T := choose(true); value: T = 127;"
+            "comp fn choose(b: bool) type { if b { return int8; } else { return int32; }; } comp T := choose(true); value: T = 127;"
         );
         pass!(
             computed_aggregate_types_are_distinct,
-            "fn box(T: type) type { return struct { x: T }; } comp A := box(int8); comp B := box(int32); a: A = A { x: 1 }; b: B = B { x: 2 };"
+            "comp fn box(T: type) type { return struct { x: T }; } comp A := box(int8); comp B := box(int32); a: A = A { x: 1 }; b: B = B { x: 2 };"
         );
         pass!(
             computed_bool_forwarding,
-            "fn choose(b: bool) type { if b { return int8; } else { return int32; }; } fn forward(b: bool) type { return choose(b); } comp T := forward(true); x: T = 1;"
+            "comp fn choose(b: bool) type { if b { return int8; } else { return int32; }; } comp fn forward(b: bool) type { return choose(b); } comp T := forward(true); x: T = 1;"
         );
         err!(
             specialized_argument_mismatch,
@@ -3427,29 +3920,29 @@ mod type_resolution {
         );
         err!(
             computed_no_body,
-            "fn choose() type; comp T := choose();",
+            "comp fn choose() type; comp T := choose();",
             "body"
         );
         err!(
             computed_recursion_limit,
-            "fn choose() type { return choose(); } comp T := choose();",
+            "comp fn choose() type { return choose(); } comp T := choose();",
             "limit"
         );
         pass!(
             computed_local_alias,
-            "fn choose() type { return int32; } fn f() int32 { comp T := choose(); comp U := T; x: U = 1; return x; }"
+            "comp fn choose() type { return int32; } fn f() int32 { comp T := choose(); comp U := T; x: U = 1; return x; }"
         );
         pass!(
             computed_multi_binding,
-            "fn choose() type { return int32; } comp A, comp B := choose(), choose(); a: A = 1; b: B = 2;"
+            "comp fn choose() type { return int32; } comp A, comp B := choose(), choose(); a: A = 1; b: B = 2;"
         );
         pass!(
             computed_named_local_aggregate,
-            "fn box(T: type) type { comp Box: type = struct { x: T }; return Box; } comp A := box(int8); comp B := box(int32); a: A = A { x: 1 }; b: B = B { x: 2 };"
+            "comp fn box(T: type) type { comp Box: type = struct { x: T }; return Box; } comp A := box(int8); comp B := box(int32); a: A = A { x: 1 }; b: B = B { x: 2 };"
         );
         pass!(
             computed_cache_preserves_nominal_identity,
-            "fn box(T: type) type { return struct { x: T }; } comp A := box(int8); comp B := box(int8); a: A = A { x: 1 }; b: B = a;"
+            "comp fn box(T: type) type { return struct { x: T }; } comp A := box(int8); comp B := box(int8); a: A = A { x: 1 }; b: B = a;"
         );
         fail!(
             unreachable_break_is_invalid,
@@ -3463,14 +3956,14 @@ mod type_resolution {
         );
         #[test]
         fn computed_cross_file_type_and_generic_alias() {
-            let mut lib = analyzer("fn identity(T: type, x: T) T { return x; } fn box(T: type) type { return struct { x: T }; }").units.remove(0);
+            let mut lib = analyzer("fn identity(T: type, x: T) T { return x; } comp fn box(T: type) type { return struct { x: T }; }").units.remove(0);
             lib.source_file_id = FileId(1);
             for node in &mut lib.ast.statements {
                 if let StatementKind::FunctionDeclaration(f) = &mut node.kind {
                     f.is_pub = true;
                 }
             }
-            let main = analyzer("comp ident := lib::identity; a := ident(int8, 1); comp Box := lib::box(int32); b: Box = Box { x: 1 };").units.remove(0);
+            let main = analyzer("comp ident := lib::identity; a := ident(int8, 1); comp maker := lib::box; comp Box := maker(int32); b: Box = Box { x: 1 };").units.remove(0);
             let mut a = Analyzer::new(
                 BuildPlan {
                     files: vec![
@@ -3592,12 +4085,12 @@ mod type_resolution {
         );
         err!(
             computed_side_effect_is_rejected,
-            "fn side() bool; fn choose() type { b := side(); return int32; } comp T := choose();",
+            "fn side() bool; comp fn choose() type { b := side(); return int32; } comp T := choose();",
             "known type or bool"
         );
         err!(
             computed_uninitialized_local_is_rejected,
-            "fn choose() type { b: bool; return int32; } comp T := choose();",
+            "comp fn choose() type { b: bool; return int32; } comp T := choose();",
             "known type or bool"
         );
         #[test]
@@ -3614,6 +4107,450 @@ mod type_resolution {
             );
         }
     }
+    mod comp_function_eligibility {
+        use super::*;
+        use crate::frontend::{
+            analysis_annotation::BindingId,
+            analyzer::{
+                types::check_assignable, validation::validate as validate_type_annotations,
+            },
+            semantic_type::SemanticType as T,
+        };
+
+        #[test]
+        fn known_runtime_identity_does_not_authorize_evaluation() {
+            for source in [
+                "fn choose() type { return int32; } comp T := choose();",
+                "fn choose(T: type) type { return T; } comp T := choose(int32);",
+                "fn choose() type { return int32; } comp alias := choose; comp T := alias();",
+                "fn choose(b: bool) type { return int32; } comp fn forward(b: bool) type { return choose(b); }",
+            ] {
+                bad(source, "runtime function is not eligible");
+            }
+        }
+
+        #[test]
+        fn explicit_eligibility_supports_known_aliases_and_bounded_computation() {
+            analyzer("comp fn choose(b: bool) type { if b { return int8; } else { return int32; }; } comp alias := choose; comp T := alias(true); x: T = 127;").analyze().unwrap();
+            analyzer("comp fn choose(T: type) type { return T; } fn f() { comp alias := choose; comp T := alias(int32); value: T = 1; }").analyze().unwrap();
+        }
+
+        #[test]
+        fn eligible_type_does_not_fabricate_indirect_callee_identity() {
+            bad(
+                "comp fn choose(b: bool) type { return int32; } fn f(b: bool) { comp T := choose(b); }",
+                "known type or bool",
+            );
+            bad(
+                "fn invoke(f: comp fn() type) type { return f(); }",
+                "requires a named function",
+            );
+            bad(
+                "comp fn choose() type { return int32; } callback: comp fn() type = choose; comp T := callback();",
+                "requires a function definition",
+            );
+        }
+
+        #[test]
+        fn eligibility_is_interned_and_compatible_only_with_itself() {
+            let (_, types) = run("comp Runtime: type = fn() type; comp Eligible: type = comp fn() type; comp Again: type = comp fn() type;").unwrap();
+            let values: Vec<_> = (0..3)
+                .map(|index| {
+                    types.type_values[&BindingId::Declaration(DeclId {
+                        file_id: FileId(0),
+                        index,
+                    })]
+                })
+                .collect();
+            assert_ne!(values[0], values[1]);
+            assert_eq!(values[1], values[2]);
+            assert!(check_assignable(values[0], values[1], &types).is_err());
+            assert!(check_assignable(values[1], values[0], &types).is_err());
+            good(
+                "comp fn choose() type { return int32; } comp Eligible: type = comp fn() type; callback: Eligible = choose;",
+            );
+            bad(
+                "comp fn choose() type { return int32; } comp Runtime: type = fn() type; callback: Runtime = choose;",
+                "incompatible",
+            );
+            bad(
+                "fn choose() type { return int32; } callback: comp fn() type = choose;",
+                "incompatible",
+            );
+        }
+
+        #[test]
+        fn generic_runtime_signatures_preserve_comp_callback_eligibility() {
+            let (a, mut types) = run("fn accept(T: type, f: comp fn(T) type) comp fn(T) type { return f; } comp fn choose(b: bool) type { return int32; } callback := accept(bool, choose);").unwrap();
+            let instance = types.generic_instances.values().next().unwrap();
+            let T::Function(signature) = types.get(instance.signature).unwrap().clone() else {
+                panic!()
+            };
+            assert!(!signature.is_comp);
+            let callback = signature.return_type;
+            assert!(matches!(types.get(callback).unwrap(), T::Function(f) if f.is_comp));
+            let T::Function(mut corrupt) = types.get(callback).unwrap().clone() else {
+                panic!()
+            };
+            corrupt.is_comp = false;
+            let corrupt = types.intern(T::Function(corrupt));
+            let mut signature = signature.clone();
+            signature.parameters[1] = corrupt;
+            signature.return_type = corrupt;
+            let corrupt = types.intern(T::Function(signature));
+            types
+                .generic_instances
+                .values_mut()
+                .next()
+                .unwrap()
+                .signature = corrupt;
+            assert!(validate_type_annotations(&a.units, &a.symbols, &types).is_err());
+            analyzer("fn identity(T: type, x: T) T { return x; } value := identity(int32, 7);")
+                .analyze()
+                .unwrap();
+        }
+
+        #[test]
+        fn declaration_and_type_annotations_validate_eligibility() {
+            let (mut a, types) = run(
+                "comp fn choose() type { return int32; } comp Callback: type = comp fn() type;",
+            )
+            .unwrap();
+            let StatementKind::FunctionDeclaration(fun) = &mut a.units[0].ast.statements[0].kind
+            else {
+                panic!()
+            };
+            fun.signature.is_comp = false;
+            assert!(validate_type_annotations(&a.units, &a.symbols, &types).is_err());
+            let (mut a, types) = run("comp Callback: type = comp fn() type;").unwrap();
+            let StatementKind::VariableDeclaration(var) = &mut a.units[0].ast.statements[0].kind
+            else {
+                panic!()
+            };
+            let crate::frontend::ast::expression::ExpressionKind::TypeValue(ty) =
+                &mut var.expression.as_mut().unwrap().kind
+            else {
+                panic!()
+            };
+            let crate::frontend::ast::type_expression::TypeExpressionKind::Function {
+                is_comp, ..
+            } = &mut ty.kind
+            else {
+                panic!()
+            };
+            *is_comp = false;
+            assert!(validate_type_annotations(&a.units, &a.symbols, &types).is_err());
+        }
+
+        #[test]
+        fn unsupported_comp_declarations_have_diagnostics_even_without_calls() {
+            bad("comp fn choose() type;", "body");
+            bad("comp fn choose() int32 { return 1; }", "must return type");
+            bad(
+                "comp fn choose() type { while (true) { return int32; }; }",
+                "bounded comp function",
+            );
+            bad("comp fn choose() type { return; }", "bounded comp function");
+            analysis_bad(
+                "comp fn choose(b: bool) type { if b { return int32; }; }",
+                "return",
+            );
+        }
+    }
+
+    mod generic_body_strategy {
+        use super::*;
+        use crate::frontend::analysis_annotation::BindingId;
+        use crate::frontend::semantic_type::SemanticType as T;
+
+        #[test]
+        fn symbolic_arithmetic_is_rechecked_per_instance() {
+            good("fn add(T: type, x: T) T { return x + x; }");
+            good(
+                "fn add(T: type, x: T) T { return x + 1; } a := add(int32, 2); b := add(int8, 3);",
+            );
+            bad(
+                "fn add(T: type, x: T) T { return x + x; } a := add(bool, true);",
+                "invalid binary",
+            );
+            bad(
+                "fn add(T: type, x: T) T { return x + true; }",
+                "invalid binary",
+            );
+            bad(
+                "fn add(T: type, x: T) T { broken := true + false; return x; }",
+                "invalid binary",
+            );
+            bad(
+                "fn f(T: type, x: T) T { return true; } a := f(int32, 1);",
+                "incompatible",
+            );
+        }
+
+        #[test]
+        fn dependent_members_and_indices_are_concrete_obligations() {
+            good(
+                "fn get(T: type, x: T) int32 { return x.value; } comp S := struct { value: int32 }; a := get(S, S { value: 3 });",
+            );
+            bad(
+                "fn get(T: type, x: T) int32 { return x.value; } a := get(int32, 1);",
+                "member",
+            );
+            good("fn first(T: type, x: T) int32 { return x[0]; } a := first(int32[2], [1, 2]);");
+            bad(
+                "fn first(T: type, x: T) int32 { return x[0]; } a := first(int32, 1);",
+                "indexable",
+            );
+            bad(
+                "fn first(T: type, x: T) int32 { return x[2]; } a := first(int32[2], [1, 2]);",
+                "bounds",
+            );
+            bad(
+                "fn first(T: type, x: T) int32 { return x[true]; }",
+                "integer",
+            );
+        }
+
+        #[test]
+        fn instance_environment_is_owned_and_templates_remain_symbolic() {
+            let (a, types) = run("fn add(T: type, x: T) T { value := x + x; return value; } a := add(int32, 2); b := add(int8, 3);").unwrap();
+            assert_eq!(types.generic_instances.len(), 2);
+            let StatementKind::FunctionDeclaration(template) = &a.units[0].ast.statements[0].kind
+            else {
+                panic!()
+            };
+            let parameter = template.signature.parameters[1].annotation.binding.unwrap();
+            assert!(matches!(
+                types.get(types.bindings[&parameter].ty).unwrap(),
+                T::Parameter(_)
+            ));
+            for instance in types.generic_instances.values() {
+                assert!(instance.body.is_some());
+                assert!(
+                    !types
+                        .is_dependent(instance.bindings[&parameter].ty)
+                        .unwrap()
+                );
+                assert_ne!(
+                    instance.bindings[&parameter].ty,
+                    types.bindings[&parameter].ty
+                );
+            }
+            super::super::super::validation::validate(&a.units, &a.symbols, &types).unwrap();
+        }
+
+        #[test]
+        fn recursive_instances_and_invalid_recursive_bodies() {
+            good("fn f(T: type, x: T) T { return f(T, x); } a := f(int32, 1);");
+            good(
+                "fn f(T: type, x: T) T { return g(T, x); } fn g(U: type, x: U) U { return f(U, x); } a := f(int32, 1);",
+            );
+            bad(
+                "fn f(T: type, x: T) T { y := f(T, x); return x + x; } a := f(bool, true);",
+                "invalid binary",
+            );
+        }
+
+        #[test]
+        fn concrete_flow_and_corrupted_handoff_are_rejected() {
+            bad(
+                "fn f(T: type) T { x: T; return x; } a := f(int32);",
+                "uninitialized",
+            );
+            let (a, types) = run("fn f(T: type, x: T) T { return x; } a := f(int32, 1);").unwrap();
+            let mut corrupt = types.clone();
+            corrupt.generic_instances.values_mut().next().unwrap().body = None;
+            assert!(
+                super::super::super::validation::validate(&a.units, &a.symbols, &corrupt).is_err()
+            );
+            let mut corrupt = types.clone();
+            corrupt
+                .generic_instances
+                .values_mut()
+                .next()
+                .unwrap()
+                .bindings
+                .clear();
+            assert!(
+                super::super::super::validation::validate(&a.units, &a.symbols, &corrupt).is_err()
+            );
+            let mut corrupt = types;
+            let instance = corrupt.generic_instances.values_mut().next().unwrap();
+            let binding = instance
+                .bindings
+                .keys()
+                .copied()
+                .find(|id| matches!(id, BindingId::Local(_)))
+                .unwrap();
+            instance.bindings.get_mut(&binding).unwrap().ty = TypeId(u32::MAX);
+            assert!(
+                super::super::super::validation::validate(&a.units, &a.symbols, &corrupt).is_err()
+            );
+        }
+
+        #[test]
+        fn failed_instantiation_restores_template_facts_and_does_not_publish_a_body() {
+            let (a, mut types) = run("fn add(T: type, x: T) T { return x + x; }").unwrap();
+            let StatementKind::FunctionDeclaration(fun) = &a.units[0].ast.statements[0].kind else {
+                panic!()
+            };
+            let Some(BindingId::Declaration(template)) = fun.signature.annotation.binding else {
+                panic!()
+            };
+            let argument = types.builtin(BuiltinType::Boolean);
+            let saved_bindings = types.bindings.clone();
+            let saved_values = types.type_values.clone();
+            let saved_locals = types.locals.clone();
+            let mut context = TypeContext::new(FileId(0), &a.symbols, &mut types);
+            context.state.functions.insert(template, fun.clone());
+            let key = GenericInstanceKey {
+                template,
+                arguments: vec![argument],
+            };
+            assert!(resolve_generic_instance(&key, &mut context).is_err());
+            assert!(context.state.active_instances.is_empty());
+            assert!(!context.types.generic_instances.contains_key(&key));
+            assert_eq!(context.types.bindings, saved_bindings);
+            assert_eq!(context.types.type_values, saved_values);
+            assert_eq!(context.types.locals, saved_locals);
+        }
+
+        #[test]
+        fn expanding_instantiation_is_bounded() {
+            bad(
+                "fn f(T: type, x: T) T { return f(*T, x&)*; } a := f(int32, 1);",
+                "recursion",
+            );
+        }
+
+        #[test]
+        fn computed_pointer_and_callback_shapes_check_symbolically() {
+            good(
+                "comp fn ptr(T: type) type { return *T; } fn f(T: type, x: T) T { comp P := ptr(T); p: P = x&; return p*; } a := f(int32, 1);",
+            );
+            good(
+                "comp fn callback(T: type) type { return fn(T) -> T; } fn f(T: type, x: T) T { comp F := callback(T); cb: F; return x; } a := f(int32, 1);",
+            );
+
+            good("fn f(T: type, x: T) T { return -x; } a := f(int32, 1);");
+            bad(
+                "fn f(T: type, x: T) T { return -x; } a := f(bool, true);",
+                "unary",
+            );
+            bad(
+                "fn f(T: type, x: T[2]) T[2] { return x + x; }",
+                "invalid binary",
+            );
+            bad(
+                "fn f(T: type, x: T) bool { return x < true; }",
+                "invalid binary",
+            );
+            bad("fn f(T: type, x: T) T { return x / 0; }", "zero");
+            bad("fn f(T: type, x: T) T { return x << -1; }", "range");
+        }
+
+        #[test]
+        fn nested_computation_identity_and_boolean_recipes() {
+            let (a, types) = run("comp fn box(T: type) type { return struct { value: T }; } comp fn forward(T: type) type { return box(T); } comp A := forward(int32); comp B := forward(int32); comp C := forward(int8);").unwrap();
+            let values: Vec<_> = a.units[0].ast.statements[2..]
+                .iter()
+                .map(|node| {
+                    let StatementKind::VariableDeclaration(v) = &node.kind else {
+                        panic!()
+                    };
+                    types.type_values[&v.annotation.binding.unwrap()]
+                })
+                .collect();
+            assert_eq!(values[0], values[1]);
+            assert_ne!(values[0], values[2]);
+            assert!(
+                matches!(types.get(values[0]).unwrap(), T::Struct(fields) if matches!(types.get(fields[0].ty).unwrap(), T::Builtin(BuiltinType::Int32)))
+            );
+            good(
+                "comp fn choose(b: bool) type { if b { return int8; } else { return int32; }; } comp fn forward(b: bool) type { return choose(!b); } comp A := forward(false); x: A = 127;",
+            );
+            bad(
+                "comp fn choose(b: bool) type { if b { return int8; } else { return int32; }; } comp fn forward(b: bool) type { return choose(!b); } comp A := forward(false); x: A = 128;",
+                "range",
+            );
+            bad(
+                "comp fn loop(T: type) type { return loop(T); } comp A := loop(int32);",
+                "recursion",
+            );
+        }
+
+        #[test]
+        fn corrupted_body_and_computation_dependencies_are_rejected() {
+            let (a, mut types) =
+                run("fn f(T: type, x: T) T { return x; } a := f(int32, 1);").unwrap();
+            let body = types
+                .generic_instances
+                .values_mut()
+                .next()
+                .unwrap()
+                .body
+                .as_mut()
+                .unwrap()
+                .body
+                .as_mut()
+                .unwrap();
+            body.statements.clear();
+            assert!(
+                super::super::super::validation::validate(&a.units, &a.symbols, &types).is_err()
+            );
+            let (a, mut types) =
+                run("fn add(T: type, x: T) T { return x + x; } a := add(int32, 1);").unwrap();
+            let boolean = types.builtin(BuiltinType::Boolean);
+            let instance = types.generic_instances.values_mut().next().unwrap();
+            let StatementKind::Return(Some(values)) = &mut instance
+                .body
+                .as_mut()
+                .unwrap()
+                .body
+                .as_mut()
+                .unwrap()
+                .statements[0]
+                .kind
+            else {
+                panic!()
+            };
+            values[0].annotation.resolved.as_mut().unwrap().ty = boolean;
+            assert!(
+                super::super::super::validation::validate(&a.units, &a.symbols, &types).is_err()
+            );
+            let (a, mut types) = run("comp fn choose(b: bool) type { if b { return int8; } else { return int32; }; } comp fn forward(b: bool) type { return choose(b); }").unwrap();
+            let recipe = types
+                .types
+                .iter_mut()
+                .find(|t| matches!(t, T::TypeResult { .. }))
+                .unwrap();
+            let T::TypeResult { arguments, .. } = recipe else {
+                unreachable!()
+            };
+            arguments.clear();
+            assert!(
+                super::super::super::validation::validate(&a.units, &a.symbols, &types).is_err()
+            );
+        }
+
+        #[test]
+        fn retained_computations_resolve_nested_types() {
+            good(
+                "comp fn choose(T: type, b: bool) type { if b { return *T; } else { return T; }; } comp fn forward(T: type, b: bool) type { comp R := choose(T, b); return R; } comp P := forward(int32, true); x := 1; p: P = x&;",
+            );
+            good(
+                "comp fn ptr(T: type) type { return *T; } comp fn wrap(T: type) type { comp P := ptr(T); return struct { values: P[2] }; } fn f(T: type, x: T) T { comp P := wrap(T); return x; } a := f(int32, 1);",
+            );
+            good(
+                "comp fn ptr(T: type) type { return *T; } comp fn forward(T: type) type { return ptr(T); } comp P := forward(int32); x := 1; p: P = x&;",
+            );
+            bad(
+                "comp fn choose(b: bool) type { if b { return int8; } else { return int32; }; } fn f(b: bool) { comp T := choose(b); x: T = 1; }",
+                "known type or bool",
+            );
+        }
+    }
+
     mod completion_acceptance {
         use super::*;
         #[test]
@@ -3622,7 +4559,7 @@ mod type_resolution {
         }
         #[test]
         fn compile_time_function_evaluation() {
-            good("fn choose() type { return int32; } comp T := choose(); value: T = 1;");
+            good("comp fn choose() type { return int32; } comp T := choose(); value: T = 1;");
         }
         #[test]
         fn definite_initialization() {
@@ -3644,6 +4581,580 @@ mod type_resolution {
             analyzer("fn f() int32 { return 1; }")
                 .analyze()
                 .expect("complete semantic analysis remains required");
+        }
+    }
+}
+
+mod generic_flow_regressions {
+    //! Full-pipeline generic flow and transactional instance-cache regressions.
+
+    use super::super::generics::{GenericInstanceKey, resolve_generic_instance};
+    use crate::{
+        build_plan::{BuildPlan, FileId, SourceFile},
+        diagnostics::{CompilerError, ErrorKind},
+        driver::CompilationUnit,
+        frontend::{
+            analysis_annotation::BindingId,
+            analyzer::{AnalyzedProject, Analyzer, TypeContext},
+            ast::statement::StatementKind,
+            parser::Parser,
+            tokenizer::Tokenizer,
+            tokens::builtin::BuiltinType,
+        },
+    };
+    use std::path::Path;
+
+    fn analyzer(source: &str) -> Analyzer {
+        let ast = Parser::with_source(
+            Tokenizer::new(source),
+            Path::new("generic_flow.fib"),
+            source,
+        )
+        .parse()
+        .unwrap_or_else(|error| panic!("fixture did not parse: {source}\n{error:#}"));
+        Analyzer::new(
+            BuildPlan {
+                files: vec![SourceFile {
+                    id: FileId(0),
+                    name: "main".to_string().into(),
+                    path: "generic_flow.fib".into(),
+                }],
+                entry: FileId(0),
+                output: "unused".into(),
+            },
+            vec![CompilationUnit {
+                source_file_id: FileId(0),
+                ast,
+            }],
+        )
+        .unwrap()
+    }
+
+    fn analyze(source: &str) -> AnalyzedProject {
+        analyzer(source).analyze().unwrap_or_else(|error| {
+            panic!("expected full analysis to succeed: {source}\n{error:#}")
+        })
+    }
+
+    fn reject(source: &str, fragment: &str) {
+        let error = analyzer(source)
+            .analyze()
+            .expect_err("invalid program passed full analysis");
+        let diagnostic = error
+            .downcast_ref::<CompilerError>()
+            .unwrap_or_else(|| panic!("expected a structured diagnostic: {error:#}"));
+        assert_eq!(diagnostic.kind, ErrorKind::Type, "{error:#}");
+        assert!(diagnostic.span.is_some(), "{error:#}");
+        assert!(
+            diagnostic.message.contains(fragment),
+            "expected {fragment:?}: {error:#}"
+        );
+    }
+
+    #[test]
+    fn dependent_return_completeness_is_checked_on_the_concrete_instance() {
+        analyze("fn f(T: type) T {} fn main() { f(void); }");
+        analyze("fn f(T: type) T {}");
+        reject(
+            "fn f(T: type) T {} fn main() { f(int32); }",
+            "return a value on all paths",
+        );
+        reject("fn f(T: type) int32 {}", "return a value on all paths");
+        reject("fn f(T: type) *T {}", "return a value on all paths");
+    }
+
+    #[test]
+    fn dependent_struct_projections_can_initialize_the_concrete_value() {
+        analyze(
+            "comp S := struct { x: int32 }; fn make(T: type) T { value: T; value.x = 1; return value; } fn main() { value := make(S); }",
+        );
+        reject(
+            "comp S := struct { x: int32, y: int32 }; fn make(T: type) T { value: T; value.x = 1; return value; } fn main() { value := make(S); }",
+            "uninitialized",
+        );
+    }
+
+    #[test]
+    fn dependent_index_projections_can_initialize_the_concrete_value() {
+        analyze(
+            "fn make(T: type) T { value: T; value[0] = 1; return value; } fn main() { value := make(int32[1]); }",
+        );
+        reject(
+            "fn make(T: type) T { value: T; value[0] = 1; return value; } fn main() { value := make(int32[2]); }",
+            "uninitialized",
+        );
+    }
+
+    #[test]
+    fn template_initializer_calls_do_not_reapply_concrete_projection_rules() {
+        analyze(
+            "comp S := struct { x: int32 }; fn make(T: type) T { value: T; value.x = 1; return value; } value := make(S);",
+        );
+    }
+
+    #[test]
+    fn template_flow_still_checks_independent_reads_and_index_addresses() {
+        reject(
+            "fn f(T: type) { value: int32; copy := value; }",
+            "uninitialized",
+        );
+        reject(
+            "fn make(T: type) T { value: T; index: int32; value[index] = 1; return value; }",
+            "uninitialized",
+        );
+        reject(
+            "fn f(T: type, b: bool) { value: int32; if b { value = 1; }; copy := value; }",
+            "uninitialized",
+        );
+    }
+
+    #[test]
+    fn template_flow_still_checks_independent_loop_and_defer_obligations() {
+        reject("fn f(T: type) { break; }", "loop");
+        reject("fn f(T: type) { continue; }", "loop");
+        reject("fn f(T: type) { defer return; }", "defer");
+        reject(
+            "fn take(value: int32); fn f(T: type) { value: int32; defer take(value); }",
+            "uninitialized",
+        );
+        analyze(
+            "fn take(value: int32); fn f(T: type) { value: int32; defer take(value); value = 1; }",
+        );
+    }
+
+    #[test]
+    fn concrete_dependent_reads_remain_initialization_obligations() {
+        reject(
+            "fn f(T: type) T { value: T; return value; } fn main() { value := f(int32); }",
+            "uninitialized",
+        );
+        analyze(
+            "comp Empty := struct {}; fn f(T: type) T { value: T; return value; } fn main() { value := f(Empty); }",
+        );
+    }
+
+    #[test]
+    fn full_analysis_rejects_invalid_recursive_specializations() {
+        analyze(
+            "fn f(T: type, x: T) T { y := g(T, x); return x + x; } fn g(U: type, x: U) U { return f(U, x); } fn main() { value := f(int32, 1); }",
+        );
+        reject(
+            "fn f(T: type, x: T) T { y := g(T, x); return x + x; } fn g(U: type, x: U) U { return f(U, x); } fn main() { value := f(bool, true); }",
+            "invalid binary",
+        );
+    }
+
+    #[test]
+    fn failed_recursive_group_rolls_back_new_siblings_but_preserves_old_instances() {
+        let mut analyzer = analyzer(
+            "fn f(T: type, x: T) T { y := g(T, x); return x + x; } fn g(U: type, x: U) U { return f(U, x); }",
+        );
+        analyzer.collect_declarations().unwrap();
+        analyzer.resolve_names().unwrap();
+        let mut types = analyzer.resolve_types().unwrap();
+        let mut functions = Vec::new();
+        for node in &analyzer.units[0].ast.statements {
+            let StatementKind::FunctionDeclaration(fun) = &node.kind else {
+                panic!("expected a function fixture");
+            };
+            let Some(BindingId::Declaration(id)) = fun.signature.annotation.binding else {
+                panic!("expected a resolved template identity");
+            };
+            functions.push((id, fun.clone()));
+        }
+        let f = functions[0].0;
+        let g = functions[1].0;
+        let int32 = types.builtin(BuiltinType::Int32);
+        let boolean = types.builtin(BuiltinType::Boolean);
+        let mut context = TypeContext::new(FileId(0), &analyzer.symbols, &mut types);
+        context.state.functions.extend(functions);
+        resolve_generic_instance(
+            &GenericInstanceKey {
+                template: f,
+                arguments: vec![int32],
+            },
+            &mut context,
+        )
+        .unwrap();
+        assert!(
+            context
+                .types
+                .generic_instances
+                .contains_key(&GenericInstanceKey {
+                    template: g,
+                    arguments: vec![int32],
+                })
+        );
+        let saved_instances = context.types.generic_instances.clone();
+        let saved_bindings = context.types.bindings.clone();
+        let saved_values = context.types.type_values.clone();
+        let saved_locals = context.types.locals.clone();
+        let saved_declarations = context.types.declarations.clone();
+
+        // g(bool) finishes using f(bool)'s provisional signature before f's
+        // arithmetic fails. Neither member of that group may survive the failure.
+        for template in [f, g] {
+            let error = resolve_generic_instance(
+                &GenericInstanceKey {
+                    template,
+                    arguments: vec![boolean],
+                },
+                &mut context,
+            )
+            .expect_err("invalid recursive group was cached as checked");
+            let diagnostic = error.downcast_ref::<CompilerError>().unwrap();
+            assert_eq!(diagnostic.kind, ErrorKind::Type);
+            assert!(diagnostic.message.contains("invalid binary"), "{error:#}");
+            assert!(context.state.active_instances.is_empty());
+            assert_eq!(context.types.generic_instances, saved_instances);
+            assert_eq!(context.types.bindings, saved_bindings);
+            assert_eq!(context.types.type_values, saved_values);
+            assert_eq!(context.types.locals, saved_locals);
+            assert_eq!(context.types.declarations, saved_declarations);
+        }
+    }
+}
+
+mod validation_regressions {
+    //! Corruption checks independent of inference and the existing analyzer suite.
+    use super::super::validation::validate;
+    use crate::{
+        build_plan::{BuildPlan, FileId, SourceFile},
+        diagnostics::{CompilerError, ErrorKind},
+        driver::CompilationUnit,
+        frontend::{
+            analysis_annotation::{ExpressionInfo, ValueCategory as C},
+            analyzer::{AnalyzedProject, Analyzer},
+            ast::{
+                expression::{Expression, ExpressionKind as E},
+                function_declaration::FunctionDeclaration,
+                statement::StatementKind as S,
+            },
+            parser::Parser,
+            tokenizer::Tokenizer,
+            tokens::{Literal, builtin::BuiltinType as B},
+        },
+    };
+    use std::path::Path;
+
+    fn analyze(source: &str) -> AnalyzedProject {
+        let ast = Parser::with_source(Tokenizer::new(source), Path::new("validation.fib"), source)
+            .parse()
+            .unwrap_or_else(|error| panic!("fixture did not parse: {source}\n{error:#}"));
+        Analyzer::new(
+            BuildPlan {
+                files: vec![SourceFile {
+                    id: FileId(0),
+                    name: "main".to_string().into(),
+                    path: "validation.fib".into(),
+                }],
+                entry: FileId(0),
+                output: "unused".into(),
+            },
+            vec![CompilationUnit {
+                source_file_id: FileId(0),
+                ast,
+            }],
+        )
+        .unwrap()
+        .analyze()
+        .unwrap_or_else(|error| panic!("fixture failed analysis: {source}\n{error:#}"))
+    }
+
+    fn reject(project: &AnalyzedProject, fragment: &str) {
+        let error = validate(&project.units, &project.symbols, &project.types)
+            .expect_err("corrupt annotations passed independent validation");
+        let diagnostic = error
+            .downcast_ref::<CompilerError>()
+            .unwrap_or_else(|| panic!("expected a structured type diagnostic: {error:#}"));
+        assert_eq!(diagnostic.kind, ErrorKind::Type, "{error:#}");
+        assert!(diagnostic.span.is_some(), "{error:#}");
+        assert!(diagnostic.message.contains(fragment), "{error:#}");
+    }
+
+    fn function(project: &mut AnalyzedProject, index: usize) -> &mut FunctionDeclaration {
+        let S::FunctionDeclaration(fun) = &mut project.units[0].ast.statements[index].kind else {
+            panic!("expected function");
+        };
+        fun
+    }
+
+    fn returns(fun: &mut FunctionDeclaration) -> &mut Option<Vec<Expression>> {
+        let S::Return(values) = &mut fun.body.as_mut().unwrap().statements[0].kind else {
+            panic!("expected return");
+        };
+        values
+    }
+
+    #[test]
+    fn concrete_instance_return_literals_are_not_trusted() {
+        for builtin in [B::Boolean, B::Int64] {
+            let mut project = analyze("fn f(T: type) T { return 1; } value := f(int32);");
+            let ty = project.types.builtin(builtin.clone());
+            let instance = project.types.generic_instances.values_mut().next().unwrap();
+            returns(instance.body.as_mut().unwrap()).as_mut().unwrap()[0]
+                .annotation
+                .resolved
+                .as_mut()
+                .unwrap()
+                .ty = ty;
+            reject(
+                &project,
+                if builtin == B::Boolean {
+                    "literal kind"
+                } else {
+                    "literal context"
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn return_types_are_directional_and_scoped_to_each_function() {
+        let mut project = analyze("fn f() int32 { return 1; } fn g() bool { return true; }");
+        let boolean = project.types.builtin(B::Boolean);
+        let expr = &mut returns(function(&mut project, 0)).as_mut().unwrap()[0];
+        expr.kind = E::Literal(Literal::Boolean(true));
+        expr.annotation.resolved = Some(ExpressionInfo {
+            ty: boolean,
+            category: C::Value,
+            type_value: None,
+        });
+        reject(&project, "incompatible");
+
+        let mut project = analyze("fn f() never { return f(); }");
+        let int32 = project.types.builtin(B::Int32);
+        let expr = &mut returns(function(&mut project, 0)).as_mut().unwrap()[0];
+        expr.kind = E::Literal(Literal::Integer(1));
+        expr.annotation.resolved = Some(ExpressionInfo {
+            ty: int32,
+            category: C::Value,
+            type_value: None,
+        });
+        reject(&project, "incompatible");
+    }
+
+    #[test]
+    fn returns_cannot_change_container_qualification() {
+        for (from, to) in [
+            ("const *int32", "*int32"),
+            ("const int32[]", "int32[]"),
+            ("const int32[1]", "int32[1]"),
+        ] {
+            let source = format!("fn f(p: {from}, q: {to}) {from} {{ q; return p; }}");
+            let mut project = analyze(&source);
+            let nodes = &mut function(&mut project, 0).body.as_mut().unwrap().statements;
+            let S::ExpressionStatement(replacement) = &nodes[0].kind else {
+                panic!("expected expression");
+            };
+            let replacement = replacement.clone();
+            let S::Return(Some(values)) = &mut nodes[1].kind else {
+                panic!("expected return");
+            };
+            values[0] = replacement;
+            reject(&project, "incompatible");
+        }
+    }
+
+    #[test]
+    fn return_outside_a_function_is_not_annotation_complete() {
+        let mut project = analyze("fn f() { return; }");
+        let statement = function(&mut project, 0).body.as_ref().unwrap().statements[0].clone();
+        project.units[0].ast.statements.push(statement);
+        reject(&project, "return outside function");
+    }
+
+    #[test]
+    fn symbolic_literal_defaults_are_still_validated() {
+        let mut project = analyze("fn f(T: type) T { return 1; }");
+        let int64 = project.types.builtin(B::Int64);
+        returns(function(&mut project, 0)).as_mut().unwrap()[0]
+            .annotation
+            .resolved
+            .as_mut()
+            .unwrap()
+            .ty = int64;
+        reject(&project, "literal context");
+    }
+
+    #[test]
+    fn comp_returns_must_still_produce_metatype_values() {
+        let mut project = analyze("comp fn f() type { return int32; }");
+        let boolean = project.types.builtin(B::Boolean);
+        let expr = &mut returns(function(&mut project, 0)).as_mut().unwrap()[0];
+        expr.kind = E::Literal(Literal::Boolean(true));
+        expr.annotation.resolved = Some(ExpressionInfo {
+            ty: boolean,
+            category: C::Value,
+            type_value: None,
+        });
+        reject(&project, "incompatible");
+    }
+
+    #[test]
+    fn return_arity_and_tuple_elements_are_checked() {
+        let mut project = analyze("fn f() int32 { return 1; }");
+        *returns(function(&mut project, 0)) = None;
+        reject(&project, "empty return");
+
+        let mut project = analyze("fn f() int32 { return 1; }");
+        let values = returns(function(&mut project, 0)).as_mut().unwrap();
+        values.push(values[0].clone());
+        reject(&project, "arity");
+
+        let mut project = analyze("fn f() (int32, bool) { return 1, true; }");
+        returns(function(&mut project, 0)).as_mut().unwrap().pop();
+        reject(&project, "incompatible");
+
+        let mut project = analyze("fn f() (int32, bool) { return 1, true; }");
+        returns(function(&mut project, 0))
+            .as_mut()
+            .unwrap()
+            .swap(0, 1);
+        reject(&project, "incompatible");
+
+        let mut project = analyze("fn f() (int32, bool) { return 1, true; }");
+        let values = returns(function(&mut project, 0)).as_mut().unwrap();
+        values.push(values[0].clone());
+        reject(&project, "arity");
+    }
+
+    #[test]
+    fn literals_must_match_their_kind_and_fit_their_context() {
+        for (source, replacement) in [
+            ("fn f() int8 { return 1; }", Literal::Integer(128)),
+            ("fn f() uint8 { return 1; }", Literal::Integer(256)),
+            ("fn f() float16 { return 1.0; }", Literal::Float(70000.0)),
+        ] {
+            let mut project = analyze(source);
+            returns(function(&mut project, 0)).as_mut().unwrap()[0].kind = E::Literal(replacement);
+            reject(&project, "out of range");
+        }
+        for source in [
+            "fn f() bool { return true; }",
+            "fn f() char { return 'a'; }",
+            "fn f() string { return \"x\"; }",
+            "fn f() *int32 { return null; }",
+        ] {
+            let mut project = analyze(source);
+            let int32 = project.types.builtin(B::Int32);
+            returns(function(&mut project, 0)).as_mut().unwrap()[0]
+                .annotation
+                .resolved
+                .as_mut()
+                .unwrap()
+                .ty = int32;
+            reject(&project, "literal kind");
+        }
+    }
+
+    #[test]
+    fn array_return_elements_use_the_array_context() {
+        let mut project = analyze("fn f() int8[1] { return [1]; }");
+        let int32 = project.types.builtin(B::Int32);
+        let E::ArrayLiteral { elements } =
+            &mut returns(function(&mut project, 0)).as_mut().unwrap()[0].kind
+        else {
+            panic!("expected array literal");
+        };
+        elements[0].annotation.resolved.as_mut().unwrap().ty = int32;
+        reject(&project, "literal context");
+    }
+
+    #[test]
+    fn valid_return_contexts_remain_supported() {
+        for source in [
+            "fn f() { return; }",
+            "fn f() int8 { return -128; }",
+            "fn f() int16 { return -32768; }",
+            "fn f(b: bool) int32 { if b { return 1; } else { return 2; }; }",
+            "fn f(b: bool) int32 { while (b) { return 1; }; return 2; }",
+            "fn f() float32 { return 1; }",
+            "fn f() int8[1] { return [-128]; }",
+            "fn f() *int32 { return null; }",
+            "fn pair() (int32, bool) { return 1, true; } fn f() (int32, bool) { return pair(); }",
+            "fn stop() never; fn f() int32 { return stop(); }",
+            "fn stop() never; fn f() (int32, bool) { return stop(), true; }",
+            "fn f(T: type) T { return 1; }",
+            "fn f(T: type) T { return; } fn g() { f(void); }",
+            "comp fn choose(T: type) type { return T; } comp T := choose(int32);",
+            "comp fn choose(b: bool) type { if b { return int8; } else { return int32; }; } comp fn forward(b: bool) type { return choose(b); }",
+        ] {
+            let project = analyze(source);
+            validate(&project.units, &project.symbols, &project.types).unwrap();
+        }
+    }
+
+    #[test]
+    fn coherently_rewritten_cast_results_cannot_bypass_cast_legality() {
+        for (from, to) in [
+            ("const int32[]", "int32[]"),
+            ("const int32[1]", "int32[1]"),
+            ("const *int32", "*int32"),
+            ("*const *int32", "*void"),
+            ("*const int32[]", "*void"),
+            ("*const int32[1]", "*void"),
+            ("(const int32[], int32)[]", "(int32[], int32)[]"),
+            ("(const int32[], int32)", "(int32[], int32)"),
+            ("const int32[][1]", "int32[][1]"),
+            ("int32[]", "bool"),
+            ("int32[1]", "int32[2]"),
+            ("int32", "bool"),
+            ("bool", "int32"),
+            ("*int32", "int64"),
+            ("int64", "*int32"),
+        ] {
+            let source = format!("fn f(p: {from}, target: {to}) {{ result := p as {from}; }}");
+            let mut project = analyze(&source);
+            let fun = function(&mut project, 0);
+            let target = fun.signature.parameters[1].parameter_type.clone();
+            let ty = target.annotation.resolved.unwrap();
+            let S::VariableDeclaration(var) = &mut fun.body.as_mut().unwrap().statements[0].kind
+            else {
+                panic!("expected result binding");
+            };
+            let binding = var.annotation.binding.unwrap();
+            let expr = var.expression.as_mut().unwrap();
+            let E::Cast { target_type, .. } = &mut expr.kind else {
+                panic!("expected cast");
+            };
+            *target_type = target;
+            expr.annotation.resolved.as_mut().unwrap().ty = ty;
+            let mut info = project.types.bindings[&binding];
+            info.ty = ty;
+            project.types.bind(binding, info);
+            reject(&project, "unsupported cast");
+        }
+    }
+
+    #[test]
+    fn numeric_cast_ranges_are_revalidated() {
+        let mut project = analyze("fn f() { result := 127 as int8; }");
+        let fun = function(&mut project, 0);
+        let S::VariableDeclaration(var) = &mut fun.body.as_mut().unwrap().statements[0].kind else {
+            panic!("expected binding");
+        };
+        let E::Cast { expr, .. } = &mut var.expression.as_mut().unwrap().kind else {
+            panic!("expected cast");
+        };
+        expr.kind = E::Literal(Literal::Integer(128));
+        reject(&project, "cast value is out of range");
+    }
+
+    #[test]
+    fn legal_cast_matrix_remains_supported() {
+        for source in [
+            "fn f(p: const int32[]) { q := p as const int32[]; }",
+            "fn f(p: const int32[1]) { q := p as const int32[1]; }",
+            "fn f(p: const *int32) { q := p as const *void; r := q as const *int32; }",
+            "fn f(p: *int32) { q := p as *void; r := q as *int32; }",
+            "fn f(x: int32) { y := x as float64; z := y as int64; }",
+            "fn f() { p := null as *int32; }",
+            "fn stop() never; fn f() int32 { return stop() as int32; }",
+            "fn f(T: type, x: T) int32 { return x as int32; }",
+        ] {
+            let project = analyze(source);
+            validate(&project.units, &project.symbols, &project.types).unwrap();
         }
     }
 }
