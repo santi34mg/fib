@@ -15,7 +15,7 @@ pub struct FunctionBuilder<'ir> {
 impl<'ir> FunctionBuilder<'ir> {
     pub fn new(ir: &'ir mut Ir, function: FunctionId) -> IrResult<Self> {
         if !matches!(
-            ir.function(function).map(|f| &f.body),
+            ir.get_function(function).map(|f| &f.body),
             Some(FunctionBody::Declaration)
         ) {
             return Err(IrError::Invalid {
@@ -59,7 +59,7 @@ impl<'ir> FunctionBuilder<'ir> {
     }
 
     fn check_types(&self, types: &[TypeId]) -> IrResult<()> {
-        if types.iter().any(|&ty| self.working.ty(ty).is_none()) {
+        if types.iter().any(|&ty| self.working.get_type(ty).is_none()) {
             return Err(IrError::Invalid {
                 message: "unknown type",
             });

@@ -33,7 +33,7 @@ fn module() -> Ir {
         },
     ];
     ir.functions.push(Function {
-        name: "main".into(),
+        identifier: "main".into(),
         signature: Signature {
             params: vec![],
             results: vec![TypeId(0)],
@@ -171,7 +171,7 @@ fn each_functions_abi_controls_its_calls_and_returns() {
     use super::abi::{classify_signature, classify_with};
     let mut ir = module();
     ir.functions.push(Function {
-        name: "test_fib".into(),
+        identifier: "test_fib".into(),
         signature: Signature {
             params: vec![TypeId(0), TypeId(0)],
             results: vec![TypeId(0)],

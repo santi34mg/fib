@@ -38,7 +38,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
             Linkage::Internal => LlvmLinkage::Internal,
             Linkage::External => LlvmLinkage::External,
         };
-        let value = module.add_function(&function.name, signature, Some(linkage));
+        let value = module.add_function(&function.identifier, signature, Some(linkage));
         value.set_call_conventions(convention(abi.convention));
         Ok(value)
     }

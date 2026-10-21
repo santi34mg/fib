@@ -19,7 +19,7 @@ fn target() -> TargetSpec {
 fn malformed_ir_is_rejected_before_emission() {
     let mut ir = Ir::new();
     ir.functions.push(Function {
-        name: "bad".into(),
+        identifier: "bad".into(),
         signature: Signature {
             params: vec![crate::ir::TypeId(99)],
             results: vec![],
@@ -101,7 +101,7 @@ fn scalar_calls_preserve_parameters_results_and_void_returns() {
         ("main", vec![], vec![TypeId(0)]),
     ] {
         ir.functions.push(Function {
-            name: name.into(),
+            identifier: name.into(),
             signature: Signature {
                 params,
                 results,

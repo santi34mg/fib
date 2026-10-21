@@ -9,13 +9,45 @@ fn source(text: &str) -> (tempfile::TempDir, BuildPlan) {
 }
 
 #[test]
+fn build_file_builtins_lower_to_verified_bytes_calls_and_interpret() {
+    let (_directory, plan) = source(
+        "fn build() int32 { build_api::add_source(\"src/main.fib\"); build_api::set_entry(\"main\"); build_api::set_output(\"build/app\"); return 0; }",
+    );
+    let ir = compile_build_file_to_ir(&plan).unwrap();
+    crate::ir::verify_ir(&ir).unwrap();
+    assert_eq!(ir.builtin_functions.len(), 3);
+    assert!(
+        ir.types
+            .iter()
+            .any(|ty| matches!(ty, crate::ir::IrType::Bytes))
+    );
+    assert_eq!(
+        ir.constants
+            .iter()
+            .filter(|constant| matches!(constant.kind, crate::ir::ConstantKind::Bytes(_)))
+            .count(),
+        3
+    );
+
+    let build_file = plan.files[0].path.clone();
+    let mut builder = crate::plan::PlanBuilder::from(build_file);
+    crate::ir_interpreter::interpret_ir(ir, &mut builder).unwrap();
+    assert_eq!(
+        builder.modules,
+        vec![std::path::PathBuf::from("src/main.fib")]
+    );
+    assert_eq!(builder.entry_name.as_deref(), Some("main"));
+    assert_eq!(builder.output, Some(std::path::PathBuf::from("build/app")));
+}
+
+#[test]
 fn frontend_and_ir_pipeline_preserve_file_identity() {
     let (_directory, plan) = source("fn main() int32 { return 42; }");
     let project = run_frontend(&plan).unwrap();
     assert_eq!(project.units[0].source_file_id, plan.entry);
-    let ir = lower_to_ir(&project).unwrap();
+    let ir = crate::ir::lowering::lower(&project).unwrap();
     crate::ir::verify_ir(&ir).unwrap();
-    assert_eq!(ir.functions[0].name, "main");
+    assert_eq!(ir.functions[0].identifier, "main");
     assert!(matches!(
         run_pipeline(&plan, PipelineGoal::Check).unwrap(),
         CompilationOutput::Checked
@@ -38,7 +70,7 @@ fn unsupported_programs_and_invalid_analysis_fail_before_artifacts() {
     let (_directory, plan) = source("fn main() int32 { return 42; }");
     let mut project = run_frontend(&plan).unwrap();
     project.types.complete = false;
-    assert!(lower_to_ir(&project).is_err());
+    assert!(crate::ir::lowering::lower(&project).is_err());
 }
 
 #[test]
@@ -66,7 +98,7 @@ fn invalid_plans_missing_files_and_parse_errors_are_diagnostics() {
 fn helpers_conditionals_and_mutable_locals_lower_to_verified_ssa() {
     let (_directory, plan) = source(include_str!("../../tests/programs/conditionals.fib"));
     let project = run_frontend(&plan).unwrap();
-    let ir = lower_to_ir(&project).unwrap();
+    let ir = crate::ir::lowering::lower(&project).unwrap();
     crate::ir::verify_ir(&ir).unwrap();
     assert_eq!(ir.functions.len(), 2);
     assert!(ir.blocks.len() >= 5);
@@ -99,7 +131,7 @@ fn scalar_subset_rejections_are_located_backend_diagnostics_even_in_dead_code() 
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
-        let error = lower_to_ir(&project)
+        let error = crate::ir::lowering::lower(&project)
             .unwrap_err()
             .downcast::<CompilerError>()
             .unwrap();
@@ -126,7 +158,7 @@ fn source_scope_and_return_shapes_are_supported_without_unreachable_ir() {
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
-        let ir = lower_to_ir(&project).unwrap();
+        let ir = crate::ir::lowering::lower(&project).unwrap();
         crate::ir::verify_ir(&ir).unwrap();
     }
 }
