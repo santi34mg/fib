@@ -1,7 +1,9 @@
 # Compiler implementation guide
 
 Reviewed against this checkout on 2026-10-19. Source and tests take precedence over
-historical comments, samples, and language proposals.
+historical comments, samples, and language proposals. Semantic reconstruction
+updates were made on 2026-10-21; final review fixes passed the blocking pre-commit
+checks, including LLVM-enabled library and executable acceptance tests.
 
 ## Actual status
 
@@ -10,8 +12,12 @@ utilities, diagnostic rendering, and raw IR data/access/formatting utilities.
 The name pass validates named units, annotates declarations, and resolves lexical
 names, file paths, visibility, and compile-time aliases. Semantic typing/member
 lookup now execute and validate their annotations. Explicit metatype
-specialization, bounded type-return evaluation, definite initialization and
-structured control-flow checks now run; see [typing](../type-resolution.md).
+specialization now rechecks concrete bodies, retaining symbolic template checks.
+Bounded type computation requires explicit `comp fn` eligibility. Independent
+binding/element mutability, `never` bottom coercion, definite initialization and
+structured control-flow checks run; see [typing](../type-resolution.md). Variadics
+are removed. Arbitrary-precision literals and exact IEEE constant evaluation are
+not yet implemented; the legacy numeric checker remains bounded.
 Single-file compilation supports int32 helpers/direct calls, initialized int32/bool
 locals, assignment, comparisons, nested conditionals and returns through verified
 SSA, multi-block LLVM/PHIs, object emission and host `cc` linking. Each function's

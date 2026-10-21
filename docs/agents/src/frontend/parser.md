@@ -25,7 +25,9 @@ This is parsing only. It does not type-check or compile the function.
   uninitialized multi-bindings require a type on each binding. A final `:=`
   introduces the shared initializer list, not a shared type.
 - Functions: `fn add(a: int32, b: int32) int32 { return a + b; }`;
-  omitted return type is void. Prototypes/externs use `;`.
+  omitted return type is void. Prototypes/externs use `;`. Explicit `comp fn`
+  declarations and `comp fn(...) -> type` function types parse separately.
+  Variadic parameter syntax is removed.
 - Type bindings use `Name: type = struct { field: int32 };` or
   `Alias: type = pkg::Value;`, producing `VariableDeclaration` with an arbitrary
   expression initializer. Explicit type syntax produces `TypeValue`; named
@@ -34,8 +36,11 @@ This is parsing only. It does not type-check or compile the function.
 - Qualified names use `file::name`; members use `value.field`; length is `.len`.
 - Index/slice syntax is `a[i]`, `a[start..end]`, with inclusive `.=` also parsed.
   Legacy `a.[i]`/`.@len` are not current syntax.
-- Pointer types use `*T`; postfix `p*`/`x&` express dereference/address-of in
-  supported delimiter contexts. Multiplication/bitwise-and remain binary operators.
+- Pointer types use `*T`; `const *T`, `const T[]` and `const T[N]` record
+  layer-local element qualifiers independently of binding modifiers. Postfix
+  `p*`/`x&` express dereference/address-of in supported delimiter contexts;
+  projection assignment targets such as `p* = value` and `(p*).field = value`
+  parse. Multiplication/bitwise-and remain binary operators.
 - Loops use `while (condition) { ... };`, or `while () { ... };`, not `for`.
 - Statements require `;`, including `if`, `while`, and `switch` blocks.
   Type bindings also require `;`, including after closing struct/enum braces.

@@ -20,8 +20,12 @@ annotations and table entries. Namespace aliases have no fabricated value types.
 units; `Analyzer::units` exposes those units. `AnalyzedProject` is returned by
 `Analyzer::analyze` after initialization and structured flow checks, retaining
 original plan paths in `source_paths` for downstream diagnostics. Generic
-signature instances are cached by declaration/type arguments; symbolic type
-parameters and type-result computations remain represented in template bodies.
+instances are cached by declaration/type arguments with separately annotated
+concrete bodies and owned binding facts. Templates retain symbolic type parameters
+and deferred computations with arguments/dependencies. Readonly container layers
+and explicit compile-time function eligibility participate in type identity.
+`never` coerces only from a top-level found bottom type; composite compatibility
+remains invariant.
 The supported scalar/conditional lowering translates frontend identities into
 owned SSA IDs/types and never falls back to direct AST emission. General source
 lowering remains unfinished.

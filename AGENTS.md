@@ -11,8 +11,11 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   and resolve lexical names, file paths, visibility, and compile-time aliases.
   Name resolution validates its annotation slots. The type pass resolves semantic
   types, expressions and owner-based members and validates applicable annotations;
-  explicit metatype specialization, bounded type-return evaluation, initialization
-  and structured flow validation now run. Analysis annotates the original AST; no
+  explicit metatype specialization with concrete body rechecking, bounded `comp fn`
+  type computation, independent binding/element mutability, `never` bottom coercion,
+  initialization and structured flow validation now run. Numeric constants still
+  use the bounded legacy evaluator, not arbitrary precision/exact IEEE semantics.
+  Analysis annotates the original AST; no
   lexer/analyze/typed_ast modules exist.
 - `src/driver.rs` implements parsing, analysis and pipeline stages. `lower_to_ir`
   supports single-file int32 helpers/direct calls, initialized int32/bool locals,
@@ -48,10 +51,10 @@ cargo test --offline --no-default-features
 cargo run --offline --no-default-features -- --help
 ```
 
-The unfiltered no-default-features suite passes, including the six former pending
-acceptance cases and the added completion regressions. Name resolution still has
-236 passing cases. Check, fmt, and no-default Clippy with
-`--all-targets -- -D warnings` pass. All analyzer tests/helpers live in
+The completed semantic-reconstruction pre-commit run passed all blocking checks,
+including 677 LLVM-enabled library tests and five executable acceptance tests.
+The no-default suite, formatting, checks and Clippy also passed through that hook.
+All analyzer tests/helpers live in
 `src/frontend/analyzer/test.rs`. Run one phase with
 `cargo test --no-default-features name_resolution::phase_01_files`.
 `tests/executable.rs` runs LLVM-enabled compile/link/exit-status acceptance tests. Offline is optional outside restricted environments.
@@ -74,6 +77,10 @@ Bindings use `[pub] [const | comp] name (: Type = | :=) expression;`, including
 for type bindings; parsing alone still accepts the unmodified form. Multi-bindings retain independent
 modifiers/types and a shared initializer list. Legacy `type Name ...` is removed.
 Functions are ordinary identifiers; builtin functions and their `@` forms are removed.
+`comp fn f(T: type) type { return T; }` explicitly enables bounded type computation;
+its function type is `comp fn(type) -> type`. Variadics are removed. Type-level
+`const *T`, `const T[]` and `const T[N]` qualify elements independently of binding
+`const`; qualifiers are layer-local and compatibility does not discard them.
 Legacy `@` types, `var`, `for`, dot-index and imports
 are not the current working grammar. Parsing is not semantic/runtime support.
 See [parser details](docs/agents/src/frontend/parser.md). Samples use current
