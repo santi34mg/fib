@@ -20,7 +20,6 @@ fn signature() -> Signature {
     Signature {
         params: vec![TypeId(0), TypeId(0)],
         results: vec![TypeId(0)],
-        variadic: false,
         calling_convention: CallingConvention::C,
     }
 }
@@ -39,7 +38,6 @@ fn unsupported_conventions_and_types_never_fall_back_to_c() {
     for mutate in [
         |s: &mut Signature| s.calling_convention = CallingConvention::Fib,
         |s: &mut Signature| s.params[0] = TypeId(1),
-        |s: &mut Signature| s.variadic = true,
         |s: &mut Signature| s.results.push(TypeId(0)),
         |s: &mut Signature| s.params[0] = TypeId(99),
     ] {

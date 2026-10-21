@@ -61,7 +61,6 @@ pub struct Signature {
     pub params: Vec<TypeId>,
     /// Empty means void; multiple results remain explicit until ABI lowering.
     pub results: Vec<TypeId>,
-    pub variadic: bool,
     pub calling_convention: CallingConvention,
 }
 

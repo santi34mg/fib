@@ -37,7 +37,6 @@ fn module() -> Ir {
         signature: Signature {
             params: vec![],
             results: vec![TypeId(0)],
-            variadic: false,
             calling_convention: CallingConvention::C,
         },
         linkage: Linkage::External,
@@ -176,7 +175,6 @@ fn each_functions_abi_controls_its_calls_and_returns() {
         signature: Signature {
             params: vec![TypeId(0), TypeId(0)],
             results: vec![TypeId(0)],
-            variadic: false,
             calling_convention: CallingConvention::Fib,
         },
         linkage: Linkage::Internal,

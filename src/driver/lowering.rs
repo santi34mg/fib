@@ -78,15 +78,9 @@ pub(super) fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             ));
         };
         let signature = &function.signature;
-        if function.is_extern
-            || function.is_variadic
-            || function.body.is_none()
-            || !signature.generic_parameters.is_empty()
+        if function.is_extern || function.body.is_none() || !signature.generic_parameters.is_empty()
         {
-            return Err(source.error(
-                node.span,
-                "extern, variadic and generic functions are not supported",
-            ));
+            return Err(source.error(node.span, "extern and generic functions are not supported"));
         }
         let Some(BindingId::Declaration(id)) = signature.annotation.binding else {
             return Err(source.error(node.span, "missing function identity"));
@@ -127,7 +121,6 @@ pub(super) fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             signature: Signature {
                 params: vec![I32; signature.parameters.len()],
                 results: vec![I32],
-                variadic: false,
                 calling_convention: source_convention(),
             },
             linkage: if is_main {
