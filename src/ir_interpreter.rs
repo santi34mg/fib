@@ -1,9 +1,66 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
-use crate::{builder_object::BuilderObject, ir::Ir};
+use anyhow::bail;
 
-pub fn interpret_ir(ir: Ir, bo: &mut BuilderObject) -> anyhow::Result<Vec<PathBuf>> {
-    let _ = bo;
-    let _ = ir;
-    todo!()
+use crate::{
+    builtins::BuiltinFunction,
+    ir::{ConstantKind, FunctionBody, InstructionKind, Ir, Operand},
+    plan::PlanBuilder,
+};
+
+pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
+    crate::ir::verify_ir(&ir)?;
+    // TODO: add general CFG/value interpretation; this initial build-file subset is
+    // deliberately limited to direct builtin calls with constant byte strings.
+    let build_function = ir
+        .functions
+        .iter()
+        .find(|&f| f.identifier == "build")
+        .ok_or_else(|| anyhow::anyhow!("couldn't find build function"))?;
+    match build_function.body {
+        FunctionBody::Declaration => bail!("expected build function to have a body"),
+        FunctionBody::Definition {
+            ref entry,
+            blocks: _,
+            stack_slots: _,
+        } => {
+            let entry_block = ir
+                .get_block(*entry)
+                .expect("couldn't get build entry block");
+            for instruction in entry_block.instructions.iter() {
+                match instruction.kind {
+                    InstructionKind::Call {
+                        ref callee,
+                        ref args,
+                    } => {
+                        let builtin =
+                            ir.builtin_functions.get(callee).copied().ok_or_else(|| {
+                                anyhow::anyhow!("call to unsupported declaration {callee:?}")
+                            })?;
+                        let [Operand::Constant(constant_id)] = args.as_slice() else {
+                            bail!("build builtin requires one constant argument")
+                        };
+                        let constant = ir
+                            .get_constant(*constant_id)
+                            .ok_or_else(|| anyhow::anyhow!("missing builtin argument constant"))?;
+                        let ConstantKind::Bytes(bytes) = &constant.kind else {
+                            bail!("build builtin argument must be bytes")
+                        };
+                        let string = std::str::from_utf8(bytes)?;
+                        match builtin {
+                            BuiltinFunction::AddSource => {
+                                bo.modules.push(PathBuf::from_str(string)?);
+                            }
+                            BuiltinFunction::SetEntry => bo.entry_name = Some(string.to_owned()),
+                            BuiltinFunction::SetOutput => {
+                                bo.output = Some(PathBuf::from_str(string)?);
+                            }
+                        }
+                    }
+                    _ => bail!("unsupported instruction in build-file interpreter"),
+                }
+            }
+        }
+    }
+    Ok(())
 }

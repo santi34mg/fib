@@ -24,7 +24,7 @@ fn sample_ir() -> Ir {
         ],
         functions: vec![
             Function {
-                name: "example".into(),
+                identifier: "example".into(),
                 signature: signature(),
                 linkage: Linkage::Internal,
                 body: FunctionBody::Definition {
@@ -34,7 +34,7 @@ fn sample_ir() -> Ir {
                 },
             },
             Function {
-                name: "external".into(),
+                identifier: "external".into(),
                 signature: Signature {
                     calling_convention: CallingConvention::C,
                     ..signature()
@@ -114,24 +114,24 @@ fn sample_ir() -> Ir {
 fn arena_accessors_preserve_identity_ownership_and_types() {
     let ir = sample_ir();
     assert!(!ir.is_empty());
-    assert_eq!(ir.block(BlockId(1)).unwrap().owner, FunctionId(0));
-    assert_eq!(ir.value(ValueId(2)).unwrap().owner, FunctionId(0));
+    assert_eq!(ir.get_block(BlockId(1)).unwrap().owner, FunctionId(0));
+    assert_eq!(ir.get_value(ValueId(2)).unwrap().owner, FunctionId(0));
     assert_eq!(ir.operand_type(Operand::Value(ValueId(2))), Some(TypeId(0)));
     assert_eq!(
         ir.operand_type(Operand::Constant(ConstantId(0))),
         Some(TypeId(1))
     );
     assert!(matches!(
-        ir.ty(TypeId(0)),
+        ir.get_type(TypeId(0)),
         Some(IrType::Integer { signed: true, .. })
     ));
-    assert!(ir.function(FunctionId(99)).is_none());
-    assert!(ir.global(GlobalId(99)).is_none());
-    assert!(ir.ty(TypeId(99)).is_none());
-    assert!(ir.constant(ConstantId(99)).is_none());
-    assert!(ir.block(BlockId(99)).is_none());
-    assert!(ir.value(ValueId(99)).is_none());
-    assert!(ir.stack_slot(StackSlotId(99)).is_none());
+    assert!(ir.get_function(FunctionId(99)).is_none());
+    assert!(ir.get_global(GlobalId(99)).is_none());
+    assert!(ir.get_type(TypeId(99)).is_none());
+    assert!(ir.get_constant(ConstantId(99)).is_none());
+    assert!(ir.get_block(BlockId(99)).is_none());
+    assert!(ir.get_value(ValueId(99)).is_none());
+    assert!(ir.get_stack_slot(StackSlotId(99)).is_none());
     assert_eq!(ir.operand_type(Operand::Value(ValueId(99))), None);
 }
 
@@ -142,7 +142,7 @@ fn declarations_retain_signatures_without_blocks() {
     ir.functions.push(sample_ir().functions.remove(1));
     assert!(!ir.is_empty());
     assert!(ir.blocks.is_empty());
-    let function = ir.function(FunctionId(0)).unwrap();
+    let function = ir.get_function(FunctionId(0)).unwrap();
     assert!(matches!(function.body, FunctionBody::Declaration));
     assert_eq!(function.signature.params, vec![TypeId(0)]);
     assert_eq!(function.signature.results, vec![TypeId(0)]);
@@ -250,7 +250,7 @@ fn verifier_accepts_scalar_graph_and_rejects_corruption() {
                 },
             }
         },
-        |ir| ir.functions[1].name = "example".into(),
+        |ir| ir.functions[1].identifier = "example".into(),
     ];
     for mutate in bad {
         let mut ir = valid.clone();
@@ -267,7 +267,7 @@ fn declaration_ir() -> Ir {
         signed: true,
     });
     ir.functions.push(Function {
-        name: "f".into(),
+        identifier: "f".into(),
         signature: Signature {
             params: vec![],
             results: vec![TypeId(0)],

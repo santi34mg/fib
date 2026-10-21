@@ -19,7 +19,7 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
     }
     for ty in &ir.types {
         match ty {
-            IrType::Bool => (),
+            IrType::Bool | IrType::Bytes => (),
             IrType::Integer {
                 width: IntegerWidth::Bits(bits),
                 ..
@@ -27,11 +27,12 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
             _ => return Err(unsupported("verification of non-scalar types")),
         }
     }
-    let valid_type = |ty: TypeId| require(ir.ty(ty).is_some(), "unknown type");
+    let valid_type = |ty: TypeId| require(ir.get_type(ty).is_some(), "unknown type");
     for c in &ir.constants {
         valid_type(c.ty)?;
-        match (&c.kind, ir.ty(c.ty)) {
+        match (&c.kind, ir.get_type(c.ty)) {
             (ConstantKind::Bool(_), Some(IrType::Bool)) => (),
+            (ConstantKind::Bytes(_), Some(IrType::Bytes)) => (),
             (
                 ConstantKind::Integer { bits },
                 Some(IrType::Integer {
@@ -49,13 +50,22 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
             }
         }
     }
+    for function in ir.builtin_functions.keys() {
+        let declaration = ir.get_function(*function).ok_or(IrError::Invalid {
+            message: "unknown builtin function",
+        })?;
+        require(
+            matches!(declaration.body, FunctionBody::Declaration),
+            "builtin function must be a declaration",
+        )?;
+    }
     let mut names = HashSet::new();
     let mut owned_blocks = HashSet::new();
     let mut definitions = HashSet::new();
     for (fi, f) in ir.functions.iter().enumerate() {
         let owner = FunctionId(fi);
         require(
-            !f.name.is_empty() && !f.name.contains('\0') && names.insert(&f.name),
+            !f.identifier.is_empty() && !f.identifier.contains('\0') && names.insert(&f.identifier),
             "invalid or duplicate symbol",
         )?;
         for &ty in f.signature.params.iter().chain(&f.signature.results) {
@@ -78,12 +88,12 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
         let mut predecessors = vec![Vec::new(); ir.blocks.len()];
         for &bid in blocks {
             require(owned_blocks.insert(bid), "block has multiple owners")?;
-            let b = ir.block(bid).ok_or(IrError::Invalid {
+            let b = ir.get_block(bid).ok_or(IrError::Invalid {
                 message: "unknown block",
             })?;
             require(b.owner == owner, "block owner mismatch")?;
             let mut define = |id: ValueId, location: ValueDefinition| -> IrResult<()> {
-                let v = ir.value(id).ok_or(IrError::Invalid {
+                let v = ir.get_value(id).ok_or(IrError::Invalid {
                     message: "unknown value definition",
                 })?;
                 valid_type(v.ty)?;
@@ -215,19 +225,20 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                         let rhs = operand(*rhs, position)?;
                         require(lhs == rhs, "comparison operand type mismatch")?;
                         require(
-                            matches!(ir.ty(lhs), Some(IrType::Integer { .. }))
-                                || (matches!(ir.ty(lhs), Some(IrType::Bool))
+                            matches!(ir.get_type(lhs), Some(IrType::Integer { .. }))
+                                || (matches!(ir.get_type(lhs), Some(IrType::Bool))
                                     && matches!(op, BinaryOp::Eq | BinaryOp::Ne)),
                             "invalid comparison operand type",
                         )?;
                         require(
-                            results.len() == 1 && matches!(ir.ty(results[0]), Some(IrType::Bool)),
+                            results.len() == 1
+                                && matches!(ir.get_type(results[0]), Some(IrType::Bool)),
                             "comparison requires one Bool result",
                         )?;
                         results.clone()
                     }
                     InstructionKind::Call { callee, args } => {
-                        let callee = ir.function(*callee).ok_or(IrError::Invalid {
+                        let callee = ir.get_function(*callee).ok_or(IrError::Invalid {
                             message: "unknown callee",
                         })?;
                         let args = args
@@ -267,7 +278,10 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                     require(values == f.signature.results, "return signature mismatch")?;
                 }
                 Terminator::Branch { condition, .. } => require(
-                    matches!(ir.ty(operand(*condition, position)?), Some(IrType::Bool)),
+                    matches!(
+                        ir.get_type(operand(*condition, position)?),
+                        Some(IrType::Bool)
+                    ),
                     "branch requires bool",
                 )?,
                 Terminator::Jump(_) | Terminator::Unreachable => (),

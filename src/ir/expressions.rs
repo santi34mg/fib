@@ -43,28 +43,36 @@ pub struct Constant {
     pub kind: ConstantKind,
 }
 
-/// Pure, module-wide data. No function-local values may occur in constants.
+/// A module-wide constant value, independent of any function's runtime state.
+/// Constants may reference other constants, globals, or functions, but never
+/// function-local SSA values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConstantKind {
+    /// A boolean literal.
     Bool(bool),
-    /// Low bits of a typed integer; signed integers use two's complement.
-    Integer {
-        bits: u128,
-    },
-    /// IEEE bit pattern at the width specified by the constant's type.
-    Float {
-        bits: u128,
-    },
+    /// The low-order bits of an integer value; signed values use two's-complement
+    /// representation. The constant's type determines the integer width.
+    Integer { bits: u128 },
+    /// The IEEE-754 bit pattern of a floating-point value. The constant's type
+    /// determines the floating-point width.
+    Float { bits: u128 },
+    /// A null value of the constant's declared type.
     Null,
-    /// Array, tuple or struct elements in type declaration order.
+    /// An array, tuple, or struct value, with elements ordered as specified by
+    /// the corresponding type declaration.
     Aggregate(Vec<ConstantId>),
-    /// Variant index into the enum type, not its discriminant.
+    /// An enum value. `variant` is the variant's zero-based index in the enum
+    /// definition (not its discriminant); `fields` contains that variant's
+    /// payload values in declaration order.
     Enum {
         variant: usize,
         fields: Vec<ConstantId>,
     },
-    /// Exact bytes of an unsigned 8-bit array; no implicit NUL or allocation.
+    /// The exact contents of an unsigned 8-bit array. No terminator or storage
+    /// allocation is implied.
     Bytes(Vec<u8>),
+    /// The address of a global, represented as a constant pointer value.
     GlobalAddress(GlobalId),
+    /// The address of a function, represented as a constant pointer value.
     FunctionAddress(FunctionId),
 }

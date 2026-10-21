@@ -6,6 +6,8 @@ use super::TypeId;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrType {
     Bool,
+    /// Interpreter-owned immutable byte string. It has no native ABI layout yet.
+    Bytes,
     Integer {
         width: IntegerWidth,
         signed: bool,

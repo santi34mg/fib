@@ -10,6 +10,7 @@ mod builder;
 mod display;
 mod expressions;
 mod instruction;
+pub mod lowering;
 mod statements;
 #[cfg(test)]
 mod test;
@@ -24,6 +25,7 @@ pub use types::{CallingConvention, EnumVariant, FloatWidth, IntegerWidth, IrType
 pub use verify::verify_ir;
 
 macro_rules! ids {
+    // santi: this is black magic
     ($($name:ident),+ $(,)?) => {
         $(
             /// Index into the corresponding arena of one `Ir`. Not portable
@@ -50,6 +52,8 @@ ids!(
 #[derive(Debug, Clone, Default)]
 pub struct Ir {
     pub functions: Vec<Function>,
+    /// Interpreter intrinsics keyed by canonical IR function identity.
+    pub builtin_functions: std::collections::HashMap<FunctionId, crate::builtins::BuiltinFunction>,
     pub globals: Vec<Global>,
     pub types: Vec<IrType>,
     pub constants: Vec<Constant>,
@@ -66,6 +70,7 @@ impl Ir {
     /// Whether all arenas are empty, including declaration-only modules.
     pub fn is_empty(&self) -> bool {
         self.functions.is_empty()
+            && self.builtin_functions.is_empty()
             && self.globals.is_empty()
             && self.types.is_empty()
             && self.constants.is_empty()
@@ -74,39 +79,39 @@ impl Ir {
             && self.stack_slots.is_empty()
     }
 
-    pub fn function(&self, id: FunctionId) -> Option<&Function> {
+    pub fn get_function(&self, id: FunctionId) -> Option<&Function> {
         self.functions.get(id.0)
     }
 
-    pub fn global(&self, id: GlobalId) -> Option<&Global> {
+    pub fn get_global(&self, id: GlobalId) -> Option<&Global> {
         self.globals.get(id.0)
     }
 
-    pub fn ty(&self, id: TypeId) -> Option<&IrType> {
+    pub fn get_type(&self, id: TypeId) -> Option<&IrType> {
         self.types.get(id.0)
     }
 
-    pub fn constant(&self, id: ConstantId) -> Option<&Constant> {
+    pub fn get_constant(&self, id: ConstantId) -> Option<&Constant> {
         self.constants.get(id.0)
     }
 
-    pub fn block(&self, id: BlockId) -> Option<&BasicBlock> {
+    pub fn get_block(&self, id: BlockId) -> Option<&BasicBlock> {
         self.blocks.get(id.0)
     }
 
-    pub fn value(&self, id: ValueId) -> Option<&Value> {
+    pub fn get_value(&self, id: ValueId) -> Option<&Value> {
         self.values.get(id.0)
     }
 
-    pub fn stack_slot(&self, id: StackSlotId) -> Option<&StackSlot> {
+    pub fn get_stack_slot(&self, id: StackSlotId) -> Option<&StackSlot> {
         self.stack_slots.get(id.0)
     }
 
     /// Only resolves the recorded type; does not check ownership or validity.
     pub fn operand_type(&self, operand: Operand) -> Option<TypeId> {
         match operand {
-            Operand::Value(id) => self.value(id).map(|value| value.ty),
-            Operand::Constant(id) => self.constant(id).map(|constant| constant.ty),
+            Operand::Value(id) => self.get_value(id).map(|value| value.ty),
+            Operand::Constant(id) => self.get_constant(id).map(|constant| constant.ty),
         }
     }
 }
@@ -114,7 +119,7 @@ impl Ir {
 #[derive(Debug, Clone)]
 pub struct Function {
     /// Owned, canonical linker name, not a source-name lookup key.
-    pub name: String,
+    pub identifier: String,
     pub signature: Signature,
     pub linkage: Linkage,
     pub body: FunctionBody,

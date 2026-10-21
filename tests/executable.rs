@@ -1,8 +1,8 @@
 //! Requires LLVM 21 and a host C linker. No skipped tests when LLVM is enabled.
 #![cfg(feature = "llvm")]
 use fibc::{
-    build_plan::BuildPlan,
     driver::{PipelineGoal, compiler_output::CompilationOutput, run_pipeline},
+    plan::BuildPlan,
 };
 use std::process::Command;
 

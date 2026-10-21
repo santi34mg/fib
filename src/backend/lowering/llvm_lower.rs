@@ -227,7 +227,7 @@ pub(super) fn emit_classified(
                             .operand_type(*lhs)
                             .ok_or_else(|| error("missing comparison operand type"))?;
                         let signed =
-                            matches!(ir.ty(ty), Some(IrType::Integer { signed: true, .. }));
+                            matches!(ir.get_type(ty), Some(IrType::Integer { signed: true, .. }));
                         let predicate = comparison_predicate(*op, signed)?;
                         let value = builder
                             .build_int_compare(
