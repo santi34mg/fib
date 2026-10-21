@@ -11,6 +11,14 @@ impl<'input> Tokenizer<'input> {
         let Some(ch) = self.bump() else {
             return Some(TokenKind::Error("unterminated character literal".into()));
         };
+        // A bare quote cannot be the character body: a literal quote must be
+        // written as an escape (`'\''`). Reject an unescaped quote so `'''` is
+        // not silently accepted as the character `'`.
+        if ch == '\'' {
+            return Some(TokenKind::Error(
+                "unescaped quote in character literal".into(),
+            ));
+        }
         // if char is '\\' then it is an escape sequence
         let ch = if ch == '\\' {
             let Some(esc) = self.bump() else {

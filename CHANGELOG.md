@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Builtin numeric type variants and displayed names use bit widths (`Int32`, `int32`); bare `int` and `uint` now denote 32-bit types. The production lexer still accepts legacy numbered `@int4`-style source spellings until the parser migration.
 - The opt-in parser uses postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of the established compiler's dotted access forms.
 
+### Fixed
+- The tokenizer now rejects an unescaped quote in a character literal, so `'''` (and the bare forms `''` and `'''''`) no longer parse as a valid character literal; a literal quote must be written as an escape (`'\''`).
+
 ## [0.1.1] - 2026-10-14
 
 ### Added
