@@ -144,6 +144,7 @@ where
                         else_branch,
                     }
                 }
+
                 TokenKind::Keyword(Keyword::Pub | Keyword::Const | Keyword::Comp) => {
                     self.parse_variable_declaration()?
                 }
@@ -199,7 +200,8 @@ where
                 {
                     self.parse_variable_declaration()?
                 }
-                TokenKind::Identifier(_) => {
+                TokenKind::Identifier(_)
+                | TokenKind::Punctuation(Punctuation::OpeningParenthesis) => {
                     let expr = self.parse_binary(
                         &[
                             Operator::Assign,
@@ -313,7 +315,6 @@ where
                 | TokenKind::Operator(Operator::LogicalNot)
                 | TokenKind::Operator(Operator::Minus)
                 | TokenKind::Operator(Operator::Tilde)
-                | TokenKind::Punctuation(Punctuation::OpeningParenthesis)
                 | TokenKind::Punctuation(Punctuation::OpeningSquareBrace) => {
                     let expr = self.parse_expression()?;
                     StatementKind::ExpressionStatement(expr)

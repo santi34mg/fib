@@ -49,7 +49,7 @@ where
                                 | Punctuation::ClosingSquareBrace
                                 | Punctuation::ClosingCurlyBrace
                                 | Punctuation::Comma
-                        ))
+                        )) | Some(TokenKind::Operator(Operator::Assign))
                     ) =>
                 {
                     self.next();

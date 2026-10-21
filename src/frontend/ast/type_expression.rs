@@ -28,8 +28,11 @@ impl TypeExpression {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeExpressionKind {
+    /// Readonly pointee/elements, independent of binding mutability.
+    Readonly(Box<TypeExpression>),
     Builtin(BuiltinType),
     Function {
+        is_comp: bool,
         argument_types: Vec<TypeExpression>,
         return_type: Box<TypeExpression>,
     },
@@ -58,12 +61,20 @@ pub enum TypeExpressionKind {
 impl fmt::Display for TypeExpressionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            TypeExpressionKind::Readonly(ty) => write!(f, "const {ty}"),
             TypeExpressionKind::Builtin(builtin_type) => f.write_str(builtin_type.name()),
             TypeExpressionKind::Function {
+                is_comp,
                 argument_types,
                 return_type,
             } => {
-                write!(f, "function({:?}) -> {}", argument_types, return_type)
+                write!(
+                    f,
+                    "{}fn({:?}) {}",
+                    if *is_comp { "comp " } else { "" },
+                    argument_types,
+                    return_type
+                )
             }
             TypeExpressionKind::Struct { fields } => {
                 write!(f, "struct {{ {:?} }}", fields)
@@ -75,10 +86,24 @@ impl fmt::Display for TypeExpressionKind {
                 write!(f, "enum {{ {:?} }}", variants)
             }
             TypeExpressionKind::Array { element_type, size } => {
-                write!(f, "{}[{}]", element_type, size)
+                if matches!(
+                    element_type.kind,
+                    TypeExpressionKind::Pointer { .. } | TypeExpressionKind::Readonly(_)
+                ) {
+                    write!(f, "({element_type})[{size}]")
+                } else {
+                    write!(f, "{element_type}[{size}]")
+                }
             }
             TypeExpressionKind::Slice { element_type } => {
-                write!(f, "{}[]", element_type)
+                if matches!(
+                    element_type.kind,
+                    TypeExpressionKind::Pointer { .. } | TypeExpressionKind::Readonly(_)
+                ) {
+                    write!(f, "({element_type})[]")
+                } else {
+                    write!(f, "{element_type}[]")
+                }
             }
             TypeExpressionKind::QualifiedIdentifier(QualifiedIdentifier { segments, .. }) => {
                 if let Some((last, rest)) = segments.split_last() {

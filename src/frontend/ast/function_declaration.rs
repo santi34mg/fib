@@ -5,7 +5,6 @@ pub struct FunctionDeclaration {
     pub signature: FunctionSignature,
     pub body: Option<FunctionBody>,
     pub is_extern: bool,
-    pub is_variadic: bool,
     pub is_pub: bool,
 }
 

@@ -19,6 +19,8 @@ pub enum SemanticType {
     Pending,
     Builtin(BuiltinType),
     Pointer(TypeId),
+    /// Qualifies exactly one pointer/array/slice layer, not its binding.
+    Readonly(TypeId),
     Array {
         element: TypeId,
         length: u64,
@@ -37,16 +39,31 @@ pub enum SemanticType {
     /// Evaluation replaces it with an actual denoted type at a concrete call.
     TypeResult {
         function: DeclId,
-        file: crate::build_plan::FileId,
-        span: crate::diagnostics::Span,
+        arguments: Vec<ComputationArgument>,
+    },
+    MemberResult {
+        owner: TypeId,
+        spelling: String,
+    },
+    IndexResult {
+        owner: TypeId,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ComputationArgument {
+    Type(TypeId),
+    Bool(bool),
+    /// A bounded boolean recipe, with lexical binding identities preserved.
+    Expression(Box<crate::frontend::ast::expression::Expression>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionType {
+    /// Eligibility for bounded compile-time type computation, not known identity.
+    pub is_comp: bool,
     pub parameters: Vec<TypeId>,
     pub return_type: TypeId,
-    pub variadic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -72,6 +89,7 @@ pub struct SemanticTypes {
     pub bindings: HashMap<BindingId, ExpressionInfo>,
     pub type_values: HashMap<BindingId, TypeId>,
     pub variant_constructors: HashMap<(TypeId, u32), TypeId>,
+    pub computation_results: HashMap<(DeclId, Vec<ComputationArgument>), TypeId>,
     /// Metatype parameters in source order, owned by the defining function.
     pub generic_parameters: HashMap<DeclId, Vec<LocalId>>,
     pub generic_instances: HashMap<
@@ -128,6 +146,44 @@ impl SemanticTypes {
         }
         Ok(ty)
     }
+    pub(crate) fn is_symbolic(&self, id: TypeId) -> anyhow::Result<bool> {
+        Ok(matches!(
+            self.get(self.canonical(id)?)?,
+            SemanticType::Parameter(_)
+                | SemanticType::TypeResult { .. }
+                | SemanticType::MemberResult { .. }
+                | SemanticType::IndexResult { .. }
+        ))
+    }
+    pub fn is_dependent(&self, root: TypeId) -> anyhow::Result<bool> {
+        let mut stack = vec![root];
+        let mut seen = HashSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            match self.get(id)? {
+                SemanticType::Parameter(_)
+                | SemanticType::TypeResult { .. }
+                | SemanticType::MemberResult { .. }
+                | SemanticType::IndexResult { .. } => return Ok(true),
+                SemanticType::Readonly(t) | SemanticType::Pointer(t) | SemanticType::Slice(t) => {
+                    stack.push(*t)
+                }
+                SemanticType::Array { element, .. } => stack.push(*element),
+                SemanticType::Tuple(ts) => stack.extend(ts),
+                SemanticType::Function(f) => {
+                    stack.extend(&f.parameters);
+                    stack.push(f.return_type);
+                }
+                SemanticType::Struct(fs) => stack.extend(fs.iter().map(|f| f.ty)),
+                SemanticType::Enum(vs) => stack.extend(vs.iter().filter_map(|v| v.payload)),
+                SemanticType::Declared(_) => stack.push(self.canonical(id)?),
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
     pub fn is_opaque(&self, id: TypeId) -> anyhow::Result<bool> {
         Ok(matches!(
             self.get(id)?,
@@ -156,6 +212,29 @@ impl SemanticTypes {
                 continue;
             }
             match self.get(id)? {
+                SemanticType::Readonly(t) => {
+                    if !matches!(
+                        self.get(self.canonical(*t)?)?,
+                        SemanticType::Pointer(_)
+                            | SemanticType::Array { .. }
+                            | SemanticType::Slice(_)
+                    ) {
+                        return Err(type_error(
+                            "const type qualifier requires a pointer, slice or array",
+                        ));
+                    }
+                    stack.push(*t);
+                }
+                SemanticType::TypeResult { arguments, .. } => {
+                    for arg in arguments {
+                        if let ComputationArgument::Type(t) = arg {
+                            stack.push(*t);
+                        }
+                    }
+                }
+                SemanticType::MemberResult { owner, .. } | SemanticType::IndexResult { owner } => {
+                    stack.push(*owner)
+                }
                 SemanticType::Pointer(t) | SemanticType::Slice(t) => stack.push(*t),
                 SemanticType::Array { element, .. } => stack.push(*element),
                 SemanticType::Tuple(ts) => stack.extend(ts),
@@ -175,6 +254,14 @@ impl SemanticTypes {
             }
         }
         Ok(())
+    }
+    /// Inspect one container layer without erasing its mutability from identity.
+    pub(crate) fn container(&self, id: TypeId) -> anyhow::Result<(&SemanticType, bool)> {
+        let id = self.canonical(id)?;
+        match self.get(id)? {
+            SemanticType::Readonly(inner) => Ok((self.get(self.canonical(*inner)?)?, true)),
+            ty => Ok((ty, false)),
+        }
     }
     pub(crate) fn canonical(&self, mut id: TypeId) -> anyhow::Result<TypeId> {
         let mut seen = HashSet::new();

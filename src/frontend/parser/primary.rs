@@ -96,7 +96,13 @@ where
             && (matches!(
                 token.kind,
                 TokenKind::Builtin(Builtin::BuiltinType(_))
-                    | TokenKind::Keyword(Keyword::Struct | Keyword::Enum | Keyword::Function)
+                    | TokenKind::Keyword(
+                        Keyword::Struct
+                            | Keyword::Enum
+                            | Keyword::Function
+                            | Keyword::Const
+                            | Keyword::Comp
+                    )
                     | TokenKind::Operator(Operator::Star)
             ) || self.starts_tuple_type_value())
         {

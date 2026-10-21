@@ -58,6 +58,8 @@ pub struct TypeAnnotation {
 pub enum ValueCategory {
     Value,
     ImmutablePlace,
+    /// Storage reached through readonly pointee/element access, not a const binding.
+    ReadonlyPlace,
     MutablePlace,
 }
 
@@ -80,6 +82,8 @@ pub enum MemberKind {
     Field(u32),
     EnumVariant(u32),
     Length,
+    /// Selection whose owner is dependent; the instance must resolve it again.
+    Dependent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

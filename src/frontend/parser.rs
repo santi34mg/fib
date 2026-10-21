@@ -212,7 +212,15 @@ where
         while let Some(token) = self.peek() {
             let span = crate::diagnostics::Span::new(token.line, token.column);
             match token.kind {
-                TokenKind::Keyword(Keyword::Function | Keyword::Extern) => {
+                kind if matches!(
+                    kind,
+                    TokenKind::Keyword(Keyword::Function | Keyword::Extern)
+                ) || (matches!(kind, TokenKind::Keyword(Keyword::Comp))
+                    && matches!(
+                        self.peek_n(2).map(|t| t.kind),
+                        Some(TokenKind::Keyword(Keyword::Function))
+                    )) =>
+                {
                     let function = self.parse_function_declaration()?;
                     statements.push(Statement {
                         kind: StatementKind::FunctionDeclaration(function),
