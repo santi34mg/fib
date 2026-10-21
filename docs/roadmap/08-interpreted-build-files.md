@@ -2,10 +2,13 @@
 
 ## Status
 
-This document defines a future implementation plan. Build-file discovery,
-build-file lowering, IR interpretation, the build API and project-plan construction
-are not implemented in the current compiler. `fib build --single-file PATH` remains
-the only working build entry while this plan is unfinished.
+This document defines the remaining implementation plan. The compiler now has an
+initial synthetic `build_api` namespace, shared analysis, verified straight-line lowering
+for literal source/entry/output calls, and identity-based interpreter dispatch into
+`PlanBuilder`. Initial deterministic project-plan finalization validates root-relative
+sources, names, entry and output safety. General CFG/value interpretation and broader
+builder orchestration are not implemented. `fib build --single-file PATH` remains the only
+complete build entry while this plan is unfinished.
 
 The chosen direction is to compile `build.fib` through the normal frontend into
 verified, backend-independent IR and interpret that IR inside `fibc`. The compiler

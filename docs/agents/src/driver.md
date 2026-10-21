@@ -1,12 +1,15 @@
 # Driver and build architecture
 
-`driver.rs` implements `parse_files`, `run_frontend`, `lower_to_ir` and
+`driver.rs` implements `parse_files`, frontend/bootstrap orchestration and
 `run_pipeline`. Plans explicitly enumerate files; parsing preserves their IDs and
 source context. Empty/missing-entry plans fail before reading files. Analysis uses
 `Analyzer::analyze`, including completion validation.
 
-`lower_to_ir` independently revalidates analysis and delegates to `driver/lowering`.
-The executable subset is one file with `main() int32` and int32 helper definitions,
+Both normal and bootstrap projects use `Analyzer::new(...).analyze()` and the single
+`ir::lowering::lower` entry point. The bootstrap configures `build_api` as a synthetic
+module with ordinary declaration/type identities. The driver validates `main` or
+`build` as the selected entry contract and chooses LLVM or the interpreter; lowering
+independently revalidates analysis. The normal executable subset is one file with `main() int32` and int32 helper definitions,
 direct calls, initialized int32/bool locals (including const), assignments,
 comparisons, nested if/else and returns. Negative int32 literals are supported.
 All source forms are prevalidated, including dead branches. Unsupported constructs
@@ -29,17 +32,30 @@ then renamed only after success. Source-overwriting paths are rejected. Binary
 linking invokes host `cc`, preserving stderr on failure. Object output needs LLVM
 21; binary output additionally needs a compatible C linker/runtime.
 
+`compile_build_file_to_ir` is bootstrap orchestration, not a separate frontend or
+lowering route. It configures the compiler-provided synthetic
+`build_api::{add_source, set_entry, set_output}` module on the ordinary analyzer, validates
+one `build() int32` entry, and invokes the same lowering used by normal source. Builtins retain semantic `DeclId` identities through a
+`FunctionId -> BuiltinFunction` IR table; strings become interpreter-only byte values.
+Unsupported build-file syntax fails explicitly and this IR is not sent to LLVM.
+
 `BuildPlan::single_file` canonicalizes a source path, derives its namespace from
 the UTF-8 stem and chooses an executable beside it without its source extension
 (`.exe` on Windows). Sources without a distinct output name fail. The CLI's
 `build --single-file PATH` uses this route and prints the resulting binary path.
 
-Build-file interpretation, `BuilderObject` orchestration and `interpret_ir` remain
-unfinished. The future path is fixed as `<cwd>/build.fib` discovery, bootstrap
+Build-file interpretation is only an initial straight-line subset: `interpret_ir`
+validates IR and dispatches the three build operations by builtin identity into
+host-owned `PlanBuilder` state. General CFG/value/function interpretation,
+general `BuilderObject` orchestration remains unfinished. The current finalizer resolves
+source/output paths against the build-file directory, assigns deterministic IDs and
+stem-derived logical names, validates the selected entry, and rejects duplicate,
+missing, escaping or overwriting paths. The path remains fixed as `<cwd>/build.fib` discovery, bootstrap
 compilation to verified owned IR, interpretation through an opaque host-owned build
 API, and centralized `BuildPlan` finalization. It will not emit or load a native
 build-file executable and will not expose Rust ABI or Rust object layouts. See the
 [interpreted build-file plan](../../roadmap/08-interpreted-build-files.md). `run`,
-`test` and build without `--single-file` currently return explicit errors.
+`test` remains unimplemented; `build --build-file PATH` supports the narrow interpreted
+subset and then enters the normal binary pipeline.
 Arithmetic, source loops/defer, uninitialized declarations, globals/storage,
 aggregates, indirect calls and concrete generic bodies remain unsupported.
