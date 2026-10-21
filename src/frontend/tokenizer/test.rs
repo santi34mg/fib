@@ -90,6 +90,31 @@ mod tests {
     }
 
     #[test]
+    fn test_literal_character_unescaped_quote_fail() {
+        // An unescaped quote must be written as an escape (`'\''`); the bare
+        // forms `'''`, `''` and `'''''` must all produce Error tokens rather
+        // than being accepted as character literals.
+        for test_string in ["'''", "''", "'''''"] {
+            let tokens: Vec<_> = Tokenizer::new(test_string).collect();
+            assert!(
+                tokens.iter().any(|t| matches!(t.kind, TokenKind::Error(_))),
+                "expected an error token for {test_string:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_literal_character_escaped_quote_valid() {
+        // The escaped quote form `'\''` must remain a valid character literal.
+        let test_string = r#"'\''"#;
+        let expected = ['\''];
+        let tokenizer = Tokenizer::new(test_string);
+        tokenizer
+            .zip(expected)
+            .for_each(|(t, e)| assert_eq!(t.kind, TokenKind::Literal(Literal::Character(e))))
+    }
+
+    #[test]
     fn test_literal_string() {
         let test_string = "\"Hello, World!\" \"Fiber is\n great!\"";
         let expected = ["Hello, World!", "Fiber is\n great!"];
