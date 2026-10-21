@@ -49,5 +49,8 @@ compilation.
   Unlike advisory CI deny, local deny failure blocks the hook.
 
 The planned project model uses explicitly named files in `BuildPlan`, optionally
-produced by interpreting `build.fib`. It is not the former include-root/recursive
-import model; build.fib interpretation is not implemented yet.
+produced by compiling `build.fib` to verified owned IR and interpreting it through
+an opaque host-owned build API. It will not emit or load a native build-file
+artifact. This is not the former include-root/recursive import model; build-file
+interpretation is not implemented yet. See the
+[future build-file plan](../roadmap/08-interpreted-build-files.md).

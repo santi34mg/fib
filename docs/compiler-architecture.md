@@ -24,6 +24,24 @@ Build without that flag, `run`, `test`, build.fib interpretation and IR
 interpretation remain unimplemented. Historical positional-file, include-root,
 check/emit/link/release options and `compile_project`/`check_project` are absent.
 
+## Planned build-file interpretation
+
+The future `fib build` path will discover exactly `<cwd>/build.fib`, compile it in
+an internal bootstrap plan through the normal frontend and lowering boundary,
+verify its owned IR and interpret that IR to populate a host-owned plan builder.
+The finalized `BuildPlan` will then enter the existing project pipeline. Relative
+paths are anchored to the build-file directory; `--single-file` remains a separate
+mode that does not execute a build file.
+
+The interpreter boundary is a versioned Fib API using opaque host-owned state. It
+must not expose Rust values or Rust ABI, return the current `BuilderObject` by
+value, invoke LLVM, emit a host executable, use a JIT fallback or load native code
+into the compiler. Source syntax for the distinguished `build` entry and API types
+remains open until their semantic representations are defined. See the
+[interpreted build-file plan](roadmap/08-interpreted-build-files.md) for staged
+implementation, validation and acceptance criteria. This is intended architecture,
+not current behavior.
+
 ## Working subset boundaries
 
 ```text

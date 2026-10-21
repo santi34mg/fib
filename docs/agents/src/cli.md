@@ -19,3 +19,8 @@ explicit error. Help and frontend/IR library APIs need no LLVM.
 Build without a single file (build.fib), `run` and `test` return errors. Historical
 positional-file, include-root, check/emit/link/release and output flags are absent.
 `tests/executable.rs` exercises real CLI builds and executable exit statuses.
+
+The future default `fib build` path will discover exactly `<cwd>/build.fib`, lower
+it to verified owned IR and interpret it to construct a validated `BuildPlan`; it
+will not emit or load a native build-file artifact. See the
+[interpreted build-file plan](../../roadmap/08-interpreted-build-files.md).

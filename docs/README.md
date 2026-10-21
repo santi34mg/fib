@@ -23,6 +23,9 @@ testing instructions, and contributor guidance.
   pass and the boundary with unfinished full analysis.
 - [Roadmap](roadmap/README.md): proposals, dependencies, open decisions, and
   acceptance criteria. Proposed syntax is not necessarily parsed today.
+- [Interpreted build files](roadmap/08-interpreted-build-files.md): future
+  `build.fib` discovery, bootstrap lowering, IR interpretation and validated
+  `BuildPlan` construction.
 
 These design documents should guide the refactor; parser observations alone do
 not settle language semantics. There is not yet a complete standalone language
