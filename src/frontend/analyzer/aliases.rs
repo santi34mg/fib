@@ -21,7 +21,7 @@ pub(super) struct Definition {
 
 pub(super) fn definitions(
     units: &[CompilationUnit],
-    paths: &HashMap<crate::build_plan::FileId, std::path::PathBuf>,
+    paths: &HashMap<crate::plan::FileId, std::path::PathBuf>,
 ) -> anyhow::Result<HashMap<DeclId, Definition>> {
     let mut definitions = HashMap::new();
     fn add(
@@ -102,7 +102,7 @@ pub(super) fn definitions(
 pub(super) fn resolve(
     symbols: &mut ProjectSymbols,
     definitions: &HashMap<DeclId, Definition>,
-    paths: &HashMap<crate::build_plan::FileId, std::path::PathBuf>,
+    paths: &HashMap<crate::plan::FileId, std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     // Suspend a path lookup at its first unresolved alias, resolve that alias
     // with an explicit stack, then resume the original path. No callback recurses.

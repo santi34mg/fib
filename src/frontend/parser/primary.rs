@@ -179,7 +179,6 @@ where
                 )?;
                 Ok(inner_expr)
             }
-
             // Surface lexer diagnostics verbatim (e.g. unterminated
             // strings, unknown `@builtins`) instead of a generic
             // "expected an atom" message.
