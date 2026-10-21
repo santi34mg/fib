@@ -1,10 +1,12 @@
+use std::fmt::Display;
+
 use anyhow::Context;
 
-use crate::build_plan::{BuildPlan, FileId};
 use crate::driver::compiler_output::CompilationOutput;
 use crate::frontend::analyzer::AnalyzedProject;
 use crate::frontend::ast::Ast;
 use crate::ir::Ir;
+use crate::plan::{BuildPlan, FileId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineGoal {
@@ -12,6 +14,17 @@ pub enum PipelineGoal {
     Ir,
     Objects,
     Binary,
+}
+
+impl Display for PipelineGoal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PipelineGoal::Check => write!(f, "check"),
+            PipelineGoal::Ir => write!(f, "ir"),
+            PipelineGoal::Objects => write!(f, "object files"),
+            PipelineGoal::Binary => write!(f, "binary file"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -23,11 +36,13 @@ pub struct CompilationUnit {
 
 /// Compile only the files explicitly enumerated and named by the plan.
 pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<CompilationOutput> {
+    println!("Running pipeline with goal {}...", goal);
     let project = run_frontend(plan)?;
+    require_entry(&project, "main")?;
     if goal == PipelineGoal::Check {
         return Ok(CompilationOutput::Checked);
     }
-    let ir = lower_to_ir(&project)?;
+    let ir = crate::ir::lowering::lower(&project)?;
     if goal == PipelineGoal::Ir {
         return Ok(CompilationOutput::Ir(ir));
     }
@@ -79,8 +94,58 @@ pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<Comp
     Ok(CompilationOutput::Binary(output))
 }
 
-pub fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
+fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
     crate::frontend::analyzer::Analyzer::new(plan.clone(), parse_files(plan)?)?.analyze()
+}
+
+/// Compile the isolated build file with the compiler-provided build API.
+pub fn compile_build_file_to_ir(plan: &BuildPlan) -> anyhow::Result<Ir> {
+    let project = crate::frontend::analyzer::Analyzer::new(plan.clone(), parse_files(plan)?)?
+        .with_synthetic_module(crate::builtins::SyntheticModule::BUILD_API)?
+        .analyze()?;
+    require_entry(&project, "build")?;
+    crate::ir::lowering::lower(&project)
+}
+
+fn require_entry(project: &AnalyzedProject, name: &str) -> anyhow::Result<()> {
+    let matches = project
+        .units
+        .iter()
+        .flat_map(|unit| &unit.ast.statements)
+        .filter_map(|statement| {
+            let crate::frontend::ast::statement::StatementKind::FunctionDeclaration(function) =
+                &statement.kind
+            else {
+                return None;
+            };
+            (function.signature.identifier == name).then_some(function)
+        })
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        matches.len() == 1,
+        "expected exactly one '{name}' entry function"
+    );
+    let entry = matches[0];
+    anyhow::ensure!(
+        entry.body.is_some() && !entry.is_extern && entry.signature.parameters.is_empty(),
+        "entry function '{name}' must be a definition with no parameters"
+    );
+    let return_type = entry
+        .signature
+        .return_type
+        .annotation
+        .resolved
+        .ok_or_else(|| anyhow::anyhow!("entry function '{name}' has no resolved return type"))?;
+    anyhow::ensure!(
+        matches!(
+            project.types.get(project.types.canonical(return_type)?)?,
+            crate::frontend::semantic_type::SemanticType::Builtin(
+                crate::frontend::tokens::builtin::BuiltinType::Int32
+            )
+        ),
+        "entry function '{name}' must return int32"
+    );
+    Ok(())
 }
 
 pub fn parse_files(plan: &BuildPlan) -> anyhow::Result<Vec<CompilationUnit>> {
@@ -107,13 +172,6 @@ pub fn parse_files(plan: &BuildPlan) -> anyhow::Result<Vec<CompilationUnit>> {
         })
         .collect()
 }
-
-/// Lower the supported scalar/conditional subset after independent analysis validation.
-pub fn lower_to_ir(project: &AnalyzedProject) -> anyhow::Result<Ir> {
-    lowering::lower(project)
-}
-
-mod lowering;
 
 pub mod compiler_output;
 #[cfg(test)]
