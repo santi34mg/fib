@@ -46,6 +46,7 @@ struct Flow<'a> {
         &'a crate::frontend::ast::function_declaration::FunctionDeclaration,
     >,
     checking_initializers: bool,
+    template: bool,
     active_calls: HashSet<crate::frontend::identifier::DeclId>,
 }
 
@@ -71,6 +72,7 @@ pub(super) fn validate(
             })
             .collect(),
         checking_initializers: false,
+        template: false,
         active_calls: HashSet::new(),
     };
     let mut initialized = State::new();
@@ -104,14 +106,26 @@ pub(super) fn validate(
                                     .ok_or_else(|| type_error("pending parameter"))?,
                             ));
                         }
-                        let exits = flow.block(&body.statements, state)?;
+                        let previous_template =
+                            std::mem::replace(&mut flow.template, is_template(fun, flow.types));
+                        let result = flow.block(&body.statements, state);
+                        flow.template = previous_template;
+                        let exits = result?;
                         let ret = fun
                             .signature
                             .return_type
                             .annotation
                             .resolved
                             .ok_or_else(|| type_error("pending return type"))?;
-                        if !matches!(flow.types.get(ret)?, T::Builtin(B::Void))
+                        if matches!(flow.types.get(ret)?, T::Builtin(B::Never))
+                            && exits
+                                .iter()
+                                .any(|e| matches!(e.kind, ExitKind::Next | ExitKind::Return))
+                        {
+                            return Err(type_error("never function cannot return normally"));
+                        }
+                        if !(is_template(fun, flow.types) && flow.types.is_symbolic(ret)?)
+                            && !matches!(flow.types.get(ret)?, T::Builtin(B::Void))
                             && exits.iter().any(|e| e.kind == ExitKind::Next)
                         {
                             return Err(type_error(
@@ -140,6 +154,68 @@ pub(super) fn validate(
     }
     Ok(())
 }
+pub(super) fn validate_specialization(
+    fun: &crate::frontend::ast::function_declaration::FunctionDeclaration,
+    types: &SemanticTypes,
+) -> anyhow::Result<()> {
+    let Some(body) = &fun.body else {
+        return Ok(());
+    };
+    let mut flow = Flow {
+        types,
+        loops: 0,
+        functions: HashMap::new(),
+        checking_initializers: false,
+        template: false,
+        active_calls: HashSet::new(),
+    };
+    let mut state: State = types
+        .declarations
+        .keys()
+        .map(|id| root(BindingId::Declaration(*id)))
+        .collect();
+    for p in &fun.signature.parameters {
+        state.insert(root(
+            p.annotation
+                .binding
+                .ok_or_else(|| type_error("pending instance parameter"))?,
+        ));
+    }
+    let exits = flow.block(&body.statements, state)?;
+    let ret = fun
+        .signature
+        .return_type
+        .annotation
+        .resolved
+        .ok_or_else(|| type_error("pending instance return type"))?;
+    if matches!(types.get(ret)?, T::Builtin(B::Never))
+        && exits
+            .iter()
+            .any(|e| matches!(e.kind, ExitKind::Next | ExitKind::Return))
+    {
+        return Err(type_error("never function cannot return normally"));
+    }
+    if !matches!(types.get(ret)?, T::Builtin(B::Void))
+        && exits.iter().any(|e| e.kind == ExitKind::Next)
+    {
+        return Err(type_error("function does not return a value on all paths"));
+    }
+    Ok(())
+}
+
+fn is_template(
+    fun: &crate::frontend::ast::function_declaration::FunctionDeclaration,
+    types: &SemanticTypes,
+) -> bool {
+    let Some(BindingId::Declaration(id)) = fun.signature.annotation.binding else {
+        return false;
+    };
+    types
+        .generic_parameters
+        .get(&id)
+        .is_some_and(|parameters| !parameters.is_empty())
+}
+
 fn root(binding: BindingId) -> Place {
     Place {
         binding,
@@ -176,8 +252,8 @@ fn place(expr: &Expression, types: &SemanticTypes) -> anyhow::Result<Option<Plac
                 object
                     .annotation
                     .resolved
-                    .and_then(|i| types.get(i.ty).ok()),
-                Some(T::Array { .. })
+                    .and_then(|i| types.container(i.ty).ok()),
+                Some((T::Array { .. }, _))
             ) && let Some(mut p) = place(object, types)?
                 && let Some(index) = super::constant::integer_as_i128(index, types)?
                 && let Ok(index) = u64::try_from(index)
@@ -208,7 +284,13 @@ impl Flow<'_> {
         }) {
             return Ok(true);
         }
-        match self.types.get(ty)? {
+        // Unknown shape can be void, empty, or require projected writes. Do not
+        // turn that deferred obligation into a failure on the source template;
+        // concrete instances run this same analysis with template mode disabled.
+        if self.template && self.types.is_symbolic(ty)? {
+            return Ok(true);
+        }
+        match self.types.container(ty)?.0 {
             T::Struct(fs) => {
                 for (i, f) in fs.iter().enumerate() {
                     let mut field = p.clone();
@@ -246,10 +328,22 @@ impl Flow<'_> {
     }
     fn read(&mut self, expr: &Expression, state: &State) -> anyhow::Result<()> {
         let result = (|| {
+            // Do not read operands that cannot be reached after an earlier one diverges.
+            macro_rules! read {
+                ($e:expr) => {{
+                    let e = $e;
+                    self.read(e, state)?;
+                    if super::value_typing::diverges(e, self.types) {
+                        return Ok(());
+                    }
+                }};
+            }
             if let Some(info) = expr.annotation.resolved
                 && matches!(
                     info.category,
-                    ValueCategory::MutablePlace | ValueCategory::ImmutablePlace
+                    ValueCategory::MutablePlace
+                        | ValueCategory::ImmutablePlace
+                        | ValueCategory::ReadonlyPlace
                 )
                 && let Some(p) = place(expr, self.types)?
             {
@@ -265,7 +359,7 @@ impl Flow<'_> {
                 }
                 E::UnaryExpression(u) => self.read(&u.expression, state)?,
                 E::BinaryExpresison(b) => {
-                    self.read(&b.left, state)?;
+                    read!(&b.left);
                     let known = super::evaluation::boolean(&b.left, &HashMap::new());
                     if !matches!(
                         (b.operator, known),
@@ -275,9 +369,9 @@ impl Flow<'_> {
                     }
                 }
                 E::Call { callee, args } => {
-                    self.read(callee, state)?;
+                    read!(callee);
                     for a in args {
-                        self.read(a, state)?;
+                        read!(a);
                     }
                     if self.checking_initializers
                         && !expr.annotation.resolved.is_some_and(|i| {
@@ -303,7 +397,10 @@ impl Flow<'_> {
                         }
                         let loops = self.loops;
                         self.loops = 0;
+                        let previous_template =
+                            std::mem::replace(&mut self.template, is_template(fun, self.types));
                         let result = self.block(&body.statements, state);
+                        self.template = previous_template;
                         self.loops = loops;
                         self.active_calls.remove(&id);
                         result?;
@@ -312,25 +409,31 @@ impl Flow<'_> {
                 E::ExprAcess { expr, .. } => self.read(expr, state)?,
                 E::StructConstruct { fields, .. } => {
                     for f in fields {
-                        self.read(&f.expression, state)?;
+                        read!(&f.expression);
                     }
                 }
                 E::Cast { expr, .. } => self.read(expr, state)?,
                 E::IndexAccess { object, index } => {
-                    self.read(object, state)?;
-                    self.read(index, state)?;
+                    if object.annotation.resolved.is_some_and(|i| {
+                        matches!(self.types.container(i.ty), Ok((T::Array { .. }, _)))
+                    }) {
+                        self.address(object, state)?;
+                    } else {
+                        read!(object);
+                    }
+                    read!(index);
                 }
                 E::SliceLiteral {
                     object, start, end, ..
                 } => {
-                    self.read(object, state)?;
+                    read!(object);
                     for e in start.iter().chain(end) {
-                        self.read(e, state)?;
+                        read!(e);
                     }
                 }
                 E::ArrayLiteral { elements } => {
                     for e in elements {
-                        self.read(e, state)?;
+                        read!(e);
                     }
                 }
                 _ => {}
@@ -349,8 +452,8 @@ impl Flow<'_> {
                     object
                         .annotation
                         .resolved
-                        .and_then(|i| self.types.get(i.ty).ok()),
-                    Some(T::Array { .. })
+                        .and_then(|i| self.types.container(i.ty).ok()),
+                    Some((T::Array { .. }, _))
                 ) {
                     self.address(object, state)
                 } else {
@@ -443,7 +546,11 @@ impl Flow<'_> {
         for place in candidates {
             let mut ty = self.types.bindings.get(&place.binding).map(|i| i.ty);
             for projection in &place.path {
-                ty = match (ty.map(|t| self.types.get(t)).transpose()?, projection) {
+                ty = match (
+                    ty.map(|t| self.types.container(t).map(|(ty, _)| ty))
+                        .transpose()?,
+                    projection,
+                ) {
                     (Some(T::Struct(fs)), Projection::Field(index)) => {
                         fs.get(*index as usize).map(|f| f.ty)
                     }
@@ -470,6 +577,37 @@ impl Flow<'_> {
     }
     fn statement(&mut self, node: &Statement, mut state: State) -> anyhow::Result<Vec<Exit>> {
         let mut kind = ExitKind::Next;
+        // Evaluate mandatory inputs in the same order as the statement below.
+        // Divergence is an exit, not a successful write, return, or branch join.
+        let inputs: Vec<&Expression> = match &node.kind {
+            S::VariableDeclaration(v) => v.expression.iter().collect(),
+            S::MultiVariableDeclaration { values, .. } | S::MultiAssignment { values, .. } => {
+                values.iter().collect()
+            }
+            S::ExpressionStatement(e) => vec![e],
+            S::Assignment { right, .. } => vec![right],
+            S::DerefAssign { pointer, expr } => vec![pointer, expr],
+            S::IndexAssign { expr, .. } => vec![expr],
+            S::Return(values) => values.iter().flatten().collect(),
+            S::If { condition, .. } => vec![condition],
+            S::While { condition, .. } => condition.iter().collect(),
+            S::Switch { subject, .. } => vec![subject],
+            _ => vec![],
+        };
+        if inputs
+            .iter()
+            .any(|e| super::value_typing::diverges(e, self.types))
+        {
+            for expr in inputs {
+                self.read(expr, &state)?;
+                if super::value_typing::diverges(expr, self.types) {
+                    return Ok(vec![Exit {
+                        kind: ExitKind::Diverge,
+                        state,
+                    }]);
+                }
+            }
+        }
         match &node.kind {
             S::VariableDeclaration(v) => {
                 if let Some(expr) = &v.expression {

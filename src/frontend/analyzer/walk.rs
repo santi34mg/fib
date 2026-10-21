@@ -16,6 +16,15 @@ use crate::frontend::{
 type Result = anyhow::Result<()>;
 
 pub(super) trait Visitor {
+    fn statement(&mut self, _node: &mut Statement) -> Result {
+        Ok(())
+    }
+    fn expression(&mut self, _node: &mut Expression) -> Result {
+        Ok(())
+    }
+    fn ty(&mut self, _node: &mut TypeExpression) -> Result {
+        Ok(())
+    }
     fn name(&mut self, _name: &mut QualifiedIdentifier) -> Result {
         Ok(())
     }
@@ -59,6 +68,7 @@ fn variable(
 }
 
 fn statement(v: &mut impl Visitor, node: &mut Statement, file: bool) -> Result {
+    v.statement(node)?;
     match &mut node.kind {
         S::FunctionDeclaration(fun) => {
             v.binding(
@@ -164,6 +174,7 @@ fn statement(v: &mut impl Visitor, node: &mut Statement, file: bool) -> Result {
 }
 
 fn expression(v: &mut impl Visitor, expr: &mut Expression) -> Result {
+    v.expression(expr)?;
     match &mut expr.kind {
         E::QualifiedIdentifier(name) => v.name(name)?,
         E::BinaryExpresison(binary) => {
@@ -218,11 +229,13 @@ fn expression(v: &mut impl Visitor, expr: &mut Expression) -> Result {
 }
 
 fn ty_expression(v: &mut impl Visitor, ty: &mut TypeExpression) -> Result {
+    v.ty(ty)?;
     match &mut ty.kind {
         T::QualifiedIdentifier(name) => v.name(name)?,
         T::Function {
             argument_types,
             return_type,
+            ..
         } => {
             for ty in argument_types {
                 ty_expression(v, ty)?;
@@ -234,6 +247,7 @@ fn ty_expression(v: &mut impl Visitor, ty: &mut TypeExpression) -> Result {
                 ty_expression(v, ty)?;
             }
         }
+        T::Readonly(inner) => ty_expression(v, inner)?,
         T::Pointer { pointed_type } => ty_expression(v, pointed_type)?,
         T::Array { element_type, .. } | T::Slice { element_type } => {
             ty_expression(v, element_type)?

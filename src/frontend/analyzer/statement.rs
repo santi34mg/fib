@@ -120,6 +120,9 @@ pub fn validate_assignment_target(target: &ExpressionInfo) -> anyhow::Result<()>
         crate::frontend::analysis_annotation::ValueCategory::ImmutablePlace => Err(
             crate::frontend::semantic_type::type_error("assignment to immutable place"),
         ),
+        crate::frontend::analysis_annotation::ValueCategory::ReadonlyPlace => Err(
+            crate::frontend::semantic_type::type_error("assignment to immutable readonly place"),
+        ),
         _ => Err(crate::frontend::semantic_type::type_error(
             "assignment requires a mutable place",
         )),

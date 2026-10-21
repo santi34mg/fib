@@ -72,8 +72,7 @@ impl Analyzer {
     pub fn resolve_types_signature(
         signature: &mut FunctionSignature,
         context: &mut TypeContext<'_>,
-        variadic: bool,
     ) -> anyhow::Result<TypeId> {
-        context.signature(signature, variadic)
+        context.signature(signature)
     }
 }
