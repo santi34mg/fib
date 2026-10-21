@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::build_plan::{BuildPlan, FileId, FileName};
 use crate::diagnostics::{CompilerError, ErrorKind, Span};
+use crate::plan::{BuildPlan, FileId, FileName};
 
 pub use crate::frontend::identifier::{DeclId, Entity, LocalId, ResolvedName};
 
