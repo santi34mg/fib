@@ -3,7 +3,11 @@
 These are implementation questions, not completed features. Compare source and
 [parser behavior](src/frontend/parser.md) before extending the language.
 
-- How will `build.fib` interpretation construct named plans and report source errors?
+- Which source signature, namespace mechanism, opaque value representations and
+  recoverable-error model will expose the decided interpreted `build.fib` API? The
+  execution route itself is fixed in the
+  [future plan](../roadmap/08-interpreted-build-files.md): verified owned IR,
+  host-owned builder state and no native build-file loading.
 - How will declaration collection reconcile forward visibility with initialization order?
 - How will nested no-capture functions and generic identities extend the existing
   file visibility, alias-cycle, and lexical name-resolution rules?

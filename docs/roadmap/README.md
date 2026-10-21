@@ -54,6 +54,7 @@ from proposals. There are no completed semantic or backend milestones here.
 | 05 | [String representation redesign](05-remove-string.md) | Literal/FFI/ownership policy; generic owning container for the proposed library model |
 | 06 | [Function overloading](06-function-overloading.md) | Canonical declaration identity, complete declaration collection and typing |
 | 07 | [Interfaces and constraints](07-interfaces.md) | Generic types/functions, overload rules and conformance identity |
+| 08 | [Interpreted build files](08-interpreted-build-files.md) | Verified owned IR, interpreter operations, opaque build API and centralized `BuildPlan` validation |
 
 Earlier plans called these decisions “locked.” They remain design inputs, not
 implemented guarantees. In particular, removing type values, deleting builtin
@@ -115,8 +116,10 @@ open semantic decisions.
 - [ ] Wire driver goals, object production, configured linker arguments, target,
       sysroot, library paths and toolchain diagnostics. No obsolete `--emit`,
       include-root, check or release CLI flags are available today.
-- [ ] Implement build-file interpretation, builder operations, IR interpretation
-      and CLI execution only with tests proving their real effects.
+- [ ] Implement build-file discovery, bootstrap lowering, the opaque build API,
+      verified IR interpretation and centralized plan validation according to the
+      [interpreted build-file plan](08-interpreted-build-files.md). Do not emit or
+      load a native build-file artifact.
 
 The [backend plan](../../src/backend/README.md) is an IR-only contract. A future
 native backend consumes the same IR; it is not a second frontend lowering route.

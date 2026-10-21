@@ -35,6 +35,11 @@ the UTF-8 stem and chooses an executable beside it without its source extension
 `build --single-file PATH` uses this route and prints the resulting binary path.
 
 Build-file interpretation, `BuilderObject` orchestration and `interpret_ir` remain
-unfinished. `run`, `test` and build without `--single-file` return explicit errors.
+unfinished. The future path is fixed as `<cwd>/build.fib` discovery, bootstrap
+compilation to verified owned IR, interpretation through an opaque host-owned build
+API, and centralized `BuildPlan` finalization. It will not emit or load a native
+build-file executable and will not expose Rust ABI or Rust object layouts. See the
+[interpreted build-file plan](../../roadmap/08-interpreted-build-files.md). `run`,
+`test` and build without `--single-file` currently return explicit errors.
 Arithmetic, source loops/defer, uninitialized declarations, globals/storage,
 aggregates, indirect calls and concrete generic bodies remain unsupported.

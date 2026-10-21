@@ -26,8 +26,11 @@ build --single-file PATH -> BuildPlan -> parse_files -> Analyzer
   -> AnalyzedProject -> lower_to_ir -> verified Ir -> verified LLVM
   -> object -> cc -> executable (scalar/conditional subset)
 
-build.fib -> IR interpreter -> project BuildPlan (unimplemented)
+build.fib -> verified IR -> IR interpreter -> project BuildPlan (unimplemented)
 ```
+
+The [future build-file plan](../roadmap/08-interpreted-build-files.md) fixes IR
+interpretation—not native artifact loading—as the intended execution route.
 
 There is no separate typed AST, direct AST-to-LLVM fallback, recursive import
 loader, `compile_project` or `check_project`. `tests/executable.rs` checks real
