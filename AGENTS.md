@@ -17,13 +17,18 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   use the bounded legacy evaluator, not arbitrary precision/exact IEEE semantics.
   Analysis annotates the original AST; no
   lexer/analyze/typed_ast modules exist.
-- `src/driver.rs` implements parsing, analysis and pipeline stages. `lower_to_ir`
-  supports single-file int32 helpers/direct calls, initialized int32/bool locals,
-  assignment, comparisons, nested if/else and returns. It revalidates analysis,
-  prevalidates the supported subset (including dead branches), and builds SSA.
+- `src/driver.rs` implements parsing, analysis and pipeline orchestration. One
+  `src/ir/lowering.rs` entry point lowers analyzed source plus any synthetic modules;
+  the driver validates the selected entry contract and chooses the IR consumer. Program lowering supports
+  single-file int32 helpers/direct calls, initialized int32/bool locals, assignment,
+  comparisons, nested if/else and returns. It revalidates analysis, prevalidates the
+  supported subset (including dead branches), and builds SSA.
   Arithmetic, source loops, uninitialized locals, storage and generics still fail.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
-  build.fib interpretation, builder orchestration and IR interpreter are unfinished.
+  Build files have an initial `build_api` semantic namespace and a narrow verified-IR
+  path for literal source/entry/output operations. It finalizes deterministic plans
+  with root-relative path/name/entry/output validation. General interpretation and
+  broader builder orchestration remain unfinished.
 - `src/ir/` is owned SSA. The transactional builder allocates blocks/values/slots;
   verification checks scalar constants/calls/comparisons and jump/branch/return/unreachable,
   ownership, signatures, reachability and dominance. Storage and other operation/

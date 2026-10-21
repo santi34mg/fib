@@ -12,8 +12,9 @@ production Fib ABI, storage, arithmetic, source loops and build.fib are unfinish
 
 ## Present baseline and orchestration
 
-`driver::{parse_files, run_frontend, lower_to_ir, run_pipeline}` implement the
-single-file scalar/conditional subset. `BuildPlan` explicitly enumerates files;
+`driver::{parse_files, run_frontend, run_pipeline}` orchestrate the frontend and
+pipeline; `ir::lowering::lower` owns the single AST-to-IR entry point for source and
+synthetic modules. The supported subset implements the single-file scalar/conditional subset. `BuildPlan` explicitly enumerates files;
 `BuildPlan::single_file` canonicalizes the input and chooses an executable beside
 it. Check and IR goals need no LLVM; object/binary goals need LLVM 21, and binaries
 also need host `cc`. Output is staged and published after success. Source-overwrite
@@ -46,7 +47,7 @@ not current behavior.
 
 ```text
 BuildPlan -> parse_files -> Analyzer -> AnalyzedProject
-  -> lower_to_ir -> owned Ir -> verify_ir -> LLVM emitter
+  -> ir::lowering::lower -> owned Ir -> verify_ir -> LLVM emitter
   -> LLVM verification -> object -> cc -> executable
 ```
 
@@ -156,8 +157,8 @@ struct does not establish that analysis or completion validation ran.
 
 ## Lowering and ownership
 
-`driver::lower_to_ir(&AnalyzedProject) -> anyhow::Result<Ir>` is the only lowering
-boundary. Its future context must map canonical frontend declaration/instance IDs,
+`ir::lowering::lower` is the single lowering boundary. Orchestration validates the
+entry contract and selects the consumer before or after this boundary; lowering maps canonical frontend declaration/instance IDs,
 semantic type IDs, and local bindings into IR-owned identities. Source names are
 not runtime lookup keys. A mutable source binding can map to several SSA values.
 Generic instances must be distinguished by declaration and type arguments.

@@ -23,16 +23,21 @@ locals, assignment, comparisons, nested conditionals and returns through verifie
 SSA, multi-block LLVM/PHIs, object emission and host `cc` linking. Each function's
 signature selects its ABI; the production classifier supports C 32-bit integer/
 void boundaries, while Fib ABI remains unsupported. Arithmetic, source loops,
-storage, broader runtime representations and build.fib remain unfinished.
+storage and broader runtime representations remain unfinished. `build.fib` has an
+initial synthetic-module build API and shared-lowering/interpreter subset for
+literal `build_api::{add_source, set_entry, set_output}` calls; deterministic project-plan finalization now validates its initial path/name/entry/output
+contract; general interpretation remains unfinished.
 See [driver](src/driver.md), [IR](src/ir/README.md), [backend](src/backend/README.md)
 and [tests](tests/README.md) for exact limits.
 
 ```text
 build --single-file PATH -> BuildPlan -> parse_files -> Analyzer
-  -> AnalyzedProject -> lower_to_ir -> verified Ir -> verified LLVM
+  -> AnalyzedProject -> ir::lowering::lower -> verified Ir -> verified LLVM
   -> object -> cc -> executable (scalar/conditional subset)
 
-build.fib -> verified IR -> IR interpreter -> project BuildPlan (unimplemented)
+build.fib + synthetic build_api -> Analyzer -> ir::lowering::lower -> verified IR
+  -> limited IR interpreter -> PlanBuilder state (partial)
+  -> validated project BuildPlan (unimplemented)
 ```
 
 The [future build-file plan](../roadmap/08-interpreted-build-files.md) fixes IR
