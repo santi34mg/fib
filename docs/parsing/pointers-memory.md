@@ -11,8 +11,10 @@ next: *Node = null;
 if next == null { found := false; };
 ```
 
-`*T` is a recursively parsed pointer type. `*void` is syntactically valid;
-`null` is a literal node.
+`*T` is a recursively parsed pointer type. `const *T` qualifies its pointee
+independently of binding `const`; `const p: *T` and `p: const *T` have different
+permissions. The same qualifier syntax applies to slice/array elements.
+`*void` is syntactically valid; `null` is a literal node.
 
 No `unique`, `shared`, or `weak` pointer grammar exists. Leftover helper names or
 historical ownership plans should not be described as usable pointer kinds.
@@ -28,7 +30,8 @@ converted := (address&) as *void;
 ```
 
 The parsed postfix operators are `expr&` (address-of) and `expr*` (dereference),
-without a dot. They are consumed only before `;`, `)`, `]`, `}`, or `,`.
+without a dot. They are consumed before supported delimiters, including `=`
+for projection assignments.
 For subsequent member access, casts, or arithmetic, group the postfix operation:
 `(node*).next` rather than `node*.next`. Prefix `*pointer` and `&value` do not
 parse. Old `expr.*` and `expr.&` forms are rejected.
@@ -44,12 +47,10 @@ pointer[i] = item;
 Indexing has no dot before `[`. The parser retains an index expression/assignment.
 Ordinary name-starting field assignments also parse (`obj.field = value;`).
 
-Direct pointer stores are not a completed syntax feature: `pointer* = value;`
-does not trigger postfix dereference before `=`, prefix `*pointer = value;` is
-rejected, and a parenthesized target statement `(pointer*) = value;` is not
-handled as assignment. Do not translate old `pointer.* = value` examples into
-claimed working stores. Dedicated AST assignment variants are not evidence that
-the parser emits them.
+Direct postfix stores such as `pointer* = value;`, `(pointer*) = value;` and
+`(pointer*).field = value;` parse as projection assignments. Prefix
+`*pointer = value;` and legacy `pointer.*` remain unsupported. Semantic analysis
+checks element permissions; parsing does not imply storage lowering support.
 
 ## Casts and external allocation declarations
 

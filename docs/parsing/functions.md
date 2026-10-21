@@ -43,7 +43,7 @@ The multi-binding declaration preserves a single call initializer.
 
 ```fib
 fn declared(x: *char) bool;
-extern fn printf(fmt: string, ...) int32;
+extern fn puts(text: *char) int32;
 extern fn malloc(size: usize) *void;
 extern fn free(ptr: *void) void;
 ```
@@ -52,11 +52,18 @@ A semicolon records a bodyless signature. `extern` sets a declaration flag.
 The parser also tolerates an external signature without `;` in some positions;
 use explicit semicolons for clear examples.
 
-## Variadic syntax
+## Compile-time declarations and removed variadics
 
-A final `...` is consumed in parameter lists and sets `is_variadic`. It must be
-followed immediately by `)`, with no later parameter. The parser does not limit
-variadic declarations to `extern`.
+```fib
+comp fn identity_type(T: type) type { return T; }
+callback: comp fn(type) -> type;
+```
+
+`comp` is an explicit function declaration/type modifier, distinct from an
+ordinary `fn`. Parsing records eligibility; bounded semantic type computation
+requires a body returning `type`. Knowing an ordinary function's identity does
+not authorize evaluation. Function type syntax retains `->`; declarations do not.
+Variadic `...` parameter syntax has been removed and produces a diagnostic.
 
 ## Metatype parameters
 
@@ -86,5 +93,5 @@ binding parses. Function-value design is discussed in
 Related follow-up is collected in this [GitHub issue #12](https://github.com/santi34mg/fib/issues/12).
 
 Parser coverage: `test_function_declaration_with_params`,
-`function_signatures_preserve_variadic_return_and_bodyless_forms`,
+`function_signatures_preserve_return_and_bodyless_forms`,
 `test_function_call_expression`, and `composite_type_expressions_preserve_nesting`.

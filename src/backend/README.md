@@ -152,15 +152,11 @@ multi-result/aggregate ABI. Classification must distinguish Fib and C; neither
 convention may silently stand in for the other. Attributes must agree on the
 declaration, definition and call, including ABI-required attributes.
 
-Variadic signatures distinguish fixed parameters from the tail. Call-site
-classification must validate tail types and apply the target/convention's
-required promotions (including integer and floating promotions for supported C
-varargs), aggregate rules, and any target-specific calling protocol. Do not
-infer a callee signature from actual arguments or treat `variadic: true` as a
-complete ABI implementation. Until those policies exist, reject unsupported
-varargs/conventions/aggregate cases explicitly. The present IR has direct calls
-by `FunctionId`, not an indirect-call instruction; do not invent one or a
-runtime helper as a side effect of emission.
+Variadic signatures are removed from Fib and its IR. External C variadic APIs
+require separately supplied fixed-signature C shims, not guessed tail promotion
+or a variadic LLVM declaration. Reject unsupported conventions/aggregate cases
+explicitly. The present IR has direct calls by `FunctionId`, not an indirect-call
+instruction; do not invent one or a runtime helper as a side effect of emission.
 
 ## 4. Predeclarations and identity maps
 

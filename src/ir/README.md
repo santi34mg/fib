@@ -73,7 +73,7 @@ not part of the consumer contract.
   `None`; these are lookups, not validation. `operand_type(Operand)` returns
   `Option<TypeId>` from the value/constant record without validating that type.
 - `Function { name, signature, linkage, body }` and `Signature { params,
-  results, variadic, calling_convention }`. `FunctionBody::Declaration` retains
+  results, calling_convention }`. `FunctionBody::Declaration` retains
   external signatures without local entities. `Definition { entry, blocks,
   stack_slots }` refers into the shared arenas. Linkage is independent of body
   presence: an externally visible definition is not an external declaration.
