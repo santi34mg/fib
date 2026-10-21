@@ -19,6 +19,32 @@ where
             return Ok(None);
         };
         let span = Span::new(type_token.line, type_token.column);
+        if matches!(type_token.kind, TokenKind::Keyword(Keyword::Const)) {
+            self.next();
+            let inner = self.parse_type_expression()?.ok_or_else(|| {
+                self.error(
+                    "expected pointer, slice or array after const",
+                    type_token.line,
+                    type_token.column,
+                )
+            })?;
+            if !matches!(
+                inner.kind,
+                TypeExpressionKind::Pointer { .. }
+                    | TypeExpressionKind::Slice { .. }
+                    | TypeExpressionKind::Array { .. }
+            ) {
+                return Err(self.error(
+                    "const type qualifier requires a pointer, slice or array",
+                    type_token.line,
+                    type_token.column,
+                ));
+            }
+            return Ok(Some(TypeExpression::at(
+                TypeExpressionKind::Readonly(Box::new(inner)),
+                span,
+            )));
+        }
         let var_type: TypeExpression = match type_token.kind {
             TokenKind::Builtin(Builtin::BuiltinType(builtin_type)) => {
                 self.next();
@@ -30,6 +56,13 @@ where
                     Keyword::Struct => self.parse_struct_literal(&type_token)?,
                     Keyword::Enum => self.parse_enum_literal(&type_token)?,
                     Keyword::Function => self.parse_function_type(&type_token)?,
+                    Keyword::Comp => {
+                        self.expect_token(
+                            TokenKind::Keyword(Keyword::Function),
+                            "expected 'fn' after 'comp' in function type",
+                        )?;
+                        self.parse_function_type(&type_token)?
+                    }
                     _ => return Err(self.error("not a type", type_token.line, type_token.column)),
                 }
             }
@@ -66,7 +99,8 @@ where
             }
         };
         // Postfix array/slice type: `type[size]` or `type[]`.
-        let var_type = if matches!(
+        let mut var_type = var_type;
+        while matches!(
             self.peek(),
             Some(Token {
                 kind: TokenKind::Punctuation(Punctuation::OpeningSquareBrace),
@@ -75,7 +109,7 @@ where
         ) {
             self.next(); // consume '['
             // `T[]` — a slice (runtime-length view).
-            if matches!(
+            var_type = if matches!(
                 self.peek(),
                 Some(Token {
                     kind: TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
@@ -111,10 +145,8 @@ where
                     },
                     span,
                 )
-            }
-        } else {
-            var_type
-        };
+            };
+        }
         Ok(Some(var_type))
     }
 }

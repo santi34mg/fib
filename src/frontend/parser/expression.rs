@@ -1,12 +1,6 @@
-use crate::{
-    diagnostics::Span,
-    frontend::{
-        ast::expression::{Expression, ExpressionKind},
-        tokens::{
-            Punctuation, Token, TokenKind,
-            builtin::{Builtin, BuiltinType},
-        },
-    },
+use crate::frontend::{
+    ast::expression::Expression,
+    tokens::{Punctuation, Token, TokenKind},
 };
 
 use super::Parser;
@@ -26,18 +20,6 @@ where
     }
 
     pub fn parse_expression(&mut self) -> anyhow::Result<Expression> {
-        if let Some(Token {
-            kind: TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Void)),
-            line,
-            column,
-            ..
-        }) = self.peek()
-        {
-            return Ok(Expression::at(
-                ExpressionKind::VoidExpression,
-                Span::new(line, column),
-            ));
-        }
         self.parse_logical_or()
     }
 }

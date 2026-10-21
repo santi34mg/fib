@@ -19,6 +19,155 @@ mod tests {
     use crate::frontend::tokens::{Literal, Operator, Token};
 
     #[test]
+    fn void_type_values_consume_their_token() {
+        let ast = get_ast("f(void);");
+        let statements = module_statements(&ast);
+        let StatementKind::ExpressionStatement(expr) = statements[0] else {
+            panic!("expected call statement");
+        };
+        let ExpressionKind::Call { args, .. } = &expr.kind else {
+            panic!("expected call");
+        };
+        assert!(matches!(
+            &args[0].kind,
+            ExpressionKind::TypeValue(ty)
+                if ty.kind == TypeExpressionKind::Builtin(BuiltinType::Void)
+        ));
+    }
+
+    #[test]
+    fn comp_function_declaration_and_types_preserve_eligibility() {
+        let ast = get_ast(
+            "comp fn choose(T: type) type { return T; } fn runtime(T: type, x: T) T { return x; } callback: comp fn(type) type; comp Callback: type = comp fn(bool) type;",
+        );
+        let StatementKind::FunctionDeclaration(comp) = &ast.statements[0].kind else {
+            panic!()
+        };
+        let StatementKind::FunctionDeclaration(runtime) = &ast.statements[1].kind else {
+            panic!()
+        };
+        assert!(comp.signature.is_comp);
+        assert!(comp.body.is_some());
+        assert!(!runtime.signature.is_comp);
+        let StatementKind::VariableDeclaration(callback) = &ast.statements[2].kind else {
+            panic!()
+        };
+        assert!(matches!(
+            callback.ty.as_ref().unwrap().kind,
+            TypeExpressionKind::Function { is_comp: true, .. }
+        ));
+        let StatementKind::VariableDeclaration(alias) = &ast.statements[3].kind else {
+            panic!()
+        };
+        assert!(matches!(
+            &alias.expression.as_ref().unwrap().kind,
+            ExpressionKind::TypeValue(TypeExpression {
+                kind: TypeExpressionKind::Function { is_comp: true, .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn malformed_comp_functions_are_rejected() {
+        for source in [
+            "comp fn () type { return int32; }",
+            "comp fn choose(T:) type { return T; }",
+            "comp fn choose() type { return int32;",
+            "callback: comp int32;",
+            "callback: comp fn(bool type;",
+            "callback: comp fn(bool);",
+            "callback: comp fn(bool, ;",
+            "callback: comp comp fn() type;",
+        ] {
+            let mut parser =
+                Parser::with_source(Tokenizer::new(source), Path::new("comp.fib"), source);
+            assert!(parser.parse().is_err(), "accepted {source}");
+        }
+    }
+
+    #[test]
+    fn readonly_type_qualifiers_preserve_binding_flags_and_layers() {
+        for (spelling, is_const, readonly) in [
+            ("a: *int32", false, false),
+            ("const a: *int32", true, false),
+            ("a: const *int32", false, true),
+            ("const a: const *int32", true, true),
+            ("a: int32[]", false, false),
+            ("const a: int32[]", true, false),
+            ("a: const int32[]", false, true),
+            ("const a: const int32[]", true, true),
+            ("a: int32[2]", false, false),
+            ("const a: int32[2]", true, false),
+            ("a: const int32[2]", false, true),
+            ("const a: const int32[2]", true, true),
+        ] {
+            let ast = get_ast(&format!("{spelling};"));
+            let statements = module_statements(&ast);
+            let StatementKind::VariableDeclaration(var) = statements[0] else {
+                panic!()
+            };
+            assert_eq!(var.is_const, is_const, "{spelling}");
+            let ty = var.ty.as_ref().unwrap();
+            assert_eq!(
+                matches!(ty.kind, TypeExpressionKind::Readonly(_)),
+                readonly,
+                "{spelling}"
+            );
+            assert!(ty.annotation.resolved.is_none());
+        }
+        for spelling in [
+            "const *const *int32",
+            "*const int32[]",
+            "const (const int32[2])[3]",
+            "(const *int32)[]",
+        ] {
+            let source = format!("x: {spelling};");
+            let mut parser =
+                Parser::with_source(Tokenizer::new(&source), Path::new("qualifier.fib"), &source);
+            let ast = parser.parse().unwrap();
+            let StatementKind::VariableDeclaration(var) = &ast.statements[0].kind else {
+                panic!()
+            };
+            assert_eq!(var.ty.as_ref().unwrap().to_string(), spelling);
+        }
+        let ast = get_ast("comp P: type = const *int32; comp V: type = const int32[];");
+        assert_eq!(module_statements(&ast).len(), 2);
+    }
+
+    #[test]
+    fn readonly_projection_assignment_targets_parse() {
+        for target in ["p*", "(p*)", "(p*).field", "(p*)[0]", "a[0].field"] {
+            let ast = get_ast(&format!("{target} = 2;"));
+            assert!(
+                matches!(module_statements(&ast)[0], StatementKind::Assignment { .. }),
+                "{target}"
+            );
+        }
+    }
+
+    #[test]
+    fn readonly_type_qualifiers_reject_meaningless_and_malformed_forms() {
+        for source in [
+            "x: const int32;",
+            "x: const bool;",
+            "x: const T;",
+            "x: const struct { x: int32 };",
+            "x: const (int32, bool);",
+            "x: const fn(int32) -> int32;",
+            "x: const;",
+            "x: const *;",
+            "x: const const *int32;",
+            "x: const int32[true];",
+            "x: const int32[2;",
+        ] {
+            let mut parser =
+                Parser::with_source(Tokenizer::new(source), Path::new("qualifier.fib"), source);
+            assert!(parser.parse().is_err(), "accepted {source}");
+        }
+    }
+
+    #[test]
     fn samples_parse_with_current_frontend() {
         let samples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
         let mut paths: Vec<_> = std::fs::read_dir(&samples_dir)
@@ -1790,6 +1939,7 @@ mod tests {
         let TypeExpressionKind::Function {
             argument_types,
             return_type,
+            ..
         } = &ty.kind
         else {
             panic!("expected function type: {:#?}", ty);
@@ -1803,11 +1953,10 @@ mod tests {
     }
 
     #[test]
-    fn function_signatures_preserve_variadic_return_and_bodyless_forms() {
-        for (source, variadic, external, has_body, return_type, parameter_count) in [
+    fn function_signatures_preserve_return_and_bodyless_forms() {
+        for (source, external, has_body, return_type, parameter_count) in [
             (
-                "extern fn log(fmt: string, ...) int32;",
-                true,
+                "extern fn log(fmt: string) int32;",
                 true,
                 false,
                 BuiltinType::Int32,
@@ -1817,15 +1966,13 @@ mod tests {
                 "fn declared(x: *char) bool;",
                 false,
                 false,
-                false,
                 BuiltinType::Boolean,
                 1,
             ),
-            ("fn implicit() {}", false, false, true, BuiltinType::Void, 0),
+            ("fn implicit() {}", false, true, BuiltinType::Void, 0),
         ] {
             let ast = get_ast(source);
             let func = find_func(&ast).expect("function declaration");
-            assert_eq!(func.is_variadic, variadic, "{source}");
             assert_eq!(func.is_extern, external, "{source}");
             assert_eq!(func.body.is_some(), has_body, "{source}");
             assert_eq!(func.signature.parameters.len(), parameter_count, "{source}");
@@ -1841,6 +1988,31 @@ mod tests {
                     matches!(&func.signature.parameters[0].parameter_type.kind, TypeExpressionKind::Pointer { pointed_type } if matches!(pointed_type.kind, TypeExpressionKind::Builtin(BuiltinType::Char)))
                 );
             }
+        }
+    }
+
+    #[test]
+    fn variadic_function_syntax_reports_parameter_diagnostic() {
+        for source in [
+            "extern fn log(fmt: string, ...) int32;",
+            "extern fn log(...) int32;",
+            "fn log(fmt: string, ...) {}",
+            "fn log(...) {}",
+        ] {
+            let mut parser = Parser::with_source(Tokenizer::new(source), Path::new("test"), source);
+            let error = parser
+                .parse()
+                .expect_err("variadic function syntax must be rejected");
+            let error = error
+                .downcast_ref::<crate::frontend::parser::ParseError>()
+                .expect("typed parse error");
+            assert!(
+                error.to_string().contains("expected parameter name"),
+                "{error}"
+            );
+            assert_eq!(error.line, 1);
+            assert_eq!(error.column, source.find("...").unwrap() + 1);
+            assert_eq!(error.source_line, source);
         }
     }
 
@@ -2017,7 +2189,7 @@ mod tests {
             ("Broken: type = *", "expected type"),
             ("Broken: type = ();", "expected an atom"),
             ("fn f(x: ) {}", "expected parameter type"),
-            ("fn f(x: int32, ... y) void {}", "expected ')'"),
+            ("fn f(x: int32, ... y) void {}", "expected parameter name"),
             ("switch (x) { when .Ok(1) { } };", "expected binding name"),
         ] {
             let error = get_ast_err(source);

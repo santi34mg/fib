@@ -1,7 +1,7 @@
 use crate::diagnostics::Span;
 use crate::frontend::{
     ast::type_expression::{TypeExpression, TypeExpressionKind},
-    tokens::{Operator, Punctuation, Token, TokenKind},
+    tokens::{Keyword, Operator, Punctuation, Token, TokenKind},
 };
 
 use super::Parser;
@@ -42,21 +42,25 @@ where
                 self.expect_token(TokenKind::Punctuation(Punctuation::Comma), "expected ','")?;
             }
         }
-        // consume ')'
-        self.next();
-        // expect '->'
-        let arrow = self.expect_token(
-            TokenKind::Operator(Operator::ThinRightArrow),
-            "expected '->'",
+        self.expect_token(
+            TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+            "expected ')'",
         )?;
+        // Retain the existing arrow spelling while sharing declaration-style returns.
+        self.consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::ThinRightArrow)));
         let return_type = match self.parse_type_expression()? {
             Some(rt) => rt,
             None => {
-                return Err(self.error("expected a return type", arrow.line, arrow.column));
+                return Err(self.error(
+                    "expected a return type",
+                    type_token.line,
+                    type_token.column,
+                ));
             }
         };
         Ok(TypeExpression::at(
             TypeExpressionKind::Function {
+                is_comp: matches!(type_token.kind, TokenKind::Keyword(Keyword::Comp)),
                 argument_types,
                 return_type: Box::new(return_type),
             },

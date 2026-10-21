@@ -7,7 +7,7 @@ use crate::frontend::{
         function_signature::FunctionSignature,
         type_expression::{TypeExpression, TypeExpressionKind},
     },
-    tokens::{Keyword, Operator, Punctuation, Token, TokenKind, builtin::BuiltinType},
+    tokens::{Keyword, Punctuation, Token, TokenKind, builtin::BuiltinType},
 };
 
 use super::Parser;
@@ -17,6 +17,9 @@ where
     I: Iterator<Item = Token>,
 {
     pub fn parse_function_declaration(&mut self) -> anyhow::Result<FunctionDeclaration> {
+        let is_comp = self
+            .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Comp)))
+            .is_some();
         // Check for optional 'extern' prefix
         let is_extern = if matches!(
             self.peek(),
@@ -48,20 +51,10 @@ where
             "parse_function_declaration: expected '('",
         )?;
         let mut args = Vec::new();
-        let mut is_variadic = false;
         while let Some(token) = self.peek() {
             match &token.kind {
                 TokenKind::Punctuation(Punctuation::ClosingParenthesis) => {
                     self.next();
-                    break;
-                }
-                TokenKind::Operator(Operator::Ellipsis) => {
-                    self.next(); // consume '...'
-                    is_variadic = true;
-                    self.expect_token(
-                        TokenKind::Punctuation(Punctuation::ClosingParenthesis),
-                        "expected ')' after '...' in variadic parameter list",
-                    )?;
                     break;
                 }
                 _ => {
@@ -136,6 +129,7 @@ where
         Ok(FunctionDeclaration {
             signature: FunctionSignature {
                 identifier,
+                is_comp,
                 annotation: Default::default(),
                 parameters: args,
                 return_type,
@@ -143,7 +137,6 @@ where
             },
             body,
             is_extern,
-            is_variadic,
             // FIXME: parse function visibility properly
             is_pub: false,
         })
