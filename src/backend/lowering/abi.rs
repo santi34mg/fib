@@ -27,8 +27,7 @@ pub struct FunctionAbi {
 impl FunctionAbi {
     pub fn validate(&self, signature: &Signature, types: &[IrType]) -> Result<(), BackendError> {
         let invalid = || failure("invalid direct scalar ABI mapping");
-        if signature.variadic
-            || signature.results.len() > 1
+        if signature.results.len() > 1
             || self.parameters.len() != signature.params.len()
             || self.parameter_positions.len() != signature.params.len()
             || self.result != signature.results.first().copied()

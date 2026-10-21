@@ -230,7 +230,6 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                         let callee = ir.function(*callee).ok_or(IrError::Invalid {
                             message: "unknown callee",
                         })?;
-                        require(!callee.signature.variadic, "variadic calls unsupported")?;
                         let args = args
                             .iter()
                             .map(|&a| operand(a, position))

@@ -23,7 +23,6 @@ fn malformed_ir_is_rejected_before_emission() {
         signature: Signature {
             params: vec![crate::ir::TypeId(99)],
             results: vec![],
-            variadic: false,
             calling_convention: crate::ir::CallingConvention::C,
         },
         linkage: Linkage::External,
@@ -106,7 +105,6 @@ fn scalar_calls_preserve_parameters_results_and_void_returns() {
             signature: Signature {
                 params,
                 results,
-                variadic: false,
                 calling_convention: CallingConvention::C,
             },
             linkage: Linkage::External,

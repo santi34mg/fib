@@ -1,4 +1,4 @@
-extern fn printf(fmt: @string, ...) @int4
+// C variadic APIs require fixed-signature C shims; Fib has no variadic declarations.
 extern fn malloc(size: @uint8) *@void
 extern fn free(ptr: *@void) @void
 extern fn memcpy(dest: *@void, src: *@void, n: @uint8) *@void
@@ -51,10 +51,7 @@ extern fn strtoul(s: @string, endptr: *@string, base: @int4) @uint8
 extern fn mmap(addr: *@void, length: @uint8, prot: @int4, flags: @int4, fd: @int4, offset: @int8) *@void
 extern fn munmap(addr: *@void, length: @uint8) @int4
 extern fn perror(s: @string) @void
-extern fn snprintf(dest: @string, size: @uint8, fmt: @string, ...) @int4
-extern fn sscanf(s: @string, fmt: @string, ...) @int4
-extern fn sprintf(dest: @string, fmt: @string, ...) @int4
-extern fn fprintf(stream: *@void, fmt: @string, ...) @int4
+
 extern fn assert(condition: @int4) @void
 extern fn __errno_location() *@int4
 extern fn strerror(errnum: @int4) @string
@@ -75,7 +72,7 @@ extern fn lseek(fd: @int4, offset: @int8, whence: @int4) @int8
 extern fn close(fd: @int4) @int4
 extern fn getchar() @int4
 extern fn putchar(c: @int4) @int4
-extern fn open(path: @string, flags: @int4, ...) @int4
+
 extern fn creat(path: @string, mode: @uint4) @int4
 extern fn mkdir(path: @string, mode: @uint4) @int4
 extern fn rmdir(path: @string) @int4
@@ -104,7 +101,7 @@ extern fn readlink(path: @string, buf: @string, size: @uint8) @int8
 extern fn access(path: @string, mode: @int4) @int4
 extern fn truncate(path: @string, length: @int8) @int4
 extern fn ftruncate(fd: @int4, length: @int8) @int4
-extern fn fcntl(fd: @int4, cmd: @int4, ...) @int4
+
 extern fn socket(domain: @int4, sock_type: @int4, protocol: @int4) @int4
 extern fn connect(sockfd: @int4, addr: *@void, addrlen: @uint8) @int4
 extern fn bind(sockfd: @int4, addr: *@void, addrlen: @uint8) @int4
@@ -130,7 +127,7 @@ extern fn pthread_cond_signal(cond: *@void) @int4
 extern fn pthread_cond_broadcast(cond: *@void) @int4
 extern fn pthread_self() @void
 extern fn sched_yield() @int4
-extern fn sem_open(name: @string, oflag: @int4, ...) *@void
+
 extern fn sem_close(sem: *@void) @int4
 extern fn sem_wait(sem: *@void) @int4
 extern fn sem_post(sem: *@void) @int4

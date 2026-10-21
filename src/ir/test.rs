@@ -6,7 +6,6 @@ fn signature() -> Signature {
     Signature {
         params: vec![TypeId(0)],
         results: vec![TypeId(0)],
-        variadic: false,
         calling_convention: CallingConvention::Fib,
     }
 }
@@ -272,7 +271,6 @@ fn declaration_ir() -> Ir {
         signature: Signature {
             params: vec![],
             results: vec![TypeId(0)],
-            variadic: false,
             calling_convention: CallingConvention::Fib,
         },
         linkage: Linkage::Internal,
