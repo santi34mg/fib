@@ -40,12 +40,15 @@ Address: type = *void;
 Remote: type = other::Thing;
 ```
 
-- `*T` is pointer syntax. No ownership/borrowing pointer kinds are parsed.
+- `*T` is pointer syntax. `const *T`, `const T[]` and `const T[N]` qualify
+  one container's pointee/elements independently of binding `const`. Nested
+  qualifiers parse; `const int32` is rejected as a meaningless type qualifier.
+  No ownership/borrowing pointer kinds are parsed.
 - `T[N]` parses a fixed array; `N` must be an integer literal, not an expression.
 - `T[]` parses a slice.
 - `(A, B)` parses a tuple type; `(A)` is just `A`, and `()` is rejected.
-- `fn(A, B) -> R` is function **type** syntax. Function **declarations** have no
-  arrow; see [Functions](functions.md).
+- `fn(A, B) -> R` and `comp fn(A, B) -> R` are distinct function **type**
+  syntax. Function **declarations** have no arrow; see [Functions](functions.md).
 - Qualified names such as `other::Thing` parse as named type references.
 
 The type parser consumes one array/slice suffix at each recursive level, not

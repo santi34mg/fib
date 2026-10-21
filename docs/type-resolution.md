@@ -61,25 +61,36 @@ runtime expression types. Reserved label syntax has no applicable slots.
 - `*void` is an opaque raw pointer. Opacity is queried centrally so future opaque
   types can extend the same boundary. Dereference/member/index operations on it
   are rejected.
-- `never` is currently admitted only as a return type.
+- `never` is a bottom type: a diverging expression can satisfy any expected value
+  type, but a non-`never` value cannot satisfy `never`. Composite types remain
+  invariant; `*never` is not a subtype of `*int32`. `never` is not storable.
+  Functions returning `never` must not complete normally.
 - `type` is admitted in `comp` bindings, function parameters and returns. Signature
   references to metatype parameters use symbolic identities. Bodies such as
   `fn identity(T: type, x: T) T { return x; }` can be checked symbolically;
   Explicit metatype arguments specialize signatures, including pointers, slices,
   arrays, tuples and function types. Instances are cached by defining declaration
-  and canonical type arguments; aliases share the template identity. Bodies are
-  checked symbolically, so operations requiring constraints on an unknown type
-  parameter still error. Generic calls require a named template; indirect generic
-  function values and variadic typing remain unsupported.
-- Type-returning functions evaluate type values, local declarations, nested calls
-  and branches on known bool values, with type/bool arguments and a recursion
-  limit of 64. Repeated calls preserve nominal aggregate identity, while distinct
-  argument lists own distinct definition sites. Computed `comp` calls must produce type values. Numeric computation, mutation,
-  loops, side effects and general compile-time execution remain unsupported and
-  return diagnostics. Calls depending on runtime bool parameters retain symbolic
-  type-result identities while checking their defining body. Concrete type calls
-  require known arguments. Computed local `comp` bindings retain lexical identity
-  and can be aliased without permitting aliases of runtime locals.
+  and canonical type arguments; aliases share the template identity. Templates
+  retain symbolic annotations; dependent arithmetic, member and index operations
+  are rechecked in separately annotated concrete instances with owned binding
+  facts and initialization/flow validation. Failed recursive specialization groups
+  roll back newly cached instances. Unknown callable/dereference shapes and
+  dependent enum dispatch still fail explicitly. Generic calls require a named
+  template; indirect generic function values remain unsupported. Variadics have
+  been removed from syntax, AST, semantic signatures and IR.
+- Explicit `comp fn` declarations and `comp fn(...) -> type` function types
+  distinguish eligibility for bounded type computation from runtime functions.
+  Knowing a runtime function's identity does not authorize its evaluation.
+  Comp functions currently require a non-extern body and a `type` return.
+  They evaluate type values, local declarations, nested eligible calls and branches
+  on known bool values, with type/bool arguments and a recursion limit of 64.
+  Repeated calls preserve nominal aggregate identity; distinct argument lists own
+  distinct definition sites. Deferred computations retain arguments and boolean
+  dependencies for substitution/re-evaluation. Concrete instances reject unresolved
+  computed types in runtime positions. General compile-time execution, numeric
+  arguments, mutation, loops, side effects and indirect callable-value evaluation
+  remain unsupported. Computed local `comp` bindings retain lexical identity and
+  can be aliased without permitting aliases of runtime locals.
 - `usize` remains symbolic, independent of the host's pointer width. It is the
   `.len` result for arrays, slices and strings (byte count for strings). A struct
   field named `len` remains an ordinary field.
@@ -107,10 +118,14 @@ integers, logical operators require booleans, and ordering accepts numbers or
 characters. Shifts retain the left type. Equality accepts scalar/string/unit
 values and same-typed pointers; aggregates and functions are rejected.
 
-Assignments require mutable places. Fields/array indices inherit receiver
-categories; pointer dereferences and slice elements refer to mutable storage even
-when the pointer/slice binding is const. Addressing immutable places is rejected
-until an appropriate pointer type exists. Raw-pointer checks promise no lifetime
+Assignments require mutable places. Binding mutability and element mutability
+are independent: `const p: *T` fixes the binding but permits pointee writes;
+`p: const *T` permits rebinding but forbids pointee writes. The same distinction
+applies to `const T[]` and `const T[N]`. Binding `const` alone does not make array
+elements readonly. Type qualifiers apply to one container layer, not a deep
+freeze. Access, slicing and addressing preserve permissions; compatibility is
+exact in both directions and casts cannot erase readonly qualifiers. Fields
+inherit the selected storage category. Raw-pointer checks promise no lifetime
 or ownership safety.
 
 Pointers support dereference, same-type equality and explicit `*T` ↔ `*void` casts.
@@ -120,7 +135,7 @@ aggregate, enum/integer and array/slice conversions are rejected.
 
 Ordinary, forward, recursive and indirect calls check callee type, argument count,
 argument types and result type. Returns check the containing signature and result
-arity/types; complete analysis additionally checks path completeness. Variadic typing explicitly errors.
+arity/types; complete analysis additionally checks path completeness.
 There are no builtin functions: string helpers will be ordinary standard-library
 functions; the compiler defines no signatures or dispatch by their spelling.
 
@@ -169,6 +184,8 @@ and return-path cases exercise `Analyzer::analyze`, while type-only fixtures ret
 the separate `resolve_types` contract. `completion_regressions` adds positive and
 negative tests for specialization/cache identities, computed types, source paths,
 annotation corruption, partial initialization, joins, loops, switches and defer
-ordering. No acceptance cases are ignored or marked `should_panic`. The unfiltered
-no-default-features suite passes. See [validation](agents/tests/README.md) and the
+ordering. Additional inline suites cover readonly qualifiers, explicit comp
+eligibility, concrete specialization, recursive-cache rollback and independent
+return/literal/cast validation. Final review regressions passed the blocking
+pre-commit checks; see [validation](agents/tests/README.md) and the
 linked [analysis issues](agents/issues/README.md) for broader compiler work.

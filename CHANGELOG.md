@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Independent pointee/element mutability with `const *T`, `const T[]` and `const T[N]`, including nested qualifiers, qualified address/view propagation and readonly-preserving casts.
+- Explicit `comp fn` declarations and function types gate bounded type computation independently of known function identity. Concrete generic instances own rechecked bodies/binding environments; deferred type computations retain argument dependencies. Dependent arithmetic/member/index operations are checked on specialization.
+- Directional `never` bottom coercion and divergence propagation, with normal completion forbidden for `never` functions. Independent annotation validation checks return contexts, literal kinds and cast legality.
 - Multi-block LLVM emission with PHIs, backedges, parallel-edge splitting and signed/unsigned comparisons. Single-file lowering now supports int32 helpers/direct calls, initialized int32/bool locals, assignments, nested if/else and early returns using SSA merges. Per-function ABI classification and a shared LLVM boundary adapter keep physical argument placement separate from logical IR; the production C scalar ABI remains supported and Fib ABI fails explicitly. TDD coverage includes executable conditionals, hand-built CFGs, mixed test ABI dispatch and located subset diagnostics. Analyzed projects retain source paths for lowering errors.
 - First executable single-file compiler milestone: `fibc build --single-file PATH` analyzes a lone `main() int32` returning an integer literal, constructs and verifies owned SSA, emits verified LLVM 21 and a PIC object, and links with host `cc`. Transactional IR construction and scalar ownership/signature/dominance verification reject invalid or unsupported input. Acceptance tests compile/link/run exit codes 0, 42 and 127; general lowering, representations and ABI/CFG planning remain unfinished.
 - Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
@@ -26,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserved the unfinished symbol-table and IR rewrite sources from `refactor/modules-and-generic-functions`; the IR interpreter is now exported but remains unimplemented.
 
 ### Changed
+- **Breaking:** removed variadic syntax, AST/semantic/IR signature flags and historical variadic libc declarations (fixed-signature C shims are required; old std callers remain unmigrated). Type-return evaluation now requires explicit `comp fn`; ordinary runtime functions are not evaluable merely because their declaration is known. Binding `const` is independent of array-element mutability; use a qualified array type for readonly elements.
 - **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples/editor highlighting use ordinary calls.
 - Type bindings now require explicit `comp` during analysis, including local inline types and type aliases. Local aliases follow declaration order and cannot reuse build-plan file names or their roots. Local compile-time type identities remain private to lexical lookup. Collection and name resolution reject invalid stage ordering and repeated attempts; name errors carry structured source locations.
 - LSP semantic highlighting recognizes `pub` and `comp` as declaration keywords, including per-binding modifiers in multi-variable declarations.
@@ -38,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced obsolete typed-AST/flat-IR lowering bodies with coherent SSA and backend API sketches; no direct AST-to-LLVM fallback or compatibility `IrProgram` is retained.
 
 ### Fixed
+- Parse `void` type values through the ordinary type-expression path so calls consume their arguments correctly.
+- Reject known-zero remainder divisors independently of the dividend and diagnose inclusive slice-bound normalization overflow without panicking. Failed recursive specialization groups discard newly cached dependents; template-dependent flow obligations are checked on concrete instances.
 - Compile-time alias dependencies use an iterative stack, preserving canonical identities and cycle diagnostics while resolving the 8,000-alias regression on a 2 MiB stack.
 - Migrated all 15 sample programs to current syntax while preserving their operations and numeric widths; output remains intended/unverified. Fibonacci benchmark results now use `int64` so `fib(50)` fits, and linked-list cleanup is registered after constructing the list.
 - Aligned LSP highlighting with the current tokenizer/parser: bare bit-width types, `const` bindings, `.len`, declaration contexts, and decimal-prefixed floats; removed legacy `var`/`import` keyword and `@`-type highlighting.
