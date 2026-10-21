@@ -2,7 +2,7 @@
 //! deliberately delegated only after both semantic types have been determined.
 use super::{TypeContext, at_span, types::check_assignable};
 use crate::frontend::{
-    analysis_annotation::{ExpressionInfo, MemberInfo, MemberKind, ValueCategory as C},
+    analysis_annotation::{ExpressionInfo, MemberInfo, MemberKind, ValueCategory},
     ast::expression::{Expression, ExpressionKind as E},
     semantic_type::{SemanticType as T, SemanticTypes, TypeId, type_error},
     tokens::{Literal, Operator as O, builtin::BuiltinType as B},
@@ -29,10 +29,13 @@ fn float(b: &B) -> bool {
     matches!(b, B::Float16 | B::Float32 | B::Float64 | B::Float128)
 }
 pub(super) fn numeric(t: &T) -> bool {
-    matches!(t,T::Builtin(b) if integer(b).is_some() || float(b))
+    matches!(t, T::Builtin(b) if integer(b).is_some() || float(b))
 }
-pub(super) fn integral(t: &T) -> bool {
-    matches!(t,T::Builtin(b) if integer(b).is_some())
+/// Returns whether a semantic type is an integer builtin. Unlike `integer`,
+/// which also provides signedness and width, this predicate is convenient when
+/// an operation only needs to enforce that its operand is is_integral_type.
+pub(super) fn is_integral_type(t: &T) -> bool {
+    matches!(t, T::Builtin(b) if integer(b).is_some())
 }
 fn fits_integer(value: i128, ty: &T) -> anyhow::Result<()> {
     let T::Builtin(b) = ty else {
@@ -72,18 +75,28 @@ fn fits_float(value: f64, ty: &T) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Binding constness does not restrict array/slice elements. A readonly access
-/// path does restrict inline array storage, but does not requalify a slice's view.
+/// Determines the value category produced by indexing an array or slice, along
+/// with the element type and (for arrays) its known length.
+///
+/// A binding's constness is intentionally ignored: a mutable binding may hold
+/// an array whose elements can be changed, and a const binding does not make
+/// those elements readonly. Instead, readonly is inherited from the access
+/// path. For inline arrays, indexing through a readonly place yields a
+/// readonly place for the element. Slices are different: readonly on the slice
+/// value itself does not qualify the slice's element view, so indexing a slice
+/// yields a mutable place unless the slice type or access path is readonly.
+/// Value-category arrays remain values when indexed; other writable elements
+/// are mutable places.
 pub(super) fn indexed(
     receiver: ExpressionInfo,
     types: &SemanticTypes,
-) -> anyhow::Result<(TypeId, Option<u64>, C)> {
+) -> anyhow::Result<(TypeId, Option<u64>, ValueCategory)> {
     let (container, readonly) = types.container(receiver.ty)?;
     let (element, length, inherited) = match container {
         T::Array { element, length } => (
             *element,
             Some(*length),
-            receiver.category == C::ReadonlyPlace,
+            receiver.category == ValueCategory::ReadonlyPlace,
         ),
         T::Slice(element) => (*element, None, false),
         T::Parameter(_) | T::TypeResult { .. } | T::MemberResult { .. } | T::IndexResult { .. } => {
@@ -98,7 +111,7 @@ pub(super) fn indexed(
             (
                 TypeId(index as u32),
                 None,
-                receiver.category == C::ReadonlyPlace,
+                receiver.category == ValueCategory::ReadonlyPlace,
             )
         }
         _ => return Err(type_error("receiver is not indexable")),
@@ -107,28 +120,28 @@ pub(super) fn indexed(
         element,
         length,
         if readonly || inherited {
-            C::ReadonlyPlace
-        } else if length.is_some() && receiver.category == C::Value {
-            C::Value
+            ValueCategory::ReadonlyPlace
+        } else if length.is_some() && receiver.category == ValueCategory::Value {
+            ValueCategory::Value
         } else {
-            C::MutablePlace
+            ValueCategory::MutablePlace
         },
     ))
 }
 
 /// The same resolved-type cast policy is used by inference and validation.
-pub(super) fn cast_allowed(
+pub(super) fn is_cast_allowed(
     from: TypeId,
     to: TypeId,
     types: &SemanticTypes,
 ) -> anyhow::Result<bool> {
     Ok(matches!(types.get(from)?, T::Builtin(B::Never))
         || (numeric(types.get(from)?) && numeric(types.get(to)?))
-        || pointer_cast(from, to, types)?
+        || is_pointer_cast(from, to, types)?
         || check_assignable(to, from, types).is_ok())
 }
 
-pub(super) fn pointer_cast(
+pub(super) fn is_pointer_cast(
     from: TypeId,
     to: TypeId,
     types: &SemanticTypes,
@@ -382,16 +395,16 @@ impl TypeContext<'_> {
                 }
                 match u.operator {
                     O::Minus if numeric(self.types.get(info.ty)?) => info.ty,
-                    O::Tilde if integral(self.types.get(info.ty)?) => info.ty,
+                    O::Tilde if is_integral_type(self.types.get(info.ty)?) => info.ty,
                     O::LogicalNot if matches!(self.types.get(info.ty)?, T::Builtin(B::Boolean)) => {
                         info.ty
                     }
                     O::AddressOf => {
-                        if info.category == C::Value {
+                        if info.category == ValueCategory::Value {
                             return Err(type_error("address requires a place"));
                         }
                         let pointer = self.types.intern(T::Pointer(info.ty));
-                        if info.category == C::MutablePlace {
+                        if info.category == ValueCategory::MutablePlace {
                             pointer
                         } else {
                             self.types.intern(T::Readonly(pointer))
@@ -408,9 +421,9 @@ impl TypeContext<'_> {
                         return Ok(ExpressionInfo {
                             ty: *pointee,
                             category: if readonly {
-                                C::ReadonlyPlace
+                                ValueCategory::ReadonlyPlace
                             } else {
-                                C::MutablePlace
+                                ValueCategory::MutablePlace
                             },
                             type_value: None,
                         });
@@ -447,7 +460,7 @@ impl TypeContext<'_> {
                     expected.filter(|t| {
                         self.types.get(*t).is_ok_and(|ty| {
                             if integer_only {
-                                integral(ty)
+                                is_integral_type(ty)
                             } else {
                                 numeric(ty)
                             }
@@ -524,7 +537,7 @@ impl TypeContext<'_> {
                                     O::Percent | O::Ampersand | O::Pipe | O::Caret
                                 )
                             {
-                                integral(ty)
+                                is_integral_type(ty)
                             } else if matches!(b.operator, O::DoubleEquals | O::Different) {
                                 numeric(ty)
                                     || matches!(
@@ -553,9 +566,12 @@ impl TypeContext<'_> {
                 }
                 match b.operator {
                     O::Plus | O::Minus | O::Star | O::Slash if numeric(lt) => left.ty,
-                    O::Percent | O::Ampersand | O::Pipe | O::Caret if integral(lt) => left.ty,
+                    O::Percent | O::Ampersand | O::Pipe | O::Caret if is_integral_type(lt) => {
+                        left.ty
+                    }
                     O::LeftShift | O::RightShift
-                        if integral(lt) && (right_never || integral(self.types.get(right.ty)?)) =>
+                        if is_integral_type(lt)
+                            && (right_never || is_integral_type(self.types.get(right.ty)?)) =>
                     {
                         if let Some(count) = super::constant::integer_as_i128(&b.right, self.types)?
                         {
@@ -632,7 +648,7 @@ impl TypeContext<'_> {
                     ) {
                         info.category
                     } else {
-                        C::Value
+                        ValueCategory::Value
                     },
                     type_value: None,
                 });
@@ -762,7 +778,7 @@ impl TypeContext<'_> {
                     return Err(type_error("slice bounds are reversed"));
                 }
                 let slice = self.types.intern(T::Slice(element));
-                if category == C::ReadonlyPlace {
+                if category == ValueCategory::ReadonlyPlace {
                     self.types.intern(T::Readonly(slice))
                 } else {
                     slice
@@ -783,7 +799,7 @@ impl TypeContext<'_> {
                     },
                 )?;
                 let from = self.types.get(info.ty)?;
-                let allowed = cast_allowed(info.ty, target, self.types)?;
+                let allowed = is_cast_allowed(info.ty, target, self.types)?;
                 if matches!(from, T::Builtin(B::Never)) {
                     return Ok(info);
                 }
@@ -818,7 +834,7 @@ impl TypeContext<'_> {
         allow_end: bool,
     ) -> anyhow::Result<()> {
         let info = self.expression(expr, None)?;
-        if !integral(self.types.get(info.ty)?)
+        if !is_integral_type(self.types.get(info.ty)?)
             && !matches!(self.types.get(info.ty)?, T::Builtin(B::Never))
             && !self.types.is_symbolic(info.ty)?
         {

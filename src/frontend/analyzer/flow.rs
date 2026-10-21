@@ -52,7 +52,7 @@ struct Flow<'a> {
 
 pub(super) fn validate(
     project: &AnalyzedProject,
-    paths: Option<&HashMap<crate::build_plan::FileId, std::path::PathBuf>>,
+    paths: Option<&HashMap<crate::plan::FileId, std::path::PathBuf>>,
 ) -> anyhow::Result<()> {
     let mut flow = Flow {
         types: &project.types,

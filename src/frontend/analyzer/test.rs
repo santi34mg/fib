@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 
 use crate::{
-    build_plan::FileId,
     frontend::{
         analysis_annotation::{
             BindingAnnotation, ExpressionAnnotation, ExpressionInfo, LabelAnnotation,
@@ -21,6 +20,7 @@ use crate::{
         semantic_type::{SemanticTypes, TypeId},
         symbol_table::{LocalBinding, SymbolTable},
     },
+    plan::FileId,
 };
 
 use super::{
@@ -154,6 +154,8 @@ fn complete_analysis_validates_an_empty_type_pass() {
         symbols: symbols(),
         local_ids: LocalIdAllocator::default(),
         paths: HashMap::new(),
+        synthetic_modules: Vec::new(),
+        builtins: HashMap::new(),
         phase: super::NamePhase::New,
     };
     analyzer.analyze().unwrap();
@@ -167,9 +169,115 @@ fn complete_analysis_validates_an_empty_type_pass() {
         units,
         symbols: registry,
         types,
+        builtins: HashMap::new(),
         source_paths: HashMap::new(),
     })
     .unwrap();
+}
+
+#[test]
+fn synthetic_builtins_resolve_type_and_survive_analysis_only_when_configured() {
+    use crate::{
+        builtins::{BuiltinFunction, SyntheticModule},
+        driver::CompilationUnit,
+        frontend::{
+            analysis_annotation::BindingId, parser::Parser, semantic_type::SemanticType,
+            tokenizer::Tokenizer, tokens::builtin::BuiltinType,
+        },
+        plan::{BuildPlan, FileName, SourceFile},
+    };
+    use std::path::Path;
+
+    fn input(source: &str) -> (BuildPlan, Vec<CompilationUnit>) {
+        let ast = Parser::with_source(Tokenizer::new(source), Path::new("build.fib"), source)
+            .parse()
+            .unwrap();
+        (
+            BuildPlan {
+                files: vec![SourceFile {
+                    id: FileId(0),
+                    name: FileName("build".into()),
+                    path: "build.fib".into(),
+                }],
+                entry: FileId(0),
+                output: "unused".into(),
+            },
+            vec![CompilationUnit {
+                source_file_id: FileId(0),
+                ast,
+            }],
+        )
+    }
+
+    let source = "fn configure() { build_api::add_source(\"x\"); }";
+    let (plan, units) = input(source);
+    let normal_error = Analyzer::new(plan, units).unwrap().analyze().unwrap_err();
+    assert!(format!("{normal_error:#}").contains("add_source"));
+
+    let (plan, units) = input(source);
+    let project = Analyzer::new(plan, units)
+        .unwrap()
+        .with_synthetic_module(SyntheticModule::BUILD_API)
+        .unwrap()
+        .analyze()
+        .unwrap();
+    let (&id, _) = project
+        .builtins
+        .iter()
+        .find(|(_, builtin)| **builtin == BuiltinFunction::AddSource)
+        .expect("add_source builtin identity");
+    let info = project.types.bindings[&BindingId::Declaration(id)];
+    let SemanticType::Function(signature) = project.types.get(info.ty).unwrap() else {
+        panic!("builtin must have a function type")
+    };
+    assert_eq!(signature.parameters.len(), 1);
+    assert!(matches!(
+        project.types.get(signature.parameters[0]).unwrap(),
+        SemanticType::Builtin(BuiltinType::String)
+    ));
+    assert!(matches!(
+        project.types.get(signature.return_type).unwrap(),
+        SemanticType::Builtin(BuiltinType::Void)
+    ));
+    assert_eq!(project.builtins.len(), BuiltinFunction::ALL.len());
+}
+
+#[test]
+fn synthetic_builtin_namespace_does_not_collide_with_source_names() {
+    use crate::{
+        builtins::{BuiltinFunction, SyntheticModule},
+        driver::CompilationUnit,
+        frontend::{parser::Parser, tokenizer::Tokenizer},
+        plan::{BuildPlan, FileName, SourceFile},
+    };
+    use std::path::Path;
+
+    let source = "fn add_source() {} fn configure() { build_api::add_source(\"x\"); }";
+    let ast = Parser::with_source(Tokenizer::new(source), Path::new("build.fib"), source)
+        .parse()
+        .unwrap();
+    let plan = BuildPlan {
+        files: vec![SourceFile {
+            id: FileId(0),
+            name: FileName("build".into()),
+            path: "build.fib".into(),
+        }],
+        entry: FileId(0),
+        output: "unused".into(),
+    };
+    let project = Analyzer::new(
+        plan,
+        vec![CompilationUnit {
+            source_file_id: FileId(0),
+            ast,
+        }],
+    )
+    .unwrap()
+    .with_synthetic_module(SyntheticModule::BUILD_API)
+    .unwrap()
+    .analyze()
+    .unwrap();
+    assert_eq!(project.builtins.len(), BuiltinFunction::ALL.len());
 }
 
 #[test]
@@ -233,7 +341,6 @@ mod name_resolution {
 
     use super::{Analyzer, LocalIdAllocator, ResolveContext};
     use crate::{
-        build_plan::{BuildPlan, FileId, SourceFile},
         diagnostics::Span,
         driver::CompilationUnit,
         frontend::{
@@ -254,6 +361,7 @@ mod name_resolution {
             symbol_table::{LocalBinding, SymbolTable},
             tokenizer::Tokenizer,
         },
+        plan::{BuildPlan, FileId, SourceFile},
     };
 
     mod phase_01_files {
@@ -2565,13 +2673,13 @@ mod name_resolution {
 mod type_resolution {
     use super::*;
     use crate::{
-        build_plan::{BuildPlan, SourceFile},
         diagnostics::{CompilerError, ErrorKind},
         driver::CompilationUnit,
         frontend::{
             ast::statement::StatementKind, parser::Parser, semantic_type::SemanticType,
             tokenizer::Tokenizer, tokens::builtin::BuiltinType,
         },
+        plan::{BuildPlan, SourceFile},
     };
     use std::path::Path;
 
@@ -3438,8 +3546,8 @@ mod type_resolution {
     }
 
     fn run_files(files: &[(&str, &str)]) -> anyhow::Result<(Analyzer, SemanticTypes)> {
-        use crate::build_plan::{BuildPlan, SourceFile};
         use crate::driver::CompilationUnit;
+        use crate::plan::{BuildPlan, SourceFile};
         let plan = BuildPlan {
             files: files
                 .iter()
@@ -4590,7 +4698,6 @@ mod generic_flow_regressions {
 
     use super::super::generics::{GenericInstanceKey, resolve_generic_instance};
     use crate::{
-        build_plan::{BuildPlan, FileId, SourceFile},
         diagnostics::{CompilerError, ErrorKind},
         driver::CompilationUnit,
         frontend::{
@@ -4601,6 +4708,7 @@ mod generic_flow_regressions {
             tokenizer::Tokenizer,
             tokens::builtin::BuiltinType,
         },
+        plan::{BuildPlan, FileId, SourceFile},
     };
     use std::path::Path;
 
@@ -4819,7 +4927,6 @@ mod validation_regressions {
     //! Corruption checks independent of inference and the existing analyzer suite.
     use super::super::validation::validate;
     use crate::{
-        build_plan::{BuildPlan, FileId, SourceFile},
         diagnostics::{CompilerError, ErrorKind},
         driver::CompilationUnit,
         frontend::{
@@ -4834,6 +4941,7 @@ mod validation_regressions {
             tokenizer::Tokenizer,
             tokens::{Literal, builtin::BuiltinType as B},
         },
+        plan::{BuildPlan, FileId, SourceFile},
     };
     use std::path::Path;
 

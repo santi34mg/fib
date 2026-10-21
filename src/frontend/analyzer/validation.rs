@@ -48,6 +48,25 @@ pub(super) fn validate(
         }
         v.collect(&unit.ast.statements)?;
     }
+    // Compiler-provided namespaces have no source AST to walk. Their declarations
+    // are nevertheless canonical bindings and must still pass the semantic-table
+    // consistency checks below.
+    for namespace in symbols
+        .namespaces
+        .values()
+        .filter(|namespace| !files.contains(&namespace.file_id))
+    {
+        for index in 0..namespace.declarations.len() {
+            let index =
+                u32::try_from(index).map_err(|_| type_error("declaration ID space exhausted"))?;
+            v.bindings.insert(BindingId::Declaration(
+                crate::frontend::identifier::DeclId {
+                    file_id: namespace.file_id,
+                    index,
+                },
+            ));
+        }
+    }
     for (index, ty) in types.types.iter().enumerate() {
         types.validate_type(TypeId(index as u32))?;
         if let T::Declared(id) = ty {
@@ -828,7 +847,7 @@ impl Validator<'_> {
                                     O::Percent | O::Ampersand | O::Pipe | O::Caret
                                 )
                             {
-                                super::value_typing::integral(ty)
+                                super::value_typing::is_integral_type(ty)
                             } else if matches!(b.operator, O::DoubleEquals | O::Different) {
                                 super::value_typing::numeric(ty)
                                     || matches!(
@@ -988,7 +1007,7 @@ impl Validator<'_> {
                             None
                         },
                     )?;
-                    if !super::value_typing::cast_allowed(source.ty, target, self.types)? {
+                    if !super::value_typing::is_cast_allowed(source.ty, target, self.types)? {
                         return Err(type_error("unsupported cast annotation"));
                     }
                     super::constant::check_cast(expr, target, self.types)?;

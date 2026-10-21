@@ -2,7 +2,6 @@
 //! source snapshots; all successful annotations are written to the original AST.
 use super::{TypeContext, at_span};
 use crate::{
-    build_plan::FileId,
     diagnostics::Span,
     driver::CompilationUnit,
     frontend::{
@@ -23,6 +22,7 @@ use crate::{
         },
         tokens::builtin::BuiltinType as B,
     },
+    plan::FileId,
 };
 use std::collections::{HashMap, HashSet};
 

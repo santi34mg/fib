@@ -8,10 +8,12 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
 
-use crate::build_plan::{BuildPlan, FileId};
+use crate::builtins::{BuiltinFunction, SyntheticModule};
 use crate::diagnostics::{CompilerError, Span};
 use crate::driver::CompilationUnit;
-use crate::frontend::analysis_annotation::{BindingAnnotation, BindingId};
+use crate::frontend::analysis_annotation::{
+    BindingAnnotation, BindingId, ExpressionInfo, ValueCategory,
+};
 use crate::frontend::ast::statement::StatementKind;
 use crate::frontend::ast::{
     expression::ExpressionKind, qualified_name::QualifiedIdentifier,
@@ -22,8 +24,11 @@ use crate::frontend::namespace::{
 };
 use crate::frontend::scope_kind::ScopeKind;
 use crate::frontend::{
-    namespace::ProjectSymbols, semantic_type::SemanticTypes, symbol_table::SymbolTable,
+    namespace::ProjectSymbols,
+    semantic_type::{SemanticType, SemanticTypes},
+    symbol_table::SymbolTable,
 };
+use crate::plan::{BuildPlan, FileId, FileName};
 
 /// The original ASTs plus project-owned semantic identities and types.
 /// AST nodes carry initially pending `analysis_annotation` slots. Successful
@@ -34,6 +39,8 @@ pub struct AnalyzedProject {
     pub units: Vec<CompilationUnit>,
     pub symbols: ProjectSymbols,
     pub types: SemanticTypes,
+    /// Build-environment functions keyed by their synthetic declaration identity.
+    pub builtins: HashMap<DeclId, BuiltinFunction>,
     /// Original plan paths retained for diagnostics after analysis.
     pub source_paths: HashMap<FileId, std::path::PathBuf>,
 }
@@ -105,6 +112,8 @@ pub struct Analyzer {
     symbols: ProjectSymbols,
     local_ids: LocalIdAllocator,
     paths: HashMap<FileId, std::path::PathBuf>,
+    synthetic_modules: Vec<(FileId, SyntheticModule)>,
+    builtins: HashMap<DeclId, BuiltinFunction>,
     phase: NamePhase,
 }
 
@@ -142,8 +151,42 @@ impl Analyzer {
             symbols,
             local_ids: LocalIdAllocator::default(),
             paths: plan.files.into_iter().map(|f| (f.id, f.path)).collect(),
+            synthetic_modules: Vec::new(),
+            builtins: HashMap::new(),
             phase: NamePhase::New,
         })
+    }
+
+    /// Add a compiler-provided namespace to the same analysis pipeline used by
+    /// source modules. Synthetic declarations have identities and semantic types,
+    /// but no source AST or path.
+    pub fn with_synthetic_module(mut self, module: SyntheticModule) -> anyhow::Result<Self> {
+        if self
+            .symbols
+            .files_by_name
+            .contains_key(&FileName(module.name.into()))
+        {
+            return Err(name_error(format!(
+                "duplicate file or synthetic module name '{}'",
+                module.name
+            )));
+        }
+        let next = self
+            .symbols
+            .files_by_name
+            .values()
+            .chain(self.synthetic_modules.iter().map(|(id, _)| id))
+            .map(|id| id.0)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| name_error("synthetic module file ID space exhausted"))?;
+        let file = FileId(next);
+        self.symbols
+            .files_by_name
+            .insert(FileName(module.name.into()), file);
+        self.synthetic_modules.push((file, module));
+        Ok(self)
     }
 
     pub fn analyze(mut self) -> anyhow::Result<AnalyzedProject> {
@@ -156,6 +199,7 @@ impl Analyzer {
             units: self.units,
             symbols: self.symbols,
             types,
+            builtins: self.builtins,
             source_paths: self.paths.clone(),
         };
         validate_analysis_with_paths(&project, Some(&self.paths))?;
@@ -249,6 +293,25 @@ impl Analyzer {
             })();
             result.map_err(|e| with_path(e, self.paths.get(&file_id)))?;
         }
+        for &(file_id, module) in &self.synthetic_modules {
+            let mut namespace = Namespace {
+                file_id,
+                declarations: Vec::new(),
+                names: HashMap::new(),
+            };
+            for &builtin in module.functions {
+                let id = add_declaration(
+                    &mut namespace,
+                    builtin.name(),
+                    true,
+                    DeclarationKind::Value,
+                    Span::new(1, 1),
+                    true,
+                )?;
+                self.builtins.insert(id, builtin);
+            }
+            self.symbols.namespaces.insert(file_id, namespace);
+        }
         self.phase = NamePhase::Collected;
         Ok(())
     }
@@ -287,6 +350,19 @@ impl Analyzer {
         }
         self.phase = NamePhase::Typing;
         let mut types = SemanticTypes::default();
+        // also check builtin types
+        for (&id, &builtin) in &self.builtins {
+            let signature = builtin.semantic_type(&mut types);
+            let ty = types.intern(SemanticType::Function(signature));
+            types.bind(
+                BindingId::Declaration(id),
+                ExpressionInfo {
+                    ty,
+                    category: ValueCategory::Value,
+                    type_value: None,
+                },
+            );
+        }
         typing::resolve_project_with_paths(
             &mut self.units,
             &self.symbols,
