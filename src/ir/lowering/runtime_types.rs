@@ -18,8 +18,9 @@ pub(super) fn register_runtime_types(
             ));
         }
         let result = match project.types.get(ty)? {
-            SemanticType::Builtin(b) => SCALARS[..15].contains(b),
+            SemanticType::Builtin(b) => SCALARS[..16].contains(b),
             SemanticType::Readonly(t) | SemanticType::Pointer(t) => supported(project, *t, seen)?,
+            SemanticType::Array { element, .. } => supported(project, *element, seen)?,
             SemanticType::Struct(fields) => {
                 let mut result = true;
                 for f in fields {
@@ -71,6 +72,15 @@ pub(super) fn register_runtime_types(
                     ir.types.push(IrType::Pointer { pointee });
                     id
                 }
+            }
+            SemanticType::Array { element, length } => {
+                let element = register(project, ir, map, *element)?;
+                let id = TypeId(ir.types.len());
+                ir.types.push(IrType::Array {
+                    element,
+                    len: *length,
+                });
+                id
             }
             SemanticType::Struct(fields) => {
                 let id = TypeId(ir.types.len());
@@ -171,7 +181,7 @@ pub(super) fn register_runtime_types(
     }
     for (index, ty) in project.types.types.iter().enumerate() {
         let id = SemanticId(index as u32);
-        if matches!(ty, SemanticType::Builtin(b) if SCALARS.contains(b))
+        if matches!(ty, SemanticType::Builtin(b) if SCALARS[..16].contains(b) || (*b == BuiltinType::String && ir.types.get(scalar_id(b).0) == Some(&IrType::Bytes)))
             || supported(project, id, &mut std::collections::HashSet::new())?
         {
             register(project, ir, &mut map, id)?;

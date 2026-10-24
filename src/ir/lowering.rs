@@ -4,7 +4,9 @@ use crate::{
     diagnostics::{CompilerError, ErrorKind, Span},
     frontend::{
         analysis_annotation::{BindingId, MemberKind, ValueCategory},
-        analyzer::{AnalyzedProject, evaluate_numeric, known_boolean, validate_analysis},
+        analyzer::{
+            AnalyzedProject, evaluate_boolean, evaluate_numeric, known_boolean, validate_analysis,
+        },
         ast::{
             expression::{Expression, ExpressionKind as E},
             pattern::Pattern,
@@ -24,7 +26,7 @@ mod runtime_types;
 mod storage;
 use runtime_types::register_runtime_types;
 use storage::storage_bindings;
-const SCALARS: [BuiltinType; 16] = [
+const SCALARS: [BuiltinType; 17] = [
     BuiltinType::Int32,
     BuiltinType::Boolean,
     BuiltinType::Int8,
@@ -40,6 +42,7 @@ const SCALARS: [BuiltinType; 16] = [
     BuiltinType::Float32,
     BuiltinType::Float64,
     BuiltinType::Float128,
+    BuiltinType::Usize,
     BuiltinType::String,
 ];
 fn scalar_id(b: &BuiltinType) -> TypeId {
@@ -55,6 +58,10 @@ fn scalar_type(b: &BuiltinType) -> IrType {
     match b {
         BuiltinType::Boolean => IrType::Bool,
         BuiltinType::String => IrType::Bytes,
+        BuiltinType::Usize => IrType::Integer {
+            width: IntegerWidth::Pointer,
+            signed: false,
+        },
         _ => match NumericType::builtin(b).expect("registered scalar") {
             NumericType::Integer { width, signed } => IrType::Integer {
                 width: IntegerWidth::Bits(width),
@@ -73,6 +80,7 @@ fn scalar_type(b: &BuiltinType) -> IrType {
 
 struct Source<'a> {
     project: &'a AnalyzedProject,
+    types: &'a crate::frontend::semantic_type::SemanticTypes,
     file: FileId,
     runtime_types: &'a HashMap<SemanticId, TypeId>,
     pointers: &'a HashMap<TypeId, TypeId>,
@@ -87,9 +95,9 @@ impl Source<'_> {
         error.into()
     }
     fn ir_type(&self, ty: SemanticId, span: Span) -> anyhow::Result<Option<TypeId>> {
-        let ty = self.project.types.canonical(ty)?;
+        let ty = self.types.canonical(ty)?;
         if matches!(
-            self.project.types.get(ty)?,
+            self.types.get(ty)?,
             SemanticType::Builtin(BuiltinType::Void)
         ) {
             return Ok(None);
@@ -140,22 +148,24 @@ impl Source<'_> {
     }
     fn signature(&self, declaration: DeclId, span: Span) -> anyhow::Result<Signature> {
         let semantic = self
-            .project
             .types
             .declarations
             .get(&declaration)
             .copied()
             .ok_or_else(|| self.error(span, "missing function semantic type"))?;
-        let SemanticType::Function(function) = self
-            .project
-            .types
-            .get(self.project.types.canonical(semantic)?)?
+        let SemanticType::Function(function) = self.types.get(self.types.canonical(semantic)?)?
         else {
             return Err(self.error(span, "function declaration has a non-function type"));
         };
         let params = function
             .parameters
             .iter()
+            .filter(|ty| {
+                !matches!(
+                    self.types.get(**ty),
+                    Ok(SemanticType::Builtin(BuiltinType::MetaType))
+                )
+            })
             .map(|ty| self.value_type(*ty, span))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let results = self
@@ -172,7 +182,7 @@ impl Source<'_> {
 
 /// Lowers the validated, analyzed source subset into owned SSA IR.
 ///
-/// This entry point requires exactly one source unit. It first registers builtin
+/// This entry point registers declarations across all selected source units and concrete generic instances before lowering bodies. It registers builtin
 /// and user function identities so calls can refer to later declarations, then
 /// checks supported constructs and gathers constants before building function
 /// bodies. The resulting IR is verified before it is returned.
@@ -182,10 +192,6 @@ impl Source<'_> {
 /// have no return values; value-returning functions must return or diverge.
 pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     validate_analysis(project)?;
-    anyhow::ensure!(
-        project.units.len() == 1,
-        "IR lowering currently requires one source file"
-    );
     let mut ir = Ir::new();
     ir.types = SCALARS[..scalar_id(&BuiltinType::String).0]
         .iter()
@@ -193,11 +199,12 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         .collect();
     // NOTE: This conditional Bytes-type registration probably needs to be approached differently in the future.
     if project.builtins.values().any(|b| !b.is_intrinsic())
-        || project
-            .types
-            .types
-            .iter()
-            .any(|ty| matches!(ty, SemanticType::Builtin(BuiltinType::String)))
+        || project.types.bindings.values().any(|info| {
+            matches!(
+                project.types.get(info.ty),
+                Ok(SemanticType::Builtin(BuiltinType::String))
+            )
+        })
     {
         ir.types.push(IrType::Bytes);
     }
@@ -257,12 +264,13 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         }
         let source = Source {
             project,
+            types: &project.types,
             file: declaration.file_id,
             runtime_types: &runtime_types,
             pointers: &pointers,
         };
         let function_id = FunctionId(ir.functions.len());
-        functions.insert(declaration, function_id);
+        functions.insert(FunctionKey::Declaration(declaration), function_id);
         ir.functions.push(Function {
             identifier: format!("fib.build.v1.{}", builtin.name()),
             signature: Signature {
@@ -283,12 +291,15 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     for unit in &project.units {
         let source = Source {
             project,
+            types: &project.types,
             file: unit.source_file_id,
             runtime_types: &runtime_types,
             pointers: &pointers,
         };
         for node in &unit.ast.statements {
-            if matches!(&node.kind, S::VariableDeclaration(v) if v.is_comp) {
+            if matches!(&node.kind, S::VariableDeclaration(v) if v.is_comp)
+                || matches!(&node.kind, S::MultiVariableDeclaration { bindings, .. } if bindings.iter().all(|v| v.is_comp))
+            {
                 continue;
             }
             let S::FunctionDeclaration(function) = &node.kind else {
@@ -299,6 +310,17 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             };
             let signature = &function.signature;
             if signature.is_comp {
+                continue;
+            }
+            if source
+                .types
+                .generic_parameters
+                .get(&match signature.annotation.binding {
+                    Some(BindingId::Declaration(id)) => id,
+                    _ => return Err(source.error(node.span, "missing function identity")),
+                })
+                .is_some_and(|parameters| !parameters.is_empty())
+            {
                 continue;
             }
             if function.is_extern
@@ -313,16 +335,26 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
                 return Err(source.error(node.span, "missing function identity"));
             };
             let function_id = FunctionId(ir.functions.len());
-            if functions.insert(declaration, function_id).is_some() {
+            if functions
+                .insert(FunctionKey::Declaration(declaration), function_id)
+                .is_some()
+            {
                 return Err(source.error(node.span, "duplicate lowered function identity"));
             }
-            let entry = signature.identifier == entry_name;
+            let entry = unit.source_file_id == project.entry && signature.identifier == entry_name;
             let mut lowered_signature = source.signature(declaration, node.span)?;
             if !entry {
                 lowered_signature.calling_convention = CallingConvention::Fib;
             }
             ir.functions.push(Function {
-                identifier: signature.identifier.clone(),
+                identifier: if entry || project.units.len() == 1 {
+                    signature.identifier.clone()
+                } else {
+                    format!(
+                        "fib.{}.{}.{}",
+                        declaration.file_id.0, declaration.index, signature.identifier
+                    )
+                },
                 signature: lowered_signature,
                 linkage: if entry {
                     Linkage::External
@@ -331,14 +363,82 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
                 },
                 body: FunctionBody::Declaration,
             });
-            declarations.push((function_id, function, node.span, unit.source_file_id));
+            declarations.push((function_id, function, node.span, unit.source_file_id, None));
         }
+    }
+    let mut instances = project
+        .types
+        .generic_instances
+        .values()
+        .filter(|instance| instance.body.is_some())
+        .collect::<Vec<_>>();
+    instances.sort_by_key(|instance| {
+        (
+            instance.key.template.file_id,
+            instance.key.template.index,
+            instance
+                .key
+                .arguments
+                .iter()
+                .map(|ty| ty.0)
+                .collect::<Vec<_>>(),
+        )
+    });
+    for instance in instances {
+        let function = instance.body.as_ref().expect("concrete instance");
+        if function.signature.is_comp {
+            continue;
+        }
+        let mut environment = project.types.clone();
+        for (&binding, &info) in &instance.bindings {
+            environment.bind(binding, info);
+        }
+        environment
+            .declarations
+            .insert(instance.key.template, instance.signature);
+        let source = Source {
+            project,
+            types: &environment,
+            file: instance.key.template.file_id,
+            runtime_types: &runtime_types,
+            pointers: &pointers,
+        };
+        let id = FunctionId(ir.functions.len());
+        functions.insert(FunctionKey::Instance(instance.key.clone()), id);
+        ir.functions.push(Function {
+            identifier: format!(
+                "fib.generic.{}.{}.{}",
+                instance.key.template.file_id.0,
+                instance.key.template.index,
+                instance
+                    .key
+                    .arguments
+                    .iter()
+                    .map(|t| t.0.to_string())
+                    .collect::<Vec<_>>()
+                    .join(".")
+            ),
+            signature: Signature {
+                calling_convention: CallingConvention::Fib,
+                ..source.signature(instance.key.template, Span::new(1, 1))?
+            },
+            linkage: Linkage::Internal,
+            body: FunctionBody::Declaration,
+        });
+        declarations.push((
+            id,
+            function,
+            Span::new(1, 1),
+            instance.key.template.file_id,
+            Some(environment),
+        ));
     }
     // Validate the entire subset, including dead branches, and collect constants
     // before the builder borrows IR. Forward function identities already exist.
-    for (_, function, _, file) in &declarations {
+    for (_, function, _, file, environment) in &declarations {
         let source = Source {
             project,
+            types: environment.as_ref().unwrap_or(&project.types),
             file: *file,
             runtime_types: &runtime_types,
             pointers: &pointers,
@@ -357,9 +457,10 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         )?;
     }
     let constants = ir.constants.clone();
-    for (id, function, span, file) in declarations {
+    for (id, function, span, file, environment) in declarations {
         let source = Source {
             project,
+            types: environment.as_ref().unwrap_or(&project.types),
             file,
             runtime_types: &runtime_types,
             pointers: &pointers,
@@ -373,6 +474,15 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             .signature
             .parameters
             .iter()
+            .filter(|p| {
+                !matches!(
+                    p.parameter_type
+                        .annotation
+                        .resolved
+                        .and_then(|ty| source.types.get(ty).ok()),
+                    Some(SemanticType::Builtin(BuiltinType::MetaType))
+                )
+            })
             .zip(builder.block_params(entry)?)
         {
             let Some(BindingId::Local(local)) = parameter.annotation.binding else {
@@ -387,6 +497,16 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             .statements;
         let mut stored = storage_bindings(body, &source)?;
         for parameter in &function.signature.parameters {
+            if matches!(
+                parameter
+                    .parameter_type
+                    .annotation
+                    .resolved
+                    .and_then(|ty| source.types.get(ty).ok()),
+                Some(SemanticType::Builtin(BuiltinType::MetaType))
+            ) {
+                continue;
+            }
             if let Some(BindingId::Local(id)) = parameter.annotation.binding
                 && source.is_aggregate_local(id)?
             {
@@ -395,7 +515,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         }
         let mut slots = BTreeMap::new();
         for local in stored {
-            let ty = source.value_type(source.project.types.locals[&local], span)?;
+            let ty = source.value_type(source.types.locals[&local], span)?;
             let slot = builder.create_stack_slot(ty, None)?;
             let address = Operand::Value(
                 builder.append_instruction(
@@ -465,11 +585,37 @@ fn local(expr: &Expression) -> Option<LocalId> {
         None
     }
 }
-fn callee(expr: &Expression, functions: &HashMap<DeclId, FunctionId>) -> Option<FunctionId> {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum FunctionKey {
+    Declaration(DeclId),
+    Instance(crate::frontend::analyzer::generics::GenericInstanceKey),
+}
+fn runtime_argument(expr: &&Expression) -> bool {
+    expr.annotation
+        .resolved
+        .is_none_or(|info| info.type_value.is_none())
+}
+fn callee(
+    expr: &Expression,
+    args: &[Expression],
+    functions: &HashMap<FunctionKey, FunctionId>,
+) -> Option<FunctionId> {
     if let E::QualifiedIdentifier(name) = &expr.kind
         && let Some(ResolvedName::Entity(Entity::Declaration(id))) = name.annotation.resolved
     {
-        functions.get(&id).copied()
+        let arguments = args
+            .iter()
+            .filter_map(|arg| arg.annotation.resolved?.type_value)
+            .collect::<Vec<_>>();
+        let key = if arguments.is_empty() {
+            FunctionKey::Declaration(id)
+        } else {
+            FunctionKey::Instance(crate::frontend::analyzer::generics::GenericInstanceKey {
+                template: id,
+                arguments,
+            })
+        };
+        functions.get(&key).copied()
     } else {
         None
     }
@@ -495,9 +641,24 @@ fn binary_op(operator: Operator) -> Option<BinaryOp> {
         _ => return None,
     })
 }
+fn array_length(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Constant>> {
+    if let E::ExprAcess { member, .. } = &expr.kind
+        && let Some(info) = member.resolved
+        && info.kind == MemberKind::Length
+        && let (SemanticType::Array { length, .. }, _) = source.types.container(info.owner)?
+    {
+        return Ok(Some(Constant {
+            ty: source.expression_type(expr)?,
+            kind: ConstantKind::Integer {
+                bits: u128::from(*length),
+            },
+        }));
+    }
+    Ok(None)
+}
 fn literal(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Constant>> {
-    if let Some(value) = evaluate_numeric(expr, &source.project.types)
-        .map_err(|e| source.error(expr.span, e.to_string()))?
+    if let Some(value) =
+        evaluate_numeric(expr, source.types).map_err(|e| source.error(expr.span, e.to_string()))?
     {
         let kind = match value.ty {
             crate::numeric::NumericType::Integer { .. } => {
@@ -508,6 +669,12 @@ fn literal(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Cons
         return Ok(Some(Constant {
             ty: source.expression_type(expr)?,
             kind,
+        }));
+    }
+    if let Some(value) = evaluate_boolean(expr, source.types)? {
+        return Ok(Some(Constant {
+            ty: source.expression_type(expr)?,
+            kind: ConstantKind::Bool(value),
         }));
     }
     Ok(match &expr.kind {
@@ -528,7 +695,7 @@ fn literal(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Cons
 }
 struct Checker<'a, 'p> {
     source: &'a Source<'p>,
-    functions: &'a HashMap<DeclId, FunctionId>,
+    functions: &'a HashMap<FunctionKey, FunctionId>,
     constants: &'a mut Vec<Constant>,
 }
 impl Checker<'_, '_> {
@@ -547,6 +714,19 @@ impl Checker<'_, '_> {
             return Ok(());
         }
         self.source.expression_type(expr)?;
+        if let Some(constant) = array_length(self.source, expr)? {
+            if let E::ExprAcess { expr: receiver, .. } = &expr.kind {
+                self.expression(receiver)?;
+            }
+            if !self
+                .constants
+                .iter()
+                .any(|c| c.ty == constant.ty && c.kind == constant.kind)
+            {
+                self.constants.push(constant);
+            }
+            return Ok(());
+        }
         if let Some(constant) = literal(self.source, expr)? {
             if !self
                 .constants
@@ -562,8 +742,10 @@ impl Checker<'_, '_> {
             E::Call {
                 callee: function,
                 args,
-            } if callee(function, self.functions).is_some() || self.source.intrinsic(function) => {
-                for arg in args {
+            } if callee(function, args, self.functions).is_some()
+                || self.source.intrinsic(function) =>
+            {
+                for arg in args.iter().filter(runtime_argument) {
                     self.expression(arg)?;
                 }
                 Ok(())
@@ -584,6 +766,12 @@ impl Checker<'_, '_> {
                 if matches!(member.resolved.map(|m| m.kind), Some(MemberKind::Field(_))) =>
             {
                 self.expression(expr)
+            }
+            E::ArrayLiteral { elements } => {
+                for element in elements {
+                    self.expression(element)?;
+                }
+                Ok(())
             }
             E::StructConstruct { fields, .. } => {
                 for field in fields {
@@ -624,6 +812,28 @@ impl Checker<'_, '_> {
                     }
                 }
                 S::VariableDeclaration(variable) if variable.is_comp => {}
+                S::MultiVariableDeclaration { bindings, values } => {
+                    if !values.is_empty() && values.len() != bindings.len() {
+                        return Err(self
+                            .source
+                            .error(node.span, "unsupported multi-result initializer"));
+                    }
+                    for (index, binding) in bindings.iter().enumerate() {
+                        if !binding.is_comp {
+                            if let Some(ty) = &binding.ty {
+                                self.source.value_type(
+                                    ty.annotation.resolved.ok_or_else(|| {
+                                        self.source.error(node.span, "missing binding type")
+                                    })?,
+                                    node.span,
+                                )?;
+                            }
+                            if let Some(value) = values.get(index) {
+                                self.expression(value)?;
+                            }
+                        }
+                    }
+                }
                 S::Assignment { left, right } => {
                     self.expression(left)?;
                     self.expression(right)?;
@@ -639,12 +849,12 @@ impl Checker<'_, '_> {
                             "only calls may be used as expression statements",
                         ));
                     };
-                    callee(function, self.functions).ok_or_else(|| {
+                    callee(function, args, self.functions).ok_or_else(|| {
                         self.source
                             .error(expression.span, "unsupported call target")
                     })?;
-                    if self.source.project.types.get(
-                        self.source.project.types.canonical(
+                    if self.source.types.get(
+                        self.source.types.canonical(
                             expression
                                 .annotation
                                 .resolved
@@ -716,7 +926,7 @@ struct LoopContext {
 }
 struct Lowerer<'a, 'p, 'ir> {
     source: &'a Source<'p>,
-    functions: &'a HashMap<DeclId, FunctionId>,
+    functions: &'a HashMap<FunctionKey, FunctionId>,
     constants: &'a [Constant],
     builder: FunctionBuilder<'ir>,
     loops: Vec<LoopContext>,
@@ -745,7 +955,7 @@ impl Lowerer<'_, '_, '_> {
                 .source
                 .project
                 .types
-                .get(self.source.project.types.canonical(owner)?)?
+                .get(self.source.types.canonical(owner)?)?
             else {
                 unreachable!()
             };
@@ -766,6 +976,40 @@ impl Lowerer<'_, '_, '_> {
             return self.instruction(
                 state,
                 InstructionKind::Enum { variant, fields },
+                self.source.expression_type(expr)?,
+            );
+        }
+        if let Some(constant) = array_length(self.source, expr)? {
+            if let E::ExprAcess {
+                expr: receiver,
+                member,
+                ..
+            } = &expr.kind
+            {
+                if member.implicit_deref {
+                    self.checked_pointer(state, receiver)?;
+                } else {
+                    self.value_expression(state, receiver)?;
+                }
+            }
+            let index = self
+                .constants
+                .iter()
+                .position(|c| c.ty == constant.ty && c.kind == constant.kind)
+                .ok_or_else(|| {
+                    self.source
+                        .error(expr.span, "missing array length constant")
+                })?;
+            return Ok(Operand::Constant(ConstantId(index)));
+        }
+        if let E::ArrayLiteral { elements } = &expr.kind {
+            let elements = elements
+                .iter()
+                .map(|e| self.value_expression(state, e))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            return self.instruction(
+                state,
+                InstructionKind::Aggregate { elements },
                 self.source.expression_type(expr)?,
             );
         }
@@ -889,10 +1133,11 @@ impl Lowerer<'_, '_, '_> {
                 callee: function,
                 args,
             } => {
-                let callee = callee(function, self.functions)
+                let callee = callee(function, args, self.functions)
                     .ok_or_else(|| self.source.error(expr.span, "unsupported call target"))?;
                 let args = args
                     .iter()
+                    .filter(runtime_argument)
                     .map(|arg| self.value_expression(state, arg))
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 InstructionKind::Call { callee, args }
@@ -939,6 +1184,44 @@ impl Lowerer<'_, '_, '_> {
             .resolved
             .is_some_and(|i| i.category != ValueCategory::Value)
     }
+    fn checked_pointer(&mut self, state: &mut State, expr: &Expression) -> anyhow::Result<Operand> {
+        let pointer = self.value_expression(state, expr)?;
+        let ty = self.source.expression_type(expr)?;
+        let null = self
+            .constants
+            .iter()
+            .position(|c| c.ty == ty && c.kind == ConstantKind::Null)
+            .ok_or_else(|| self.source.error(expr.span, "missing null constant"))?;
+        let valid = self.instruction(
+            state,
+            InstructionKind::Binary {
+                op: BinaryOp::Ne,
+                lhs: pointer,
+                rhs: Operand::Constant(ConstantId(null)),
+            },
+            scalar_id(&BuiltinType::Boolean),
+        )?;
+        let next = self.builder.create_block(&[])?;
+        let fail = self.builder.create_block(&[])?;
+        self.builder.set_terminator(
+            state.block,
+            Terminator::Branch {
+                condition: valid,
+                then_edge: Edge {
+                    target: next,
+                    args: vec![],
+                },
+                else_edge: Edge {
+                    target: fail,
+                    args: vec![],
+                },
+            },
+        )?;
+        self.builder
+            .set_terminator(fail, Terminator::Trap(TrapReason::NullPointerDereference))?;
+        state.block = next;
+        Ok(pointer)
+    }
     fn place(&mut self, state: &mut State, expr: &Expression) -> anyhow::Result<Operand> {
         if let Some(id) = local(expr) {
             return self
@@ -951,7 +1234,11 @@ impl Lowerer<'_, '_, '_> {
             E::ExprAcess {
                 expr: base, member, ..
             } => {
-                let base = self.place(state, base)?;
+                let base = if member.implicit_deref {
+                    self.checked_pointer(state, base)?
+                } else {
+                    self.place(state, base)?
+                };
                 let Some(MemberKind::Field(field)) = member.resolved.map(|m| m.kind) else {
                     return Err(self.source.error(expr.span, "unsupported field address"));
                 };
@@ -966,42 +1253,7 @@ impl Lowerer<'_, '_, '_> {
                 )
             }
             E::UnaryExpression(unary) if unary.operator == Operator::Dereference => {
-                let pointer = self.value_expression(state, &unary.expression)?;
-                let ty = self.source.expression_type(&unary.expression)?;
-                let null = self
-                    .constants
-                    .iter()
-                    .position(|c| c.ty == ty && c.kind == ConstantKind::Null)
-                    .ok_or_else(|| self.source.error(expr.span, "missing null constant"))?;
-                let valid = self.instruction(
-                    state,
-                    InstructionKind::Binary {
-                        op: BinaryOp::Ne,
-                        lhs: pointer,
-                        rhs: Operand::Constant(ConstantId(null)),
-                    },
-                    scalar_id(&BuiltinType::Boolean),
-                )?;
-                let next = self.builder.create_block(&[])?;
-                let fail = self.builder.create_block(&[])?;
-                self.builder.set_terminator(
-                    state.block,
-                    Terminator::Branch {
-                        condition: valid,
-                        then_edge: Edge {
-                            target: next,
-                            args: vec![],
-                        },
-                        else_edge: Edge {
-                            target: fail,
-                            args: vec![],
-                        },
-                    },
-                )?;
-                self.builder
-                    .set_terminator(fail, Terminator::Trap(TrapReason::NullPointerDereference))?;
-                state.block = next;
-                Ok(pointer)
+                self.checked_pointer(state, &unary.expression)
             }
             E::Call { callee, args } if self.source.intrinsic(callee) => {
                 let [pointer] = args.as_slice() else {
@@ -1024,10 +1276,11 @@ impl Lowerer<'_, '_, '_> {
                 .source
                 .error(expr.span, "only calls may be used as expression statements"));
         };
-        let callee = callee(function, self.functions)
+        let callee = callee(function, args, self.functions)
             .ok_or_else(|| self.source.error(expr.span, "unsupported call target"))?;
         let args = args
             .iter()
+            .filter(runtime_argument)
             .map(|arg| self.value_expression(state, arg))
             .collect::<anyhow::Result<Vec<_>>>()?;
         self.builder.append_instruction(
@@ -1035,6 +1288,30 @@ impl Lowerer<'_, '_, '_> {
             InstructionKind::Call { callee, args },
             &[],
         )?;
+        Ok(())
+    }
+    fn initialize_binding(
+        &mut self,
+        state: &mut State,
+        variable: &crate::frontend::ast::variable_declaration::VariableDeclaration,
+        value: Operand,
+        span: Span,
+    ) -> anyhow::Result<()> {
+        let Some(BindingId::Local(id)) = variable.annotation.binding else {
+            return Err(self.source.error(span, "missing local identity"));
+        };
+        if let Some(&address) = self.slots.get(&id) {
+            self.builder.append_instruction(
+                state.block,
+                InstructionKind::Store {
+                    address: Address(address),
+                    value,
+                },
+                &[],
+            )?;
+        } else {
+            state.locals.insert(id, value);
+        }
         Ok(())
     }
     fn statements(&mut self, nodes: &[Statement], state: State) -> anyhow::Result<Option<State>> {
@@ -1046,22 +1323,26 @@ impl Lowerer<'_, '_, '_> {
             match &node.kind {
                 S::VariableDeclaration(variable) if variable.is_comp => {}
                 S::VariableDeclaration(variable) => {
-                    let Some(BindingId::Local(id)) = variable.annotation.binding else {
-                        return Err(self.source.error(node.span, "missing local identity"));
-                    };
                     if let Some(expr) = &variable.expression {
                         let value = self.value_expression(&mut state, expr)?;
-                        if let Some(&address) = self.slots.get(&id) {
-                            self.builder.append_instruction(
-                                state.block,
-                                InstructionKind::Store {
-                                    address: Address(address),
-                                    value,
-                                },
-                                &[],
-                            )?;
-                        } else {
-                            state.locals.insert(id, value);
+                        self.initialize_binding(&mut state, variable, value, node.span)?;
+                    }
+                }
+                S::MultiVariableDeclaration { bindings, values } => {
+                    let values = values
+                        .iter()
+                        .zip(bindings)
+                        .map(|(value, binding)| {
+                            if binding.is_comp {
+                                Ok(None)
+                            } else {
+                                self.value_expression(&mut state, value).map(Some)
+                            }
+                        })
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    for (binding, value) in bindings.iter().zip(values) {
+                        if let Some(value) = value {
+                            self.initialize_binding(&mut state, binding, value, node.span)?;
                         }
                     }
                 }
@@ -1149,7 +1430,7 @@ impl Lowerer<'_, '_, '_> {
             .source
             .project
             .types
-            .get(self.source.project.types.canonical(ty)?)?
+            .get(self.source.types.canonical(ty)?)?
         else {
             unreachable!()
         };
@@ -1280,7 +1561,7 @@ impl Lowerer<'_, '_, '_> {
             .iter()
             .map(|id| {
                 self.source
-                    .value_type(self.source.project.types.locals[id], subject.span)
+                    .value_type(self.source.types.locals[id], subject.span)
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         let join = self.builder.create_block(&types)?;
@@ -1354,7 +1635,7 @@ impl Lowerer<'_, '_, '_> {
                 .iter()
                 .map(|id| {
                     let ty =
-                        self.source.project.types.locals.get(id).ok_or_else(|| {
+                        self.source.types.locals.get(id).ok_or_else(|| {
                             self.source.error(span, "missing local semantic type")
                         })?;
                     self.source.value_type(*ty, span)
@@ -1493,7 +1774,7 @@ impl Lowerer<'_, '_, '_> {
                 let types = changed
                     .iter()
                     .map(|id| {
-                        let ty = self.source.project.types.locals.get(id).ok_or_else(|| {
+                        let ty = self.source.types.locals.get(id).ok_or_else(|| {
                             self.source
                                 .error(condition.span, "missing local semantic type")
                         })?;
@@ -1535,14 +1816,13 @@ impl Lowerer<'_, '_, '_> {
 impl Source<'_> {
     fn is_aggregate_local(&self, id: LocalId) -> anyhow::Result<bool> {
         let ty = self
-            .project
             .types
             .locals
             .get(&id)
             .ok_or_else(|| self.error(Span::new(1, 1), "missing local semantic type"))?;
         Ok(matches!(
-            self.project.types.get(self.project.types.canonical(*ty)?)?,
-            SemanticType::Struct(_) | SemanticType::Enum(_)
+            self.types.container(*ty)?.0,
+            SemanticType::Struct(_) | SemanticType::Enum(_) | SemanticType::Array { .. }
         ))
     }
 }

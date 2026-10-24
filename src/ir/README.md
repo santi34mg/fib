@@ -1,5 +1,10 @@
 # Owned SSA IR
 
+The [language specification](../../docs/language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 The executable boundary is `AnalyzedProject -> Ir -> backend`. Arena records
 remain public and unverified until `verify_ir` succeeds. IDs are stable indices
 within one IR; the IR has no frontend or LLVM dependencies.
@@ -52,9 +57,11 @@ fallthrough. Values are immutable; mutable storage requires explicit addresses,
 loads and stores. `Display` remains a diagnostic dump marked unverified.
 
 The broader records describe future support, not executable guarantees:
-arrays/slices, tuples, globals and nonnumeric casts remain unfinished. Bytes are interpreter-only.
-Unit/never/character/string runtime representation, indirect calls, generic body
-specialization and general source lowering still need implementation.
+runtime indexing/slices, tuples, globals and general nonnumeric casts remain unfinished.
+Fixed-array values and numeric/bool casts are verified and lowered. Bytes are interpreter-only.
+Unit/never/character/string runtime representation, indirect calls and broader
+source lowering remain unfinished. Concrete generic instances lower from their
+rechecked bodies and binding facts; symbolic templates are never emitted.
 
 `ir::lowering::lower` lowers fixed-width integer/float/bool and struct/enum/pointer
 helpers and direct calls,
@@ -154,7 +161,7 @@ successful lookup, or a formatted dump as evidence that verification ran.
 
 - Broader nonnumeric casts, target restrictions and representations beyond the
   implemented scalar and struct/storage semantics.
-- Array/slice/tuple layout, ABI legalization of multiple results, varargs,
+- Runtime slice/tuple layout, ABI legalization of multiple results, varargs,
   indirect calls, builtins/intrinsics and runtime helpers. Current direct calls
   identify functions by ID; no claim of complete language coverage is made.
 - Pointer provenance, alignment, mutability, volatile/atomic access and memory

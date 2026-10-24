@@ -1,5 +1,10 @@
 # Owned SSA IR
 
+The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 See the [IR implementation contract](../../../../src/ir/README.md).
 
 `Ir` owns stable indexed arenas; raw public records and display do not certify
@@ -24,3 +29,10 @@ Enum constructors and switches with copied payload bindings also lower; see [enu
 uninitialized and address-taken locals use explicit stack storage; ordinary
 dereference adds a null-check/trap CFG, and the unchecked intrinsic omits it. Tests cover valid scalar graphs, invalid references,
 ownership, signatures, forward uses, dominance and transactional construction.
+
+Concrete generic instances are keyed by canonical template/type identities, with
+rechecked binding environments used for storage classification and SSA joins.
+Type parameters/arguments are absent from runtime signatures/calls. Multi-file
+function identities are registered before bodies; internal symbols distinguish
+same-spelled declarations. Fixed-array aggregates validate lengths, element
+signatures and by-value cycles. Numeric casts include explicit bool conversions.

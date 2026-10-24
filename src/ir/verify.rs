@@ -25,6 +25,18 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                 width: IntegerWidth::Bits(bits),
                 ..
             } => require((1..=128).contains(bits), "invalid integer width")?,
+            IrType::Integer {
+                width: IntegerWidth::Pointer,
+                ..
+            } => (),
+            IrType::Array { element, .. } => {
+                require(
+                    ir.get_type(*element).is_some()
+                        && !matches!(ir.get_type(*element), Some(IrType::Bytes)),
+                    "invalid array element type",
+                )?;
+                check_sized(ir, TypeId(index), &mut sized)?;
+            }
             IrType::Pointer { pointee } => {
                 require(ir.get_type(*pointee).is_some(), "unknown pointee type")?;
                 require(
@@ -79,6 +91,25 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                 *width == 128 || *bits < (1u128 << width),
                 "integer constant exceeds width",
             )?,
+            (
+                ConstantKind::Integer { .. },
+                Some(IrType::Integer {
+                    width: IntegerWidth::Pointer,
+                    ..
+                }),
+            ) => (),
+            (ConstantKind::Aggregate(elements), Some(IrType::Array { element, len })) => {
+                require(
+                    elements.len() as u64 == *len,
+                    "array constant length mismatch",
+                )?;
+                for id in elements {
+                    require(
+                        ir.get_constant(*id).is_some_and(|c| c.ty == *element),
+                        "array constant element type mismatch",
+                    )?;
+                }
+            }
             (ConstantKind::Float { bits }, Some(IrType::Float(width))) => {
                 let width = match width {
                     FloatWidth::F16 => 16,
@@ -371,7 +402,11 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                                 && [source, results[0]].iter().all(|ty| {
                                     matches!(
                                         ir.get_type(*ty),
-                                        Some(IrType::Integer { .. } | IrType::Float(_))
+                                        Some(
+                                            IrType::Integer { .. }
+                                                | IrType::Float(_)
+                                                | IrType::Bool
+                                        )
                                     )
                                 }),
                             "invalid numeric cast",
@@ -404,12 +439,21 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                     }
                     InstructionKind::Aggregate { elements } => {
                         require(results.len() == 1, "aggregate requires one result")?;
-                        let fields = fields(ir, results[0])?;
                         let actual = elements
                             .iter()
                             .map(|e| operand(*e, position))
                             .collect::<IrResult<Vec<_>>>()?;
-                        require(*fields == actual, "aggregate field signature mismatch")?;
+                        match ir.get_type(results[0]) {
+                            Some(IrType::Array { element, len }) => require(
+                                actual.len() as u64 == *len
+                                    && actual.iter().all(|ty| ty == element),
+                                "array element signature mismatch",
+                            )?,
+                            _ => require(
+                                *fields(ir, results[0])? == actual,
+                                "aggregate field signature mismatch",
+                            )?,
+                        }
                         results.clone()
                     }
                     InstructionKind::ExtractField { aggregate, field } => {
@@ -607,6 +651,7 @@ fn check_sized(ir: &Ir, ty: TypeId, done: &mut HashSet<TypeId>) -> IrResult<()> 
             Some(IrType::Struct { fields, .. }) => {
                 pending.extend(fields.iter().map(|f| (*f, false)))
             }
+            Some(IrType::Array { element, .. }) => pending.push((*element, false)),
             Some(IrType::Enum { variants, .. }) => {
                 pending.extend(variants.iter().flat_map(|v| &v.fields).map(|f| (*f, false)))
             }

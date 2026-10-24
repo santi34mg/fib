@@ -635,7 +635,7 @@ fn numeric_instruction_signatures_and_traps_are_verified() {
             1 => {
                 bad.blocks[0].instructions[0].kind = InstructionKind::Cast {
                     kind: CastKind::Numeric,
-                    operand: Operand::Constant(ConstantId(2)),
+                    operand: Operand::Constant(ConstantId(999)),
                 }
             }
             2 => bad.values[float.0].ty = TypeId(2),
@@ -1169,4 +1169,68 @@ fn enum_pointer_recursion_is_finite() {
             .to_string()
             .contains("recursive")
     );
+}
+
+#[test]
+fn arrays_verify_shape_elements_and_by_value_cycles() {
+    let mut ir = declaration_ir();
+    ir.types.push(IrType::Array {
+        element: TypeId(0),
+        len: 2,
+    });
+    ir.constants.push(Constant {
+        ty: TypeId(1),
+        kind: ConstantKind::Aggregate(vec![ConstantId(0), ConstantId(0)]),
+    });
+    let mut builder = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let entry = builder.create_block(&[]).unwrap();
+    builder
+        .append_instruction(
+            entry,
+            InstructionKind::Aggregate {
+                elements: vec![Operand::Constant(ConstantId(0)); 2],
+            },
+            &[TypeId(1)],
+        )
+        .unwrap();
+    builder
+        .set_terminator(
+            entry,
+            Terminator::Return {
+                values: vec![Operand::Constant(ConstantId(0))],
+            },
+        )
+        .unwrap();
+    builder.finish(entry).unwrap();
+    verify_ir(&ir).unwrap();
+    let mut malformed = ir.clone();
+    let InstructionKind::Aggregate { elements } = &mut malformed.blocks[0].instructions[0].kind
+    else {
+        unreachable!()
+    };
+    elements.pop();
+    assert!(
+        verify_ir(&malformed)
+            .unwrap_err()
+            .to_string()
+            .contains("array element signature")
+    );
+    let mut bad = ir.clone();
+    let ConstantKind::Aggregate(values) = &mut bad.constants[1].kind else {
+        unreachable!()
+    };
+    values.pop();
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir.clone();
+    bad.types[1] = IrType::Array {
+        element: TypeId(1),
+        len: 0,
+    };
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir.clone();
+    bad.types[1] = IrType::Array {
+        element: TypeId(999),
+        len: 2,
+    };
+    assert!(verify_ir(&bad).is_err());
 }

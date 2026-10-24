@@ -32,6 +32,11 @@ pub(super) fn storage_bindings(
                 }
             }
             E::ExprAcess { expr, .. } | E::Cast { expr, .. } => expression(expr, stored),
+            E::ArrayLiteral { elements } => {
+                for element in elements {
+                    expression(element, stored);
+                }
+            }
             E::StructConstruct { fields, .. } => {
                 for field in fields {
                     expression(&field.expression, stored);
@@ -55,6 +60,21 @@ pub(super) fn storage_bindings(
                     }
                     if let Some(expr) = &v.expression {
                         expression(expr, stored);
+                    }
+                }
+                S::MultiVariableDeclaration { bindings, values } => {
+                    for (index, binding) in bindings.iter().enumerate() {
+                        if binding.is_comp {
+                            continue;
+                        }
+                        if let Some(BindingId::Local(id)) = binding.annotation.binding
+                            && (values.is_empty() || source.is_aggregate_local(id)?)
+                        {
+                            stored.insert(id);
+                        }
+                        if let Some(value) = values.get(index) {
+                            expression(value, stored);
+                        }
                     }
                 }
                 S::Assignment { left, right } => {

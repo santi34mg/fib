@@ -120,12 +120,11 @@ fn helpers_conditionals_and_mutable_locals_lower_to_verified_ssa() {
 fn scalar_subset_rejections_are_located_backend_diagnostics_even_in_dead_code() {
     use crate::diagnostics::{CompilerError, ErrorKind};
     for text in [
-        "fn main() int32 { if false { x := [1, 2]; }; return 42; }",
-        "fn main() int32 { while (false) { x := [1, 2]; }; return 42; }",
-        "fn main() int32 { while () { break; x := [1, 2]; }; return 42; }",
-        "fn main() int32 { while () { continue; x := [1, 2]; }; }",
+        "fn main() int32 { if false { x := [1, 2][..]; }; return 42; }",
+        "fn main() int32 { while (false) { x := [1, 2][..]; }; return 42; }",
+        "fn main() int32 { while () { break; x := [1, 2][..]; }; return 42; }",
+        "fn main() int32 { while () { continue; x := [1, 2][..]; }; }",
         "fn main() int32 { x := 0; defer x = 1; return 42; }",
-        "fn main() int32 { x, y := 1, 2; return x; }",
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
@@ -206,7 +205,13 @@ fn all_scalar_types_lower_to_verified_ir_without_requiring_llvm() {
     assert_eq!(
         ir.types
             .iter()
-            .filter(|ty| matches!(ty, IrType::Integer { .. }))
+            .filter(|ty| matches!(
+                ty,
+                IrType::Integer {
+                    width: crate::ir::IntegerWidth::Bits(_),
+                    ..
+                }
+            ))
             .count(),
         10
     );
@@ -377,9 +382,9 @@ fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
 fn unsupported_struct_fields_and_dead_memory_syntax_fail_before_artifacts() {
     for text in [
         "fn main() int32 { value: string; value = \"ready\"; return 0; }",
-        "comp S: type = struct { a: int32[2] }; fn main() int32 { s := S { a: [1, 2] }; return 0; }",
+        "comp S: type = struct { a: int32[] }; fn main() int32 { s := S { a: [1, 2][..] }; return 0; }",
         "comp S: type = struct { text: string }; fn main() int32 { s := S { text: \"a\" }; return 0; }",
-        "fn main() int32 { while (false) { data := [1, 2]; }; return 0; }",
+        "fn main() int32 { while (false) { data := [1, 2][..]; }; return 0; }",
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
@@ -426,7 +431,7 @@ fn enums_lower_to_verified_switches_and_payload_copies() {
 #[test]
 fn enum_lowering_checks_unmatched_and_dead_arms() {
     for text in [
-        "comp E: type = enum { A, B }; fn main() int32 { e := E.B; x := 42; switch(e) { when .A { x = 7; } }; return x; }",
+        "comp E: type = enum { A, B }; fn main() int32 { e := E.B; x := 42; switch(e) { when .A { x = 7; } when else {} }; return x; }",
         "comp E: type = enum { A, B }; fn main() int32 { e := E.A; switch(e) { when .A {} when .B {} }; return 42; }",
         "comp E: type = enum {}; fn impossible(e: E) int32 { switch(e) {}; } fn main() int32 { return 42; }",
         "comp E: type = enum { Next { next: *E }, End }; fn main() int32 { e := E.End; return 42; }",
@@ -435,8 +440,8 @@ fn enum_lowering_checks_unmatched_and_dead_arms() {
         crate::ir::lowering::lower(&run_frontend(&plan).unwrap()).unwrap();
     }
     for text in [
-        "comp E: type = enum { A, Bad { values: int32[2] } }; fn main() int32 { e := E.A; return 42; }",
-        "comp E: type = enum { A, B }; fn main() int32 { switch(E.A) { when .A {} when .B { data := [1, 2]; } }; return 42; }",
+        "comp E: type = enum { A, Bad { values: int32[] } }; fn main() int32 { e := E.A; return 42; }",
+        "comp E: type = enum { A, B }; fn main() int32 { switch(E.A) { when .A {} when .B { data := [1, 2][..]; } }; return 42; }",
         "comp E: type = enum { A }; fn main() int32 { x := 0; if false { switch(E.A) { when .A { defer x = 1; } }; }; return 42; }",
     ] {
         let (_directory, plan) = source(text);
