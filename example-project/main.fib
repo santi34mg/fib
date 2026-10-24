@@ -1,5 +1,5 @@
-// Run through build.fib or compile this file directly. Exit 0 means every
-// demonstration passed; exit 1..6 identifies a failed section (see README.md).
+// Build both source files through build.fib. Exit 0 means every demonstration
+// passed; exit 1..9 identifies a failed section (see README.md).
 fn main() int32 {
     if (!integer_widths(-1, 255)) { return 1; };
     if (!floating_point(1.5) || !ieee_values(0.0)) { return 2; };
@@ -21,6 +21,11 @@ fn main() int32 {
         || !zero_or_even_quotient(0) || zero_or_even_quotient(4)) {
         return 6;
     };
+
+    // File-qualified calls reach the package-visible checks in features.fib.
+    if (!features::structs_and_pointers()) { return 7; };
+    if (!features::enums_and_switches()) { return 8; };
+    if (!features::generics_and_arrays()) { return 9; };
 
     // A void helper is an ordinary direct call used as a statement.
     finish();

@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserved the unfinished symbol-table and IR rewrite sources from `refactor/modules-and-generic-functions`; the IR interpreter is now exported but remains unimplemented.
 
 ### Changed
+- Expanded the runnable example project to two source files with struct/pointer,
+  enum/switch, generic, fixed-array and multi-binding demonstrations, checked by
+  the frontend/IR and executable acceptance tests.
 - Documented the language specification: package-rooted file namespaces/source discovery and scoped visibility; protected implicit-prelude type identifiers; retained suffix arrays; contextual direct-literal casts and explicit numeric/bool conversion; independent array mutability, readonly views, warned one-layer pointer field access and exhaustive enum switches. Compiler implementation status is documented separately.
 - Refreshed roadmap and implementation documentation for executable enums, explicit interpreted build files and current test coverage. Consolidated generic and array rules into the language specification and removed superseded proposal pages.
 - Moved analyzed-source-to-IR lowering from the driver into one `ir::lowering::lower` entry point. Build files and normal sources now use the same analyzer and lowering; `build_api` is configured as a synthetic module, while the driver only validates the entry contract and selects LLVM or interpretation.

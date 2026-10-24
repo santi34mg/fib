@@ -464,6 +464,11 @@ fn current_capabilities_project_builds_from_build_file_and_runs() {
         include_str!("../example-project/main.fib"),
     )
     .unwrap();
+    std::fs::write(
+        directory.path().join("features.fib"),
+        include_str!("../example-project/features.fib"),
+    )
+    .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
         .args(["build", "--build-file"])
         .arg(&build_file)

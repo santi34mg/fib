@@ -12,6 +12,9 @@ include `tests/programs/return_42.fib`, `conditionals.fib`, and the samples
 `enum_runtime.fib`. Other samples have parser coverage without an execution claim.
 The runnable `example-project/` is copied into a temporary directory for both
 no-default frontend/IR validation and an LLVM-enabled CLI build-file/exit-0 test.
+Both tests copy the build file and its two sources. Plan assertions check file
+membership, the `main` entry and the `demo` output; execution covers all nine
+demonstrations, including cross-file calls and aggregate/generic behavior.
 
 ## What tests actually establish
 

@@ -308,10 +308,22 @@ fn current_capabilities_project_lowers_without_llvm() {
         include_str!("../../example-project/main.fib"),
     )
     .unwrap();
+    std::fs::write(
+        directory.path().join("features.fib"),
+        include_str!("../../example-project/features.fib"),
+    )
+    .unwrap();
     let plan = crate::plan::PlanBuilder::from(build_file)
         .compile_and_interpret_build_file()
         .unwrap();
-    assert_eq!(plan.files.len(), 1);
+    assert_eq!(plan.files.len(), 2);
+    let entry = plan
+        .files
+        .iter()
+        .find(|file| file.id == plan.entry)
+        .unwrap();
+    assert_eq!(entry.name.0, "main");
+    assert!(plan.files.iter().any(|file| file.name.0 == "features"));
     assert_eq!(
         plan.output,
         directory.path().canonicalize().unwrap().join("demo")

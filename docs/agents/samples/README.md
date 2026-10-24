@@ -1,7 +1,9 @@
 # Samples: parser regression coverage
 
 [`example-project/`](../../../example-project/README.md) is the runnable current-
-capabilities project. Driver tests verify its build plan and source IR without
+capabilities project. Its two source files cover scalars/control flow plus
+structs/pointers, enums/switches, generics, fixed arrays and multi-binding locals.
+Driver tests verify both planned files, the entry/output and source IR without
 LLVM; executable acceptance builds it through the CLI and checks exit 0.
 
 [`samples/`](../../../samples) contains `.fib` examples for output, arithmetic,
