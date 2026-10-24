@@ -14,10 +14,11 @@ terminators, and requires an explicit entry and every block to be terminated.
 builder or failing any finish check leaves the original IR unchanged. Cloning
 is an initial correctness choice, not an optimized construction strategy.
 
-`verify_ir` supports Bool, fixed-width integers (1..=128), IEEE floats and
-interpreter-owned Bytes, typed scalar constants, declarations and definitions,
+`verify_ir` supports Bool, fixed-width integers (1..=128), IEEE floats, nominal structs, typed pointers and
+interpreter-owned Bytes, typed scalar/null constants, declarations and definitions,
 block parameters, Constant/direct Call/arithmetic/comparison/unary/numeric Cast
-instructions, and Jump/Branch/Return/Trap/Unreachable terminators. It checks:
+instructions, Aggregate/ExtractField/InsertField, StackAddress/FieldAddress,
+Load/Store, and Jump/Branch/Return/Trap/Unreachable terminators. It checks:
 
 - References, unique symbol names, arena membership and function ownership.
 - Unique SSA definitions and reciprocal definition positions.
@@ -27,10 +28,11 @@ instructions, and Jump/Branch/Return/Trap/Unreachable terminators. It checks:
   return signatures.
 - Integer widths and raw constant bits; orphan values and blocks are errors.
 
-Empty IR is valid and actually checked. Unsupported types, constants, storage,
-switches and instruction families fail explicitly. Stack-slot allocation exists,
-but verification of storage is unfinished, so a builder containing storage cannot
-publish a body. Unreachable blocks are rejected rather than assigned arbitrary
+Empty IR is valid and actually checked. Stack slots have checked types and unique
+function ownership/body membership; projections and load/store signatures are
+verified. Struct layouts reject by-value cycles and permit pointer recursion.
+Globals, unsupported types/constants, switches and other instruction families
+fail explicitly. Bytes have no memory or struct-field representation. Unreachable blocks are rejected rather than assigned arbitrary
 values/dominance. `IrError::Invalid` identifies malformed supported IR;
 `NotImplemented` identifies unsupported verification families.
 
@@ -50,15 +52,20 @@ fallthrough. Values are immutable; mutable storage requires explicit addresses,
 loads and stores. `Display` remains a diagnostic dump marked unverified.
 
 The broader records describe future support, not executable guarantees:
-pointers, arrays/slices, aggregates, enums, globals, nonnumeric casts, memory
-operations and switch validation remain unfinished. Bytes are interpreter-only.
+arrays/slices, tuples, enums, globals, nonnumeric casts and switch validation
+remain unfinished. Bytes are interpreter-only.
 Unit/never/character/string runtime representation, indirect calls, generic body
 specialization and general source lowering still need implementation.
 
-The driver lowers fixed-width integer/float/bool helpers and direct calls,
+`ir::lowering::lower` lowers fixed-width integer/float/bool and struct/pointer
+helpers and direct calls,
 initialized locals, assignment, arithmetic, bitwise/shifts, explicit numeric casts,
 short-circuit booleans, comparisons, conditionals, while loops, break/continue and returns.
-Branch joins use block parameters; mutable local bindings need no storage.
+SSA branch joins use block parameters. Structs, uninitialized locals and
+address-taken bindings use stack storage. Ordinary source dereference emits an
+explicit null-check/trap CFG; `memory::unchecked_deref` omits that check. The IR
+verifier proves structural memory typing, not allocation validity or initialization.
+See [struct/storage semantics](../../docs/struct-storage-semantics.md).
 See `../backend/README.md` for ABI restrictions and executable tests.
 
 ## Backend-facing surface
@@ -115,7 +122,8 @@ not part of the consumer contract.
    type agree with the block parameter or instruction result. Uses refer to the
    same function, follow instruction ordering, and obey dominance. Loops and
    joins use block parameters and edge arguments, not reassignment or hidden phi
-   instructions. No SSA construction/sealing algorithm has been selected here.
+   instructions. Current source lowering constructs scalar joins/backedges directly; memory
+   bindings use explicit storage.
 3. Every block ends with exactly one separate terminator. Block order never
    implies execution order. There are no label pseudo-instructions or implicit
    false edges. Edge targets stay in the same function; argument counts/types
@@ -145,8 +153,8 @@ successful lookup, or a formatted dump as evidence that verification ran.
 
 ## Decisions still needed for broader executable lowering
 
-- Exact arithmetic overflow, shift, division-by-zero, floating comparison and
-  cast semantics; trap/check representation and target restrictions.
+- Broader nonnumeric casts, target restrictions and representations beyond the
+  implemented scalar and struct/storage semantics.
 - Aggregate/slice/enum layout, ABI legalization of multiple results, varargs,
   indirect calls, builtins/intrinsics and runtime helpers. Current direct calls
   identify functions by ID; no claim of complete language coverage is made.

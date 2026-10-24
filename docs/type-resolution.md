@@ -11,7 +11,7 @@ This pass is separate from complete analysis: `Analyzer::analyze` runs typing,
 then validates definite initialization and structured control flow before returning
 `AnalyzedProject`. `validate_analysis` independently rechecks the public AST and
 semantic tables. `AnalyzedProject::source_paths` retains original plan paths for
-downstream diagnostics. A scalar/conditional subset now compiles through verified
+downstream diagnostics. A scalar/struct/control-flow subset now compiles through verified
 SSA and LLVM; broader lowering and runtime representations remain unfinished.
 
 ## Semantic identities
@@ -139,8 +139,12 @@ aggregate, enum/integer and array/slice conversions are rejected.
 Ordinary, forward, recursive and indirect calls check callee type, argument count,
 argument types and result type. Returns check the containing signature and result
 arity/types; complete analysis additionally checks path completeness.
-There are no builtin functions: string helpers will be ordinary standard-library
-functions; the compiler defines no signatures or dispatch by their spelling.
+String helpers are ordinary standard-library functions, with no compiler dispatch
+by their spelling. The synthetic `memory` namespace provides the identity-based
+`unchecked_deref(pointer)` intrinsic. It returns the same typed mutable/readonly
+place as ordinary dereference, with independent annotation validation, while
+skipping the runtime null guard. Intrinsics cannot be stored as runtime values;
+see [struct/storage semantics](struct-storage-semantics.md).
 
 Struct construction requires every field once, with no defaults. Payloadless enum
 variants are values; payload variants are positional constructors in declaration

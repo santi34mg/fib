@@ -75,5 +75,6 @@ This is not an external C interoperability contract or the full production Fib
 ABI. Target legalization may use compiler-runtime helpers supplied by host cc.
 
 The build-file interpreter retains its narrow literal byte-string API subset.
-Char, symbolic usize lowering, memory/storage, aggregates, source loops and
-generic bodies remain unsupported by native lowering.
+Char, symbolic usize, runtime globals, arrays/slices/enums and generic bodies
+remain unsupported by native lowering. Structs, typed pointers and stack storage
+are supported; see [struct/storage semantics](struct-storage-semantics.md).

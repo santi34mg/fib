@@ -21,6 +21,8 @@ testing instructions, and contributor guidance.
   design, with its implementation status explicitly identified.
 - [Type resolution](type-resolution.md): semantic rules implemented by the type
   pass and the boundary with unfinished full analysis.
+- [Struct/storage semantics](struct-storage-semantics.md): implemented struct copies,
+  partial initialization, typed pointers, null traps and unchecked places.
 - [Roadmap](roadmap/README.md): proposals, dependencies, open decisions, and
   acceptance criteria. Proposed syntax is not necessarily parsed today.
 - [Interpreted build files](roadmap/08-interpreted-build-files.md): future

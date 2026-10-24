@@ -154,25 +154,46 @@ Calls use resolved declaration-to-`FunctionId` mappings, not spelling-based look
 
 The executable subset supports signed/unsigned 8/16/32/64/128-bit integers,
 float16/32/64/128 and bool; scalar helper parameters/results; void helpers; direct
-calls; initialized locals; assignment; arithmetic/bitwise/shifts; explicit numeric
-casts; comparisons; short-circuit logic; nested if/else; while; break/continue; and
-returns. Source helpers use internal linkage and the limited scalar Fib convention;
-the entry uses the C convention.
+calls; structs and typed raw pointers; partial initialization; assignment;
+arithmetic/bitwise/shifts; explicit numeric casts; comparisons; short-circuit logic; nested if/else; while; break/continue; and
+returns. Source helpers use internal linkage and the limited direct Fib convention
+for scalars, structs and pointers; the entry uses the C convention.
 
-Mutable locals map to immutable SSA operands. Assignment replaces the current
-mapping. Conditional joins merge differing continuing values through block
+Initialized scalar locals without address-taking map to immutable SSA operands;
+assignment replaces their current mapping. Struct locals, uninitialized locals and
+address-taken bindings use stack slots allocated in function entry. Initializers
+execute at their declaration, and loads/stores preserve alias-visible updates.
+Field updates never load uninitialized siblings. Struct arguments, assignments and
+results copy values; pointer fields retain their referenced addresses. Conditional joins merge differing continuing values through block
 parameters; returning arms contribute no edge, and branch-local bindings do not
-escape. Loops carry all bindings visible at entry through deterministically
+escape. Loops carry SSA bindings visible at entry through deterministically
 ordered header/exit parameters. Continues and body fallthrough send current values
 to the header; breaks send them to the innermost exit. Dynamic conditions execute
 on every iteration, including their short-circuit CFG. Known-false loops emit no
 body, and unconditional loops create an exit only for reachable breaks. Diverging
 functions need no artificial return or unreachable block.
 
-Uninitialized declarations, runtime globals, storage, aggregates, switches,
-defer, indirect calls, multiple-result source functions and concrete generic
+Runtime globals, arrays/slices/tuples/enums, switches, defer, multi-bindings,
+indirect calls, multiple-result source functions and concrete generic
 bodies remain unsupported by lowering. Analysis may accept these constructs;
 that does not make them executable.
+
+### Checked and unchecked places
+
+`Analyzer::new` installs the compiler-provided `memory` namespace for both normal
+and build-file analysis. `memory::unchecked_deref(pointer)` is an intrinsic with
+a dedicated semantic callable marker and a typed mutable/readonly place result.
+It resolves by declaration identity, supports compile-time aliases and cannot be
+stored as a runtime callable. Independent validation rechecks its arguments,
+identity and place annotation.
+
+Ordinary postfix dereference checks for null before yielding a place, including
+field projection and address-taking. Lowering emits explicit null comparison,
+branch and `TrapReason::NullPointerDereference` blocks. Unchecked dereference
+evaluates its pointer once and omits that check only for the selected dereference;
+subsequent ordinary dereferences are checked. Neither form establishes lifetime,
+allocation validity or alias-based initialization. See
+[struct/storage semantics](struct-storage-semantics.md).
 
 ## Owned IR and verification
 
@@ -195,28 +216,31 @@ dropping an unfinished builder leaves the original IR unchanged.
 reciprocal ownership/definition records, signatures, instruction/result types,
 edge arguments, reachability and dominance, including cycles. It rejects orphan
 records and unreachable blocks. Supported operations include scalar constants,
-direct calls, arithmetic/unary/comparisons/numeric casts and
+direct calls, arithmetic/unary/comparisons/numeric casts, struct aggregate
+construction/extract/insert, stack/field addresses, typed loads/stores and
 jump/branch/return/trap/unreachable terminators. Interpreter-only Bytes are also
 verified; LLVM does not lower them.
 
-Pointer/aggregate/global/storage/switch records describe extension interfaces;
-their presence is not verification support. Even allocated stack slots cannot
-currently pass verification. Memory operations require future explicit
-addresses/loads/stores rather than treating SSA local bindings as storage.
+Struct/pointer references, by-value layout cycles, field signatures and stack-slot
+ownership/body membership are verified. Pointer recursion is allowed. Memory
+verification is structural: source flow analysis handles direct-local initialization,
+and raw pointer validity/lifetime remains the caller's obligation. Globals,
+arrays/slices/tuples/enums and switches remain unsupported representation families.
 See the [IR contract](../src/ir/README.md).
 
 ## LLVM, ABI and artifacts
 
 `backend::emit_llvm(&Ir, &TargetSpec)` is the public emission boundary. It verifies
 IR, resolves an LLVM 21 target machine and data layout, classifies every function's
-ABI, predeclares functions, emits scalar CFGs and verifies the final LLVM module.
+ABI, predeclares functions, emits scalar/struct/memory CFGs and verifies the final LLVM module.
 `TargetSpec` carries a triple, CPU and features; only generic CPU/default features
 are supported. The driver requests the host target.
 
 ABI classification is per signature. One shared description governs declarations,
 incoming parameters, calls and returns. The C subset supports 32-bit integer
-parameters/results and void; internal Fib helpers use direct scalar LLVM fastcc.
-Full production Fib ABI, broader external C interoperability, aggregates, varargs
+parameters/results and void; internal Fib helpers use direct scalar, struct and
+pointer LLVM fastcc arguments/results. Full production Fib ABI, broader external
+C interoperability, other aggregate families, varargs
 and callbacks remain unfinished.
 
 Emission allocates entry first, precreates non-entry PHIs, traverses reverse
@@ -224,6 +248,12 @@ postorder and patches incoming operands after definitions exist. Parallel branch
 arms targeting one block get distinct trampoline predecessors. Runtime guard
 splits update actual predecessor mappings, so PHIs remain correct across checks
 and backedges.
+
+LLVM identified unpacked struct types retain nominal identity, with bodies filled
+after all identities exist. Target layout and field GEPs determine offsets; no
+host size guesses or packed layout are introduced. Stack slots allocate in entry;
+loads/stores use conservative alignment and field GEPs avoid speculative inbounds
+promises.
 
 Integer operations wrap; invalid division, shifts and float-to-integer casts trap.
 Floating operations follow IEEE rules, with exact literal/constant evaluation and
@@ -249,8 +279,10 @@ future work. See the [backend contract](../src/backend/README.md).
 `compile_build_file_to_ir` configures the ordinary analyzer with a synthetic
 `build_api` module, validates `build() int32`, and uses the same source lowering.
 Synthetic declarations have ordinary semantic identities but no source AST/path.
-Their `DeclId` identities map to builtin functions and survive lowering through
-an IR `FunctionId -> BuiltinFunction` table.
+Build-operation `DeclId` identities map to builtin functions and survive lowering through
+an IR `FunctionId -> BuiltinFunction` table. Memory intrinsics instead lower to
+places/memory instructions; they do not select the build entry or become IR
+function declarations.
 
 The interpreter verifies IR and supports a single returning entry block containing
 direct `build_api::{add_source, set_entry, set_output}` calls with constant UTF-8
@@ -273,18 +305,19 @@ same IR path; see the [build-file plan](roadmap/08-interpreted-build-files.md).
 ## Validation and extension discipline
 
 Frontend tests cover syntax, names, types, specialization and analysis completion.
-Driver tests exercise analyzed-source lowering, source diagnostics, scopes,
-loop-carried values and build-file rejection. IR tests check construction and
+Driver tests exercise analyzed-source lowering, source diagnostics, struct storage,
+scopes, loop-carried values and build-file rejection. IR tests check construction and
 malformed graphs; backend tests cover ABI classification and emitted CFGs.
 `tests/executable.rs` compiles, links and runs scalar/control-flow programs,
 including all numeric widths, guarded failures and bounded loop cases.
 
-The parser sample sweep parses every top-level sample. `builtin_scalars.fib` and
-`scalar_loops.fib` additionally have executable acceptance coverage. Other samples
-and the experimental standard library are not automatically compiled or run.
+The parser sample sweep parses every top-level sample. `builtin_scalars.fib`,
+`scalar_loops.fib` and `struct_storage.fib` additionally have executable acceptance
+coverage. The current-capabilities example project is also built and executed.
+Other samples and the experimental standard library are not automatically compiled or run.
 
-The loop milestone passed 688 no-default-feature library tests, 695 LLVM-enabled
-library tests and 16 executable acceptance tests, plus formatting, check and
+The struct/storage milestone passed 700 no-default-feature library tests,
+708 LLVM-enabled library tests and 21 executable acceptance tests, plus formatting, check and
 all-target Clippy with warnings denied in both configurations. Rust 1.98.0 is
 pinned by `rust-toolchain.toml`; the package uses Rust 2024 and Inkwell 0.8/LLVM 21.
 

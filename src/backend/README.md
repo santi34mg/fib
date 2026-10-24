@@ -8,16 +8,22 @@ only after LLVM module verification. There is no frontend-to-LLVM fallback.
 ## Executable subset
 
 The C entry ABI supports 32-bit integer parameters/results and void returns.
-Internal Fib helpers support direct Bool, fixed-width integers and IEEE float
-parameters/results, or void, using LLVM fastcc. This limited scalar convention is
+Internal Fib helpers support direct Bool, fixed-width integers, IEEE floats,
+structs and typed pointers as parameters/results, or void, using LLVM fastcc.
+This limited direct convention is
 not the full production Fib ABI or a general external C interoperability contract.
 Definitions support multiple blocks, entry arguments, block parameters/PHIs,
-Constant/direct Call/arithmetic/comparison/unary/numeric Cast instructions, and
+Constant/direct Call/arithmetic/comparison/unary/numeric Cast instructions,
+aggregate construction/extract/insert, stack/field addresses, loads/stores, and
 Jump/Branch/Return/Trap/Unreachable. Comparisons use operand signedness and IEEE
 ordered predicates, except NaN inequality is unordered. Bool supports equality.
 Integer arithmetic wraps; runtime guards protect division, shifts and float-to-int
 casts before LLVM can produce poison. Guards update PHI predecessor mappings.
-See [scalar semantics](../../docs/scalar-semantics.md).
+See [scalar semantics](../../docs/scalar-semantics.md). LLVM identified unpacked
+structs and target-derived GEPs implement field layout; slots allocate in entry.
+Arbitrary memory accesses use alignment 1. Source null checks are explicit IR
+branches/traps; unchecked intrinsic accesses have no guard. Field GEPs do not
+promise inbounds. See [struct/storage semantics](../../docs/struct-storage-semantics.md).
 Emission traverses reverse postorder, patches PHI inputs after all values exist,
 and splits parallel branch arms into distinct LLVM predecessors. Backedges and
 shuffled body block order are covered by executable hand-built IR tests.
@@ -30,7 +36,8 @@ ABI switch or alternative emission entry point. `abi::classify_abis` dispatches
 per signature and creates a `FunctionAbi` indexed by `FunctionId`. Classification
 receives resolved target triple/layout and logical IR types, and works without
 LLVM. Descriptions currently represent direct scalar parameter placement and a
-direct/void result; coercions, aggregate passing and hidden results are deferred.
+direct/void result. Structs use direct LLVM aggregate arguments/results; physical
+coercions and hidden results remain deferred.
 
 A function's ABI governs every call to that function and every return from it.
 `llvm_abi` translates descriptions into declarations, incoming argument decoding,
@@ -41,7 +48,7 @@ functions; the test permutation is separate from production scalar fastcc classi
 Source helpers select Fib convention in lowering and retain internal linkage;
 main/build entries select C. Neither convention silently falls back to another.
 
-Broader C ABI widths, varargs, multiple results, storage and unsupported instruction/
+Broader C ABI widths, varargs, multiple results, globals and unsupported instruction/
 type families still return errors. General Fib ABI policy and source ABI syntax
 remain future work.
 
@@ -68,7 +75,7 @@ than the initial emitter in `llvm_lower`. The inactive `next/ir_lower.rs` still
 references removed APIs and is not compiled.
 
 Future implementation needs target-aware representations for all runtime types,
-broader ABI classification, global initialization, storage and the remaining
+broader ABI classification, global initialization and the remaining
 instructions. Parallel edges carrying
 different arguments require distinct LLVM predecessors; backedges need deferred
 SSA resolution. LLVM verification must remain mandatory. Never repair malformed
