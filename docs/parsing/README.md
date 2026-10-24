@@ -1,5 +1,8 @@
 # Verified parsing reference
 
+The [language specification](../language-specification.md) defines the language. This directory remains a snapshot of current parsing; it must not imply
+support beyond the documented analysis and execution boundaries.
+
 This directory records **what the current tokenizer and parser accept and
 reject during the compiler refactor**. It is an implementation snapshot, not
 the intended language specification. A parser limitation is not a language-design
