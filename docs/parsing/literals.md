@@ -23,8 +23,8 @@ count: int32 = 42; // A trailing comment.
 | `0b` | Binary | `0b1010` |
 
 Prefixes are lowercase. A leading zero alone does not imply octal. Token payloads
-are parsed as `u64`; values beyond that range are tokenizer errors, even though
-128-bit type names exist. A negative number is a unary minus expression applied
+retain arbitrary-precision unsigned magnitudes; numeric range validation belongs
+to analysis, so the tokenizer accepts values beyond uint128. A negative number is a unary minus expression applied
 to an unsigned integer-literal token, not a signed token.
 
 Underscore separators, numeric suffixes, and uppercase base prefixes are not
@@ -39,8 +39,8 @@ negative := -0.5;
 ```
 
 A decimal fractional point is consumed only if followed by a decimal digit.
-Literal payloads are parsed as Rust `f64`; the annotation does not change that
-lexical representation. Decimal exponent syntax, hexadecimal floats, `.5`, and
+Literal payloads retain their exact decimal spelling. Analysis rounds directly
+to the contextual IEEE format, without an intermediate host `f64`. Decimal exponent syntax, hexadecimal floats, `.5`, and
 `1.` are not supported as single float literals. `1..5` is tokenized as an
 integer, the `..` range separator, and another integer; it is not a standalone
 range expression in the parser. See [Arrays](arrays.md).

@@ -16,14 +16,16 @@ specialization now rechecks concrete bodies, retaining symbolic template checks.
 Bounded type computation requires explicit `comp fn` eligibility. Independent
 binding/element mutability, `never` bottom coercion, definite initialization and
 structured control-flow checks run; see [typing](../type-resolution.md). Variadics
-are removed. Arbitrary-precision literals and exact IEEE constant evaluation are
-not yet implemented; the legacy numeric checker remains bounded.
-Single-file compilation supports int32 helpers/direct calls, initialized int32/bool
-locals, assignment, comparisons, nested conditionals and returns through verified
-SSA, multi-block LLVM/PHIs, object emission and host `cc` linking. Each function's
-signature selects its ABI; the production classifier supports C 32-bit integer/
-void boundaries, while Fib ABI remains unsupported. Arithmetic, source loops,
-storage and broader runtime representations remain unfinished. `build.fib` has an
+are removed. Numeric literals use arbitrary-precision integer magnitudes and direct decimal-to-IEEE
+rounding; constant evaluation implements fixed-width wrapping and exact IEEE
+operations. Single-file compilation supports fixed-width signed/unsigned integers
+through 128 bits, float16/32/64/128 and bool through locals, arithmetic,
+bitwise/shifts, explicit casts, short-circuit logic, helpers/calls, conditionals and
+returns. Typed numeric values require explicit conversions. Native helpers use a
+limited scalar Fib fastcc ABI; main keeps the C int32 entry contract. Source loops,
+storage and broader runtime representations remain unfinished. See
+[scalar semantics](../scalar-semantics.md) for numeric and trap rules.
+`build.fib` has an
 initial synthetic-module build API and shared-lowering/interpreter subset for
 literal `build_api::{add_source, set_entry, set_output}` calls; deterministic project-plan finalization now validates its initial path/name/entry/output
 contract; general interpretation remains unfinished.

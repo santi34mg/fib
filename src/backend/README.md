@@ -7,10 +7,17 @@ only after LLVM module verification. There is no frontend-to-LLVM fallback.
 
 ## Executable subset
 
-The production ABI subset is C 32-bit integer parameters/results and void returns.
+The C entry ABI supports 32-bit integer parameters/results and void returns.
+Internal Fib helpers support direct Bool, fixed-width integers and IEEE float
+parameters/results, or void, using LLVM fastcc. This limited scalar convention is
+not the full production Fib ABI or a general external C interoperability contract.
 Definitions support multiple blocks, entry arguments, block parameters/PHIs,
-Constant/direct Call/comparison instructions, and Jump/Branch/Return/Unreachable.
-Comparison ordering uses operand signedness; bool supports equality/inequality.
+Constant/direct Call/arithmetic/comparison/unary/numeric Cast instructions, and
+Jump/Branch/Return/Trap/Unreachable. Comparisons use operand signedness and IEEE
+ordered predicates, except NaN inequality is unordered. Bool supports equality.
+Integer arithmetic wraps; runtime guards protect division, shifts and float-to-int
+casts before LLVM can produce poison. Guards update PHI predecessor mappings.
+See [scalar semantics](../../docs/scalar-semantics.md).
 Emission traverses reverse postorder, patches PHI inputs after all values exist,
 and splits parallel branch arms into distinct LLVM predecessors. Backedges and
 shuffled body block order are covered by executable hand-built IR tests.
@@ -30,11 +37,11 @@ A function's ABI governs every call to that function and every return from it.
 call argument packing/result decoding and return packing. Logical IR signatures,
 SSA values and PHIs remain independent of physical argument positions. A
 mixed-convention test uses a test-only reversed-argument policy for internal Fib
-functions; this is not a production definition of Fib ABI. Production Fib
-classification fails explicitly, without falling back to C. Source helpers
-currently select C centrally in lowering and retain internal linkage.
+functions; the test permutation is separate from production scalar fastcc classification.
+Source helpers select Fib convention in lowering and retain internal linkage;
+main/build entries select C. Neither convention silently falls back to another.
 
-Other ABI widths, varargs, multiple results, storage and unsupported instruction/
+Broader C ABI widths, varargs, multiple results, storage and unsupported instruction/
 type families still return errors. General Fib ABI policy and source ABI syntax
 remain future work.
 

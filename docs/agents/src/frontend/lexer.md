@@ -26,5 +26,7 @@ alias rules; arbitrary compile-time evaluation remains unfinished.
 
 Tests live in `src/frontend/tokenizer/test.rs`. Add exact kinds, literal values,
 positions, and malformed-input cases. Verify escape/backslash, NUL, Unicode and
-numeric overflow behavior before making broader lexical guarantees. No analyzer
-executes to perform a second escape-decoding or contextual range-check pass.
+numeric malformed-input behavior before making broader lexical guarantees.
+Integer tokens retain arbitrary-precision magnitudes; floating tokens retain
+decimal spellings. Contextual range checking and IEEE rounding run in analysis,
+not tokenization. Escape decoding still occurs exactly once in the tokenizer.

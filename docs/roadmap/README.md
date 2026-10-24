@@ -126,17 +126,16 @@ native backend consumes the same IR; it is not a second frontend lowering route.
 
 ## Retained semantic policy proposals
 
-These are intended policies requiring specification and tests, not current
-analyzer/runtime behavior:
+Fixed-width scalar arithmetic and explicit numeric conversions are implemented;
+see [scalar semantics](../scalar-semantics.md). They use wrapping integers,
+checked division/shift failures, truncating integer casts and IEEE floats.
+Implicit widening was not adopted: typed values require explicit conversions,
+including at assignment, argument and return boundaries. Full external ABI and
+checked-operation APIs remain future work.
 
-- Numeric conversions: implicit widening only within a numeric family and
-  signedness; explicit narrowing keeps low bits; equal-width signed/unsigned
-  casts reinterpret bits; integer/float casts convert numerically.
-- Wrapping integer arithmetic; trap on runtime division/remainder by zero and
-  diagnose known zero divisors. Specify signed division overflow and shifts.
-- Float-to-integer conversion traps for NaN, infinity and out-of-range values;
-  integer-to-float conversion may lose precision. Specify NaN/signed-zero and
-  optimization rules plus explicit checked-operation APIs.
+Remaining proposals require specification and tests; they are not declarations
+of current analyzer/runtime behavior:
+
 - Restrict `null` to pointers, with unconstrained type `*void`; restrict `never`
   to return types with no normal return. Neither rule is currently enforced.
 - Require commas between list elements, allow one trailing comma and keep

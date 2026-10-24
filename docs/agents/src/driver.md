@@ -9,9 +9,10 @@ Both normal and bootstrap projects use `Analyzer::new(...).analyze()` and the si
 `ir::lowering::lower` entry point. The bootstrap configures `build_api` as a synthetic
 module with ordinary declaration/type identities. The driver validates `main` or
 `build` as the selected entry contract and chooses LLVM or the interpreter; lowering
-independently revalidates analysis. The normal executable subset is one file with `main() int32` and int32 helper definitions,
-direct calls, initialized int32/bool locals (including const), assignments,
-comparisons, nested if/else and returns. Negative int32 literals are supported.
+independently revalidates analysis. The normal executable subset is one file with `main() int32`, fixed-width
+integer/float/bool helper definitions and calls, initialized locals (including
+const), assignments, scalar arithmetic/bitwise/shifts, explicit numeric casts,
+short-circuit booleans, comparisons, nested if/else and returns.
 All source forms are prevalidated, including dead branches. Unsupported constructs
 produce Backend diagnostics with spans and original plan paths retained by
 `AnalyzedProject::source_paths`.
@@ -22,7 +23,7 @@ assignments replace mappings without allocating storage. Conditional joins merge
 changed outer bindings through block parameters. Returning arms do not contribute
 to joins; branch-local bindings do not escape. Known bool conditions use the same
 evaluator as frontend flow checking. Helpers have deterministic identity-based
-linker names, internal linkage and centrally selected C convention; physical ABI
+linker names, internal linkage and the limited scalar Fib fastcc convention; physical ABI
 argument placement belongs exclusively to the backend.
 
 `PipelineGoal::{Check, Ir, Objects, Binary}` stops after analysis, verified IR,
@@ -57,5 +58,5 @@ build-file executable and will not expose Rust ABI or Rust object layouts. See t
 [interpreted build-file plan](../../roadmap/08-interpreted-build-files.md). `run`,
 `test` remains unimplemented; `build --build-file PATH` supports the narrow interpreted
 subset and then enters the normal binary pipeline.
-Arithmetic, source loops/defer, uninitialized declarations, globals/storage,
+Source loops/defer, uninitialized declarations, globals/storage,
 aggregates, indirect calls and concrete generic bodies remain unsupported.

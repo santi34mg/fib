@@ -13,34 +13,34 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   types, expressions and owner-based members and validates applicable annotations;
   explicit metatype specialization with concrete body rechecking, bounded `comp fn`
   type computation, independent binding/element mutability, `never` bottom coercion,
-  initialization and structured flow validation now run. Numeric constants still
-  use the bounded legacy evaluator, not arbitrary precision/exact IEEE semantics.
+  initialization and structured flow validation now run. Numeric literals use arbitrary-precision integer magnitudes and exact decimal-to-IEEE rounding; constant arithmetic shares fixed-width wrapping/IEEE semantics with runtime.
   Analysis annotates the original AST; no
   lexer/analyze/typed_ast modules exist.
 - `src/driver.rs` implements parsing, analysis and pipeline orchestration. One
   `src/ir/lowering.rs` entry point lowers analyzed source plus any synthetic modules;
   the driver validates the selected entry contract and chooses the IR consumer. Program lowering supports
-  single-file int32 helpers/direct calls, initialized int32/bool locals, assignment,
-  comparisons, nested if/else and returns. It revalidates analysis, prevalidates the
+  single-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
-  Arithmetic, source loops, uninitialized locals, storage and generics still fail.
+  Source loops, uninitialized locals, storage and generics still fail.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
   Build files have an initial `build_api` semantic namespace and a narrow verified-IR
   path for literal source/entry/output operations. It finalizes deterministic plans
   with root-relative path/name/entry/output validation. General interpretation and
   broader builder orchestration remain unfinished.
 - `src/ir/` is owned SSA. The transactional builder allocates blocks/values/slots;
-  verification checks scalar constants/calls/comparisons and jump/branch/return/unreachable,
+  verification checks scalar constants/calls/arithmetic/unary/casts/comparisons and jump/branch/return/trap/unreachable,
   ownership, signatures, reachability and dominance. Storage and other operation/
   type families fail explicitly. Stack allocation records alone cannot be verified.
-- LLVM 21 emits multi-block SSA with PHIs/backedges and C 32-bit integer/void ABI.
+- LLVM 21 emits multi-block SSA with PHIs/backedges, the C 32-bit integer/void entry ABI and internal scalar Fib fastcc ABI.
   ABI classification is per signature; one shared description controls a function
   and calls to it. `emit_llvm(ir, target)` remains the sole public entry point.
-  Production Fib ABI, broader representations and storage remain unfinished.
+  Full production Fib ABI, external C interoperability for new scalars, broader representations and storage remain unfinished.
   `backend/lowering/next/` is inactive legacy code, not a supported route.
 - `build --single-file PATH` compiles the scalar/conditional subset through LLVM,
   object and host `cc` linking. Other build modes, `run` and `test` error explicitly.
   Old positional-file, include-root, check/emit/link/release flags do not exist.
+
+See [scalar semantics](docs/scalar-semantics.md) for wrapping, casts, traps and IEEE rules. Typed numeric values require explicit conversions; no implicit widening is performed.
 
 ## Toolchain and commands
 

@@ -106,12 +106,15 @@ modifiers and types; one tuple-valued initializer can supply multiple destinatio
 Numeric literals default to `int32`/`float64`, adopting a numeric context when
 representable. Unary negative integer boundaries are checked after the sign.
 Already typed values require matching types or explicit numeric casts; no implicit
-mixed-width/signedness promotion occurs. Tokenizer `u64`/`f64` payload limits remain.
-Syntactic constants are checked for representable arithmetic and casts, division
-by zero and invalid shifts. Integer magnitude covers `uint128`; floating checks
-use an extended exponent instead of the host `f64` range. They retain the
-payload's floating precision and are not a general compile-time evaluator or an
-exact IEEE arithmetic interpreter. Target-width `usize` validation is deferred.
+mixed-width/signedness promotion occurs, including at assignment/call/return
+boundaries. Integer magnitudes are arbitrary precision and decimal float spellings
+are retained until direct rounding to the contextual IEEE format. Syntactic
+constant evaluation implements the same fixed-width wrapping, truncating integer
+casts and IEEE arithmetic as runtime. Known integer zero divisors, invalid shifts
+and invalid float-to-integer conversions are diagnosed; floats may produce
+infinity/NaN through arithmetic. Literal values themselves must fit their types.
+Target-width `usize` validation remains deferred. See
+[scalar semantics](scalar-semantics.md) for the complete implemented rules.
 
 Arithmetic accepts numeric operands, remainder/bitwise operations require
 integers, logical operators require booleans, and ordering accepts numbers or

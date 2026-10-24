@@ -6,10 +6,14 @@ With LLVM enabled, `emit_llvm(ir, target)` verifies SSA and classifies each func
 from its signature and resolved target. The ABI adapter uses that description
 for declarations, incoming arguments, calls to the function, and returns from it.
 There is no module-wide ABI setting or alternative public emission entry point.
-Only C 32-bit integer/void classification ships; Fib ABI fails explicitly.
+C 32-bit integer/void entries and internal scalar Fib fastcc classification ship.
+The latter supports Bool, fixed-width integers and IEEE floats; full Fib ABI and
+external C interoperability for the new scalars remain unfinished.
 
-Emission supports multiple blocks/PHIs, backedges, comparisons, direct calls,
-jumps/branches and returns/unreachable. Entry is allocated first, instruction
+Emission supports multiple blocks/PHIs, backedges, scalar arithmetic/unary/casts,
+comparisons, direct calls, jumps/branches and returns/traps/unreachable.
+Wrapping/IEEE semantics and guards for division, shifts and float-to-integer casts
+follow [scalar semantics](../../../scalar-semantics.md). Entry is allocated first, instruction
 emission uses reverse postorder, and PHIs are patched after all values exist.
 Parallel branch arms targeting one block get separate trampoline predecessors.
 LLVM verification precedes artifacts and PIC objects; driver linking uses `cc`.

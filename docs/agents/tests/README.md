@@ -112,8 +112,10 @@ The LSP's previously verified 11 tests use `node --test` from `lsp/`. Those
 highlighting/protocol tests do not establish a working compiler pipeline.
 The scalar/conditional subset runs through verified SSA and multi-block LLVM to
 linked executables. Test-first changes were observed failing at their missing
-phase before implementation. Arithmetic, source loops, storage and production
-Fib ABI remain unfinished.
+phase before implementation. Source loops, storage and full production Fib ABI remain unfinished.
+Scalar coverage now includes full-width numeric literals, exact IEEE constant
+evaluation, wrapping integer operations, explicit conversions, scalar fastcc
+helpers/PHIs, short-circuit booleans and guarded runtime traps.
 
 ## Change guidance
 

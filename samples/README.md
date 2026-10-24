@@ -1,6 +1,6 @@
 # Samples
 
-All 15 `.fib` files in this directory use current tokenizer/parser syntax.
+All 16 `.fib` files in this directory use current tokenizer/parser syntax.
 `frontend::parser::test::tests::samples_parse_with_current_frontend` discovers
 and parses every top-level `.fib` sample, rejecting parse failures and empty ASTs.
 This is **syntax regression coverage, not semantic or execution validation**.
@@ -11,9 +11,11 @@ Run the focused check from the repository root:
 cargo test --no-default-features samples_parse_with_current_frontend
 ```
 
-The CLI's build/run commands, analysis, and lowering remain unfinished. Intended
-output comments describe example goals, not verified results. There is no working
-e2e runner, and historical positional-file / `-I=std` commands are unsupported.
+`builtin_scalars.fib` also has executable acceptance coverage and returns 42.
+Compile it with `fibc build --single-file samples/builtin_scalars.fib`.
+Other samples retain intended/unverified output comments and broader unsupported
+features. The `run` command and historical positional-file / `-I=std` commands
+remain unsupported.
 See the [parsing reference](../docs/parsing/README.md) for verified syntax and
 [compiler status](../README.md) for pipeline boundaries.
 
@@ -41,6 +43,8 @@ Temporary parser restrictions are not intended language-design decisions. Future
 analysis work is tracked in [GitHub issues](../docs/agents/issues/README.md).
 
 ## Example topics
+
+- `builtin_scalars.fib`: executable wrapping, explicit widening and float casts.
 
 - `hello_world.fib`, `minimal.fib`: entry functions and output.
 - `bitwise_ops.fib`, `unsigned_ops.fib`: arithmetic and bitwise operations.
