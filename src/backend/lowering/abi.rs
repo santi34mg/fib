@@ -200,6 +200,17 @@ fn direct_type(
             active.remove(&ty);
             valid
         }
+        Some(IrType::Enum { variants, .. }) => {
+            if !active.insert(ty) {
+                return false;
+            }
+            let valid = variants
+                .iter()
+                .flat_map(|v| &v.fields)
+                .all(|f| direct_type(*f, types, active));
+            active.remove(&ty);
+            valid
+        }
         _ => false,
     }
 }

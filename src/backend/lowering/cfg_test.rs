@@ -483,3 +483,288 @@ fn aggregate_insert_extract_parallel_phi_and_memory_round_trip_execute() {
     b.finish(entry).unwrap();
     assert_eq!(run(emit_llvm(&ir, &host_target().unwrap()).unwrap()), 42);
 }
+
+#[test]
+fn switch_parallel_cases_and_default_keep_distinct_phi_inputs() {
+    for (subject, expected) in [(0, 42), (1, 7)] {
+        let mut ir = module();
+        let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+        let entry = b.create_block(&[]).unwrap();
+        let join = b.create_block(&[TypeId(0)]).unwrap();
+        let result = b.block_params(join).unwrap()[0];
+        b.set_terminator(
+            entry,
+            Terminator::Switch {
+                subject: c(subject),
+                cases: vec![SwitchCase {
+                    value: ConstantId(0),
+                    edge: Edge {
+                        target: join,
+                        args: vec![c(0)],
+                    },
+                }],
+                default: Edge {
+                    target: join,
+                    args: vec![c(1)],
+                },
+            },
+        )
+        .unwrap();
+        b.set_terminator(
+            join,
+            Terminator::Return {
+                values: vec![Operand::Value(result)],
+            },
+        )
+        .unwrap();
+        b.finish(entry).unwrap();
+        assert_eq!(
+            run(emit_llvm(&ir, &host_target().unwrap()).unwrap()),
+            expected
+        );
+    }
+}
+
+#[test]
+fn switch_backedges_and_shuffled_blocks_execute() {
+    let mut ir = module();
+    ir.constants.push(Constant {
+        ty: TypeId(0),
+        kind: ConstantKind::Integer { bits: 0 },
+    });
+    ir.constants.push(Constant {
+        ty: TypeId(0),
+        kind: ConstantKind::Integer { bits: 1 },
+    });
+    let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let entry = b.create_block(&[]).unwrap();
+    let header = b.create_block(&[TypeId(0)]).unwrap();
+    let body = b.create_block(&[]).unwrap();
+    let exit = b.create_block(&[]).unwrap();
+    let count = Operand::Value(b.block_params(header).unwrap()[0]);
+    b.set_terminator(
+        entry,
+        Terminator::Jump(Edge {
+            target: header,
+            args: vec![c(4)],
+        }),
+    )
+    .unwrap();
+    b.set_terminator(
+        header,
+        Terminator::Switch {
+            subject: count,
+            cases: vec![SwitchCase {
+                value: ConstantId(0),
+                edge: Edge {
+                    target: exit,
+                    args: vec![],
+                },
+            }],
+            default: Edge {
+                target: body,
+                args: vec![],
+            },
+        },
+    )
+    .unwrap();
+    let next = b
+        .append_instruction(
+            body,
+            InstructionKind::Binary {
+                op: BinaryOp::Add,
+                lhs: count,
+                rhs: c(5),
+            },
+            &[TypeId(0)],
+        )
+        .unwrap()[0];
+    b.set_terminator(
+        body,
+        Terminator::Jump(Edge {
+            target: header,
+            args: vec![Operand::Value(next)],
+        }),
+    )
+    .unwrap();
+    b.set_terminator(
+        exit,
+        Terminator::Return {
+            values: vec![count],
+        },
+    )
+    .unwrap();
+    b.finish(entry).unwrap();
+    if let FunctionBody::Definition { blocks, .. } = &mut ir.functions[0].body {
+        blocks.reverse();
+    }
+    assert_eq!(run(emit_llvm(&ir, &host_target().unwrap()).unwrap()), 42);
+}
+
+#[test]
+fn enum_constants_construction_and_wide_discriminants_execute() {
+    for (tag, width) in [
+        (0, 8),
+        (256, 16),
+        (65536, 32),
+        (1u128 << 32, 64),
+        (u128::MAX, 128),
+    ] {
+        for constant in [false, true] {
+            let mut ir = module();
+            ir.types.push(IrType::Integer {
+                width: IntegerWidth::Bits(128),
+                signed: false,
+            });
+            ir.types.push(IrType::Struct {
+                name: None,
+                fields: vec![TypeId(0)],
+            });
+            ir.types.push(IrType::Enum {
+                name: None,
+                variants: vec![EnumVariant {
+                    name: None,
+                    discriminant: tag,
+                    fields: vec![TypeId(3)],
+                }],
+            });
+            ir.constants.push(Constant {
+                ty: TypeId(2),
+                kind: ConstantKind::Integer { bits: tag },
+            });
+            // Forward-referenced aggregate payload.
+            ir.constants.push(Constant {
+                ty: TypeId(4),
+                kind: ConstantKind::Enum {
+                    variant: 0,
+                    fields: vec![ConstantId(6)],
+                },
+            });
+            ir.constants.push(Constant {
+                ty: TypeId(3),
+                kind: ConstantKind::Aggregate(vec![ConstantId(0)]),
+            });
+            ir.functions.push(Function {
+                identifier: "read".into(),
+                signature: Signature {
+                    params: vec![TypeId(4)],
+                    results: vec![TypeId(0)],
+                    calling_convention: CallingConvention::Fib,
+                },
+                linkage: Linkage::Internal,
+                body: FunctionBody::Declaration,
+            });
+            let mut b = FunctionBuilder::new(&mut ir, FunctionId(1)).unwrap();
+            let entry = b.create_block(&[TypeId(4)]).unwrap();
+            let arm = b.create_block(&[]).unwrap();
+            let default = b.create_block(&[]).unwrap();
+            let value = Operand::Value(b.block_params(entry).unwrap()[0]);
+            let subject = b
+                .append_instruction(entry, InstructionKind::EnumTag { value }, &[TypeId(2)])
+                .unwrap()[0];
+            b.set_terminator(
+                entry,
+                Terminator::Switch {
+                    subject: Operand::Value(subject),
+                    cases: vec![SwitchCase {
+                        value: ConstantId(4),
+                        edge: Edge {
+                            target: arm,
+                            args: vec![],
+                        },
+                    }],
+                    default: Edge {
+                        target: default,
+                        args: vec![],
+                    },
+                },
+            )
+            .unwrap();
+            let payload = b
+                .append_instruction(
+                    arm,
+                    InstructionKind::EnumField {
+                        value,
+                        variant: 0,
+                        field: 0,
+                    },
+                    &[TypeId(3)],
+                )
+                .unwrap()[0];
+            let result = b
+                .append_instruction(
+                    arm,
+                    InstructionKind::ExtractField {
+                        aggregate: Operand::Value(payload),
+                        field: 0,
+                    },
+                    &[TypeId(0)],
+                )
+                .unwrap()[0];
+            b.set_terminator(
+                arm,
+                Terminator::Return {
+                    values: vec![Operand::Value(result)],
+                },
+            )
+            .unwrap();
+            b.set_terminator(default, Terminator::Return { values: vec![c(1)] })
+                .unwrap();
+            b.finish(entry).unwrap();
+            if let FunctionBody::Definition { blocks, .. } = &mut ir.functions[1].body {
+                blocks.reverse();
+            }
+            let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+            let entry = b.create_block(&[]).unwrap();
+            let value = if constant {
+                c(5)
+            } else {
+                let payload = b
+                    .append_instruction(
+                        entry,
+                        InstructionKind::Aggregate {
+                            elements: vec![c(0)],
+                        },
+                        &[TypeId(3)],
+                    )
+                    .unwrap()[0];
+                Operand::Value(
+                    b.append_instruction(
+                        entry,
+                        InstructionKind::Enum {
+                            variant: 0,
+                            fields: vec![Operand::Value(payload)],
+                        },
+                        &[TypeId(4)],
+                    )
+                    .unwrap()[0],
+                )
+            };
+            let result = b
+                .append_instruction(
+                    entry,
+                    InstructionKind::Call {
+                        callee: FunctionId(1),
+                        args: vec![value],
+                    },
+                    &[TypeId(0)],
+                )
+                .unwrap()[0];
+            b.set_terminator(
+                entry,
+                Terminator::Return {
+                    values: vec![Operand::Value(result)],
+                },
+            )
+            .unwrap();
+            b.finish(entry).unwrap();
+            let artifact = emit_llvm(&ir, &host_target().unwrap()).unwrap();
+            assert!(
+                artifact.ir_text().contains(&format!("{{ i{width},")),
+                "{}",
+                artifact.ir_text()
+            );
+            assert_eq!(run(artifact), 42);
+        }
+    }
+}

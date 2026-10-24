@@ -124,11 +124,7 @@ pub(super) fn emit_classified(
 ) -> Result<LlvmArtifact, BackendError> {
     super::ir_lower::verify_input(ir)?;
     use crate::ir::*;
-    use inkwell::{
-        context::Context,
-        types::BasicTypeEnum,
-        values::{BasicValue, BasicValueEnum},
-    };
+    use inkwell::{context::Context, types::BasicTypeEnum, values::BasicValue};
     let context = Context::create();
     let module = context.create_module("fib");
     let machine = machine(target)?;
@@ -155,17 +151,14 @@ pub(super) fn emit_classified(
             IrType::Struct { .. } => Ok(context
                 .opaque_struct_type(&format!("fib.struct.{index}"))
                 .into()),
+            IrType::Enum { .. } => Ok(context
+                .opaque_struct_type(&format!("fib.enum.{index}"))
+                .into()),
             _ => Err(error("unsupported LLVM type")),
         })
         .collect::<Result<_, _>>()?;
-    for (index, ty) in ir.types.iter().enumerate() {
-        if let IrType::Struct { fields, .. } = ty {
-            types[index].into_struct_type().set_body(
-                &fields.iter().map(|ty| types[ty.0]).collect::<Vec<_>>(),
-                false,
-            );
-        }
-    }
+    let enum_layouts =
+        super::llvm_enum::complete_types(&context, ir, &types, &machine.get_target_data())?;
     let abi_target = super::abi::AbiTarget {
         triple: machine.get_triple().as_str().to_string_lossy().into_owned(),
         data_layout: module
@@ -186,27 +179,6 @@ pub(super) fn emit_classified(
         .enumerate()
         .map(|(i, f)| abi.declare(&module, FunctionId(i), f))
         .collect::<Result<Vec<_>, _>>()?;
-    let constants: Vec<BasicValueEnum<'_>> = ir
-        .constants
-        .iter()
-        .map(|c| match c.kind {
-            ConstantKind::Null => Ok(types[c.ty.0].into_pointer_type().const_null().into()),
-            ConstantKind::Bool(b) => Ok(types[c.ty.0]
-                .into_int_type()
-                .const_int(u64::from(b), false)
-                .into()),
-            ConstantKind::Integer { bits } => Ok(types[c.ty.0]
-                .into_int_type()
-                .const_int_arbitrary_precision(&[bits as u64, (bits >> 64) as u64])
-                .into()),
-            ConstantKind::Float { bits } => Ok(super::llvm_scalar::float_constant(
-                types[c.ty.0].into_float_type(),
-                bits,
-            )
-            .into()),
-            _ => Err(error("unsupported LLVM constant")),
-        })
-        .collect::<Result<_, BackendError>>()?;
     let builder = context.create_builder();
     for (fi, f) in ir.functions.iter().enumerate() {
         let FunctionBody::Definition {
@@ -227,6 +199,15 @@ pub(super) fn emit_classified(
             );
         }
         builder.position_at_end(llvm_blocks[entry]);
+        let enum_emitter = super::llvm_enum::EnumEmitter {
+            context: &context,
+            builder: &builder,
+            entry: llvm_blocks[entry],
+            ir,
+            types: &types,
+            layouts: &enum_layouts,
+        };
+        let constants = enum_emitter.constants()?;
         let mut slots = std::collections::HashMap::new();
         for &slot in stack_slots {
             let allocation = builder
@@ -420,6 +401,53 @@ pub(super) fn emit_classified(
                             .into_struct_value();
                         values.insert(inst.results[0], value.into());
                     }
+                    InstructionKind::Enum { variant, fields } => {
+                        let ty = ir.values[inst.results[0].0].ty;
+                        let fields = fields
+                            .iter()
+                            .map(|f| operand(*f, &constants, &values))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        values.insert(
+                            inst.results[0],
+                            enum_emitter.construct(ty, *variant, &fields)?,
+                        );
+                    }
+                    InstructionKind::EnumTag { value } => {
+                        let tag = builder
+                            .build_extract_value(
+                                operand(*value, &constants, &values)?.into_struct_value(),
+                                0,
+                                "enum.tag",
+                            )
+                            .map_err(error)?
+                            .into_int_value();
+                        let dest = types[ir.values[inst.results[0].0].ty.0].into_int_type();
+                        values.insert(
+                            inst.results[0],
+                            builder
+                                .build_int_cast_sign_flag(tag, dest, false, "enum.tag.cast")
+                                .map_err(error)?
+                                .into(),
+                        );
+                    }
+                    InstructionKind::EnumField {
+                        value,
+                        variant,
+                        field,
+                    } => {
+                        let ty = ir
+                            .operand_type(*value)
+                            .ok_or_else(|| error("missing enum type"))?;
+                        values.insert(
+                            inst.results[0],
+                            enum_emitter.field(
+                                ty,
+                                operand(*value, &constants, &values)?,
+                                *variant,
+                                *field,
+                            )?,
+                        );
+                    }
                     InstructionKind::Call { callee, args } => {
                         let args = args
                             .iter()
@@ -490,7 +518,42 @@ pub(super) fn emit_classified(
                         incoming.push((else_edge, predecessor));
                     }
                 }
-                _ => return Err(error("unsupported LLVM terminator")),
+                Terminator::Switch {
+                    subject,
+                    cases,
+                    default,
+                } => {
+                    // Give every successor occurrence its own predecessor. This
+                    // also preserves parallel cases/default carrying different PHI inputs.
+                    let mut successors = Vec::new();
+                    for edge in cases
+                        .iter()
+                        .map(|c| &c.edge)
+                        .chain(std::iter::once(default))
+                    {
+                        let trampoline = context.append_basic_block(functions[fi], "switch.edge");
+                        successors.push((edge, trampoline));
+                    }
+                    let case_values = cases
+                        .iter()
+                        .zip(&successors)
+                        .map(|(c, (_, block))| Ok((constants[c.value.0].into_int_value(), *block)))
+                        .collect::<Result<Vec<_>, BackendError>>()?;
+                    builder
+                        .build_switch(
+                            operand(*subject, &constants, &values)?.into_int_value(),
+                            successors.last().expect("default successor").1,
+                            &case_values,
+                        )
+                        .map_err(error)?;
+                    for (edge, trampoline) in successors {
+                        builder.position_at_end(trampoline);
+                        builder
+                            .build_unconditional_branch(llvm_blocks[&edge.target])
+                            .map_err(error)?;
+                        incoming.push((edge, trampoline));
+                    }
+                }
             }
         }
         // Backedge arguments may be instruction results emitted after the PHI.
@@ -563,7 +626,10 @@ fn reverse_postorder(
                 pending.push((then_edge.target, false));
             }
             Terminator::Return { .. } | Terminator::Trap(_) | Terminator::Unreachable => (),
-            _ => return Err(error("unsupported CFG terminator")),
+            Terminator::Switch { cases, default, .. } => {
+                pending.push((default.target, false));
+                pending.extend(cases.iter().rev().map(|c| (c.edge.target, false)));
+            }
         }
     }
     order.reverse();

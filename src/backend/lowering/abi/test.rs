@@ -80,3 +80,26 @@ fn fib_struct_and_pointer_boundaries_remain_distinct_from_c() {
     signature.calling_convention = CallingConvention::C;
     assert!(classify_signature(&signature, &types, &target()).is_err());
 }
+
+#[test]
+fn fib_enum_boundaries_use_the_shared_direct_abi_and_c_rejects_them() {
+    let mut types = types();
+    types.push(IrType::Enum {
+        name: None,
+        variants: vec![crate::ir::EnumVariant {
+            name: None,
+            discriminant: 0,
+            fields: vec![TypeId(0)],
+        }],
+    });
+    let mut signature = Signature {
+        params: vec![TypeId(2)],
+        results: vec![TypeId(2)],
+        calling_convention: CallingConvention::Fib,
+    };
+    let abi = classify_signature(&signature, &types, &target()).unwrap();
+    assert_eq!(abi.parameters, vec![TypeId(2)]);
+    assert_eq!(abi.result, Some(TypeId(2)));
+    signature.calling_convention = CallingConvention::C;
+    assert!(classify_signature(&signature, &types, &target()).is_err());
+}
