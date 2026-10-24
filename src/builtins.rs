@@ -1,7 +1,7 @@
-//! Builtins available while analyzing a project build file.
+//! Identity-based compiler namespaces for memory intrinsics and build operations.
 
 use crate::frontend::{
-    semantic_type::{FunctionType, SemanticTypes},
+    semantic_type::{FunctionType, SemanticType, SemanticTypes},
     tokens::builtin::BuiltinType,
 };
 
@@ -14,6 +14,10 @@ pub struct SyntheticModule {
 }
 
 impl SyntheticModule {
+    pub const MEMORY: Self = Self {
+        name: "memory",
+        functions: &[BuiltinFunction::UncheckedDeref],
+    };
     pub const BUILD_API: Self = Self {
         name: "build_api",
         functions: &BuiltinFunction::ALL,
@@ -26,6 +30,7 @@ pub enum BuiltinFunction {
     AddSource,
     SetEntry,
     SetOutput,
+    UncheckedDeref,
 }
 
 impl BuiltinFunction {
@@ -36,16 +41,24 @@ impl BuiltinFunction {
             Self::AddSource => "add_source",
             Self::SetEntry => "set_entry",
             Self::SetOutput => "set_output",
+            Self::UncheckedDeref => "unchecked_deref",
         }
     }
 
-    pub fn semantic_type(self, types: &mut SemanticTypes) -> FunctionType {
+    pub fn is_intrinsic(self) -> bool {
+        self == Self::UncheckedDeref
+    }
+
+    pub fn semantic_type(self, types: &mut SemanticTypes) -> SemanticType {
+        if self.is_intrinsic() {
+            return SemanticType::IntrinsicFunction;
+        }
         let string = types.builtin(BuiltinType::String);
         let void = types.builtin(BuiltinType::Void);
-        FunctionType {
+        SemanticType::Function(FunctionType {
             is_comp: false,
             parameters: vec![string],
             return_type: void,
-        }
+        })
     }
 }

@@ -239,7 +239,14 @@ fn synthetic_builtins_resolve_type_and_survive_analysis_only_when_configured() {
         project.types.get(signature.return_type).unwrap(),
         SemanticType::Builtin(BuiltinType::Void)
     ));
-    assert_eq!(project.builtins.len(), BuiltinFunction::ALL.len());
+    assert_eq!(
+        project
+            .builtins
+            .values()
+            .filter(|b| !b.is_intrinsic())
+            .count(),
+        BuiltinFunction::ALL.len()
+    );
 }
 
 #[test]
@@ -277,7 +284,14 @@ fn synthetic_builtin_namespace_does_not_collide_with_source_names() {
     .unwrap()
     .analyze()
     .unwrap();
-    assert_eq!(project.builtins.len(), BuiltinFunction::ALL.len());
+    assert_eq!(
+        project
+            .builtins
+            .values()
+            .filter(|b| !b.is_intrinsic())
+            .count(),
+        BuiltinFunction::ALL.len()
+    );
 }
 
 #[test]
@@ -373,7 +387,7 @@ mod name_resolution {
         fn named_units_register_without_reading_paths() {
             let (plan, units) = inputs(&[("main", ""), ("pkg::util", "")]);
             let analyzer = Analyzer::new(plan, units).unwrap();
-            assert_eq!(analyzer.symbols.files_by_name.len(), 2);
+            assert_eq!(analyzer.symbols.files_by_name.len(), 3);
             assert_eq!(
                 analyzer
                     .symbols
@@ -5329,5 +5343,140 @@ mod validation_regressions {
             let project = analyze(source);
             validate(&project.units, &project.symbols, &project.types).unwrap();
         }
+    }
+}
+
+mod memory_intrinsics {
+    use super::*;
+    use crate::{
+        driver::CompilationUnit,
+        frontend::{ast::statement::StatementKind as S, parser::Parser, tokenizer::Tokenizer},
+        plan::{BuildPlan, FileName, SourceFile},
+    };
+    use std::path::Path;
+
+    fn analyze(text: &str) -> anyhow::Result<AnalyzedProject> {
+        let ast = Parser::with_source(Tokenizer::new(text), Path::new("main.fib"), text).parse()?;
+        let plan = BuildPlan {
+            files: vec![SourceFile {
+                id: FileId(0),
+                name: FileName("main".into()),
+                path: "main.fib".into(),
+            }],
+            entry: FileId(0),
+            output: "unused".into(),
+        };
+        Analyzer::new(
+            plan,
+            vec![CompilationUnit {
+                source_file_id: FileId(0),
+                ast,
+            }],
+        )?
+        .analyze()
+    }
+
+    #[test]
+    fn unchecked_places_preserve_pointer_qualifiers_and_initialization_checks() {
+        for text in [
+            "fn f(p: const *int32) int32 { return memory::unchecked_deref(p); }",
+            "fn f(p: *int32) { memory::unchecked_deref(p) = 42; }",
+            "comp S: type = struct { x: int32 }; fn f(p: *S) { memory::unchecked_deref(p).x = 42; }",
+            "fn f(p: *int32) *int32 { return memory::unchecked_deref(p)&; }",
+            "fn f(p: *int32) int32 { comp d := memory::unchecked_deref; return d(p); }",
+        ] {
+            analyze(text).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
+        }
+        for (text, expected) in [
+            ("fn f() { memory::unchecked_deref(); }", "one pointer"),
+            (
+                "fn f(p: *int32) { memory::unchecked_deref(p, p); }",
+                "one pointer",
+            ),
+            ("fn f() { x := memory::unchecked_deref(42); }", "pointer"),
+            (
+                "fn f(p: *void) { x := memory::unchecked_deref(p); }",
+                "opaque",
+            ),
+            (
+                "fn f(p: const *int32) { memory::unchecked_deref(p) = 42; }",
+                "mutable",
+            ),
+            (
+                "fn f() { p: *int32; x := memory::unchecked_deref(p); }",
+                "uninitialized",
+            ),
+            ("fn f() { d := memory::unchecked_deref; }", "runtime value"),
+            (
+                "fn f() { d := [memory::unchecked_deref]; }",
+                "runtime value",
+            ),
+            (
+                "comp S: type = struct { x: int32, y: int32 }; fn f() S { s: S; s.x = 42; return s; }",
+                "uninitialized",
+            ),
+        ] {
+            let error = analyze(text).unwrap_err();
+            assert!(format!("{error:#}").contains(expected), "{text}: {error:#}");
+        }
+    }
+
+    #[test]
+    fn intrinsic_place_annotations_are_independently_rechecked() {
+        let mut project = analyze("fn f(p: *int32) { memory::unchecked_deref(p) = 42; }").unwrap();
+        let S::FunctionDeclaration(f) = &mut project.units[0].ast.statements[0].kind else {
+            panic!("function")
+        };
+        let S::Assignment { left, .. } = &mut f.body.as_mut().unwrap().statements[0].kind else {
+            panic!("assignment")
+        };
+        left.annotation.resolved.as_mut().unwrap().category = ValueCategory::Value;
+        let error = validate_analysis(&project).unwrap_err();
+        assert!(format!("{error:#}").contains("intrinsic place annotation"));
+    }
+
+    #[test]
+    fn constructor_field_cardinality_is_revalidated_before_lowering() {
+        for duplicate in [false, true] {
+            let mut project = analyze("comp S: type = struct { x: int32, y: int32 }; fn main() int32 { s := S { x: 1, y: 2 }; return s.x; }").unwrap();
+            let S::FunctionDeclaration(f) = &mut project.units[0].ast.statements[1].kind else {
+                panic!("function")
+            };
+            let S::VariableDeclaration(v) = &mut f.body.as_mut().unwrap().statements[0].kind else {
+                panic!("binding")
+            };
+            let ExpressionKind::StructConstruct { fields, .. } =
+                &mut v.expression.as_mut().unwrap().kind
+            else {
+                panic!("constructor")
+            };
+            if duplicate {
+                fields[1] = fields[0].clone();
+            } else {
+                fields.pop();
+            }
+            assert!(
+                format!("{:#}", validate_analysis(&project).unwrap_err()).contains("exactly once")
+            );
+            assert!(crate::ir::lowering::lower(&project).is_err());
+        }
+    }
+
+    #[test]
+    fn memory_namespace_is_reserved_and_intrinsic_is_not_a_function_value() {
+        let project = analyze("fn main() int32 { return 0; }").unwrap();
+        let mut units = project.units;
+        units[0].source_file_id = FileId(0);
+        let plan = BuildPlan {
+            files: vec![SourceFile {
+                id: FileId(0),
+                name: FileName("memory".into()),
+                path: "memory.fib".into(),
+            }],
+            entry: FileId(0),
+            output: "unused".into(),
+        };
+        let result = Analyzer::new(plan, units);
+        assert!(result.err().unwrap().to_string().contains("duplicate"));
     }
 }

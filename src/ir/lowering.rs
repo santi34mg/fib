@@ -3,7 +3,7 @@
 use crate::{
     diagnostics::{CompilerError, ErrorKind, Span},
     frontend::{
-        analysis_annotation::BindingId,
+        analysis_annotation::{BindingId, MemberKind, ValueCategory},
         analyzer::{AnalyzedProject, evaluate_numeric, known_boolean, validate_analysis},
         ast::{
             expression::{Expression, ExpressionKind as E},
@@ -17,6 +17,11 @@ use crate::{
     plan::FileId,
 };
 use std::collections::{BTreeMap, HashMap};
+
+mod runtime_types;
+mod storage;
+use runtime_types::register_runtime_types;
+use storage::storage_bindings;
 const SCALARS: [BuiltinType; 16] = [
     BuiltinType::Int32,
     BuiltinType::Boolean,
@@ -67,6 +72,8 @@ fn scalar_type(b: &BuiltinType) -> IrType {
 struct Source<'a> {
     project: &'a AnalyzedProject,
     file: FileId,
+    runtime_types: &'a HashMap<SemanticId, TypeId>,
+    pointers: &'a HashMap<TypeId, TypeId>,
 }
 impl Source<'_> {
     fn error(&self, span: Span, message: impl Into<String>) -> anyhow::Error {
@@ -78,14 +85,36 @@ impl Source<'_> {
         error.into()
     }
     fn ir_type(&self, ty: SemanticId, span: Span) -> anyhow::Result<Option<TypeId>> {
-        match self.project.types.get(self.project.types.canonical(ty)?)? {
-            SemanticType::Builtin(BuiltinType::Void) => Ok(None),
-            SemanticType::Builtin(b) if SCALARS.contains(b) => Ok(Some(scalar_id(b))),
-            _ => Err(self.error(
-                span,
-                "IR lowering supports only fixed-width numeric, bool, string, and void types",
-            )),
+        let ty = self.project.types.canonical(ty)?;
+        if matches!(
+            self.project.types.get(ty)?,
+            SemanticType::Builtin(BuiltinType::Void)
+        ) {
+            return Ok(None);
         }
+        self.runtime_types
+            .get(&ty)
+            .copied()
+            .map(Some)
+            .ok_or_else(|| self.error(span, "unsupported runtime type in IR lowering"))
+    }
+    fn pointer_type(&self, ty: TypeId) -> anyhow::Result<TypeId> {
+        self.pointers
+            .get(&ty)
+            .copied()
+            .ok_or_else(|| self.error(Span::new(1, 1), "unsupported memory storage type"))
+    }
+    fn intrinsic(&self, callee: &Expression) -> bool {
+        if let E::QualifiedIdentifier(name) = &callee.kind
+            && let Some(ResolvedName::Entity(Entity::Declaration(id))) = name.annotation.resolved
+        {
+            return self
+                .project
+                .builtins
+                .get(&id)
+                .is_some_and(|b| b.is_intrinsic());
+        }
+        false
     }
     fn value_type(&self, ty: SemanticId, span: Span) -> anyhow::Result<TypeId> {
         self.ir_type(ty, span)?
@@ -152,7 +181,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         .map(scalar_type)
         .collect();
     // NOTE: This conditional Bytes-type registration probably needs to be approached differently in the future.
-    if !project.builtins.is_empty()
+    if project.builtins.values().any(|b| !b.is_intrinsic())
         || project
             .types
             .types
@@ -161,6 +190,30 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     {
         ir.types.push(IrType::Bytes);
     }
+    let runtime_types = register_runtime_types(project, &mut ir)?;
+    let mut pointers = HashMap::new();
+    for (index, ty) in ir.types.iter().enumerate() {
+        if let IrType::Pointer { pointee } = ty {
+            pointers.insert(*pointee, TypeId(index));
+        }
+    }
+    // Storage needs an address type even when the source never takes its address.
+    for index in 0..ir.types.len() {
+        let ty = TypeId(index);
+        if !matches!(ir.types[index], IrType::Bytes) && !pointers.contains_key(&ty) {
+            let id = TypeId(ir.types.len());
+            ir.types.push(IrType::Pointer { pointee: ty });
+            pointers.insert(ty, id);
+        }
+    }
+    for (index, ty) in ir.types.iter().enumerate() {
+        if matches!(ty, IrType::Pointer { .. }) {
+            ir.constants.push(Constant {
+                ty: TypeId(index),
+                kind: ConstantKind::Null,
+            });
+        }
+    }
     let mut functions = HashMap::new();
     let mut declarations = Vec::new();
 
@@ -168,9 +221,14 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     let mut builtins = project.builtins.iter().collect::<Vec<_>>();
     builtins.sort_by_key(|(declaration, _)| (declaration.file_id, declaration.index));
     for (&declaration, &builtin) in builtins {
+        if builtin.is_intrinsic() {
+            continue;
+        }
         let source = Source {
             project,
             file: declaration.file_id,
+            runtime_types: &runtime_types,
+            pointers: &pointers,
         };
         let function_id = FunctionId(ir.functions.len());
         functions.insert(declaration, function_id);
@@ -186,7 +244,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         ir.builtin_functions.insert(function_id, builtin);
     }
 
-    let entry_name = if project.builtins.is_empty() {
+    let entry_name = if !project.builtins.values().any(|b| !b.is_intrinsic()) {
         "main"
     } else {
         "build"
@@ -195,8 +253,13 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         let source = Source {
             project,
             file: unit.source_file_id,
+            runtime_types: &runtime_types,
+            pointers: &pointers,
         };
         for node in &unit.ast.statements {
+            if matches!(&node.kind, S::VariableDeclaration(v) if v.is_comp) {
+                continue;
+            }
             let S::FunctionDeclaration(function) = &node.kind else {
                 return Err(source.error(
                     node.span,
@@ -204,6 +267,9 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
                 ));
             };
             let signature = &function.signature;
+            if signature.is_comp {
+                continue;
+            }
             if function.is_extern
                 || function.body.is_none()
                 || !signature.generic_parameters.is_empty()
@@ -243,6 +309,8 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         let source = Source {
             project,
             file: *file,
+            runtime_types: &runtime_types,
+            pointers: &pointers,
         };
         Checker {
             source: &source,
@@ -259,7 +327,12 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     }
     let constants = ir.constants.clone();
     for (id, function, span, file) in declarations {
-        let source = Source { project, file };
+        let source = Source {
+            project,
+            file,
+            runtime_types: &runtime_types,
+            pointers: &pointers,
+        };
         let parameter_types = ir.functions[id.0].signature.params.clone();
         let result_count = ir.functions[id.0].signature.results.len();
         let mut builder = FunctionBuilder::new(&mut ir, id)?;
@@ -276,12 +349,49 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             };
             locals.insert(local, Operand::Value(value));
         }
+        let body = &function
+            .body
+            .as_ref()
+            .expect("checked definition")
+            .statements;
+        let mut stored = storage_bindings(body, &source)?;
+        for parameter in &function.signature.parameters {
+            if let Some(BindingId::Local(id)) = parameter.annotation.binding
+                && source.is_struct_local(id)?
+            {
+                stored.insert(id);
+            }
+        }
+        let mut slots = BTreeMap::new();
+        for local in stored {
+            let ty = source.value_type(source.project.types.locals[&local], span)?;
+            let slot = builder.create_stack_slot(ty, None)?;
+            let address = Operand::Value(
+                builder.append_instruction(
+                    entry,
+                    InstructionKind::StackAddress(slot),
+                    &[source.pointer_type(ty)?],
+                )?[0],
+            );
+            if let Some(value) = locals.remove(&local) {
+                builder.append_instruction(
+                    entry,
+                    InstructionKind::Store {
+                        address: Address(address),
+                        value,
+                    },
+                    &[],
+                )?;
+            }
+            slots.insert(local, address);
+        }
         let mut lowerer = Lowerer {
             source: &source,
             functions: &functions,
             constants: &constants,
             builder,
             loops: Vec::new(),
+            slots,
         };
         let remaining = lowerer.statements(
             &function
@@ -370,6 +480,10 @@ fn literal(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Cons
         }));
     }
     Ok(match &expr.kind {
+        E::Literal(Literal::Null) => Some(Constant {
+            ty: source.expression_type(expr)?,
+            kind: ConstantKind::Null,
+        }),
         E::Literal(Literal::Boolean(value)) => Some(Constant {
             ty: source.expression_type(expr)?,
             kind: ConstantKind::Bool(*value),
@@ -404,7 +518,7 @@ impl Checker<'_, '_> {
             E::Call {
                 callee: function,
                 args,
-            } if callee(function, self.functions).is_some() => {
+            } if callee(function, self.functions).is_some() || self.source.intrinsic(function) => {
                 for arg in args {
                     self.expression(arg)?;
                 }
@@ -413,10 +527,25 @@ impl Checker<'_, '_> {
             E::UnaryExpression(unary)
                 if matches!(
                     unary.operator,
-                    Operator::Minus | Operator::Tilde | Operator::LogicalNot
+                    Operator::Minus
+                        | Operator::Tilde
+                        | Operator::LogicalNot
+                        | Operator::AddressOf
+                        | Operator::Dereference
                 ) =>
             {
                 self.expression(&unary.expression)
+            }
+            E::ExprAcess { expr, member, .. }
+                if matches!(member.resolved.map(|m| m.kind), Some(MemberKind::Field(_))) =>
+            {
+                self.expression(expr)
+            }
+            E::StructConstruct { fields, .. } => {
+                for field in fields {
+                    self.expression(&field.expression)?;
+                }
+                Ok(())
             }
             E::Cast { expr, .. } => self.expression(expr),
             E::BinaryExpresison(binary)
@@ -446,16 +575,13 @@ impl Checker<'_, '_> {
                             node.span,
                         )?;
                     }
-                    let expr = variable.expression.as_ref().ok_or_else(|| {
-                        self.source.error(
-                            node.span,
-                            "uninitialized declarations are not supported by IR lowering",
-                        )
-                    })?;
-                    self.expression(expr)?;
+                    if let Some(expr) = &variable.expression {
+                        self.expression(expr)?;
+                    }
                 }
-                S::Assignment { left, right } if local(left).is_some() => {
-                    self.source.expression_type(left)?;
+                S::VariableDeclaration(variable) if variable.is_comp => {}
+                S::Assignment { left, right } => {
+                    self.expression(left)?;
                     self.expression(right)?;
                 }
                 S::ExpressionStatement(expression) => {
@@ -544,6 +670,7 @@ struct Lowerer<'a, 'p, 'ir> {
     constants: &'a [Constant],
     builder: FunctionBuilder<'ir>,
     loops: Vec<LoopContext>,
+    slots: BTreeMap<LocalId, Operand>,
 }
 impl Lowerer<'_, '_, '_> {
     fn value_expression(
@@ -559,11 +686,74 @@ impl Lowerer<'_, '_, '_> {
                 .ok_or_else(|| self.source.error(expr.span, "missing prepared constant"))?;
             return Ok(Operand::Constant(ConstantId(index)));
         }
+        if self.is_place(expr) {
+            let address = self.place(state, expr)?;
+            let ty = self.source.expression_type(expr)?;
+            return self.instruction(
+                state,
+                InstructionKind::Load {
+                    address: Address(address),
+                },
+                ty,
+            );
+        }
         if let Some(id) = local(expr) {
             return state.locals.get(&id).copied().ok_or_else(|| {
                 self.source
                     .error(expr.span, "missing initialized local SSA value")
             });
+        }
+        if let E::UnaryExpression(unary) = &expr.kind
+            && unary.operator == Operator::AddressOf
+        {
+            return self.place(state, &unary.expression);
+        }
+        if let E::ExprAcess {
+            expr: receiver,
+            member,
+            ..
+        } = &expr.kind
+        {
+            let value = self.value_expression(state, receiver)?;
+            let Some(MemberKind::Field(field)) = member.resolved.map(|m| m.kind) else {
+                return Err(self.source.error(expr.span, "unsupported member"));
+            };
+            return self.instruction(
+                state,
+                InstructionKind::ExtractField {
+                    aggregate: value,
+                    field: field as usize,
+                },
+                self.source.expression_type(expr)?,
+            );
+        }
+        if let E::StructConstruct { fields, .. } = &expr.kind {
+            let mut elements = vec![None; fields.len()];
+            for field in fields {
+                let Some(MemberKind::Field(index)) = field.annotation.resolved.map(|m| m.kind)
+                else {
+                    return Err(self
+                        .source
+                        .error(expr.span, "missing initializer field identity"));
+                };
+                let destination = elements.get_mut(index as usize).ok_or_else(|| {
+                    self.source
+                        .error(expr.span, "initializer field index out of bounds")
+                })?;
+                *destination = Some(self.value_expression(state, &field.expression)?);
+            }
+            let elements = elements
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    self.source
+                        .error(expr.span, "incomplete struct initializer")
+                })?;
+            return self.instruction(
+                state,
+                InstructionKind::Aggregate { elements },
+                self.source.expression_type(expr)?,
+            );
         }
         if let E::Cast { expr: source, .. } = &expr.kind
             && self.source.expression_type(source)? == self.source.expression_type(expr)?
@@ -648,6 +838,99 @@ impl Lowerer<'_, '_, '_> {
         let value = self.builder.append_instruction(state.block, kind, &[ty])?[0];
         Ok(Operand::Value(value))
     }
+    fn instruction(
+        &mut self,
+        state: &State,
+        kind: InstructionKind,
+        ty: TypeId,
+    ) -> anyhow::Result<Operand> {
+        Ok(Operand::Value(
+            self.builder.append_instruction(state.block, kind, &[ty])?[0],
+        ))
+    }
+    fn is_place(&self, expr: &Expression) -> bool {
+        if let Some(id) = local(expr) {
+            return self.slots.contains_key(&id);
+        }
+        expr.annotation
+            .resolved
+            .is_some_and(|i| i.category != ValueCategory::Value)
+    }
+    fn place(&mut self, state: &mut State, expr: &Expression) -> anyhow::Result<Operand> {
+        if let Some(id) = local(expr) {
+            return self
+                .slots
+                .get(&id)
+                .copied()
+                .ok_or_else(|| self.source.error(expr.span, "binding has no storage"));
+        }
+        match &expr.kind {
+            E::ExprAcess {
+                expr: base, member, ..
+            } => {
+                let base = self.place(state, base)?;
+                let Some(MemberKind::Field(field)) = member.resolved.map(|m| m.kind) else {
+                    return Err(self.source.error(expr.span, "unsupported field address"));
+                };
+                self.instruction(
+                    state,
+                    InstructionKind::FieldAddress {
+                        base: Address(base),
+                        field: field as usize,
+                    },
+                    self.source
+                        .pointer_type(self.source.expression_type(expr)?)?,
+                )
+            }
+            E::UnaryExpression(unary) if unary.operator == Operator::Dereference => {
+                let pointer = self.value_expression(state, &unary.expression)?;
+                let ty = self.source.expression_type(&unary.expression)?;
+                let null = self
+                    .constants
+                    .iter()
+                    .position(|c| c.ty == ty && c.kind == ConstantKind::Null)
+                    .ok_or_else(|| self.source.error(expr.span, "missing null constant"))?;
+                let valid = self.instruction(
+                    state,
+                    InstructionKind::Binary {
+                        op: BinaryOp::Ne,
+                        lhs: pointer,
+                        rhs: Operand::Constant(ConstantId(null)),
+                    },
+                    scalar_id(&BuiltinType::Boolean),
+                )?;
+                let next = self.builder.create_block(&[])?;
+                let fail = self.builder.create_block(&[])?;
+                self.builder.set_terminator(
+                    state.block,
+                    Terminator::Branch {
+                        condition: valid,
+                        then_edge: Edge {
+                            target: next,
+                            args: vec![],
+                        },
+                        else_edge: Edge {
+                            target: fail,
+                            args: vec![],
+                        },
+                    },
+                )?;
+                self.builder
+                    .set_terminator(fail, Terminator::Trap(TrapReason::NullPointerDereference))?;
+                state.block = next;
+                Ok(pointer)
+            }
+            E::Call { callee, args } if self.source.intrinsic(callee) => {
+                let [pointer] = args.as_slice() else {
+                    return Err(self.source.error(expr.span, "invalid intrinsic arity"));
+                };
+                self.value_expression(state, pointer)
+            }
+            _ => Err(self
+                .source
+                .error(expr.span, "unsupported place in IR lowering")),
+        }
+    }
     fn expression_statement(&mut self, state: &mut State, expr: &Expression) -> anyhow::Result<()> {
         let E::Call {
             callee: function,
@@ -678,24 +961,44 @@ impl Lowerer<'_, '_, '_> {
                 break;
             };
             match &node.kind {
+                S::VariableDeclaration(variable) if variable.is_comp => {}
                 S::VariableDeclaration(variable) => {
                     let Some(BindingId::Local(id)) = variable.annotation.binding else {
                         return Err(self.source.error(node.span, "missing local identity"));
                     };
-                    let value = self.value_expression(
-                        &mut state,
-                        variable.expression.as_ref().expect("checked initializer"),
-                    )?;
-                    state.locals.insert(id, value);
+                    if let Some(expr) = &variable.expression {
+                        let value = self.value_expression(&mut state, expr)?;
+                        if let Some(&address) = self.slots.get(&id) {
+                            self.builder.append_instruction(
+                                state.block,
+                                InstructionKind::Store {
+                                    address: Address(address),
+                                    value,
+                                },
+                                &[],
+                            )?;
+                        } else {
+                            state.locals.insert(id, value);
+                        }
+                    }
                 }
                 S::Assignment { left, right } => {
                     let value = self.value_expression(&mut state, right)?;
-                    state.locals.insert(
-                        local(left).ok_or_else(|| {
-                            self.source.error(left.span, "missing assignment identity")
-                        })?,
-                        value,
-                    );
+                    if let Some(id) = local(left)
+                        && !self.slots.contains_key(&id)
+                    {
+                        state.locals.insert(id, value);
+                    } else {
+                        let address = self.place(&mut state, left)?;
+                        self.builder.append_instruction(
+                            state.block,
+                            InstructionKind::Store {
+                                address: Address(address),
+                                value,
+                            },
+                            &[],
+                        )?;
+                    }
                 }
                 S::ExpressionStatement(expression) => {
                     self.expression_statement(&mut state, expression)?;
@@ -965,5 +1268,20 @@ impl Lowerer<'_, '_, '_> {
                 Ok(Some(state))
             }
         }
+    }
+}
+
+impl Source<'_> {
+    fn is_struct_local(&self, id: LocalId) -> anyhow::Result<bool> {
+        let ty = self
+            .project
+            .types
+            .locals
+            .get(&id)
+            .ok_or_else(|| self.error(Span::new(1, 1), "missing local semantic type"))?;
+        Ok(matches!(
+            self.project.types.get(self.project.types.canonical(*ty)?)?,
+            SemanticType::Struct(_)
+        ))
     }
 }

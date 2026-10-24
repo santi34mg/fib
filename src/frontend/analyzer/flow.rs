@@ -460,6 +460,17 @@ impl Flow<'_> {
                     self.read(object, state)
                 }
             }
+            E::Call { callee, args }
+                if callee
+                    .annotation
+                    .resolved
+                    .is_some_and(|i| matches!(self.types.get(i.ty), Ok(T::IntrinsicFunction))) =>
+            {
+                for arg in args {
+                    self.read(arg, state)?;
+                }
+                Ok(())
+            }
             E::UnaryExpression(u) if u.operator == O::Dereference => {
                 self.read(&u.expression, state)
             }

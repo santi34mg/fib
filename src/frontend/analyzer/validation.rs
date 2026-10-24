@@ -534,6 +534,16 @@ impl Validator<'_> {
         owner: TypeId,
         definition: bool,
     ) -> anyhow::Result<()> {
+        let T::Struct(declared) = self.types.get(self.types.canonical(owner)?)? else {
+            return Err(type_error("struct fields require a struct owner"));
+        };
+        let unique = fields
+            .iter()
+            .map(|f| &f.field_identifier)
+            .collect::<HashSet<_>>();
+        if fields.len() != declared.len() || unique.len() != fields.len() {
+            return Err(type_error("struct fields must occur exactly once"));
+        }
         for field in fields {
             let result = (|| {
                 let value = self.expression(&field.expression)?;
@@ -762,6 +772,9 @@ impl Validator<'_> {
                         return Err(type_error("struct construction owner mismatch"));
                     }
                     self.fields(fields, owner, false)?;
+                    if info.category != C::Value || info.type_value.is_some() {
+                        return Err(type_error("struct construction value annotation mismatch"));
+                    }
                 }
                 E::UnaryExpression(u) => {
                     let negative_literal = u.operator == O::Minus
@@ -891,6 +904,32 @@ impl Validator<'_> {
                 }
                 E::Call { callee, args } => {
                     let callable = self.expression(callee)?;
+                    if matches!(self.types.get(callable.ty)?, T::IntrinsicFunction) {
+                        let Some(id) = super::evaluation::function_id(callee) else {
+                            return Err(type_error("intrinsic requires a named declaration"));
+                        };
+                        if self
+                            .symbols
+                            .files_by_name
+                            .get(&crate::plan::FileName("memory".into()))
+                            != Some(&id.file_id)
+                            || self.symbols.declaration(id)?.name != "unchecked_deref"
+                        {
+                            return Err(type_error("invalid intrinsic call identity"));
+                        }
+                        let [pointer] = args.as_slice() else {
+                            return Err(type_error(
+                                "unchecked_deref requires one pointer argument",
+                            ));
+                        };
+                        let pointer = self.expression(pointer)?;
+                        let expected =
+                            super::value_typing::dereference_info(pointer.ty, self.types)?;
+                        if info != expected {
+                            return Err(type_error("intrinsic place annotation mismatch"));
+                        }
+                        return Ok(info);
+                    }
                     let T::Function(mut signature) = self.types.get(callable.ty)?.clone() else {
                         return Err(type_error("call annotation has a non-function callee"));
                     };
@@ -1125,6 +1164,9 @@ impl Validator<'_> {
             } else {
                 C::MutablePlace
             };
+            if matches!(self.types.get(info.ty)?, T::IntrinsicFunction) {
+                return Err(type_error("intrinsic is not a runtime value"));
+            }
             if info.category != category {
                 return Err(type_error("binding mutability annotation mismatch"));
             }

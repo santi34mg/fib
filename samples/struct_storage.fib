@@ -1,0 +1,40 @@
+// Executable struct/storage example. Returns 42 on success.
+comp Point: type = struct { x: int32, y: int32 };
+comp Shape: type = struct { origin: Point, visible: bool };
+comp Node: type = struct { value: int32, next: *Node };
+comp Empty: type = struct {};
+
+fn move(point: *Point, amount: int32) {
+    (point*).x = (point*).x + amount;
+}
+
+fn shifted(shape: Shape) Shape {
+    copy := shape;
+    copy.origin.y = copy.origin.y + 2;
+    return copy;
+}
+
+fn empty(value: Empty) Empty { return value; }
+
+fn main() int32 {
+    point: Point;
+    point.x = 10;
+    point.y = 20;
+    shape := Shape { visible: true, origin: point };
+    copy := shifted(shape);
+    move((copy.origin&), 5);
+    pointer := copy.origin&;
+    memory::unchecked_deref(pointer).y = 27;
+    node := Node { next: null, value: 1 };
+    tail := Node { value: 2, next: node& };
+    counter := 0;
+    address := counter&;
+    while (counter < 3) { address* = counter + 1; };
+    no_fields := empty(Empty {});
+    if (shape.origin.x == 10 && shape.origin.y == 20
+        && copy.origin.x == 15 && copy.origin.y == 27
+        && (tail.next*).value == 1 && node.next == null && counter == 3) {
+        return copy.origin.x + copy.origin.y;
+    };
+    return 7;
+}

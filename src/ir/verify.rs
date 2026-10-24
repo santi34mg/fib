@@ -81,7 +81,11 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
             }
         }
     }
-    for function in ir.builtin_functions.keys() {
+    for (function, builtin) in &ir.builtin_functions {
+        require(
+            !builtin.is_intrinsic(),
+            "memory intrinsic must be lowered to IR operations",
+        )?;
         let declaration = ir.get_function(*function).ok_or(IrError::Invalid {
             message: "unknown builtin function",
         })?;

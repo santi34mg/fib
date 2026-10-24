@@ -28,6 +28,8 @@ pub enum SemanticType {
     Slice(TypeId),
     Tuple(Vec<TypeId>),
     Function(FunctionType),
+    /// Compiler-known place-returning callable; never a runtime value.
+    IntrinsicFunction,
     Struct(Vec<FieldType>),
     Enum(Vec<VariantType>),
     /// A declaration-backed type. Its definition is in `declarations`.
@@ -212,6 +214,9 @@ impl SemanticTypes {
                 continue;
             }
             match self.get(id)? {
+                SemanticType::IntrinsicFunction if id != root => {
+                    return Err(type_error("intrinsic is not a runtime value"));
+                }
                 SemanticType::Readonly(t) => {
                     if !matches!(
                         self.get(self.canonical(*t)?)?,

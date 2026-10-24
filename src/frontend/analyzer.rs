@@ -146,7 +146,7 @@ impl Analyzer {
                 "compilation-unit IDs do not match build-plan file IDs",
             ));
         }
-        Ok(Self {
+        Self {
             units,
             symbols,
             local_ids: LocalIdAllocator::default(),
@@ -154,7 +154,8 @@ impl Analyzer {
             synthetic_modules: Vec::new(),
             builtins: HashMap::new(),
             phase: NamePhase::New,
-        })
+        }
+        .with_synthetic_module(SyntheticModule::MEMORY)
     }
 
     /// Add a compiler-provided namespace to the same analysis pipeline used by
@@ -353,7 +354,7 @@ impl Analyzer {
         // also check builtin types
         for (&id, &builtin) in &self.builtins {
             let signature = builtin.semantic_type(&mut types);
-            let ty = types.intern(SemanticType::Function(signature));
+            let ty = types.intern(signature);
             types.bind(
                 BindingId::Declaration(id),
                 ExpressionInfo {
@@ -554,6 +555,29 @@ fn validate_analysis_with_paths(
         return Err(crate::frontend::semantic_type::type_error(
             "analysis requires completed type resolution",
         ));
+    }
+    for (&id, &builtin) in &project.builtins {
+        if builtin.is_intrinsic() {
+            let memory = project
+                .symbols
+                .files_by_name
+                .get(&FileName("memory".into()));
+            if memory != Some(&id.file_id)
+                || project.symbols.declaration(id)?.name != "unchecked_deref"
+                || !matches!(
+                    project
+                        .types
+                        .declarations
+                        .get(&id)
+                        .and_then(|ty| project.types.get(*ty).ok()),
+                    Some(SemanticType::IntrinsicFunction)
+                )
+            {
+                return Err(crate::frontend::semantic_type::type_error(
+                    "invalid memory intrinsic identity",
+                ));
+            }
+        }
     }
     let mut units = project.units.clone();
     validate_type_annotations(&mut units, &project.symbols, &project.types)?;

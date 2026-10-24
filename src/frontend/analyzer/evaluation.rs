@@ -324,6 +324,18 @@ impl TypeContext<'_> {
             semantic_type::SemanticType as T, tokens::builtin::BuiltinType as B,
         };
         let info = self.expression(callee, None)?;
+        if matches!(self.types.get(info.ty)?, T::IntrinsicFunction) {
+            if function_id(callee).is_none() {
+                return Err(type_error(
+                    "intrinsic requires a named compiler declaration",
+                ));
+            }
+            let [pointer] = args else {
+                return Err(type_error("unchecked_deref requires one pointer argument"));
+            };
+            let pointer = self.expression(pointer, None)?;
+            return super::value_typing::dereference_info(pointer.ty, self.types);
+        }
         let T::Function(mut signature) = self.types.get(info.ty)?.clone() else {
             return Err(type_error("expression is not callable"));
         };

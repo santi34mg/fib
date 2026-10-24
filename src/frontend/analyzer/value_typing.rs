@@ -381,24 +381,7 @@ impl TypeContext<'_> {
                             self.types.intern(T::Readonly(pointer))
                         }
                     }
-                    O::Dereference => {
-                        let (container, readonly) = self.types.container(info.ty)?;
-                        let T::Pointer(pointee) = container else {
-                            return Err(type_error("dereference operand must be a pointer"));
-                        };
-                        if self.types.is_opaque(*pointee)? {
-                            return Err(type_error("cannot dereference opaque pointer"));
-                        }
-                        return Ok(ExpressionInfo {
-                            ty: *pointee,
-                            category: if readonly {
-                                ValueCategory::ReadonlyPlace
-                            } else {
-                                ValueCategory::MutablePlace
-                            },
-                            type_value: None,
-                        });
-                    }
+                    O::Dereference => return dereference_info(info.ty, self.types),
                     _ => return Err(type_error("invalid unary operand type")),
                 }
             }
@@ -832,4 +815,27 @@ impl TypeContext<'_> {
         }
         Ok(())
     }
+}
+
+/// Shared checked/unchecked dereference typing. Checking only changes execution.
+pub(super) fn dereference_info(
+    ty: TypeId,
+    types: &SemanticTypes,
+) -> anyhow::Result<ExpressionInfo> {
+    let (container, readonly) = types.container(ty)?;
+    let T::Pointer(pointee) = container else {
+        return Err(type_error("dereference operand must be a pointer"));
+    };
+    if types.is_opaque(*pointee)? {
+        return Err(type_error("cannot dereference opaque pointer"));
+    }
+    Ok(ExpressionInfo {
+        ty: *pointee,
+        category: if readonly {
+            ValueCategory::ReadonlyPlace
+        } else {
+            ValueCategory::MutablePlace
+        },
+        type_value: None,
+    })
 }

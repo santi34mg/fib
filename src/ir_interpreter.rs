@@ -51,6 +51,9 @@ pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
                         };
                         let string = std::str::from_utf8(bytes)?;
                         match builtin {
+                            BuiltinFunction::UncheckedDeref => {
+                                bail!("memory intrinsic cannot be interpreted")
+                            }
                             BuiltinFunction::AddSource => {
                                 bo.modules.push(PathBuf::from_str(string)?);
                             }

@@ -58,7 +58,6 @@ fn frontend_and_ir_pipeline_preserve_file_identity() {
 #[test]
 fn unsupported_programs_and_invalid_analysis_fail_before_artifacts() {
     for text in [
-        "fn main() int32 { x: int32; x = 42; return x; }",
         "fn main() int64 { return 42; }",
         "fn other() int32 { return 42; }",
     ] {
@@ -121,13 +120,11 @@ fn helpers_conditionals_and_mutable_locals_lower_to_verified_ssa() {
 fn scalar_subset_rejections_are_located_backend_diagnostics_even_in_dead_code() {
     use crate::diagnostics::{CompilerError, ErrorKind};
     for text in [
-        "fn main() int32 { x: int32; x = 42; return x; }",
         "fn main() int32 { if false { x := [1, 2]; }; return 42; }",
         "fn main() int32 { while (false) { x := [1, 2]; }; return 42; }",
         "fn main() int32 { while () { break; x := [1, 2]; }; return 42; }",
         "fn main() int32 { while () { continue; x := [1, 2]; }; }",
         "fn main() int32 { x := 0; defer x = 1; return 42; }",
-        "fn main() int32 { comp T: type = int32; return 42; }",
         "fn main() int32 { x, y := 1, 2; return x; }",
     ] {
         let (_directory, plan) = source(text);
@@ -319,4 +316,80 @@ fn current_capabilities_project_lowers_without_llvm() {
     };
     crate::ir::verify_ir(&ir).unwrap();
     assert!(!plan.output.exists());
+}
+
+#[test]
+fn struct_storage_sample_lowers_to_verified_memory_ir() {
+    let (_directory, plan) = source(include_str!("../../samples/struct_storage.fib"));
+    let project = run_frontend(&plan).unwrap();
+    let ir = crate::ir::lowering::lower(&project).unwrap();
+    crate::ir::verify_ir(&ir).unwrap();
+    assert!(!ir.stack_slots.is_empty());
+    assert!(
+        ir.types
+            .iter()
+            .any(|t| matches!(t, crate::ir::IrType::Struct { .. }))
+    );
+    assert!(ir.builtin_functions.is_empty());
+    assert_eq!(
+        ir.to_string(),
+        crate::ir::lowering::lower(&project).unwrap().to_string()
+    );
+}
+
+#[test]
+fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
+    use crate::ir::{Terminator, TrapReason};
+    for (read, guards) in [("p*", 1), ("memory::unchecked_deref(p)", 0)] {
+        let text = format!(
+            "fn read(p: *int32) int32 {{ return {read}; }} fn main() int32 {{ x := 42; return read(x&); }}"
+        );
+        let (_directory, plan) = source(&text);
+        let project = run_frontend(&plan).unwrap();
+        let ir = crate::ir::lowering::lower(&project).unwrap();
+        assert_eq!(
+            ir.blocks
+                .iter()
+                .filter(|b| matches!(
+                    b.terminator,
+                    Terminator::Trap(TrapReason::NullPointerDereference)
+                ))
+                .count(),
+            guards
+        );
+    }
+    let text = "comp S: type = struct { next: *int32 }; fn read(p: *S) int32 { return memory::unchecked_deref(p).next*; } fn main() int32 { return 0; }";
+    let (_directory, plan) = source(text);
+    let ir = crate::ir::lowering::lower(&run_frontend(&plan).unwrap()).unwrap();
+    assert_eq!(
+        ir.blocks
+            .iter()
+            .filter(|b| matches!(
+                b.terminator,
+                Terminator::Trap(TrapReason::NullPointerDereference)
+            ))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn unsupported_struct_fields_and_dead_memory_syntax_fail_before_artifacts() {
+    for text in [
+        "fn main() int32 { value: string; value = \"ready\"; return 0; }",
+        "comp S: type = struct { a: int32[2] }; fn main() int32 { s := S { a: [1, 2] }; return 0; }",
+        "comp S: type = struct { text: string }; fn main() int32 { s := S { text: \"a\" }; return 0; }",
+        "fn main() int32 { while (false) { data := [1, 2]; }; return 0; }",
+    ] {
+        let (_directory, plan) = source(text);
+        let project = run_frontend(&plan).unwrap();
+        let error = crate::ir::lowering::lower(&project).unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<crate::diagnostics::CompilerError>()
+                .is_some(),
+            "{error:#}"
+        );
+        assert!(!plan.output.exists());
+    }
 }

@@ -91,6 +91,10 @@ impl TypeContext<'_> {
         if matches!(self.types.get(info.ty)?, T::Builtin(B::Never)) {
             return Err(type_error("never cannot be stored in a binding"));
         }
+        if !comp && matches!(self.types.get(info.ty)?, T::IntrinsicFunction) {
+            return Err(type_error("intrinsic is not a runtime value"));
+        }
+        self.types.validate_type(info.ty)?;
         if !comp {
             info.category = if immutable {
                 C::ImmutablePlace

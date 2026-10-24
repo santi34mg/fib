@@ -478,3 +478,126 @@ fn current_capabilities_project_builds_from_build_file_and_runs() {
     let binary = directory.path().join("demo");
     assert_eq!(bounded_status(&binary).code(), Some(0));
 }
+
+#[test]
+fn structs_storage_and_pointer_aliases_execute() {
+    for (text, expected) in [
+        (include_str!("../samples/struct_storage.fib"), 42),
+        (
+            "fn main() int32 { x: int32; if true { x = 42; } else { x = 7; }; return x; }",
+            42,
+        ),
+        (
+            "fn main() int32 { x := 0; p := x&; while (x < 42) { p* = x + 1; }; return x; }",
+            42,
+        ),
+        (
+            "fn set(p: *int32) { p* = 42; } fn main() int32 { x := 0; p := x&; alias := p; set(alias); return x; }",
+            42,
+        ),
+        (
+            "fn change(p: **int32, value: *int32) { p* = value; } fn main() int32 { a := 7; b := 42; p := a&; change(p&, b&); return p*; }",
+            42,
+        ),
+        (
+            "comp S: type = struct { x: int32, y: int32 }; fn f(flag: bool) int32 { s: S; if flag { s.x = 42; } else { s.x = 7; }; return s.x; } fn main() int32 { return f(true); }",
+            42,
+        ),
+        (
+            "comp S: type = struct { x: int32 }; fn copy(s: S) S { s.x = 7; return s; } fn main() int32 { s := S { x: 42 }; t := copy(s); if t.x == 7 { return s.x; }; return 1; }",
+            42,
+        ),
+        (
+            "comp S: type = struct { x: int32 }; comp Alias := S; fn read(p: const *Alias) int32 { return (p*).x; } fn main() int32 { const s := S { x: 42 }; return read(s&); }",
+            42,
+        ),
+        (
+            "comp S: type = struct { x: int32 }; fn make(n: int32) S { if n == 0 { return S { x: 0 }; }; s := make(n - 1); s.x = s.x + 1; return s; } fn main() int32 { return make(42).x; }",
+            42,
+        ),
+        (
+            "comp S: type = struct { x: int32 }; fn main() int32 { s := S { x: 0 }; i := 0; while (i < 42) { i += 1; if i == 10 { continue; }; s.x = i; if i == 42 { break; }; }; return s.x; }",
+            42,
+        ),
+        (
+            "fn main() int32 { comp S: type = struct { x: int32 }; s := S { x: 42 }; comp deref := memory::unchecked_deref; p := s&; return deref(p).x; }",
+            42,
+        ),
+        (
+            "fn main() int32 { x := 42; p := x&; q := memory::unchecked_deref(p)&; if q == p { return q*; }; return 1; }",
+            42,
+        ),
+    ] {
+        assert_eq!(bounded_program(text).code(), Some(expected), "{text}");
+    }
+}
+
+#[test]
+fn struct_construction_and_assignment_preserve_evaluation_order() {
+    let text = r#"
+        comp S: type = struct { x: int32, y: int32 };
+        fn mark(trace: *int32, digit: int32) int32 {
+            trace* = (trace*) * 10 + digit;
+            return digit;
+        }
+        fn target(trace: *int32, s: *S) *S {
+            ignored := mark(trace, 3);
+            return s;
+        }
+        fn main() int32 {
+            trace := 0;
+            s := S { y: mark(trace&, 1), x: mark(trace&, 2) };
+            if trace != 12 || s.y != 1 || s.x != 2 { return 1; };
+            memory::unchecked_deref(target(trace&, s&)).x = mark(trace&, 4);
+            if trace != 1243 || s.x != 4 { return 2; };
+            return 42;
+        }
+    "#;
+    assert_eq!(bounded_program(text).code(), Some(42));
+}
+
+#[test]
+fn ordinary_null_dereferences_trap_including_field_projection_and_address_of() {
+    for text in [
+        "fn read(p: *int32) int32 { return p*; } fn main() int32 { return read(null); }",
+        "fn write(p: *int32) { p* = 42; } fn main() int32 { write(null); return 0; }",
+        "comp S: type = struct { first: int32, second: int32 }; fn f(p: *S) int32 { return (p*).second; } fn main() int32 { return f(null); }",
+        "comp S: type = struct { x: int32 }; fn f(p: *S) *int32 { return (p*).x&; } fn main() int32 { p := f(null); return 0; }",
+    ] {
+        let status = bounded_program(text);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert!(status.signal().is_some(), "{text}: {status}");
+        }
+        #[cfg(not(unix))]
+        assert!(!status.success(), "{text}: {status}");
+    }
+}
+
+#[test]
+fn structs_preserve_mixed_layout_and_every_numeric_field_width_across_calls() {
+    for ty in [
+        "int8", "int16", "int32", "int64", "int128", "uint8", "uint16", "uint32", "uint64",
+        "uint128", "float16", "float32", "float64", "float128",
+    ] {
+        let literal = if ty.starts_with("float") {
+            "42.0"
+        } else {
+            "42"
+        };
+        let text = format!(
+            r#"
+            comp Packet: type = struct {{ tag: uint8, value: {ty}, active: bool }};
+            fn change(packet: Packet) Packet {{ packet.value = packet.value + 1; return packet; }}
+            fn main() int32 {{
+                original := Packet {{ active: true, value: {literal}, tag: 9 }};
+                changed := change(original);
+                if original.value == {literal} && changed.value == 43 && changed.tag == 9 && changed.active {{ return 42; }};
+                return 7;
+            }}
+        "#
+        );
+        assert_eq!(bounded_program(&text).code(), Some(42), "{ty}");
+    }
+}
