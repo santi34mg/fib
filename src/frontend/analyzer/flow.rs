@@ -48,17 +48,37 @@ struct Flow<'a> {
     checking_initializers: bool,
     template: bool,
     active_calls: HashSet<crate::frontend::identifier::DeclId>,
+    recovery: Option<super::Recovery>,
+    file: crate::plan::FileId,
+    paths: HashMap<crate::plan::FileId, std::path::PathBuf>,
 }
 
 pub(super) fn validate(
     project: &AnalyzedProject,
     paths: Option<&HashMap<crate::plan::FileId, std::path::PathBuf>>,
 ) -> anyhow::Result<()> {
+    validate_parts(&project.units, &project.types, paths, None)
+}
+
+pub(super) fn validate_collecting(
+    units: &[crate::driver::CompilationUnit],
+    types: &SemanticTypes,
+    paths: &HashMap<crate::plan::FileId, std::path::PathBuf>,
+    recovery: &super::Recovery,
+) -> anyhow::Result<()> {
+    validate_parts(units, types, Some(paths), Some(recovery.clone()))
+}
+
+fn validate_parts(
+    units: &[crate::driver::CompilationUnit],
+    types: &SemanticTypes,
+    paths: Option<&HashMap<crate::plan::FileId, std::path::PathBuf>>,
+    recovery: Option<super::Recovery>,
+) -> anyhow::Result<()> {
     let mut flow = Flow {
-        types: &project.types,
+        types,
         loops: 0,
-        functions: project
-            .units
+        functions: units
             .iter()
             .flat_map(|u| &u.ast.statements)
             .filter_map(|node| {
@@ -74,11 +94,23 @@ pub(super) fn validate(
         checking_initializers: false,
         template: false,
         active_calls: HashSet::new(),
+        recovery: None,
+        file: crate::plan::FileId(0),
+        paths: HashMap::new(),
     };
+    flow.recovery = recovery;
+    flow.paths = paths.cloned().unwrap_or_default();
     let mut initialized = State::new();
     let mut globals = State::new();
-    for unit in &project.units {
+    for unit in units {
         for node in &unit.ast.statements {
+            if flow
+                .recovery
+                .as_ref()
+                .is_some_and(|r| r.statement_failed(unit.source_file_id, node))
+            {
+                continue;
+            }
             match &node.kind {
                 S::VariableDeclaration(v) if v.expression.is_some() || v.is_comp => {
                     flow.initialize(v, &mut globals)?;
@@ -92,64 +124,99 @@ pub(super) fn validate(
             }
         }
     }
-    for unit in &project.units {
-        for node in &unit.ast.statements {
-            let result = (|| {
-                if let S::FunctionDeclaration(fun) = &node.kind {
-                    if let Some(body) = &fun.body {
-                        let mut state = globals.clone();
-                        for param in &fun.signature.parameters {
-                            state.insert(root(
-                                param
-                                    .annotation
-                                    .binding
-                                    .ok_or_else(|| type_error("pending parameter"))?,
-                            ));
+    let phases = if flow.recovery.is_some() {
+        vec![Some(false), Some(true)]
+    } else {
+        vec![None]
+    };
+    for phase in phases {
+        for unit in units {
+            flow.file = unit.source_file_id;
+            for node in &unit.ast.statements {
+                if phase.is_some_and(|functions| {
+                    matches!(node.kind, S::FunctionDeclaration(_)) != functions
+                }) {
+                    continue;
+                }
+                if flow
+                    .recovery
+                    .as_ref()
+                    .is_some_and(|r| r.statement_failed(unit.source_file_id, node))
+                {
+                    continue;
+                }
+                let result = (|| {
+                    if let S::FunctionDeclaration(fun) = &node.kind {
+                        if let Some(body) = &fun.body {
+                            let mut state = globals.clone();
+                            for param in &fun.signature.parameters {
+                                state.insert(root(
+                                    param
+                                        .annotation
+                                        .binding
+                                        .ok_or_else(|| type_error("pending parameter"))?,
+                                ));
+                            }
+                            let previous_template =
+                                std::mem::replace(&mut flow.template, is_template(fun, flow.types));
+                            let result = flow.block(&body.statements, state);
+                            flow.template = previous_template;
+                            let exits = result?;
+                            if flow
+                                .recovery
+                                .as_ref()
+                                .is_some_and(|r| r.region_failed(flow.file, &body.statements))
+                            {
+                                return Ok(());
+                            }
+                            let ret = fun
+                                .signature
+                                .return_type
+                                .annotation
+                                .resolved
+                                .ok_or_else(|| type_error("pending return type"))?;
+                            if matches!(flow.types.get(ret)?, T::Builtin(B::Never))
+                                && exits
+                                    .iter()
+                                    .any(|e| matches!(e.kind, ExitKind::Next | ExitKind::Return))
+                            {
+                                return Err(type_error("never function cannot return normally"));
+                            }
+                            if !(is_template(fun, flow.types) && flow.types.is_symbolic(ret)?)
+                                && !matches!(flow.types.get(ret)?, T::Builtin(B::Void))
+                                && exits.iter().any(|e| e.kind == ExitKind::Next)
+                            {
+                                return Err(type_error(
+                                    "function does not return a value on all paths",
+                                ));
+                            }
                         }
-                        let previous_template =
-                            std::mem::replace(&mut flow.template, is_template(fun, flow.types));
-                        let result = flow.block(&body.statements, state);
-                        flow.template = previous_template;
+                    } else {
+                        flow.checking_initializers = true;
+                        let result = flow.statement(node, initialized.clone());
+                        flow.checking_initializers = false;
                         let exits = result?;
-                        let ret = fun
-                            .signature
-                            .return_type
-                            .annotation
-                            .resolved
-                            .ok_or_else(|| type_error("pending return type"))?;
-                        if matches!(flow.types.get(ret)?, T::Builtin(B::Never))
-                            && exits
-                                .iter()
-                                .any(|e| matches!(e.kind, ExitKind::Next | ExitKind::Return))
-                        {
-                            return Err(type_error("never function cannot return normally"));
-                        }
-                        if !(is_template(fun, flow.types) && flow.types.is_symbolic(ret)?)
-                            && !matches!(flow.types.get(ret)?, T::Builtin(B::Void))
-                            && exits.iter().any(|e| e.kind == ExitKind::Next)
-                        {
-                            return Err(type_error(
-                                "function does not return a value on all paths",
-                            ));
+                        if let Some(exit) = exits.into_iter().find(|e| e.kind == ExitKind::Next) {
+                            initialized = exit.state;
                         }
                     }
-                } else {
-                    flow.checking_initializers = true;
-                    let result = flow.statement(node, initialized.clone());
-                    flow.checking_initializers = false;
-                    let exits = result?;
-                    if let Some(exit) = exits.into_iter().find(|e| e.kind == ExitKind::Next) {
-                        initialized = exit.state;
+                    Ok(())
+                })();
+                let result = result.map_err(|e| {
+                    super::with_path(
+                        at_span(e, node.span),
+                        paths.and_then(|paths| paths.get(&unit.source_file_id)),
+                    )
+                });
+                if let Err(error) = result {
+                    if let Some(recovery) = &flow.recovery {
+                        recovery.record(error, flow.file, node.span, flow.paths.get(&flow.file));
+                        recovery.block_statement(node);
+                    } else {
+                        return Err(error);
                     }
                 }
-                Ok(())
-            })();
-            result.map_err(|e| {
-                super::with_path(
-                    at_span(e, node.span),
-                    paths.and_then(|paths| paths.get(&unit.source_file_id)),
-                )
-            })?;
+            }
         }
     }
     Ok(())
@@ -168,6 +235,9 @@ pub(super) fn validate_specialization(
         checking_initializers: false,
         template: false,
         active_calls: HashSet::new(),
+        recovery: None,
+        file: crate::plan::FileId(0),
+        paths: HashMap::new(),
     };
     let mut state: State = types
         .declarations
@@ -330,6 +400,9 @@ impl Flow<'_> {
         }
     }
     fn read(&mut self, expr: &Expression, state: &State) -> anyhow::Result<()> {
+        if binding(expr).is_some_and(|id| self.recovery.as_ref().is_some_and(|r| r.blocked(id))) {
+            return Err(super::recovery::Blocked.into());
+        }
         let result = (|| {
             // Do not read operands that cannot be reached after an earlier one diverges.
             macro_rules! read {
@@ -501,16 +574,36 @@ impl Flow<'_> {
             let Some(state) = active.take() else {
                 break;
             };
+            if self
+                .recovery
+                .as_ref()
+                .is_some_and(|r| r.statement_failed(self.file, node))
+            {
+                active = Some(state);
+                continue;
+            }
             if let S::Defer(deferred) = &node.kind {
                 defers.push(deferred.as_ref());
                 active = Some(state);
                 continue;
             }
+            let result = self
+                .statement(node, state.clone())
+                .map_err(|e| at_span(e, node.span));
+            let statement_exits = match result {
+                Ok(exits) => exits,
+                Err(error) => {
+                    if let Some(recovery) = &self.recovery {
+                        recovery.record(error, self.file, node.span, self.paths.get(&self.file));
+                        recovery.block_statement(node);
+                        active = Some(state);
+                        continue;
+                    }
+                    return Err(error);
+                }
+            };
             let mut next = vec![];
-            for mut exit in self
-                .statement(node, state)
-                .map_err(|e| at_span(e, node.span))?
-            {
+            for mut exit in statement_exits {
                 if exit.kind == ExitKind::Next {
                     next.push(exit.state);
                 } else {

@@ -47,6 +47,18 @@ pub struct AnalyzedProject {
     pub source_paths: HashMap<FileId, std::path::PathBuf>,
 }
 
+/// Partial semantic information for tooling; not a lowering input.
+#[derive(Debug)]
+pub struct AnalysisReport {
+    /// Files whose syntax or source was unavailable; their namespaces are blocked.
+    pub unavailable_files: HashSet<FileId>,
+    pub errors: Vec<CompilerError>,
+    pub warnings: Vec<crate::diagnostics::CompilerWarning>,
+    pub units: Vec<CompilationUnit>,
+    pub symbols: ProjectSymbols,
+    pub types: SemanticTypes,
+}
+
 /// Name-pass state for one file. File namespaces are shared, never copied into
 /// lexical scopes. Locals take precedence over unqualified file declarations;
 /// qualified file selection bypasses that local binding. Labels are separate.
@@ -55,9 +67,31 @@ pub struct ResolveContext<'a> {
     pub lexical: SymbolTable,
     pub symbols: &'a ProjectSymbols,
     pub local_ids: &'a mut LocalIdAllocator,
+    pub recovery: Option<Recovery>,
 }
 
 impl ResolveContext<'_> {
+    fn canonical_entity(
+        &self,
+        entity: crate::frontend::identifier::Entity,
+    ) -> anyhow::Result<crate::frontend::identifier::Entity> {
+        use crate::frontend::identifier::Entity;
+        let blocked = |entity| {
+            self.recovery.as_ref().is_some_and(|r| match entity {
+                Entity::File(file) => r.unavailable(file),
+                Entity::Declaration(id) => r.blocked(BindingId::Declaration(id)),
+            })
+        };
+        if blocked(entity) {
+            return Err(recovery::Blocked.into());
+        }
+        let canonical = self.symbols.canonical(entity)?;
+        if blocked(canonical) {
+            return Err(recovery::Blocked.into());
+        }
+        Ok(canonical)
+    }
+
     pub(super) fn scoped<T>(
         &mut self,
         kind: ScopeKind,
@@ -77,6 +111,7 @@ pub struct TypeContext<'a> {
     pub symbols: &'a ProjectSymbols,
     pub types: &'a mut SemanticTypes,
     state: typing::TypeState,
+    recovery: Option<Recovery>,
 }
 
 impl<'a> TypeContext<'a> {
@@ -86,6 +121,7 @@ impl<'a> TypeContext<'a> {
             symbols,
             types,
             state: typing::TypeState::default(),
+            recovery: None,
         }
     }
 }
@@ -118,6 +154,7 @@ pub struct Analyzer {
     synthetic_modules: Vec<(FileId, SyntheticModule)>,
     builtins: HashMap<DeclId, BuiltinFunction>,
     phase: NamePhase,
+    recovery: Option<Recovery>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -158,6 +195,7 @@ impl Analyzer {
             synthetic_modules: Vec::new(),
             builtins: HashMap::new(),
             phase: NamePhase::New,
+            recovery: None,
         }
         .with_synthetic_module(SyntheticModule::MEMORY)
     }
@@ -210,64 +248,96 @@ impl Analyzer {
             source_paths: self.paths.clone(),
         };
         validate_analysis_with_paths(&project, Some(&self.paths))?;
-        struct Warnings(
-            Vec<crate::diagnostics::CompilerWarning>,
-            Option<std::path::PathBuf>,
-        );
-        impl walk::Visitor for Warnings {
-            fn expression(
-                &mut self,
-                node: &mut crate::frontend::ast::expression::Expression,
-            ) -> anyhow::Result<()> {
-                if matches!(&node.kind, crate::frontend::ast::expression::ExpressionKind::ExprAcess { member, .. } if member.implicit_deref)
-                {
-                    let mut diagnostic = CompilerError::new(
-                        crate::diagnostics::ErrorKind::Type,
-                        "implicit pointer dereference in field access".into(),
-                    )
-                    .with_span(node.span)
-                    .with_hint("use an explicit postfix dereference to make the access explicit");
-                    diagnostic.filename = self.1.clone();
-                    self.0
-                        .push(crate::diagnostics::CompilerWarning { diagnostic });
-                }
-                Ok(())
-            }
-        }
-        for unit in &mut project.units {
-            let mut warnings = Warnings(Vec::new(), self.paths.get(&unit.source_file_id).cloned());
-            walk::statements(&mut warnings, &mut unit.ast.statements, true)?;
-            project.warnings.extend(warnings.0);
-        }
-        let mut counts = HashMap::new();
-        for warning in &project.warnings {
-            *counts
-                .entry((warning.diagnostic.filename.clone(), warning.diagnostic.span))
-                .or_insert(0usize) += 1;
-        }
-        for instance in project.types.generic_instances.values_mut() {
-            if let Some(function) = &mut instance.body
-                && let Some(body) = &mut function.body
-            {
-                let mut warnings = Warnings(
-                    Vec::new(),
-                    self.paths.get(&instance.key.template.file_id).cloned(),
-                );
-                walk::statements(&mut warnings, &mut body.statements, false)?;
-                let mut instance_counts = HashMap::new();
-                for warning in warnings.0 {
-                    let key = (warning.diagnostic.filename.clone(), warning.diagnostic.span);
-                    let current = instance_counts.entry(key.clone()).or_insert(0usize);
-                    *current += 1;
-                    let count = counts.entry(key).or_insert(0usize);
-                    if *current > *count {
-                        *count = *current;
-                        project.warnings.push(warning);
-                    }
-                }
-            }
-        }
+        collect_warnings(
+            &mut project.units,
+            &mut project.types,
+            &self.paths,
+            &mut project.warnings,
+        )?;
         Ok(project)
+    }
+
+    /// Analyze independent regions for tooling. Failed annotations remain pending;
+    /// this report is never accepted by lowering.
+    pub fn analyze_collecting(self) -> AnalysisReport {
+        self.collect_available(HashSet::new())
+    }
+
+    /// Parsed files may be unavailable after a syntax or IO error. Their file
+    /// identities remain known, but dependent checks cannot succeed.
+    pub fn analyze_available(
+        plan: BuildPlan,
+        mut units: Vec<CompilationUnit>,
+        unavailable: HashSet<FileId>,
+        build_file: bool,
+    ) -> anyhow::Result<AnalysisReport> {
+        for &file in &unavailable {
+            anyhow::ensure!(
+                plan.files.iter().any(|f| f.id == file)
+                    && !units.iter().any(|u| u.source_file_id == file),
+                "invalid unavailable source identity"
+            );
+            units.push(CompilationUnit {
+                source_file_id: file,
+                ast: crate::frontend::ast::Ast::from(Vec::new()),
+            });
+        }
+        let mut analyzer = Self::new(plan, units)?;
+        if build_file {
+            analyzer = analyzer.with_synthetic_module(SyntheticModule::BUILD_API)?;
+        }
+        Ok(analyzer.collect_available(unavailable))
+    }
+
+    fn collect_available(mut self, unavailable: HashSet<FileId>) -> AnalysisReport {
+        let recovery = Recovery::with_paths(self.paths.clone());
+        recovery.set_unavailable(unavailable.clone());
+        self.recovery = Some(recovery.clone());
+        let mut types = SemanticTypes::default();
+        let result = (|| {
+            self.collect_declarations()?;
+            self.resolve_names()?;
+            types = self.resolve_types()?;
+            flow::validate_collecting(&self.units, &types, &self.paths, &recovery)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            recovery.record(
+                error,
+                self.entry,
+                Span::new(1, 1),
+                self.paths.get(&self.entry),
+            );
+        }
+        let mut warnings = Vec::new();
+        if let Err(error) =
+            collect_warnings(&mut self.units, &mut types, &self.paths, &mut warnings)
+        {
+            recovery.record(
+                error,
+                self.entry,
+                Span::new(1, 1),
+                self.paths.get(&self.entry),
+            );
+        }
+        let mut errors = recovery.diagnostics();
+        errors.sort_by_key(|d| {
+            (
+                d.filename.clone(),
+                d.span.map(|s| (s.line, s.column)),
+                d.message.clone(),
+            )
+        });
+        self.units
+            .retain(|u| !unavailable.contains(&u.source_file_id));
+        AnalysisReport {
+            unavailable_files: unavailable,
+            errors,
+            warnings,
+            units: self.units,
+            symbols: self.symbols,
+            types,
+        }
     }
 
     /// Predeclare file bindings for forward references; do not resolve uses or
@@ -288,51 +358,70 @@ impl Analyzer {
                 };
                 for statement in &mut unit.ast.statements {
                     let span = statement.span;
-                    match &mut statement.kind {
-                        StatementKind::VariableDeclaration(var) => {
-                            let inline = inline_type(var.expression.as_ref());
-                            let computed = computed_type(var.expression.as_ref());
-                            collect_variable(&mut namespace, var, span, inline, computed)?;
-                        }
-                        StatementKind::FunctionDeclaration(fun) => {
-                            fun.signature.annotation.binding =
-                                Some(BindingId::Declaration(add_declaration(
-                                    &mut namespace,
-                                    &fun.signature.identifier,
-                                    fun.is_pub,
-                                    DeclarationKind::Value,
+                    let previous_statement = self.recovery.as_ref().map(|_| statement.clone());
+                    let previous_namespace = self.recovery.as_ref().map(|_| namespace.clone());
+                    let result = (|| {
+                        match &mut statement.kind {
+                            StatementKind::VariableDeclaration(var) => {
+                                let inline = inline_type(var.expression.as_ref());
+                                let computed = computed_type(var.expression.as_ref());
+                                collect_variable(&mut namespace, var, span, inline, computed)?;
+                            }
+                            StatementKind::FunctionDeclaration(fun) => {
+                                fun.signature.annotation.binding =
+                                    Some(BindingId::Declaration(add_declaration(
+                                        &mut namespace,
+                                        &fun.signature.identifier,
+                                        fun.is_pub,
+                                        DeclarationKind::Value,
+                                        span,
+                                        true,
+                                    )?));
+                                if let Some(scope) = fun.pub_scope {
+                                    namespace
+                                        .declarations
+                                        .last_mut()
+                                        .expect("function declaration")
+                                        .visibility = scope;
+                                }
+                            }
+                            StatementKind::MultiVariableDeclaration { bindings, values } => {
+                                for (i, binding) in bindings.iter_mut().enumerate() {
+                                    collect_variable(
+                                        &mut namespace,
+                                        binding,
+                                        span,
+                                        inline_type(values.get(i)),
+                                        computed_type(values.get(i)),
+                                    )?;
+                                }
+                            }
+                            _ => {
+                                return Err(at_span(
+                                    name_error("unexpected top-level statement"),
                                     span,
-                                    true,
-                                )?));
-                            if let Some(scope) = fun.pub_scope {
-                                namespace
-                                    .declarations
-                                    .last_mut()
-                                    .expect("function declaration")
-                                    .visibility = scope;
+                                ));
                             }
                         }
-                        StatementKind::MultiVariableDeclaration { bindings, values } => {
-                            for (i, binding) in bindings.iter_mut().enumerate() {
-                                collect_variable(
-                                    &mut namespace,
-                                    binding,
-                                    span,
-                                    inline_type(values.get(i)),
-                                    computed_type(values.get(i)),
-                                )?;
-                            }
-                        }
-                        _ => {
-                            return Err(at_span(
-                                name_error("unexpected top-level statement"),
+                        Ok(())
+                    })();
+                    if let Err(error) = result {
+                        if let Some(recovery) = &self.recovery {
+                            namespace = previous_namespace.unwrap();
+                            *statement = previous_statement.unwrap();
+                            recovery.record(
+                                at_span(error, span),
+                                file_id,
                                 span,
-                            ));
+                                self.paths.get(&file_id),
+                            );
+                        } else {
+                            return Err(error);
                         }
                     }
                 }
                 // Reserve identities without adding lexical names or resolving initializers.
-                struct LocalTypes<'a>(&'a mut Namespace);
+                struct LocalTypes<'a>(&'a mut Namespace, Option<Recovery>, FileId);
                 impl walk::Visitor for LocalTypes<'_> {
                     fn variable(
                         &mut self,
@@ -342,20 +431,29 @@ impl Analyzer {
                         inline: bool,
                     ) -> anyhow::Result<()> {
                         if !file && var.is_comp && inline {
-                            var.annotation.binding = Some(BindingId::Declaration(add_declaration(
+                            match add_declaration(
                                 self.0,
                                 &var.identifier,
                                 false,
                                 DeclarationKind::Type,
                                 span,
                                 false,
-                            )?));
+                            ) {
+                                Ok(id) => var.annotation.binding = Some(BindingId::Declaration(id)),
+                                Err(error) => {
+                                    if let Some(recovery) = &self.1 {
+                                        recovery.record(error, self.2, span, None);
+                                    } else {
+                                        return Err(error);
+                                    }
+                                }
+                            }
                         }
                         Ok(())
                     }
                 }
                 walk::statements(
-                    &mut LocalTypes(&mut namespace),
+                    &mut LocalTypes(&mut namespace, self.recovery.clone(), file_id),
                     &mut unit.ast.statements,
                     true,
                 )?;
@@ -394,20 +492,28 @@ impl Analyzer {
             ));
         }
         self.phase = NamePhase::Resolving;
-        let aliases = aliases::definitions(&self.units, &self.paths)?;
-        aliases::resolve(&mut self.symbols, &aliases, &self.paths)?;
+        let aliases = aliases::definitions(&self.units, &self.paths, self.recovery.as_ref())?;
+        aliases::resolve(
+            &mut self.symbols,
+            &aliases,
+            &self.paths,
+            self.recovery.as_ref(),
+        )?;
         for unit in &mut self.units {
             let file = unit.source_file_id;
             let mut context = ResolveContext {
                 file_id: file,
                 lexical: SymbolTable::new(),
                 local_ids: &mut self.local_ids,
+                recovery: self.recovery.clone(),
                 symbols: &self.symbols,
             };
             unit.ast
                 .resolve_name(&mut context)
                 .map_err(|e| with_path(e, self.paths.get(&file)))?;
-            validate_names(&mut unit.ast).map_err(|e| with_path(e, self.paths.get(&file)))?;
+            if self.recovery.is_none() {
+                validate_names(&mut unit.ast).map_err(|e| with_path(e, self.paths.get(&file)))?;
+            }
         }
         self.phase = NamePhase::Resolved;
         Ok(())
@@ -434,11 +540,12 @@ impl Analyzer {
                 },
             );
         }
-        typing::resolve_project_with_paths(
+        typing::resolve_project_collecting(
             &mut self.units,
             &self.symbols,
             &mut types,
             self.paths.clone(),
+            self.recovery.clone(),
         )?;
         self.phase = NamePhase::Typed;
         Ok(types)
@@ -674,6 +781,8 @@ fn validate_analysis_with_paths(
 }
 
 mod aliases;
+mod recovery;
+pub use recovery::Recovery;
 pub mod ast;
 mod constant;
 mod evaluation;
@@ -691,9 +800,75 @@ mod typing;
 mod validation;
 mod value_typing;
 pub mod variable_declaration;
-mod walk;
+pub(crate) mod walk;
 
 #[cfg(test)]
 mod test;
 
 pub(crate) use constant::{evaluate_boolean, evaluate_numeric};
+
+fn collect_warnings(
+    units: &mut [CompilationUnit],
+    types: &mut SemanticTypes,
+    paths: &HashMap<FileId, std::path::PathBuf>,
+    warnings: &mut Vec<crate::diagnostics::CompilerWarning>,
+) -> anyhow::Result<()> {
+    struct Warnings(
+        Vec<crate::diagnostics::CompilerWarning>,
+        Option<std::path::PathBuf>,
+    );
+    impl walk::Visitor for Warnings {
+        fn expression(
+            &mut self,
+            node: &mut crate::frontend::ast::expression::Expression,
+        ) -> anyhow::Result<()> {
+            if matches!(&node.kind, crate::frontend::ast::expression::ExpressionKind::ExprAcess { member, .. } if member.implicit_deref)
+            {
+                let mut diagnostic = CompilerError::new(
+                    crate::diagnostics::ErrorKind::Type,
+                    "implicit pointer dereference in field access".into(),
+                )
+                .with_span(node.span)
+                .with_hint("use an explicit postfix dereference to make the access explicit");
+                diagnostic.filename = self.1.clone();
+                self.0
+                    .push(crate::diagnostics::CompilerWarning { diagnostic });
+            }
+            Ok(())
+        }
+    }
+    for unit in units {
+        let mut collector = Warnings(Vec::new(), paths.get(&unit.source_file_id).cloned());
+        walk::statements(&mut collector, &mut unit.ast.statements, true)?;
+        warnings.extend(collector.0);
+    }
+    let mut counts = HashMap::new();
+    for warning in warnings.iter() {
+        *counts
+            .entry((warning.diagnostic.filename.clone(), warning.diagnostic.span))
+            .or_insert(0usize) += 1;
+    }
+    for instance in types.generic_instances.values_mut() {
+        if let Some(function) = &mut instance.body
+            && let Some(body) = &mut function.body
+        {
+            let mut collector = Warnings(
+                Vec::new(),
+                paths.get(&instance.key.template.file_id).cloned(),
+            );
+            walk::statements(&mut collector, &mut body.statements, false)?;
+            let mut instance_counts = HashMap::new();
+            for warning in collector.0 {
+                let key = (warning.diagnostic.filename.clone(), warning.diagnostic.span);
+                let current = instance_counts.entry(key.clone()).or_insert(0usize);
+                *current += 1;
+                let count = counts.entry(key).or_insert(0usize);
+                if *current > *count {
+                    *count = *current;
+                    warnings.push(warning);
+                }
+            }
+        }
+    }
+    Ok(())
+}

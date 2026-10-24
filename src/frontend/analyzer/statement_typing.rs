@@ -118,8 +118,46 @@ impl TypeContext<'_> {
         Ok(())
     }
     pub(super) fn statement(&mut self, node: &mut Statement) -> anyhow::Result<()> {
-        self.statement_inner(node)
-            .map_err(|e| self.diagnostic(e, Some(node.span), self.file))
+        if self.recovery.is_none() {
+            return self
+                .statement_inner(node)
+                .map_err(|e| self.diagnostic(e, Some(node.span), self.file));
+        }
+        self.statement_collecting(node)
+    }
+
+    fn statement_collecting(&mut self, node: &mut Statement) -> anyhow::Result<()> {
+        if self
+            .recovery
+            .as_ref()
+            .is_some_and(|r| r.statement_failed(self.file, node))
+        {
+            return Ok(());
+        }
+        let checkpoint = self
+            .recovery
+            .as_ref()
+            .map(|_| (self.state.clone(), self.types.clone()));
+        let result = self
+            .statement_inner(node)
+            .map_err(|e| self.diagnostic(e, Some(node.span), self.file));
+        if let Err(error) = result {
+            if let Some(recovery) = &self.recovery {
+                let (state, types) = checkpoint.unwrap();
+                self.state = state;
+                *self.types = types;
+                recovery.record(
+                    error,
+                    self.file,
+                    node.span,
+                    self.state.paths.get(&self.file),
+                );
+                recovery.block_statement(node);
+                return Ok(());
+            }
+            return Err(error);
+        }
+        Ok(())
     }
     fn statement_inner(&mut self, node: &mut Statement) -> anyhow::Result<()> {
         if self.state.in_defer

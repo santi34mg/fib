@@ -187,6 +187,9 @@ fn check_body(
     let saved_file = std::mem::replace(&mut context.file, instance.key.template.file_id);
     let saved_loop = std::mem::replace(&mut context.state.loop_depth, 0);
     let saved_defer = std::mem::replace(&mut context.state.in_defer, false);
+    // Instance-local failures must not poison the template's shared binding IDs
+    // or be published as a checked instance. The caller collects this failure.
+    let saved_recovery = context.recovery.take();
     let result = (|| {
         let signature = context.signature(&mut fun.signature)?;
         instance.signature = signature;
@@ -268,6 +271,7 @@ fn check_body(
     context.state.loop_depth = saved_loop;
     context.state.in_defer = saved_defer;
     context.file = saved_file;
+    context.recovery = saved_recovery;
     result
 }
 

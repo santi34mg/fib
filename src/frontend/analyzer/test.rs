@@ -151,6 +151,7 @@ fn annotation_defaults_are_explicitly_pending() {
 #[test]
 fn complete_analysis_validates_an_empty_type_pass() {
     let analyzer = Analyzer {
+        recovery: None,
         entry: FileId(0),
         units: Vec::new(),
         symbols: symbols(),
@@ -304,6 +305,7 @@ fn synthetic_builtin_namespace_does_not_collide_with_source_names() {
 fn empty_ast_name_resolution_preserves_scopes() {
     let mut registry = symbols();
     let mut context = ResolveContext {
+        recovery: None,
         file_id: FileId(0),
         symbols: &mut registry,
         lexical: SymbolTable::new(),
@@ -2696,6 +2698,7 @@ mod name_resolution {
                 .unwrap();
         }
         ResolveContext {
+            recovery: None,
             file_id: FileId(0),
             lexical,
             symbols,
@@ -2766,6 +2769,12 @@ mod type_resolution {
         run(source).unwrap_or_else(|e| panic!("expected successful typing: {source}\n{e:#}"));
     }
     fn bad(source: &str, fragment: &str) {
+        let report = analyzer(source).analyze_collecting();
+        assert!(
+            report.errors.iter().any(|d| d.message.contains(fragment)),
+            "collecting analysis lost {fragment:?} for {source}: {:?}",
+            report.errors
+        );
         let e = run(source).err().expect("invalid program accepted");
         let d = e
             .downcast_ref::<CompilerError>()
@@ -2779,6 +2788,12 @@ mod type_resolution {
         );
     }
     fn analysis_bad(source: &str, fragment: &str) {
+        let report = analyzer(source).analyze_collecting();
+        assert!(
+            report.errors.iter().any(|d| d.message.contains(fragment)),
+            "collecting analysis lost {fragment:?} for {source}: {:?}",
+            report.errors
+        );
         let e = analyzer(source)
             .analyze()
             .expect_err("invalid analysis accepted");
@@ -5719,5 +5734,104 @@ mod package_visibility {
         );
         let error = super::package_visibility::project(3, "owner::hidden()").unwrap_err();
         assert!(error.to_string().contains("private"));
+    }
+}
+
+mod collecting_diagnostics {
+    use super::*;
+    use crate::frontend::{parser::Parser, tokenizer::Tokenizer};
+    fn collect(source: &str) -> super::super::AnalysisReport {
+        let path = std::path::PathBuf::from("/editor/collect.fib");
+        let ast = Parser::with_source(Tokenizer::new(source), &path, source)
+            .parse()
+            .unwrap();
+        let plan = crate::frontend::tooling::standalone_plan(&path);
+        Analyzer::new(
+            plan,
+            vec![crate::driver::CompilationUnit {
+                source_file_id: FileId(0),
+                ast,
+            }],
+        )
+        .unwrap()
+        .analyze_collecting()
+    }
+    #[test]
+    fn independent_alias_errors_and_cycles_do_not_abort_other_declarations() {
+        let report = collect(
+            "comp a := missing; comp b := another; comp c := d; comp d := c; fn f() { third; }",
+        );
+        assert_eq!(report.errors.len(), 4, "{:?}", report.errors);
+        assert!(report.errors.iter().any(|e| e.message.contains("cycle")));
+        assert!(!report.types.complete);
+    }
+    #[test]
+    fn scope_state_is_restored_after_errors() {
+        let report = collect(
+            "fn f() { if (true) { x := missing; }; x; while (true) { break; }; y: bool = 1; } fn g() { x: int32 = 2; }",
+        );
+        assert_eq!(report.errors.len(), 3, "{:?}", report.errors);
+        assert!(!report.errors.iter().any(|e| e.message.contains("pending")));
+    }
+    #[test]
+    fn warnings_survive_unrelated_errors() {
+        let report = collect(
+            "comp S := struct { x: int32 }; fn f(p: *S) int32 { return p.x; } fn g() { missing; }",
+        );
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].diagnostic.filename.is_some());
+    }
+    #[test]
+    fn multiple_invalid_generic_instances_have_source_diagnostics() {
+        let report = collect(
+            "fn add(T: type, x: T) T { return x + x; } a := add(bool, true); b := add(*int32, null); fn g() { missing; }",
+        );
+        assert!(report.errors.len() >= 2, "{:?}", report.errors);
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|e| e.span.is_some() && e.filename.is_some())
+        );
+        assert!(
+            !report.errors.iter().any(|e| e.message.contains("pending")),
+            "{:?}",
+            report.errors
+        );
+    }
+    #[test]
+    fn independent_recursive_layout_errors_are_collected() {
+        let report = collect(
+            "comp A := struct { a: A }; comp B := struct { b: B }; fn f() { a: A[1]; a; bad; }",
+        );
+        assert_eq!(
+            report
+                .errors
+                .iter()
+                .filter(|e| e.message.contains("cycle"))
+                .count(),
+            2,
+            "{:?}",
+            report.errors
+        );
+        assert!(
+            report.errors.iter().any(|e| e.message.contains("bad")),
+            "{:?}",
+            report.errors
+        );
+    }
+
+    #[test]
+    fn bounded_generic_expansion_remains_a_diagnostic() {
+        let report = collect("fn f(T: type, x: T) T { return f(*T, x&)*; } a := f(int32, 1);");
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.message.contains("recursion")),
+            "{:?}",
+            report.errors
+        );
     }
 }

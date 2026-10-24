@@ -9,6 +9,14 @@ impl Ast {
     /// Resolve a file after project declaration collection and alias normalization.
     pub fn resolve_name(&mut self, context: &mut ResolveContext<'_>) -> anyhow::Result<()> {
         for statement in &mut self.statements {
+            if context
+                .recovery
+                .as_ref()
+                .is_some_and(|r| r.statement_failed(context.file_id, statement))
+            {
+                continue;
+            }
+            let previous = context.recovery.as_ref().map(|_| context.lexical.clone());
             let result = match &mut statement.kind {
                 StatementKind::FunctionDeclaration(fun) => fun.resolve_name(context),
                 StatementKind::VariableDeclaration(var) => (|| {
@@ -26,7 +34,15 @@ impl Ast {
                 }
                 _ => Err(name_error("unexpected top-level statement")),
             };
-            result.map_err(|e| at_span(e, statement.span))?;
+            if let Err(error) = result.map_err(|e| at_span(e, statement.span)) {
+                if let Some(recovery) = &context.recovery {
+                    context.lexical = previous.unwrap();
+                    recovery.record(error, context.file_id, statement.span, None);
+                    recovery.block_statement(statement);
+                } else {
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }

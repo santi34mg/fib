@@ -22,6 +22,7 @@ pub(super) struct Definition {
 pub(super) fn definitions(
     units: &[CompilationUnit],
     paths: &HashMap<crate::plan::FileId, std::path::PathBuf>,
+    recovery: Option<&super::Recovery>,
 ) -> anyhow::Result<HashMap<DeclId, Definition>> {
     let mut definitions = HashMap::new();
     fn add(
@@ -70,8 +71,11 @@ pub(super) fn definitions(
         Ok(())
     }
     for unit in units {
-        let result = (|| {
-            for statement in &unit.ast.statements {
+        for statement in &unit.ast.statements {
+            if recovery.is_some_and(|r| r.failed(unit.source_file_id, statement.span)) {
+                continue;
+            }
+            let result = (|| {
                 match &statement.kind {
                     StatementKind::VariableDeclaration(var) => add(
                         &mut definitions,
@@ -94,10 +98,22 @@ pub(super) fn definitions(
                     }
                     _ => {}
                 }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                if let Some(recovery) = recovery {
+                    recovery.record(
+                        error,
+                        unit.source_file_id,
+                        statement.span,
+                        paths.get(&unit.source_file_id),
+                    );
+                    recovery.block_statement(statement);
+                } else {
+                    return Err(with_path(error, paths.get(&unit.source_file_id)));
+                }
             }
-            Ok(())
-        })();
-        result.map_err(|e| with_path(e, paths.get(&unit.source_file_id)))?;
+        }
     }
     Ok(definitions)
 }
@@ -106,6 +122,7 @@ pub(super) fn resolve(
     symbols: &mut ProjectSymbols,
     definitions: &HashMap<DeclId, Definition>,
     paths: &HashMap<crate::plan::FileId, std::path::PathBuf>,
+    recovery: Option<&super::Recovery>,
 ) -> anyhow::Result<()> {
     // Suspend a path lookup at its first unresolved alias, resolve that alias
     // with an explicit stack, then resume the original path. No callback recurses.
@@ -124,70 +141,103 @@ pub(super) fn resolve(
     let mut ids = definitions.keys().copied().collect::<Vec<_>>();
     ids.sort_by_key(|id| (id.file_id, id.index));
     for root in ids {
-        if targets.contains_key(&root) {
+        if targets.contains_key(&root)
+            || recovery.is_some_and(|r| r.blocked(BindingId::Declaration(root)))
+        {
             continue;
         }
-        active.insert(root, 0);
-        stack.push(root);
-        while let Some(&id) = stack.last() {
-            let definition = &definitions[&id];
-            let result =
-                symbols.resolve_path_using(
-                    id.file_id,
-                    &definition.path,
-                    &mut |entity| match entity {
-                        Entity::Declaration(dependency)
-                            if definitions.contains_key(&dependency) =>
-                        {
-                            targets
-                                .get(&dependency)
-                                .copied()
-                                .ok_or_else(|| NeedAlias(dependency).into())
+        let result = (|| {
+            active.insert(root, 0);
+            stack.push(root);
+            while let Some(&id) = stack.last() {
+                let definition = &definitions[&id];
+                let result = if symbols
+                    .file_prefix(&definition.path)
+                    .is_some_and(|(file, _)| recovery.is_some_and(|r| r.unavailable(file)))
+                {
+                    Err(super::recovery::Blocked.into())
+                } else {
+                    symbols.resolve_path_using(id.file_id, &definition.path, &mut |entity| {
+                        match entity {
+                            Entity::Declaration(dependency)
+                                if definitions.contains_key(&dependency) =>
+                            {
+                                if recovery
+                                    .is_some_and(|r| r.blocked(BindingId::Declaration(dependency)))
+                                {
+                                    return Err(super::recovery::Blocked.into());
+                                }
+                                targets
+                                    .get(&dependency)
+                                    .copied()
+                                    .ok_or_else(|| NeedAlias(dependency).into())
+                            }
+                            _ => Ok(entity),
                         }
-                        _ => Ok(entity),
-                    },
-                );
-            match result {
-                Ok(target) => {
-                    targets.insert(id, target);
-                    active.remove(&id);
-                    stack.pop();
-                }
-                Err(error) => {
-                    if let Some(NeedAlias(dependency)) = error.downcast_ref::<NeedAlias>() {
-                        if let Some(&start) = active.get(dependency) {
-                            let chain = stack[start..]
-                                .iter()
-                                .chain(std::iter::once(dependency))
-                                .map(|id| {
-                                    let file = symbols
-                                        .files_by_name
-                                        .iter()
-                                        .find_map(|(name, file)| {
-                                            (*file == id.file_id).then_some(name.0.as_str())
-                                        })
-                                        .unwrap_or("<unknown file>");
-                                    format!("{file}::{}", symbols.declaration(*id).unwrap().name)
-                                })
-                                .collect::<Vec<_>>()
-                                .join(" -> ");
+                    })
+                };
+                match result {
+                    Ok(target) => {
+                        targets.insert(id, target);
+                        active.remove(&id);
+                        stack.pop();
+                    }
+                    Err(error) => {
+                        if let Some(NeedAlias(dependency)) = error.downcast_ref::<NeedAlias>() {
+                            if let Some(&start) = active.get(dependency) {
+                                let chain = stack[start..]
+                                    .iter()
+                                    .chain(std::iter::once(dependency))
+                                    .map(|id| {
+                                        let file = symbols
+                                            .files_by_name
+                                            .iter()
+                                            .find_map(|(name, file)| {
+                                                (*file == id.file_id).then_some(name.0.as_str())
+                                            })
+                                            .unwrap_or("<unknown file>");
+                                        format!(
+                                            "{file}::{}",
+                                            symbols.declaration(*id).unwrap().name
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(" -> ");
+                                return Err(with_path(
+                                    at_span(
+                                        name_error(format!("alias cycle: {chain}")),
+                                        definitions[dependency].span,
+                                    ),
+                                    paths.get(&root.file_id),
+                                ));
+                            }
+                            active.insert(*dependency, stack.len());
+                            stack.push(*dependency);
+                        } else {
                             return Err(with_path(
-                                at_span(
-                                    name_error(format!("alias cycle: {chain}")),
-                                    definitions[dependency].span,
-                                ),
+                                at_span(error, definition.span),
                                 paths.get(&root.file_id),
                             ));
                         }
-                        active.insert(*dependency, stack.len());
-                        stack.push(*dependency);
-                    } else {
-                        return Err(with_path(
-                            at_span(error, definition.span),
-                            paths.get(&root.file_id),
-                        ));
                     }
                 }
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            if let Some(recovery) = recovery {
+                recovery.record(
+                    error,
+                    root.file_id,
+                    definitions[&root].span,
+                    paths.get(&root.file_id),
+                );
+                for id in stack.drain(..) {
+                    recovery.block_binding(BindingId::Declaration(id));
+                }
+                active.clear();
+            } else {
+                return Err(error);
             }
         }
     }

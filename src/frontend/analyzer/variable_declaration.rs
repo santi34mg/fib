@@ -167,6 +167,16 @@ impl Analyzer {
         }
     }
 
+    pub(super) fn reserve_failed_local(
+        var: &mut VariableDeclaration,
+        context: &mut ResolveContext<'_>,
+    ) -> anyhow::Result<()> {
+        if context.lexical.resolve_lexical(&var.identifier).is_none() {
+            Self::insert_local(var, None, context)?;
+        }
+        Ok(())
+    }
+
     fn insert_local(
         var: &mut VariableDeclaration,
         target: Option<Entity>,

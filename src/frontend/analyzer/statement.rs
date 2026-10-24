@@ -14,8 +14,37 @@ impl Analyzer {
         statement: &mut Statement,
         context: &mut ResolveContext<'_>,
     ) -> anyhow::Result<()> {
-        Self::resolve_name_statement_inner(statement, context)
-            .map_err(|e| super::at_span(e, statement.span))
+        if context
+            .recovery
+            .as_ref()
+            .is_some_and(|r| r.statement_failed(context.file_id, statement))
+        {
+            return Ok(());
+        }
+        let previous = context.recovery.as_ref().map(|_| context.lexical.clone());
+        let result = Self::resolve_name_statement_inner(statement, context)
+            .map_err(|e| super::at_span(e, statement.span));
+        if let (Some(recovery), true) = (context.recovery.clone(), result.is_err()) {
+            context.lexical = previous.unwrap();
+            let Err(error) = result else { unreachable!() };
+            recovery.record(error, context.file_id, statement.span, None);
+            use crate::frontend::ast::statement::StatementKind as S;
+            // Keep the lexical identity of failed bindings, so dependent uses are blocked.
+            match &mut statement.kind {
+                S::VariableDeclaration(v) => {
+                    let _ = Self::reserve_failed_local(v, context);
+                }
+                S::MultiVariableDeclaration { bindings, .. } => {
+                    for v in bindings {
+                        let _ = Self::reserve_failed_local(v, context);
+                    }
+                }
+                _ => {}
+            }
+            recovery.block_statement(statement);
+            return Ok(());
+        }
+        result
     }
 
     fn resolve_name_statement_inner(

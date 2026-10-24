@@ -32,7 +32,7 @@ pub(super) enum Definition {
     Function(FunctionSignature),
     Multi(Statement),
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct TypeState {
     pub definitions: HashMap<DeclId, Definition>,
     pub resolving: HashSet<DeclId>,
@@ -65,6 +65,16 @@ pub(super) fn resolve_project_with_paths(
     types: &mut SemanticTypes,
     paths: HashMap<FileId, std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    resolve_project_collecting(units, symbols, types, paths, None)
+}
+
+pub(super) fn resolve_project_collecting(
+    units: &mut [CompilationUnit],
+    symbols: &ProjectSymbols,
+    types: &mut SemanticTypes,
+    paths: HashMap<FileId, std::path::PathBuf>,
+    recovery: Option<super::Recovery>,
+) -> anyhow::Result<()> {
     if types.started {
         return Err(type_error(
             "type resolution may only run once; failed passes cannot be retried",
@@ -91,11 +101,14 @@ pub(super) fn resolve_project_with_paths(
             );
         }
     }
-    for unit in units.iter_mut() {
-        super::validate_names(&mut unit.ast)?;
+    if recovery.is_none() {
+        for unit in units.iter_mut() {
+            super::validate_names(&mut unit.ast)?;
+        }
     }
     let mut context = TypeContext::new(FileId(0), symbols, types);
     context.state.paths = paths;
+    context.recovery = recovery;
     fn collect(nodes: &[Statement], definitions: &mut HashMap<DeclId, Definition>) {
         fn variable(
             var: &VariableDeclaration,
@@ -167,19 +180,43 @@ pub(super) fn resolve_project_with_paths(
     let mut ids: Vec<_> = context.state.definitions.keys().copied().collect();
     ids.sort_by_key(|id| (id.file_id.0, id.index));
     for id in ids {
-        if matches!(&context.state.definitions[&id], Definition::Function(..))
-            || symbols.declaration(id)?.kind == crate::frontend::namespace::DeclarationKind::Type
+        if (matches!(&context.state.definitions[&id], Definition::Function(..))
+            || symbols.declaration(id)?.kind == crate::frontend::namespace::DeclarationKind::Type)
+            && let Err(error) = context.ensure_declaration(id)
         {
-            context.ensure_declaration(id)?;
+            if let Some(recovery) = &context.recovery {
+                recovery.block_binding(BindingId::Declaration(id));
+                recovery.record(
+                    error,
+                    id.file_id,
+                    symbols.declaration(id)?.span,
+                    context.state.paths.get(&id.file_id),
+                );
+            } else {
+                return Err(error);
+            }
         }
     }
     for unit in units.iter_mut() {
         context.file = unit.source_file_id;
         context.statements(&mut unit.ast.statements)?;
     }
-    context.validate_layouts()?;
-    validate_annotations(units, symbols, context.types)?;
-    context.types.complete = true;
+    if let Err(error) = context.validate_layouts() {
+        if let Some(recovery) = &context.recovery {
+            recovery.record(
+                error,
+                context.file,
+                Span::new(1, 1),
+                context.state.paths.get(&context.file),
+            );
+        } else {
+            return Err(error);
+        }
+    }
+    if context.recovery.as_ref().is_none_or(|r| !r.has_errors()) {
+        validate_annotations(units, symbols, context.types)?;
+        context.types.complete = true;
+    }
     Ok(())
 }
 
@@ -199,6 +236,13 @@ impl TypeContext<'_> {
         }
     }
     pub(super) fn ensure_declaration(&mut self, id: DeclId) -> anyhow::Result<()> {
+        if self
+            .recovery
+            .as_ref()
+            .is_some_and(|r| r.blocked(BindingId::Declaration(id)))
+        {
+            return Err(super::recovery::Blocked.into());
+        }
         if self
             .types
             .bindings
@@ -288,6 +332,9 @@ impl TypeContext<'_> {
                 return Err(type_error("file namespace is not a value or type"));
             }
         };
+        if self.recovery.as_ref().is_some_and(|r| r.blocked(binding)) {
+            return Err(super::recovery::Blocked.into());
+        }
         if let Some(info) = self.types.bindings.get(&binding) {
             return Ok(*info);
         }
@@ -556,6 +603,7 @@ impl TypeContext<'_> {
     }
     fn validate_layouts(&self) -> anyhow::Result<()> {
         let mut done = HashSet::new();
+        let mut invalid = HashSet::new();
         for index in 0..self.types.types.len() {
             let mut active = HashSet::new();
             let mut stack = vec![(TypeId(index as u32), false)];
@@ -565,20 +613,39 @@ impl TypeContext<'_> {
                     done.insert(id);
                     continue;
                 }
+                if invalid.contains(&id) {
+                    invalid.extend(active.iter().copied());
+                    done.extend(active);
+                    break;
+                }
                 if done.contains(&id) {
                     continue;
                 }
                 if !active.insert(id) {
                     let error = type_error("illegal by-value type size cycle");
-                    return Err(
-                        if let Some(((file, span), _)) =
-                            self.state.sites.iter().find(|(_, ty)| **ty == id)
-                        {
-                            self.diagnostic(error, Some(*span), *file)
-                        } else {
-                            error
-                        },
-                    );
+                    let diagnostic = if let Some(((file, span), _)) = self
+                        .state
+                        .sites
+                        .iter()
+                        .filter(|(_, ty)| **ty == id)
+                        .min_by_key(|((file, span), _)| (file.0, span.line, span.column))
+                    {
+                        self.diagnostic(error, Some(*span), *file)
+                    } else {
+                        error
+                    };
+                    if let Some(recovery) = &self.recovery {
+                        recovery.record_global(
+                            diagnostic,
+                            self.file,
+                            Span::new(1, 1),
+                            self.state.paths.get(&self.file),
+                        );
+                        invalid.extend(active.iter().copied());
+                        done.extend(active);
+                        break;
+                    }
+                    return Err(diagnostic);
                 }
                 stack.push((id, true));
                 let children: Vec<_> = match self.types.get(id)? {
@@ -590,6 +657,22 @@ impl TypeContext<'_> {
                     _ => vec![],
                 };
                 stack.extend(children.into_iter().map(|id| (id, false)));
+            }
+        }
+        if let Some(recovery) = &self.recovery {
+            for (&binding, info) in &self.types.bindings {
+                if self
+                    .types
+                    .canonical(info.ty)
+                    .is_ok_and(|ty| invalid.contains(&ty))
+                    || info.type_value.is_some_and(|ty| {
+                        self.types
+                            .canonical(ty)
+                            .is_ok_and(|ty| invalid.contains(&ty))
+                    })
+                {
+                    recovery.block_binding(binding);
+                }
             }
         }
         Ok(())

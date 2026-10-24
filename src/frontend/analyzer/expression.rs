@@ -18,23 +18,39 @@ impl Analyzer {
         let Some(first) = name.segments.first() else {
             return Err(name_error("empty qualified name"));
         };
+        if let Some((file, _)) = context.symbols.file_prefix(&name.segments)
+            && context
+                .recovery
+                .as_ref()
+                .is_some_and(|r| r.unavailable(file))
+        {
+            return Err(super::recovery::Blocked.into());
+        }
+        if context.symbols.file_prefix(&name.segments).is_none()
+            && let Some(ResolvedName::Local(id)) = context.lexical.resolve_lexical(first)
+            && context.recovery.as_ref().is_some_and(|r| {
+                r.blocked(crate::frontend::analysis_annotation::BindingId::Local(id))
+            })
+        {
+            return Err(super::recovery::Blocked.into());
+        }
         let resolved = if name.segments.len() == 1 {
             match context.lexical.resolve_lexical(first) {
                 Some(local) => local,
-                None => ResolvedName::Entity(
-                    context
-                        .symbols
-                        .resolve_path(context.file_id, &name.segments)?,
-                ),
+                None => ResolvedName::Entity(context.symbols.resolve_path_using(
+                    context.file_id,
+                    &name.segments,
+                    &mut |e| context.canonical_entity(e),
+                )?),
             }
         } else {
             // Canonical registered file paths bypass ordinary lexical bindings.
             if context.symbols.file_prefix(&name.segments).is_some() {
-                ResolvedName::Entity(
-                    context
-                        .symbols
-                        .resolve_path(context.file_id, &name.segments)?,
-                )
+                ResolvedName::Entity(context.symbols.resolve_path_using(
+                    context.file_id,
+                    &name.segments,
+                    &mut |e| context.canonical_entity(e),
+                )?)
             } else if let Some(local) = context.lexical.resolve_lexical(first) {
                 let ResolvedName::Entity(entity) = local else {
                     return Err(name_error(format!("'{first}' is not a file namespace")));
@@ -43,17 +59,29 @@ impl Analyzer {
                     context.file_id,
                     entity,
                     &name.segments[1..],
-                    &mut |e| context.symbols.canonical(e),
+                    &mut |e| context.canonical_entity(e),
                 )?)
             } else {
-                ResolvedName::Entity(
-                    context
-                        .symbols
-                        .resolve_path(context.file_id, &name.segments)?,
-                )
+                ResolvedName::Entity(context.symbols.resolve_path_using(
+                    context.file_id,
+                    &name.segments,
+                    &mut |e| context.canonical_entity(e),
+                )?)
             }
         };
         name.annotation.resolved = Some(resolved);
+        let binding = match resolved {
+            ResolvedName::Local(id) => {
+                Some(crate::frontend::analysis_annotation::BindingId::Local(id))
+            }
+            ResolvedName::Entity(crate::frontend::identifier::Entity::Declaration(id)) => {
+                Some(crate::frontend::analysis_annotation::BindingId::Declaration(id))
+            }
+            _ => None,
+        };
+        if binding.is_some_and(|id| context.recovery.as_ref().is_some_and(|r| r.blocked(id))) {
+            return Err(super::recovery::Blocked.into());
+        }
         Ok(resolved)
     }
 

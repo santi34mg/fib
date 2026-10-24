@@ -11,3 +11,4 @@ pub mod source;
 pub mod symbol_table;
 pub mod tokenizer;
 pub mod tokens;
+pub mod tooling;

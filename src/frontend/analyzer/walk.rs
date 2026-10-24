@@ -15,7 +15,7 @@ use crate::frontend::{
 
 type Result = anyhow::Result<()>;
 
-pub(super) trait Visitor {
+pub(crate) trait Visitor {
     fn statement(&mut self, _node: &mut Statement) -> Result {
         Ok(())
     }
@@ -42,7 +42,7 @@ pub(super) trait Visitor {
     }
 }
 
-pub(super) fn statements(v: &mut impl Visitor, nodes: &mut [Statement], file: bool) -> Result {
+pub(crate) fn statements(v: &mut impl Visitor, nodes: &mut [Statement], file: bool) -> Result {
     for node in nodes {
         statement(v, node, file)?;
     }
