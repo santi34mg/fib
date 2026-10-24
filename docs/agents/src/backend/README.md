@@ -1,5 +1,10 @@
 # LLVM backend
 
+The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 See the [backend implementation contract](../../../../src/backend/README.md).
 
 With LLVM enabled, `emit_llvm(ir, target)` verifies SSA and classifies each function
@@ -26,3 +31,9 @@ Enums use target-derived tag-plus-union layout, typed payload operations and ent
 remaining instruction families are unfinished. Separate context/type/general
 instruction planning sketches remain unused. Classification works without LLVM;
 emission then reports an explicit feature error. `next/` is inactive legacy code.
+
+Fixed arrays use a private named wrapper containing an LLVM array; completion
+waits for the element layout and uses target-derived storage/alignment. Aggregate
+construction, copies and the shared internal Fib ABI preserve inline values.
+`usize` IR uses pointer-width integers resolved through target data. Runtime
+indexing/slices remain deferred; array values do not imply those operations work.

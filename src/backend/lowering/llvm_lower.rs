@@ -147,6 +147,15 @@ pub(super) fn emit_classified(
                 FloatWidth::F128 => context.f128_type(),
             }
             .into()),
+            IrType::Integer {
+                width: IntegerWidth::Pointer,
+                ..
+            } => Ok(context
+                .custom_width_int_type(machine.get_target_data().get_pointer_byte_size(None) * 8)
+                .into()),
+            IrType::Array { .. } => Ok(context
+                .opaque_struct_type(&format!("fib.array.{index}"))
+                .into()),
             IrType::Pointer { .. } => Ok(context.ptr_type(Default::default()).into()),
             IrType::Struct { .. } => Ok(context
                 .opaque_struct_type(&format!("fib.struct.{index}"))
@@ -359,21 +368,13 @@ pub(super) fn emit_classified(
                         values.insert(inst.results[0], value.into());
                     }
                     InstructionKind::Aggregate { elements } => {
-                        let mut value = types[ir.values[inst.results[0].0].ty.0]
-                            .into_struct_type()
-                            .const_zero();
-                        for (index, element) in elements.iter().enumerate() {
-                            value = builder
-                                .build_insert_value(
-                                    value,
-                                    operand(*element, &constants, &values)?,
-                                    index as u32,
-                                    "field.insert",
-                                )
-                                .map_err(error)?
-                                .into_struct_value();
-                        }
-                        values.insert(inst.results[0], value.into());
+                        let elements = elements
+                            .iter()
+                            .map(|e| operand(*e, &constants, &values))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let value =
+                            enum_emitter.aggregate(ir.values[inst.results[0].0].ty, &elements)?;
+                        values.insert(inst.results[0], value);
                     }
                     InstructionKind::ExtractField { aggregate, field } => {
                         let value = builder

@@ -216,6 +216,40 @@ pub(super) fn cast<'c>(
         return Ok(value);
     }
     Ok(match (source, dest) {
+        (IrType::Integer { .. }, IrType::Bool) => builder
+            .build_int_compare(
+                inkwell::IntPredicate::NE,
+                value.into_int_value(),
+                value.into_int_value().get_type().const_zero(),
+                "cast.bool",
+            )
+            .map_err(error)?
+            .into(),
+        (IrType::Float(_), IrType::Bool) => builder
+            .build_float_compare(
+                inkwell::FloatPredicate::UNE,
+                value.into_float_value(),
+                value.into_float_value().get_type().const_zero(),
+                "cast.bool",
+            )
+            .map_err(error)?
+            .into(),
+        (IrType::Bool, IrType::Integer { .. }) => builder
+            .build_int_z_extend(
+                value.into_int_value(),
+                llvm_dest.into_int_type(),
+                "cast.bool",
+            )
+            .map_err(error)?
+            .into(),
+        (IrType::Bool, IrType::Float(_)) => builder
+            .build_unsigned_int_to_float(
+                value.into_int_value(),
+                llvm_dest.into_float_type(),
+                "cast.bool",
+            )
+            .map_err(error)?
+            .into(),
         (IrType::Integer { signed, .. }, IrType::Integer { .. }) => builder
             .build_int_cast_sign_flag(
                 value.into_int_value(),
@@ -247,13 +281,12 @@ pub(super) fn cast<'c>(
             )
             .map_err(error)?
             .into(),
-        (
-            IrType::Float(_),
-            IrType::Integer {
-                width: IntegerWidth::Bits(width),
-                signed,
-            },
-        ) => {
+        (IrType::Float(_), IrType::Integer { width, signed }) => {
+            let width = match width {
+                IntegerWidth::Bits(width) => *width,
+                IntegerWidth::Pointer => llvm_dest.into_int_type().get_bit_width() as u16,
+            };
+            let width = &width;
             let value = value.into_float_value();
             let ty = value.get_type();
             let fw = ty.get_bit_width() as u16;

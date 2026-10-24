@@ -185,11 +185,19 @@ fn direct_type(
             IrType::Bool
             | IrType::Float(_)
             | IrType::Integer {
-                width: IntegerWidth::Bits(1..=128),
+                width: IntegerWidth::Bits(1..=128) | IntegerWidth::Pointer,
                 ..
             },
         ) => true,
         Some(IrType::Pointer { pointee }) => types.get(pointee.0).is_some(),
+        Some(IrType::Array { element, .. }) => {
+            if !active.insert(ty) {
+                return false;
+            }
+            let valid = direct_type(*element, types, active);
+            active.remove(&ty);
+            valid
+        }
         Some(IrType::Struct { fields, .. }) => {
             if !active.insert(ty) {
                 return false;

@@ -44,7 +44,12 @@ pub(super) fn complete_types<'ctx>(
         .types
         .iter()
         .enumerate()
-        .filter(|(_, t)| !matches!(t, IrType::Struct { .. } | IrType::Enum { .. }))
+        .filter(|(_, t)| {
+            !matches!(
+                t,
+                IrType::Struct { .. } | IrType::Enum { .. } | IrType::Array { .. }
+            )
+        })
         .map(|(i, _)| TypeId(i))
         .collect();
     while done.len() < types.len() {
@@ -55,6 +60,7 @@ pub(super) fn complete_types<'ctx>(
                 continue;
             }
             let dependencies: Vec<_> = match ty {
+                IrType::Array { element, .. } => vec![element],
                 IrType::Struct { fields, .. } => fields.iter().collect(),
                 IrType::Enum { variants, .. } => variants.iter().flat_map(|v| &v.fields).collect(),
                 _ => unreachable!(),
@@ -63,6 +69,14 @@ pub(super) fn complete_types<'ctx>(
                 continue;
             }
             let fields = match ty {
+                IrType::Array { element, len } => vec![
+                    types[element.0]
+                        .array_type(
+                            u32::try_from(*len)
+                                .map_err(|_| error("array length exceeds LLVM representation"))?,
+                        )
+                        .into(),
+                ],
                 IrType::Struct { fields, .. } => fields.iter().map(|t| types[t.0]).collect(),
                 IrType::Enum { variants, .. } => {
                     let largest = variants.iter().map(|v| v.discriminant).max().unwrap_or(0);
@@ -147,6 +161,43 @@ impl<'ctx> EnumEmitter<'_, 'ctx> {
             allocation.position_at_end(self.entry);
         }
         allocation.build_alloca(ty, "enum.scratch").map_err(error)
+    }
+    /// Arrays use a private wrapper around one LLVM array; the Fib ABI stays internal.
+    pub fn aggregate(
+        &self,
+        ty: TypeId,
+        fields: &[BasicValueEnum<'ctx>],
+    ) -> Result<BasicValueEnum<'ctx>, BackendError> {
+        let outer = self.types[ty.0].into_struct_type();
+        if matches!(self.ir.types[ty.0], IrType::Array { .. }) {
+            let mut array = outer
+                .get_field_type_at_index(0)
+                .ok_or_else(|| error("missing array storage"))?
+                .into_array_type()
+                .const_zero();
+            for (index, field) in fields.iter().enumerate() {
+                array = self
+                    .builder
+                    .build_insert_value(array, *field, index as u32, "array.element")
+                    .map_err(error)?
+                    .into_array_value();
+            }
+            return Ok(self
+                .builder
+                .build_insert_value(outer.const_zero(), array, 0, "array.value")
+                .map_err(error)?
+                .into_struct_value()
+                .into());
+        }
+        let mut value = outer.const_zero();
+        for (index, field) in fields.iter().enumerate() {
+            value = self
+                .builder
+                .build_insert_value(value, *field, index as u32, "aggregate.field")
+                .map_err(error)?
+                .into_struct_value();
+        }
+        Ok(value.into())
     }
     pub fn construct(
         &self,
@@ -243,24 +294,20 @@ impl<'ctx> EnumEmitter<'_, 'ctx> {
                     ConstantKind::Bool(b) => {
                         ty.into_int_type().const_int(u64::from(*b), false).into()
                     }
-                    ConstantKind::Integer { bits } => ty
-                        .into_int_type()
-                        .const_int_arbitrary_precision(&[*bits as u64, (bits >> 64) as u64])
-                        .into(),
+                    ConstantKind::Integer { bits } => {
+                        let integer = ty.into_int_type();
+                        let width = integer.get_bit_width();
+                        if width < 128 && *bits >= (1u128 << width) {
+                            return Err(error("integer constant exceeds target width"));
+                        }
+                        integer
+                            .const_int_arbitrary_precision(&[*bits as u64, (bits >> 64) as u64])
+                            .into()
+                    }
                     ConstantKind::Float { bits } => {
                         super::llvm_scalar::float_constant(ty.into_float_type(), *bits).into()
                     }
-                    ConstantKind::Aggregate(_) => {
-                        let mut value = ty.into_struct_type().const_zero();
-                        for (index, field) in fields.iter().enumerate() {
-                            value = self
-                                .builder
-                                .build_insert_value(value, *field, index as u32, "constant.field")
-                                .map_err(error)?
-                                .into_struct_value();
-                        }
-                        value.into()
-                    }
+                    ConstantKind::Aggregate(_) => self.aggregate(c.ty, &fields)?,
                     ConstantKind::Enum { variant, .. } => {
                         self.construct(c.ty, *variant, &fields)?
                     }
