@@ -138,10 +138,12 @@ where
                     && (!self.no_struct_literal || self.brace_starts_struct_fields())
                 {
                     self.next(); // consume '{'
-                    self.parse_struct_construct(QualifiedIdentifier::new(segments), span) // this one consumes '}', TODO: test that
+                    self.parse_struct_construct(QualifiedIdentifier::new(segments).at(span), span) // this one consumes '}', TODO: test that
                 } else {
                     Ok(Expression::at(
-                        ExpressionKind::QualifiedIdentifier(QualifiedIdentifier::new(segments)),
+                        ExpressionKind::QualifiedIdentifier(
+                            QualifiedIdentifier::new(segments).at(span),
+                        ),
                         span,
                     ))
                 }

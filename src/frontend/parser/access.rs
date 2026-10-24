@@ -95,11 +95,16 @@ where
             match token.kind {
                 TokenKind::Identifier(identifier_string) => {
                     self.next();
+                    let member_span = crate::diagnostics::Span::new(token.line, token.column);
+                    self.name_sites.push((member_span, "property"));
                     Ok(Expression::at(
                         ExpressionKind::ExprAcess {
                             expr: Box::new(expr),
                             accessed_identifier: identifier_string,
-                            member: Default::default(),
+                            member: crate::frontend::analysis_annotation::MemberAnnotation {
+                                source_span: Some(member_span.into()),
+                                ..Default::default()
+                            },
                         },
                         span,
                     ))

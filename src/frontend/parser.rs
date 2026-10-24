@@ -47,6 +47,9 @@ where
     /// Set while parsing an `if` condition so `if done { ... }` treats the
     /// brace as the statement body, not a composite literal.
     no_struct_literal: bool,
+    last_identifier_span: Option<crate::diagnostics::Span>,
+    /// Syntax roles retained even if parsing fails later in the file.
+    pub name_sites: Vec<(crate::diagnostics::Span, &'static str)>,
 }
 
 impl<'a, I> Parser<'a, I>
@@ -66,6 +69,8 @@ where
             source_lines: source.lines().map(str::to_owned).collect(),
             last_pos: (0, 0),
             no_struct_literal: false,
+            last_identifier_span: None,
+            name_sites: Vec::new(),
         }
     }
 
@@ -176,8 +181,18 @@ where
     fn expect_identifier(&mut self, msg: &str) -> anyhow::Result<String> {
         let token = self.expect_next(msg)?;
         match token.kind {
-            TokenKind::Identifier(name) => Ok(name),
+            TokenKind::Identifier(name) => {
+                self.last_identifier_span =
+                    Some(crate::diagnostics::Span::new(token.line, token.column));
+                Ok(name)
+            }
             _ => Err(self.error(msg, token.line, token.column)),
+        }
+    }
+
+    fn mark_name(&mut self, role: &'static str) {
+        if let Some(span) = self.last_identifier_span {
+            self.name_sites.push((span, role));
         }
     }
 
@@ -221,6 +236,24 @@ where
     }
 
     pub fn parse(&mut self) -> anyhow::Result<Ast> {
+        self.parse_inner().map_err(|error| {
+            if error.downcast_ref::<ParseError>().is_some()
+                || error
+                    .downcast_ref::<crate::diagnostics::CompilerError>()
+                    .is_some()
+            {
+                error
+            } else {
+                self.error(
+                    &format!("{error:#}"),
+                    self.last_pos.0.max(1),
+                    self.last_pos.1.max(1),
+                )
+            }
+        })
+    }
+
+    fn parse_inner(&mut self) -> anyhow::Result<Ast> {
         let mut statements: Vec<Statement> = Vec::new();
 
         while let Some(token) = self.peek() {

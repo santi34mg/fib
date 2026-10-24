@@ -105,9 +105,19 @@ fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
 
 /// Compile the isolated build file with the compiler-provided build API.
 pub fn compile_build_file_to_ir(plan: &BuildPlan) -> anyhow::Result<Ir> {
-    let project = crate::frontend::analyzer::Analyzer::new(plan.clone(), parse_files(plan)?)?
-        .with_synthetic_module(crate::builtins::SyntheticModule::BUILD_API)?
-        .analyze()?;
+    compile_build_file_to_ir_with_sources(plan, &crate::frontend::source::DiskSources)
+}
+
+pub fn compile_build_file_to_ir_with_sources(
+    plan: &BuildPlan,
+    sources: &dyn crate::frontend::source::SourceProvider,
+) -> anyhow::Result<Ir> {
+    let project = crate::frontend::analyzer::Analyzer::new(
+        plan.clone(),
+        parse_files_with_sources(plan, sources)?,
+    )?
+    .with_synthetic_module(crate::builtins::SyntheticModule::BUILD_API)?
+    .analyze()?;
     require_entry(&project, "build")?;
     crate::ir::lowering::lower(&project)
 }
@@ -155,6 +165,13 @@ fn require_entry(project: &AnalyzedProject, name: &str) -> anyhow::Result<()> {
 }
 
 pub fn parse_files(plan: &BuildPlan) -> anyhow::Result<Vec<CompilationUnit>> {
+    parse_files_with_sources(plan, &crate::frontend::source::DiskSources)
+}
+
+pub fn parse_files_with_sources(
+    plan: &BuildPlan,
+    sources: &dyn crate::frontend::source::SourceProvider,
+) -> anyhow::Result<Vec<CompilationUnit>> {
     anyhow::ensure!(
         plan.files.iter().any(|file| file.id == plan.entry),
         "build-plan entry file is missing"
@@ -163,7 +180,8 @@ pub fn parse_files(plan: &BuildPlan) -> anyhow::Result<Vec<CompilationUnit>> {
     plan.files
         .iter()
         .map(|file| {
-            let source = std::fs::read_to_string(&file.path)
+            let source = sources
+                .read(&file.path)
                 .with_context(|| format!("reading {}", file.path.display()))?;
             let ast = crate::frontend::parser::Parser::with_source(
                 crate::frontend::tokenizer::Tokenizer::new(&source),

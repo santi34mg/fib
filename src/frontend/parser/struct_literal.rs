@@ -58,6 +58,8 @@ where
         ) {
             let field_name =
                 self.expect_identifier(&format!("expected field name in {}", context))?;
+            let field_span = self.last_identifier_span;
+            self.mark_name("property");
             self.expect_token(
                 TokenKind::Punctuation(Punctuation::Colon),
                 &format!("expected ':' after field name in {}", context),
@@ -65,7 +67,10 @@ where
             let expression = self.allow_struct_literals(|p| p.parse_expression())?;
             fields.push(StructField {
                 field_identifier: field_name,
-                annotation: Default::default(),
+                annotation: crate::frontend::analysis_annotation::MemberAnnotation {
+                    source_span: field_span.map(Into::into),
+                    ..Default::default()
+                },
                 expression,
             });
             // optional comma

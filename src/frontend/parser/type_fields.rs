@@ -22,6 +22,8 @@ where
                 break;
             }
             let name = self.expect_identifier("expected field name")?;
+            let field_span = self.last_identifier_span;
+            self.mark_name("property");
             self.expect_token(
                 TokenKind::Punctuation(Punctuation::Colon),
                 "expected ':' after field name",
@@ -36,7 +38,10 @@ where
             };
             fields.push(StructField {
                 field_identifier: name,
-                annotation: Default::default(),
+                annotation: crate::frontend::analysis_annotation::MemberAnnotation {
+                    source_span: field_span.map(Into::into),
+                    ..Default::default()
+                },
                 expression: Expression::at(
                     ExpressionKind::TypeValue(field_type),
                     Span::new(line, column),

@@ -7,6 +7,7 @@ pub mod parser;
 pub mod scope;
 pub mod scope_kind;
 pub mod semantic_type;
+pub mod source;
 pub mod symbol_table;
 pub mod tokenizer;
 pub mod tokens;

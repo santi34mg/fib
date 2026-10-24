@@ -508,7 +508,10 @@ impl Validator<'_> {
                 return Ok(None);
             }
         };
-        self.binding(BindingAnnotation { binding: Some(id) })
+        self.binding(BindingAnnotation {
+            binding: Some(id),
+            ..Default::default()
+        })
     }
     fn selected(
         &self,
@@ -751,6 +754,7 @@ impl Validator<'_> {
                     }
                     self.selected(
                         MemberAnnotation {
+                            source_span: None,
                             resolved: member.resolved,
                             implicit_deref: false,
                         },

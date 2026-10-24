@@ -42,6 +42,10 @@ where
                 ));
             }
         };
+        self.name_sites.push((
+            crate::diagnostics::Span::new(token.line, token.column),
+            "keyword",
+        ));
         self.expect_token(
             TokenKind::Punctuation(Punctuation::ClosingParenthesis),
             "expected ')' after visibility scope",
@@ -65,6 +69,8 @@ where
             Some(TokenKind::Keyword(Keyword::Comp))
         );
         let name = self.expect_identifier("expected variable name")?;
+        let name_span = self.last_identifier_span;
+        self.mark_name("variable");
         let mut inferred = false;
         let ty = if self
             .consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Colon)))
@@ -92,6 +98,7 @@ where
             None
         };
         let mut binding = VariableDeclaration::new(name, ty, None);
+        binding.annotation.source_span = name_span.map(Into::into);
         binding.is_const = is_const;
         binding.is_pub = is_pub;
         binding.pub_scope = pub_scope;

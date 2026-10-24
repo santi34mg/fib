@@ -48,6 +48,7 @@ where
                 }) => {
                     self.next(); // consume '.'
                     let name = self.expect_identifier("expected variant name after '.'")?;
+                    self.mark_name("enumMember");
                     // Optional `(binding)` for variants carrying a payload.
                     let binding = if matches!(
                         self.peek(),
@@ -58,13 +59,18 @@ where
                     ) {
                         self.next(); // consume '('
                         let b = self.expect_identifier("expected binding name in pattern")?;
+                        let binding_span = self.last_identifier_span;
+                        self.mark_name("variable");
                         self.expect_token(
                             TokenKind::Punctuation(Punctuation::ClosingParenthesis),
                             "expected ')' after pattern binding",
                         )?;
                         Some(PatternBinding {
                             identifier: b,
-                            annotation: Default::default(),
+                            annotation: crate::frontend::analysis_annotation::BindingAnnotation {
+                                source_span: binding_span.map(Into::into),
+                                ..Default::default()
+                            },
                         })
                     } else {
                         None

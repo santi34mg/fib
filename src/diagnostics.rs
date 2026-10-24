@@ -33,6 +33,26 @@ impl Span {
     }
 }
 
+/// Compact optional source position for identifier annotations. This keeps
+/// recursive syntax nodes small while retaining exact editor locations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SourcePoint(std::num::NonZeroU64);
+impl From<Span> for SourcePoint {
+    fn from(span: Span) -> Self {
+        let line = span.line.clamp(1, u32::MAX as usize) as u64;
+        let column = span.column.min(u32::MAX as usize) as u64;
+        Self(std::num::NonZeroU64::new((line << 32) | column).unwrap())
+    }
+}
+impl From<SourcePoint> for Span {
+    fn from(point: SourcePoint) -> Self {
+        Self::new(
+            (point.0.get() >> 32) as usize,
+            (point.0.get() & u32::MAX as u64) as usize,
+        )
+    }
+}
+
 /// Broad category of a compiler error, used for the leading tag and as a
 /// stable key for tooling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

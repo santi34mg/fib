@@ -3639,7 +3639,10 @@ mod type_resolution {
         let StatementKind::FunctionDeclaration(fun) = &mut a.units[0].ast.statements[0].kind else {
             panic!()
         };
-        let BindingAnnotation { binding: Some(id) } = fun.signature.annotation else {
+        let BindingAnnotation {
+            binding: Some(id), ..
+        } = fun.signature.annotation
+        else {
             panic!()
         };
         let signature = t.bindings[&id].ty;

@@ -630,6 +630,7 @@ impl TypeContext<'_> {
                     _ => {}
                 }
                 *slot = crate::frontend::analysis_annotation::MemberAnnotation {
+                    source_span: slot.source_span,
                     resolved: Some(selected),
                     implicit_deref,
                 };

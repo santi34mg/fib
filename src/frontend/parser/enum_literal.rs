@@ -29,6 +29,7 @@ where
                 break;
             }
             let name = self.expect_identifier("expected variant name")?;
+            self.mark_name("enumMember");
             // Optional payload: `Variant { field-list }`
             let payload = if matches!(
                 self.peek(),

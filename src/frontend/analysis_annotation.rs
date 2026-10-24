@@ -23,8 +23,10 @@ use crate::frontend::{
 };
 
 /// Attach to a name use, including the final target of a qualified path.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct NameAnnotation {
+    /// Exact identifier start retained by the parser for editor tooling.
+    pub source_span: Option<crate::diagnostics::SourcePoint>,
     pub resolved: Option<ResolvedName>,
 }
 
@@ -35,8 +37,10 @@ pub enum BindingId {
 }
 
 /// Attach to binding sites, including parameters and pattern bindings.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BindingAnnotation {
+    /// Exact identifier start retained by the parser for editor tooling.
+    pub source_span: Option<crate::diagnostics::SourcePoint>,
     pub binding: Option<BindingId>,
 }
 
@@ -95,9 +99,27 @@ pub struct MemberInfo {
 
 /// Attach to field accesses, struct initializer fields, and variant selections.
 /// Resolving a member never creates or rewrites a lexical binding.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct MemberAnnotation {
+    /// Exact identifier start retained by the parser for editor tooling.
+    pub source_span: Option<crate::diagnostics::SourcePoint>,
     pub resolved: Option<MemberInfo>,
     /// Exactly one pointer layer is dereferenced before selecting this field.
     pub implicit_deref: bool,
 }
+
+// Source locations do not participate in semantic identity or AST equality.
+macro_rules! location_independent {
+    ($name:ty, $($field:ident),+) => {
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool { true $(&& self.$field == other.$field)+ }
+        }
+        impl Eq for $name {}
+        impl std::hash::Hash for $name {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) { $(std::hash::Hash::hash(&self.$field, state);)+ }
+        }
+    }
+}
+location_independent!(NameAnnotation, resolved);
+location_independent!(BindingAnnotation, binding);
+location_independent!(MemberAnnotation, resolved, implicit_deref);

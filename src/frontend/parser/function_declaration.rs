@@ -46,6 +46,9 @@ where
         let identifier =
             self.expect_identifier("parse_function_declaration: expected function name")?;
 
+        let name_span = self.last_identifier_span;
+        self.mark_name("function");
+
         // Parameters
         self.expect_token(
             TokenKind::Punctuation(Punctuation::OpeningParenthesis),
@@ -62,6 +65,8 @@ where
                     let argument_name = self
                         .expect_identifier("parse_function_declaration: expected parameter name")?;
 
+                    let parameter_span = self.last_identifier_span;
+                    self.mark_name("parameter");
                     self.expect_token(
                         TokenKind::Punctuation(Punctuation::Colon),
                         "expected ':' after parameter name",
@@ -79,7 +84,10 @@ where
 
                     args.push(FunctionParameter {
                         parameter_identifier: argument_name,
-                        annotation: Default::default(),
+                        annotation: crate::frontend::analysis_annotation::BindingAnnotation {
+                            source_span: parameter_span.map(Into::into),
+                            ..Default::default()
+                        },
                         parameter_type: argument_type,
                     });
 
@@ -131,7 +139,10 @@ where
             signature: FunctionSignature {
                 identifier,
                 is_comp,
-                annotation: Default::default(),
+                annotation: crate::frontend::analysis_annotation::BindingAnnotation {
+                    source_span: name_span.map(Into::into),
+                    ..Default::default()
+                },
                 parameters: args,
                 return_type,
                 generic_parameters: Vec::new(),

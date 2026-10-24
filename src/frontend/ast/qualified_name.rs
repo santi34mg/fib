@@ -7,6 +7,11 @@ pub struct QualifiedIdentifier {
 }
 
 impl QualifiedIdentifier {
+    pub fn at(mut self, span: crate::diagnostics::Span) -> Self {
+        self.annotation.source_span = Some(span.into());
+        self
+    }
+
     pub fn new(segments: Vec<String>) -> Self {
         Self {
             segments,

@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use crate::{driver::compile_build_file_to_ir, ir_interpreter::interpret_ir};
+use crate::{driver::compile_build_file_to_ir_with_sources, ir_interpreter::interpret_ir};
 
 /// Identity within one build plan; independent of a file's path or aliases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -137,7 +137,6 @@ impl BuildPlan {
     }
 
     pub fn single_file(path: &Path) -> anyhow::Result<Self> {
-        println!("Single file plan for {:#?} being created...", path);
         let path = path.canonicalize()?;
         anyhow::ensure!(path.is_file(), "source is not a file: {}", path.display());
         let name = path
@@ -201,7 +200,14 @@ impl From<PathBuf> for PlanBuilder {
 impl PlanBuilder {
     /// Compile and interpret the selected build file, then atomically finalize its
     /// host-owned state into the immutable plan consumed by the normal pipeline.
-    pub fn compile_and_interpret_build_file(mut self) -> anyhow::Result<BuildPlan> {
+    pub fn compile_and_interpret_build_file(self) -> anyhow::Result<BuildPlan> {
+        self.compile_and_interpret_build_file_with_sources(&crate::frontend::source::DiskSources)
+    }
+
+    pub fn compile_and_interpret_build_file_with_sources(
+        mut self,
+        sources: &dyn crate::frontend::source::SourceProvider,
+    ) -> anyhow::Result<BuildPlan> {
         let build_file = self.build_file.canonicalize().map_err(|error| {
             anyhow::anyhow!(
                 "cannot resolve build file {}: {error}",
@@ -220,7 +226,7 @@ impl PlanBuilder {
 
         self.build_stage = BuildStage::BuildFileCompilation;
         let bootstrap = BuildPlan::single_file(&build_file)?;
-        let ir = compile_build_file_to_ir(&bootstrap)?;
+        let ir = compile_build_file_to_ir_with_sources(&bootstrap, sources)?;
         interpret_ir(ir, &mut self)?;
         self.finalize(project_root, build_file)
     }
