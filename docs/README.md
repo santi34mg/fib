@@ -57,5 +57,5 @@ GitHub; these reports do not settle the open language-design questions in RFC #2
 The [samples](../samples/README.md) use current syntax and all have automatic
 parser coverage. Selected scalar, loop, struct and enum samples also have
 compile/link/run coverage in the executable acceptance suite; this does not
-certify every sample as executable. The
-[standard library](../std/README.md) still contains historical source sketches.
+certify every sample as executable. Standard-library implementations remain pending;
+the historical source sketches and C bindings have been removed.

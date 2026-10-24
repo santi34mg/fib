@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Removed unused backend phase-planning APIs, legacy builtin tokens and byte-width lookup, the unproduced qualified-access AST variant, and the experimental standard-library tree. Active primitive types and LLVM emission remain supported. Renamed frontend implementation guides to match current modules and updated references.
+
 ### Added
 
 - Specification execution support: ordinary protected prelude type identifiers;

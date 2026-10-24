@@ -87,15 +87,12 @@ unfinished. These are implementation boundaries, not amendments to the specifica
 - [SSA IR](src/ir/README.md)
 - [LLVM backend](src/backend/README.md)
 - [Tests and validation](tests/README.md)
-- [Samples](samples/README.md) and [standard library](std/README.md)
+- [Samples](samples/README.md)
 - [CI](.github/workflows/ci.md)
 - [Open design boundaries](language-design-questions.md)
 - [Documentation overview and language-design proposals](../README.md)
 - [Verified parsing snapshot](../parsing/README.md), not a language specification
 - [Analysis issues on GitHub](issues/README.md)
-
-Legacy page names are retained as explicit redirects/status pages so existing
-links remain useful. No missing roadmap is implied by this index.
 
 ## Maintenance rules
 

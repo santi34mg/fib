@@ -105,18 +105,16 @@ See the [backend contract](../../src/backend/README.md) and
 
 - [ ] Specify copy/move, borrowing, mutation, view lifetimes, escaping slices,
       deterministic destruction and suppression, including all control-flow exits.
-- [ ] Audit experimental `std` for success-returning no-ops, fake atomics,
-      allocation/reallocation failure, overflow, hard-coded pthread layouts and
-      signed FFI returns.
-- [ ] Classify modules as stub/unsafe/platform-specific/validated; first make
-      them parse under current syntax, then add semantic and runtime tests as
-      the corresponding compiler stages become executable.
+- [ ] Implement standard-library modules under current syntax with semantic and
+      runtime tests. Historical experimental sources have been removed. Validate
+      allocation failure, overflow, genuine atomics and platform FFI contracts
+      rather than restoring unchecked bindings or success-returning stubs.
 - [ ] Design metatype-based result/option types, owned/borrowed bytes, UTF-8 text,
       paths and move-only files; specify allocation failure and embedded NUL.
 - [ ] Replace public libc dependencies with a private platform layer, immediate
       errno translation, retry handling and C shims for ABI-sensitive structures.
 - [ ] Add robust files/I/O, buffering, formatting, partial-I/O and destruction
-      tests before migrating samples and removing the experimental libc facade.
+      tests before migrating samples to supported standard-library APIs.
 - [ ] Later: process, time, random, networking, threading and genuine atomics.
 
 ### Native interoperability

@@ -1,2 +1,0 @@
-
-pub extern fn syscall(sysnum: int32) void

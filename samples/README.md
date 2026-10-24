@@ -27,9 +27,9 @@ See the [parsing reference](../docs/parsing/README.md) for verified syntax and
 
 Samples retain qualified `libc::` calls without obsolete import declarations.
 A future build plan must explicitly provide a source file named `libc`; parsing
-these calls does not discover files or validate external signatures. Historical
-bindings in `std/libc.fib` have not been migrated as part of this sample change
-and are not a working dependency today.
+these calls does not discover files or validate external signatures. The historical
+standard-library bindings have been removed; replacement library implementations
+and external C interoperability remain pending.
 
 - `sorting.fib` retains parsed `T: type` parameters and type-valued arguments;
   generic analysis/specialization and pointer casts are not validated.

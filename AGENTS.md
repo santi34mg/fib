@@ -49,7 +49,6 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   and calls to it. `emit_llvm(ir, target)` remains the sole public entry point.
   Full production Fib ABI, external C interoperability and broader representations
   remain unfinished.
-  `backend/lowering/next/` is inactive legacy code, not a supported route.
 - `build --single-file PATH` compiles the scalar/control-flow subset through LLVM,
   object and host `cc` linking. The narrow `build --build-file PATH` route also works; default discovery, `run` and `test` error explicitly.
   Old positional-file, include-root, check/emit/link/release flags do not exist.
@@ -106,7 +105,7 @@ its function type is `comp fn(type) -> type`. Variadics are removed. Type-level
 Legacy `@` types, `var`, `for`, dot-index and imports
 are not the current working grammar. Parsing is not semantic/runtime support.
 See [parser details](docs/agents/src/frontend/parser.md). Samples use current
-syntax and have automatic parser coverage; std sources may still be stale.
+syntax and have automatic parser coverage. Standard-library implementations remain pending.
 
 `FileId`/`FileName`/paths live in `plan.rs`; syntax retains point spans and
 pending analysis slots. `AnalyzedProject::source_paths` retains plan paths after analysis; there is no

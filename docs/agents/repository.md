@@ -45,10 +45,9 @@ compilation.
 
 ## Assets
 
-- [`src/`](../../src): active modules plus explicitly uncompiled legacy code.
+- [`src/`](../../src): active compiler modules.
 - [`samples/`](../../samples): current-syntax examples with automatic parser coverage
   and selected scalar/loop/struct/enum execution coverage.
-- [`std/`](../../std): experimental Fib sources, not automatically checked.
 - `tests/executable.rs` compiles, links and executes supported scalar/aggregate/control-flow programs with LLVM.
 - [`CI`](.github/workflows/ci.md) records configured gates, not proof they pass.
 - [`.githooks/pre-commit`](../../.githooks/pre-commit) is opt-in; it skips docs-only
