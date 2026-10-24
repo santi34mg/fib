@@ -4,7 +4,7 @@
 | --- | --- |
 | `main.rs`, `cli.rs` | Clap entry; single-file scalar/control-flow builds and narrow interpreted build files; run/test error |
 | `lib.rs` | Public modules and `CompilerError` re-export |
-| `build_plan.rs` | File IDs/names, source-file records, build plan and single-file loader |
+| `plan.rs` | File IDs/names, source-file records, build plan and single-file loader |
 | `builder_object.rs` | Build stages/state; build-file discovery attempt, remaining operations `todo!()` |
 | `driver.rs`, `driver/compiler_output.rs` | Analysis and pipeline orchestration; shared SSA lowering lives in `ir/lowering.rs` |
 | `frontend/` | Working tokenizer/parser, names, semantic typing and members; explicit metatype specialization, bounded type-return evaluation and initialization/control-flow completion |

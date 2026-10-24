@@ -1,10 +1,15 @@
 # Tests and validation
 
+The [language specification](../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 Unit tests live beside implementation under `src/`. `tests/executable.rs` is an
 LLVM-feature-gated acceptance suite requiring LLVM 21 and host `cc`. Its fixtures
-include `tests/programs/return_42.fib`, `conditionals.fib`, and
-`samples/scalar_loops.fib` and `struct_storage.fib` and `enum_runtime.fib`; other samples have parser coverage, with
-`builtin_scalars.fib` additionally covered by scalar acceptance tests.
+include `tests/programs/return_42.fib`, `conditionals.fib`, and the samples
+`builtin_scalars.fib`, `scalar_loops.fib`, `struct_storage.fib` and
+`enum_runtime.fib`. Other samples have parser coverage without an execution claim.
 The runnable `example-project/` is copied into a temporary directory for both
 no-default frontend/IR validation and an LLVM-enabled CLI build-file/exit-0 test.
 
@@ -21,8 +26,10 @@ no-default frontend/IR validation and an LLVM-enabled CLI build-file/exit-0 test
   implemented name resolver. Separate type tests establish semantic typing and
   members; neither suite establishes execution.
 - `diagnostics.rs`: parser conversion and rendering/line extraction.
-- `driver/test.rs`: scalar/control-flow SSA, loops, scopes/returns, source paths, invalid plans and subset rejection.
-- `ir/test.rs`: raw records, transactional construction, ownership/signature/dominance checks.
+- `driver/test.rs`: scalar/aggregate/control-flow SSA, loops, enum switches,
+  scopes/returns, source paths, invalid plans and subset rejection.
+- `ir/test.rs`: raw records, transactional construction, scalar/aggregate/memory
+  invariants, enum active-payload proofs, ownership/signature/dominance checks.
 - `backend/lowering/test.rs`: malformed input, scalar calls and LLVM target validation.
 - `backend/lowering/abi/test.rs`: classification without LLVM and invalid boundary maps.
 - `backend/lowering/cfg_test.rs`: executable PHIs/backedges/parallel edges, comparisons and per-function ABI dispatch.
@@ -93,7 +100,35 @@ computation, partial initialization, branch joins, loops, enum switches and defe
 ordering. Initialization/return completeness use the complete `analyze` seam;
 type-only fixtures still exercise `resolve_types` independently.
 
-## Local verification (2026-10-21)
+## Specification implementation validation (2026-10-24)
+
+The implementation passed:
+
+- `cargo test --offline --no-default-features`: 714 library tests.
+- `LLVM_SYS_211_PREFIX=/usr/lib/llvm/21 cargo test --offline --all-features`:
+  725 library tests and 28 executable acceptance tests.
+- Formatting, no-default and LLVM-enabled checks, strict Clippy in both feature
+  configurations, and the LLVM-enabled all-features build.
+
+New coverage checks literal-cast context/ranges, numeric/bool casts across every
+numeric runtime representation, NaN/signed zero, readonly views and nested-cast
+restrictions, implicit-pointer warnings/null traps, RHS-first assignment,
+exhaustive unreachable switches, ordinary prelude names/type brackets, generic
+recursion/loops/aggregates, multi-file entry identity, fixed-array values/lengths,
+IR array corruption, and package membership/scoped visibility/re-exports.
+`specification_runtime.fib` is both parser-covered and compiled/executed.
+
+Package-rooted discovery and runtime indexing/slices remain deferred; these runs
+do not establish support for them.
+
+## Validation records
+
+The following results are historical milestone runs, not current test totals.
+The documentation audit on 2026-10-24 inspected source and test coverage without
+rerunning compiler suites. Test presence describes scenarios covered; it does not
+establish a new passing run.
+
+### Semantic reconstruction (2026-10-21)
 
 The completed semantic-reconstruction pre-commit run passed all blocking checks,
 including the no-default suite, formatting, check/Clippy, **677 LLVM-enabled library
@@ -114,7 +149,7 @@ cargo clippy --offline --all-targets -- -D warnings
 
 The LSP's previously verified 11 tests use `node --test` from `lsp/`. Those
 highlighting/protocol tests do not establish a working compiler pipeline.
-The scalar/control-flow subset runs through verified SSA and multi-block LLVM to
+The scalar/struct/enum/pointer/control-flow subset runs through verified SSA and LLVM to
 linked executables. Test-first changes were observed failing at their missing
 phase before implementation. Defer, runtime globals and full production Fib ABI remain unfinished.
 Loop acceptance covers zero/multiple iterations, nested loops, break/continue,
@@ -125,7 +160,7 @@ Scalar coverage now includes full-width numeric literals, exact IEEE constant
 evaluation, wrapping integer operations, explicit conversions, scalar fastcc
 helpers/PHIs, short-circuit booleans and guarded runtime traps.
 
-## Loop milestone validation (2026-10-24)
+### Loop milestone (2026-10-24)
 
 Formatting, check, tests and all-target Clippy with warnings denied passed both
 without LLVM and with LLVM 21 (`LLVM_SYS_211_PREFIX=/usr/lib/llvm/21`), offline.
@@ -133,7 +168,7 @@ The no-default suite passed 688 library tests; the LLVM-enabled suite passed
 695 library tests and 16 executable acceptance tests. The parser sample sweep
 includes `scalar_loops.fib`.
 
-## Struct/storage validation
+### Struct/storage milestone
 
 The struct/storage run passed 700 no-default library tests, 708 LLVM-enabled
 library tests and 21 executable tests, with formatting/check/Clippy in both modes.
@@ -144,6 +179,15 @@ IR tests check malformed projections/load-store types, orphan/foreign slots,
 by-value cycles and failed-builder rollback. Backend CFG coverage combines struct
 insert/extract, parallel aggregate PHIs and memory round trips. Source null access
 traps; unchecked guard omission and later checked indirection are inspected in IR.
+
+### Enum coverage present in source
+
+IR tests cover enum signatures/constants, discriminants, finite layouts, active
+payload proofs and switch successors. Lowering and executable tests cover
+constructors, payload copies, helper calls, nested struct/enum storage, pointers,
+numeric payload widths/alignment and once-only source evaluation order. Backend
+coverage includes enum constants and switch PHIs/backedges. This inventory is
+source evidence, not a new validation run or test count.
 
 ## Change guidance
 

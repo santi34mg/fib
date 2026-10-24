@@ -1,9 +1,13 @@
 # Compiler implementation guide
 
-Reviewed against this checkout on 2026-10-19. Source and tests take precedence over
-historical comments, samples, and language proposals. Semantic reconstruction
-updates were made on 2026-10-21; final review fixes passed the blocking pre-commit
-checks, including LLVM-enabled library and executable acceptance tests.
+The [language specification](../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
+Status reviewed against source and tests on 2026-10-24. Source and tests take
+precedence over historical comments, samples and language proposals. Dated
+validation results are recorded in the [test guide](tests/README.md); the specification implementation passed the no-default and LLVM-enabled suites.
 
 ## Actual status
 
@@ -13,12 +17,12 @@ The name pass validates named units, annotates declarations, and resolves lexica
 names, file paths, visibility, and compile-time aliases. Semantic typing/member
 lookup now execute and validate their annotations. Explicit metatype
 specialization now rechecks concrete bodies, retaining symbolic template checks.
-Bounded type computation requires explicit `comp fn` eligibility. Independent
-binding/element mutability, `never` bottom coercion, definite initialization and
+Bounded type computation requires explicit `comp fn` eligibility. Metatype
+parameters and type values provide generic specialization. Independent binding/element mutability, `never` bottom coercion, definite initialization and
 structured control-flow checks run; see [typing](../type-resolution.md). Variadics
 are removed. Numeric literals use arbitrary-precision integer magnitudes and direct decimal-to-IEEE
 rounding; constant evaluation implements fixed-width wrapping and exact IEEE
-operations. Single-file compilation supports fixed-width signed/unsigned integers
+operations. Compilation of explicitly planned files supports fixed-width signed/unsigned integers
 through 128 bits, float16/32/64/128 and bool through locals, arithmetic,
 bitwise/shifts, explicit casts, short-circuit logic, helpers/calls, conditionals,
 while loops, break/continue and returns. Typed numeric values require explicit
@@ -39,7 +43,7 @@ and [tests](tests/README.md) for exact limits.
 ```text
 build --single-file PATH -> BuildPlan -> parse_files -> Analyzer
   -> AnalyzedProject -> ir::lowering::lower -> verified Ir -> verified LLVM
-  -> object -> cc -> executable (scalar/control-flow subset)
+  -> object -> cc -> executable (scalar/struct/enum/pointer/control-flow subset)
 
 build.fib + synthetic build_api -> Analyzer -> ir::lowering::lower -> verified IR
   -> limited IR interpreter -> PlanBuilder state (partial)
@@ -54,6 +58,27 @@ loader, `compile_project` or `check_project`. `tests/executable.rs` checks real
 compile/link/run behavior. Public architecture records alone do not certify
 successful analysis, verification or support by the emitter.
 
+## Specification implementation gaps
+
+Primitive names resolve through protected synthetic prelude declarations. Direct
+same-family literal cast context, explicit numeric/bool casts, shallow readonly
+views, warned one-layer pointer field access and exhaustive switches are implemented.
+Concrete rechecked generic instances and calls across explicitly planned files
+lower to verified IR and LLVM. Fixed arrays support literals, inline storage,
+whole-value copies/assignment, calls/returns and `.len`; multi-binding locals
+initialize only after all RHS expressions evaluate.
+
+`BuildPlan::packages` records explicit package IDs, source roots, dependency
+maps and file membership. Scoped visibility uses package/directory regions;
+public aliases preserve target identity without exposing the original path.
+Existing single-file/flat-plan callers use the compatibility adapter.
+
+Still deferred: Unicode namespace normalization; public package/discovery build-API
+signatures; package-rooted lookup and discovery/deduplication integration; runtime
+indexing/slicing bounds and lifetime policy; and public compiler namespace spelling.
+Current lookup still uses explicit flat file names and longest-prefix matching.
+General build interpretation, globals, defer, indirect calls and broader ABI remain
+unfinished. These are implementation boundaries, not amendments to the specification.
 ## Map
 
 - [Repository and commands](repository.md)

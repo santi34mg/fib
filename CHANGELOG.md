@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- Specification execution support: ordinary protected prelude type identifiers;
+  direct same-family literal cast context; numeric/bool conversions; shallow
+  readonly views; one-layer checked pointer field access with warnings; exhaustive
+  enum switches; multi-file calls and concrete generic specialization; fixed-array
+  value storage/copies/calls/lengths and multi-binding locals. Explicit package
+  metadata and scoped visibility support file, subtree and package access with
+  identity-preserving re-exports. Discovery/package-path integration and runtime
+  indexing/slices remain deferred.
+
 - Executable enums: payloadless and payload constructors, scoped payload copies, switches, storage/pointers and internal helper calls now lower through verified SSA and LLVM. Target-derived tag-plus-union layouts, enum constants, active-variant extraction checks, switch PHIs/backedges and a runnable `enum_runtime.fib` sample have structural and executable coverage. See `docs/enum-semantics.md`.
 - Native structs and typed raw-pointer storage: construction/copies, nested fields, partial initialization, address-taking, alias mutation and direct internal struct/pointer calls. Ordinary dereference traps on null; the compiler-provided `memory::unchecked_deref(pointer)` returns a typed place without that guard. Memory IR verification, LLVM aggregates/stack operations, and semantic/structural/executable regressions accompany a runnable struct sample.
 - A runnable `example-project` demonstrates current scalar types, casts, bit operations, recursion, conditionals and loops with an interpreted build file, self-checking exit statuses and frontend/IR plus CLI executable coverage.
@@ -36,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserved the unfinished symbol-table and IR rewrite sources from `refactor/modules-and-generic-functions`; the IR interpreter is now exported but remains unimplemented.
 
 ### Changed
+- Documented the language specification: package-rooted file namespaces/source discovery and scoped visibility; protected implicit-prelude type identifiers; retained suffix arrays; contextual direct-literal casts and explicit numeric/bool conversion; independent array mutability, readonly views, warned one-layer pointer field access and exhaustive enum switches. Compiler implementation status is documented separately.
+- Refreshed roadmap and implementation documentation for executable enums, explicit interpreted build files and current test coverage. Consolidated generic and array rules into the language specification and removed superseded proposal pages.
 - Moved analyzed-source-to-IR lowering from the driver into one `ir::lowering::lower` entry point. Build files and normal sources now use the same analyzer and lowering; `build_api` is configured as a synthetic module, while the driver only validates the entry contract and selects LLVM or interpretation.
 - **Breaking:** removed variadic syntax, AST/semantic/IR signature flags and historical variadic libc declarations (fixed-signature C shims are required; old std callers remain unmigrated). Type-return evaluation now requires explicit `comp fn`; ordinary runtime functions are not evaluable merely because their declaration is known. Binding `const` is independent of array-element mutability; use a qualified array type for readonly elements.
 - **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples/editor highlighting use ordinary calls.

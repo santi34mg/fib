@@ -1,5 +1,10 @@
 # AGENTS.md
 
+The [language specification](docs/language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 [current implementation guide](docs/agents/README.md), not historical compiler claims.
 
@@ -19,9 +24,16 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 - `src/driver.rs` implements parsing, analysis and pipeline orchestration. One
   `src/ir/lowering.rs` entry point lowers analyzed source plus any synthetic modules;
   the driver validates the selected entry contract and chooses the IR consumer. Program lowering supports
-  single-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
+  multi-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
-  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Defer, runtime globals, arrays/slices and generic bodies still fail.
+  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Concrete generic functions, fixed-array values and multi-binding locals execute. Defer, runtime globals, runtime indexing/slices and indirect calls still fail.
+- Primitive types and `type` lex as ordinary identifiers and resolve through a
+  protected implicit prelude. Direct same-family literal cast context and explicit
+  numeric/bool conversions share constant/runtime rules. Shallow readonly views,
+  warned one-layer pointer field access and exhaustive enum switches are enforced.
+  `BuildPlan::packages` records explicit package IDs/source roots/dependency maps;
+  scoped visibility uses package/directory regions. Package-rooted lookup/discovery
+  integration and runtime indexing/slices remain deferred.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
   Build files have an initial `build_api` semantic namespace and a narrow verified-IR
   path for literal source/entry/output operations. It finalizes deterministic plans
@@ -67,7 +79,10 @@ All analyzer tests/helpers live in
 `tests/executable.rs` runs LLVM-enabled compile/link/exit-status acceptance tests. Offline is optional outside restricted environments.
 Focus tests with
 `cargo test --no-default-features frontend::parser` or `frontend::tokenizer`.
-See [validation status](docs/agents/tests/README.md) for formatting and limitations.
+The specification implementation passed 714 no-default library tests, 725
+LLVM-enabled library tests and 28 executable acceptance tests, plus checks,
+formatting and strict Clippy. See [validation status](docs/agents/tests/README.md)
+for dated records and limitations.
 
 CI config runs fmt; no-default check/test; LLVM 21 fmt/check/clippy
 (`--all-targets -- -D warnings`)/build/test/all-features. These are configured gates,
@@ -79,12 +94,12 @@ pre-commit hook additionally makes deny blocking. CI skips docs-only paths.
 Use bare bit-width types (`int32`, `uint64`, aliases `int`/`uint` = 32-bit),
 `x := 1;`, `const x := 1;`, `x: int32;`, `fn f(x: int32) int32 { return x; }`,
 `while (condition) { ... };`, `a[i]`, `a[a..b]`, `.len`, postfix pointer operations.
-Bindings use `[pub] [const | comp] name (: Type = | :=) expression;`, including
+Visibility supports `pub`, `pub(dir)` and `pub(root)`. Bindings use `[pub] [const | comp] name (: Type = | :=) expression;`, including
 `comp Name: type = struct { field: int32 };`. Analysis requires explicit `comp`
 for type bindings; parsing alone still accepts the unmodified form. Multi-bindings retain independent
 modifiers/types and a shared initializer list. Legacy `type Name ...` is removed.
 Functions are ordinary identifiers; builtin functions and their `@` forms are removed.
-`comp fn f(T: type) type { return T; }` explicitly enables bounded type computation;
+Ordinary metatype parameters and type-value arguments provide generic specialization. `comp fn f(T: type) type { return T; }` explicitly enables bounded type computation;
 its function type is `comp fn(type) -> type`. Variadics are removed. Type-level
 `const *T`, `const T[]` and `const T[N]` qualify elements independently of binding
 `const`; qualifiers are layer-local and compatibility does not discard them.
@@ -106,13 +121,13 @@ when implementing missing passes. See [diagnostics](docs/agents/src/diagnostics.
   specification phases in `src/frontend/analyzer/test.rs`. The phases pass for
   implemented name resolution; typing/member coverage is in the inline `type_resolution` module, including
   passing `completion_acceptance` and `completion_regressions` cases. Driver/IR/backend tests
-  cover the first verified scalar/executable subset and reject unsupported work.
+  cover the supported scalar/struct/enum/pointer subset and reject unsupported work.
 - Never turn unfinished operations into successful empty results. Implement the
   root invariant, then add real positive/negative coverage. Assert diagnostic
   category/substrings/locations instead of brittle full rendered strings.
 - Future lowering branches should ship sample reproducers and executable tests
-  once a harness exists; current samples are automatically parsed, not compiled
-    or run. Use `cargo test --no-default-features samples_parse_with_current_frontend`.
+  through the existing harness. All top-level samples are automatically parsed;
+  selected scalar, loop, struct and enum samples also have execution coverage. Use `cargo test --no-default-features samples_parse_with_current_frontend`.
 - Keep changes focused; preserve user work. Do not chase advisory coverage totals.
 - Preserve trunk-based/main and Conventional Commit PR guidance; update
   `CHANGELOG.md` under `[Unreleased]` for behavior changes when in scope.

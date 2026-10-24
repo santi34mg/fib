@@ -1,5 +1,10 @@
 # Compiler architecture
 
+The [language specification](language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 Reviewed against the current checkout on 2026-10-24. This document describes the
 working pipeline and its extension boundaries. Detailed implementation references
 live in the [agent guide](agents/README.md); future work belongs in the
@@ -28,10 +33,10 @@ build --build-file PATH
 
 | Subsystem | Responsibility |
 | --- | --- |
-| `plan` | File identities, explicit source membership, single-file plans and interpreted build-plan finalization |
+| `plan` | File/package identities, explicit source roots/dependencies/membership, compatibility plans and interpreted build-plan finalization |
 | `frontend` | Tokenization, parsing, lexical names, semantic types, specialization, initialization and structured flow |
 | `driver` | Parsing planned files, selecting entry contracts and pipeline goals, object staging and host linking |
-| `ir::lowering` | Validating the supported source subset and translating analyzed identities into scalar SSA |
+| `ir::lowering` | Validating the supported source subset and translating analyzed identities into scalar/aggregate SSA |
 | `ir` | Owned runtime records, transactional construction and shared verification |
 | `backend` | Target selection, per-function ABI classification, LLVM emission and PIC object output |
 | `ir_interpreter` | Narrow build-API execution against host-owned `PlanBuilder` state |
@@ -57,10 +62,9 @@ extension (`.exe` on Windows). It rejects inputs without a distinct output name.
 
 The normal pipeline requires exactly one `main` definition with no parameters
 and an `int32` result. Bootstrap compilation instead requires `build() int32`.
-These entry checks belong to the driver. Source lowering currently accepts only
-one source unit, even though plans and analysis support multiple planned files.
-A successfully finalized multi-file plan therefore does not imply executable
-cross-file support.
+These entry checks belong to the driver and select the function in `BuildPlan::entry`.
+Source lowering supports multiple planned files; other files may contain same-spelled
+helpers or a non-entry `main`, with distinct internal symbols.
 
 The CLI supports `build --single-file PATH` and `build --build-file PATH`,
 requiring exactly one option. Bare `build`, `run` and `test` return explicit
@@ -114,8 +118,9 @@ typed numeric values require explicit conversions.
 
 Analysis supports explicit metatype signature specialization, cached concrete
 body rechecking, and bounded type computation through eligible `comp fn`
-declarations. These facilities do not yet imply runtime generic lowering or a
-general compile-time interpreter. Complete analysis also checks `never` bottom
+declarations. Concrete cached instances lower with their rechecked binding
+facts; metatype parameters are erased from runtime calls. General compile-time
+interpretation remains unfinished. Complete analysis also checks `never` bottom
 coercion/divergence, partial initialization, branches, loops, enum-switch coverage
 and lexical defer exits. See [type resolution](type-resolution.md) for exact rules
 and limits.
@@ -136,8 +141,9 @@ types, expression types/value-or-place categories, and owner-based member facts.
 Function identity lives on its signature; each multi-binding has its own binding
 slot. Enum patterns and payload bindings retain member/local identities.
 Applicable slots start pending and must be resolved consistently before handoff.
-Label identities/annotations and bracket-style generic parameter syntax remain
-reserved rather than implemented language features.
+Label identities/annotations remain reserved. The empty generic-parameter
+metadata does not define generic syntax. Generic specialization uses ordinary
+metatype parameters and type-value arguments.
 
 Public AST and semantic records can be constructed or modified directly;
 `AnalyzedProject` is not an opaque proof type. `validate_analysis` independently
@@ -154,16 +160,16 @@ Calls use resolved declaration-to-`FunctionId` mappings, not spelling-based look
 
 The executable subset supports signed/unsigned 8/16/32/64/128-bit integers,
 float16/32/64/128 and bool; scalar helper parameters/results; void helpers; direct
-calls; structs and typed raw pointers; partial initialization; assignment;
-arithmetic/bitwise/shifts; explicit numeric casts; comparisons; short-circuit logic; nested if/else; while; break/continue; and
+calls; structs, enums and typed raw pointers; partial initialization; assignment;
+arithmetic/bitwise/shifts; explicit numeric casts; comparisons; short-circuit logic; nested if/else; enum switches; while; break/continue; and
 returns. Source helpers use internal linkage and the limited direct Fib convention
-for scalars, structs and pointers; the entry uses the C convention.
+for scalars, structs, enums and pointers; the entry uses the C convention.
 
 Initialized scalar locals without address-taking map to immutable SSA operands;
-assignment replaces their current mapping. Struct locals, uninitialized locals and
+assignment replaces their current mapping. Struct/enum locals, uninitialized locals and
 address-taken bindings use stack slots allocated in function entry. Initializers
 execute at their declaration, and loads/stores preserve alias-visible updates.
-Field updates never load uninitialized siblings. Struct arguments, assignments and
+Field updates never load uninitialized siblings. Struct and enum arguments, assignments and
 results copy values; pointer fields retain their referenced addresses. Conditional joins merge differing continuing values through block
 parameters; returning arms contribute no edge, and branch-local bindings do not
 escape. Loops carry SSA bindings visible at entry through deterministically
@@ -173,9 +179,9 @@ on every iteration, including their short-circuit CFG. Known-false loops emit no
 body, and unconditional loops create an exit only for reachable breaks. Diverging
 functions need no artificial return or unreachable block.
 
-Runtime globals, arrays/slices/tuples/enums, switches, defer, multi-bindings,
-indirect calls, multiple-result source functions and concrete generic
-bodies remain unsupported by lowering. Analysis may accept these constructs;
+Fixed-array values, multi-binding locals and concrete generic instances lower.
+Runtime globals, runtime indexing/slices/tuples, defer, indirect calls and
+multiple-result source functions remain unsupported by lowering. Analysis may accept these constructs;
 that does not make them executable.
 
 ### Checked and unchecked places
@@ -217,28 +223,32 @@ reciprocal ownership/definition records, signatures, instruction/result types,
 edge arguments, reachability and dominance, including cycles. It rejects orphan
 records and unreachable blocks. Supported operations include scalar constants,
 direct calls, arithmetic/unary/comparisons/numeric casts, struct aggregate
-construction/extract/insert, stack/field addresses, typed loads/stores and
-jump/branch/return/trap/unreachable terminators. Interpreter-only Bytes are also
-verified; LLVM does not lower them.
+construction/extract/insert, stack/field addresses, typed loads/stores,
+enum construction/tag/payload operations and constants, and
+jump/branch/switch/return/trap/unreachable terminators. Enum payload extraction
+requires an active-variant proof; see [enum semantics](enum-semantics.md).
+Interpreter-only Bytes are also verified; LLVM does not lower them.
 
 Struct/pointer references, by-value layout cycles, field signatures and stack-slot
 ownership/body membership are verified. Pointer recursion is allowed. Memory
 verification is structural: source flow analysis handles direct-local initialization,
 and raw pointer validity/lifetime remains the caller's obligation. Globals,
-arrays/slices/tuples/enums and switches remain unsupported representation families.
+slices/tuples remain unsupported representation families. Fixed arrays verify
+element types, lengths and by-value cycles; LLVM uses private array storage and
+target-derived layout.
 See the [IR contract](../src/ir/README.md).
 
 ## LLVM, ABI and artifacts
 
 `backend::emit_llvm(&Ir, &TargetSpec)` is the public emission boundary. It verifies
 IR, resolves an LLVM 21 target machine and data layout, classifies every function's
-ABI, predeclares functions, emits scalar/struct/memory CFGs and verifies the final LLVM module.
+ABI, predeclares functions, emits scalar/struct/enum/memory CFGs and verifies the final LLVM module.
 `TargetSpec` carries a triple, CPU and features; only generic CPU/default features
 are supported. The driver requests the host target.
 
 ABI classification is per signature. One shared description governs declarations,
 incoming parameters, calls and returns. The C subset supports 32-bit integer
-parameters/results and void; internal Fib helpers use direct scalar, struct and
+parameters/results and void; internal Fib helpers use direct scalar, struct, enum and
 pointer LLVM fastcc arguments/results. Full production Fib ABI, broader external
 C interoperability, other aggregate families, varargs
 and callbacks remain unfinished.
@@ -295,8 +305,8 @@ Finalization anchors paths to the build-file directory, assigns deterministic
 source IDs in declaration order, derives logical names from file stems, validates
 the selected entry and output, and rejects duplicate paths/names, escaping paths,
 missing sources, and source/build-file overwrites. Output parent directories must
-already exist. The resulting plan enters the normal program pipeline, including
-its current single-source lowering restriction.
+already exist. The resulting plan enters the normal multi-file program pipeline. Package-rooted
+lookup/discovery integration remains deferred.
 
 Build-file execution uses neither LLVM nor native artifact loading. The versioned
 opaque build API and broader interpreter capabilities are extended through this
