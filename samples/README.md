@@ -15,8 +15,8 @@ Run the focused check from the repository root:
 cargo test --no-default-features samples_parse_with_current_frontend
 ```
 
-`builtin_scalars.fib` and `scalar_loops.fib` also have executable acceptance coverage
-and return 42. Compile either with `fibc build --single-file PATH`.
+`builtin_scalars.fib`, `scalar_loops.fib` and `struct_storage.fib` also have
+executable acceptance coverage and return 42. Compile either with `fibc build --single-file PATH`.
 Other samples retain intended/unverified output comments and broader unsupported
 features. The `run` command and historical positional-file / `-I=std` commands
 remain unsupported.
@@ -50,6 +50,7 @@ analysis work is tracked in [GitHub issues](../docs/agents/issues/README.md).
 
 - `builtin_scalars.fib`: executable wrapping, explicit widening and float casts.
 - `scalar_loops.fib`: executable nested loops, scalar accumulation, breaks and continues.
+- `struct_storage.fib`: executable struct copies, partial initialization, pointer mutation and unchecked places.
 
 - `hello_world.fib`, `minimal.fib`: entry functions and output.
 - `bitwise_ops.fib`, `unsigned_ops.fib`: arithmetic and bitwise operations.

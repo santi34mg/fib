@@ -11,10 +11,10 @@ checklists. See the [current implementation guide](../agents/README.md).
 | Tokenizer/parser | Working source AST construction with pending analysis annotations. |
 | Analysis | Names, visibility, aliases, types/members, explicit metatype specialization, bounded type computation, initialization/control flow and completion validation on the original AST. |
 | Driver/build | Single-file pipeline and deterministic plan finalization; build files have a narrow interpreted literal-operation API. General interpretation and default discovery remain unfinished. |
-| SSA IR | Transactional construction and scalar verification of ownership, signatures, reachability and dominance. Source lowering supports scalar helpers/calls, initialized locals, arithmetic/casts, short-circuit logic, conditionals, while loops, break/continue and returns. Storage remains unsupported. |
-| Backend | LLVM 21 emits verified multi-block SSA/PHIs/backedges and scalar operations. C int32 entry and internal scalar Fib fastcc ABI, objects and host linking work; full production ABI and broader representations remain unfinished. |
+| SSA IR | Transactional construction and scalar verification of ownership, signatures, reachability and dominance. Source lowering supports scalar helpers/calls, initialized locals, arithmetic/casts, short-circuit logic, conditionals, while loops, break/continue and returns. Struct/pointer values, stack storage, partial initialization and checked/unchecked dereference are supported. |
+| Backend | LLVM 21 emits verified multi-block SSA/PHIs/backedges and scalar operations. C int32 entry and internal direct scalar/struct/pointer Fib fastcc ABI, objects and host linking work; full production ABI and broader representations remain unfinished. |
 | CLI/execution | `build --single-file PATH` and narrow `build --build-file PATH` work. `run` and `test` report explicit errors. |
-| Tests/corpus | Frontend, driver, IR and backend suites plus LLVM-enabled executable acceptance tests. Most samples have parser coverage; scalar and loop samples additionally have execution coverage. |
+| Tests/corpus | Frontend, driver, IR and backend suites plus LLVM-enabled executable acceptance tests. Most samples have parser coverage; scalar, loop and struct samples additionally have execution coverage. |
 
 ## Open proposals
 
@@ -38,11 +38,7 @@ semantics are documented in the [implementation guide](../agents/README.md),
 
 ### Runtime lowering and SSA
 
-- [ ] Lower uninitialized declarations after definite-initialization analysis,
-      without inventing values on paths where a binding is not initialized.
-- [ ] Implement storage operations and verification; lower nested lvalues through
-      explicit addresses/projections.
-- [ ] Lower aggregates, tuples, arrays, slices, enum payloads, multiple results,
+- [ ] Lower tuples, arrays, slices, enum payloads, multiple results,
       globals and dynamic bounds checks.
 - [ ] Lower concrete generic specializations and calls across explicitly planned
       source files, preserving canonical declaration/instance identities.
@@ -53,8 +49,8 @@ See the [SSA contract](../../src/ir/README.md) for representation boundaries.
 
 ### Backend and orchestration
 
-- [ ] Derive pointer, slice, aggregate and enum layouts from target data.
-- [ ] Extend shared ABI classification beyond the internal scalar Fib subset;
+- [ ] Extend target-derived layout to slices, tuples, arrays and enums.
+- [ ] Extend shared ABI classification beyond the internal direct scalar/struct/pointer Fib subset;
       implement external scalar C interoperability and broader representations.
 - [ ] Specify and implement C vararg promotions, callbacks and indirect calls.
 - [ ] Add configurable linker arguments, targets, sysroots, library paths and

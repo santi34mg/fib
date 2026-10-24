@@ -18,8 +18,8 @@ cargo test --no-default-features samples_parse_with_current_frontend
 ```
 
 The discovery sweep is parser-only coverage. `builtin_scalars.fib` and
-`scalar_loops.fib` additionally have LLVM compile/link/run coverage in `tests/executable.rs`, returning 42. Build
-either with `fibc build --single-file PATH`. Other samples'
+`scalar_loops.fib` and `struct_storage.fib` additionally have LLVM compile/link/run coverage in `tests/executable.rs`, returning 42. Build
+them with `fibc build --single-file PATH`. Other samples'
 output comments remain intended/unverified. Historical positional-file and `-I`
 commands remain unsupported.
 

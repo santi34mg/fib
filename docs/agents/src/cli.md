@@ -11,7 +11,8 @@ cargo run -- build --single-file tests/programs/return_42.fib
 
 `build --single-file PATH` loads, analyzes, lowers, verifies, emits an LLVM object
 and links an executable beside the source, then prints its path. The current subset supports fixed-width numeric/bool
-helpers/direct calls, initialized locals, assignment, arithmetic/casts, comparisons,
+helpers/direct calls, structs/typed pointers, partial initialization, stack
+storage, field/pointer mutation, assignment, arithmetic/casts, comparisons,
 nested if/else, while loops, break/continue and early returns. LLVM 21 and a
 host `cc` linker are required. Without the LLVM feature, building reports an
 explicit error. Help and frontend/IR library APIs need no LLVM.

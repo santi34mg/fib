@@ -11,24 +11,28 @@ module with ordinary declaration/type identities. The driver validates `main` or
 `build` as the selected entry contract and chooses LLVM or the interpreter; lowering
 independently revalidates analysis. The normal executable subset is one file with `main() int32`, fixed-width
 integer/float/bool helper definitions and calls, initialized locals (including
-const), assignments, scalar arithmetic/bitwise/shifts, explicit numeric casts,
+const), structs/typed pointers, partial initialization, stack storage, field and
+pointer mutation, assignments, scalar arithmetic/bitwise/shifts, explicit numeric casts,
 short-circuit booleans, comparisons, nested if/else, while loops, break/continue and returns.
 All source forms are prevalidated, including dead branches. Unsupported constructs
 produce Backend diagnostics with spans and original plan paths retained by
 `AnalyzedProject::source_paths`.
 
 Lowering predeclares function identities and constants, then transactionally
-constructs verified SSA. Locals map resolved identities to immutable operands;
-assignments replace mappings without allocating storage. Conditional joins merge
+constructs verified SSA. Initialized scalars without address-taking map resolved
+identities to immutable operands. Structs, uninitialized locals and address-taken
+bindings use entry-allocated stack slots with initialization at the source
+declaration; assignments and alias accesses use explicit loads/stores. Conditional joins merge
 changed outer bindings through block parameters. Returning arms do not contribute
-to joins; branch-local bindings do not escape. Loops carry all bindings visible at
+to joins; branch-local bindings do not escape. Loops carry SSA bindings visible at
 entry through ordered header/exit block parameters. Continues return current values
 to the header; breaks merge current values at the innermost loop exit. Dynamic
 conditions are reevaluated on every iteration, including short-circuit conditions.
 Absent/known-true conditions have no condition-false exit; exit blocks are created
 only when reachable. Known-false bodies are prevalidated without emitting blocks.
 Known bool conditions use the same evaluator as frontend flow checking. Helpers have deterministic identity-based
-linker names, internal linkage and the limited scalar Fib fastcc convention; physical ABI
+linker names, internal linkage and the limited direct Fib fastcc convention
+(scalars, structs and pointers); physical ABI
 argument placement belongs exclusively to the backend.
 
 `PipelineGoal::{Check, Ir, Objects, Binary}` stops after analysis, verified IR,
@@ -64,5 +68,9 @@ build-file executable and will not expose Rust ABI or Rust object layouts. See t
 [interpreted build-file plan](../../roadmap/08-interpreted-build-files.md). `run`,
 `test` remains unimplemented; `build --build-file PATH` supports the narrow interpreted
 subset and then enters the normal binary pipeline.
-Defer, uninitialized declarations, globals/storage,
-aggregates, indirect calls and concrete generic bodies remain unsupported.
+Ordinary dereference emits a null-check/trap CFG. The automatically registered
+`memory::unchecked_deref` intrinsic yields a typed place without that guard. It
+emits memory operations rather than a builtin declaration/call and does not select
+the bootstrap entry. See [struct/storage semantics](../../struct-storage-semantics.md).
+Defer, runtime globals, arrays/slices/enums, indirect calls and concrete generic
+bodies remain unsupported.

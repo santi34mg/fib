@@ -22,10 +22,13 @@ operations. Single-file compilation supports fixed-width signed/unsigned integer
 through 128 bits, float16/32/64/128 and bool through locals, arithmetic,
 bitwise/shifts, explicit casts, short-circuit logic, helpers/calls, conditionals,
 while loops, break/continue and returns. Typed numeric values require explicit
-conversions. Native helpers use a limited scalar Fib fastcc ABI; main keeps the
-C int32 entry contract. Defer, storage and broader runtime representations remain
-unfinished. See
-[scalar semantics](../scalar-semantics.md) for numeric and trap rules.
+conversions. Native helpers use a limited direct Fib fastcc ABI; main keeps the
+C int32 entry contract. Struct values, partial initialization, stack storage,
+field/pointer mutation and internal struct/pointer calls work. Ordinary dereference
+traps on null; `memory::unchecked_deref(pointer)` returns an unchecked place.
+Defer, runtime globals and broader runtime representations remain unfinished. See
+[scalar semantics](../scalar-semantics.md) for numeric rules and
+[struct/storage semantics](../struct-storage-semantics.md) for memory rules.
 `build.fib` has an
 initial synthetic-module build API and shared-lowering/interpreter subset for
 literal `build_api::{add_source, set_entry, set_output}` calls; deterministic project-plan finalization now validates its initial path/name/entry/output

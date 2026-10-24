@@ -3,7 +3,7 @@
 Unit tests live beside implementation under `src/`. `tests/executable.rs` is an
 LLVM-feature-gated acceptance suite requiring LLVM 21 and host `cc`. Its fixtures
 include `tests/programs/return_42.fib`, `conditionals.fib`, and
-`samples/scalar_loops.fib`; other samples have parser coverage, with
+`samples/scalar_loops.fib` and `struct_storage.fib`; other samples have parser coverage, with
 `builtin_scalars.fib` additionally covered by scalar acceptance tests.
 The runnable `example-project/` is copied into a temporary directory for both
 no-default frontend/IR validation and an LLVM-enabled CLI build-file/exit-0 test.
@@ -116,7 +116,7 @@ The LSP's previously verified 11 tests use `node --test` from `lsp/`. Those
 highlighting/protocol tests do not establish a working compiler pipeline.
 The scalar/control-flow subset runs through verified SSA and multi-block LLVM to
 linked executables. Test-first changes were observed failing at their missing
-phase before implementation. Defer, storage and full production Fib ABI remain unfinished.
+phase before implementation. Defer, runtime globals and full production Fib ABI remain unfinished.
 Loop acceptance covers zero/multiple iterations, nested loops, break/continue,
 returns, short-circuit conditions, and all numeric widths plus bool. Executable
 loop cases have a five-second execution timeout. Build-file CFG rejection is
@@ -132,6 +132,18 @@ without LLVM and with LLVM 21 (`LLVM_SYS_211_PREFIX=/usr/lib/llvm/21`), offline.
 The no-default suite passed 688 library tests; the LLVM-enabled suite passed
 695 library tests and 16 executable acceptance tests. The parser sample sweep
 includes `scalar_loops.fib`.
+
+## Struct/storage validation
+
+The struct/storage run passed 700 no-default library tests, 708 LLVM-enabled
+library tests and 21 executable tests, with formatting/check/Clippy in both modes.
+Struct acceptance covers copies, partial-field reads/initialization, nested fields,
+address-taken scalars, aliases, recursive calls/types, empty structs, every numeric
+field width, source evaluation order and readonly/unchecked-place rejection.
+IR tests check malformed projections/load-store types, orphan/foreign slots,
+by-value cycles and failed-builder rollback. Backend CFG coverage combines struct
+insert/extract, parallel aggregate PHIs and memory round trips. Source null access
+traps; unchecked guard omission and later checked indirection are inspected in IR.
 
 ## Change guidance
 

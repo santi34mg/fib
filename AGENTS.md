@@ -21,7 +21,7 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   the driver validates the selected entry contract and chooses the IR consumer. Program lowering supports
   single-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
-  Defer, uninitialized locals, storage and generics still fail.
+  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `memory::unchecked_deref(pointer)` yields an unchecked place. Defer, runtime globals, arrays/slices/enums and generic bodies still fail.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
   Build files have an initial `build_api` semantic namespace and a narrow verified-IR
   path for literal source/entry/output operations. It finalizes deterministic plans
@@ -29,12 +29,14 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   broader builder orchestration remain unfinished.
 - `src/ir/` is owned SSA. The transactional builder allocates blocks/values/slots;
   verification checks scalar constants/calls/arithmetic/unary/casts/comparisons and jump/branch/return/trap/unreachable,
-  ownership, signatures, reachability and dominance. Storage and other operation/
-  type families fail explicitly. Stack allocation records alone cannot be verified.
-- LLVM 21 emits multi-block SSA with PHIs/backedges, the C 32-bit integer/void entry ABI and internal scalar Fib fastcc ABI.
+  ownership, signatures, reachability and dominance. Structs, typed pointers,
+  stack-slot ownership and aggregate/memory operations are verified; globals and
+  other unsupported families still fail.
+- LLVM 21 emits multi-block SSA with PHIs/backedges, the C 32-bit integer/void entry ABI and internal direct scalar/struct/pointer Fib fastcc ABI.
   ABI classification is per signature; one shared description controls a function
   and calls to it. `emit_llvm(ir, target)` remains the sole public entry point.
-  Full production Fib ABI, external C interoperability for new scalars, broader representations and storage remain unfinished.
+  Full production Fib ABI, external C interoperability and broader representations
+  remain unfinished.
   `backend/lowering/next/` is inactive legacy code, not a supported route.
 - `build --single-file PATH` compiles the scalar/control-flow subset through LLVM,
   object and host `cc` linking. The narrow `build --build-file PATH` route also works; default discovery, `run` and `test` error explicitly.
@@ -91,7 +93,7 @@ are not the current working grammar. Parsing is not semantic/runtime support.
 See [parser details](docs/agents/src/frontend/parser.md). Samples use current
 syntax and have automatic parser coverage; std sources may still be stale.
 
-`FileId`/`FileName`/paths live in `build_plan.rs`; syntax retains point spans and
+`FileId`/`FileName`/paths live in `plan.rs`; syntax retains point spans and
 pending analysis slots. `AnalyzedProject::source_paths` retains plan paths after analysis; there is no
 central source-text store. Prefer
 `Parser::with_source` for in-memory tests; preserve source context and identities
