@@ -19,9 +19,9 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 - `src/driver.rs` implements parsing, analysis and pipeline orchestration. One
   `src/ir/lowering.rs` entry point lowers analyzed source plus any synthetic modules;
   the driver validates the selected entry contract and chooses the IR consumer. Program lowering supports
-  single-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else and returns. It revalidates analysis, prevalidates the
+  single-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
-  Source loops, uninitialized locals, storage and generics still fail.
+  Defer, uninitialized locals, storage and generics still fail.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
   Build files have an initial `build_api` semantic namespace and a narrow verified-IR
   path for literal source/entry/output operations. It finalizes deterministic plans
@@ -36,8 +36,8 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   and calls to it. `emit_llvm(ir, target)` remains the sole public entry point.
   Full production Fib ABI, external C interoperability for new scalars, broader representations and storage remain unfinished.
   `backend/lowering/next/` is inactive legacy code, not a supported route.
-- `build --single-file PATH` compiles the scalar/conditional subset through LLVM,
-  object and host `cc` linking. Other build modes, `run` and `test` error explicitly.
+- `build --single-file PATH` compiles the scalar/control-flow subset through LLVM,
+  object and host `cc` linking. The narrow `build --build-file PATH` route also works; default discovery, `run` and `test` error explicitly.
   Old positional-file, include-root, check/emit/link/release flags do not exist.
 
 See [scalar semantics](docs/scalar-semantics.md) for wrapping, casts, traps and IEEE rules. Typed numeric values require explicit conversions; no implicit widening is performed.

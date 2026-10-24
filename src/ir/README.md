@@ -57,7 +57,7 @@ specialization and general source lowering still need implementation.
 
 The driver lowers fixed-width integer/float/bool helpers and direct calls,
 initialized locals, assignment, arithmetic, bitwise/shifts, explicit numeric casts,
-short-circuit booleans, comparisons, conditionals and returns.
+short-circuit booleans, comparisons, conditionals, while loops, break/continue and returns.
 Branch joins use block parameters; mutable local bindings need no storage.
 See `../backend/README.md` for ABI restrictions and executable tests.
 
@@ -156,4 +156,4 @@ successful lookup, or a formatted dump as evidence that verification ran.
   arena editing/remapping, and how callers will distinguish verified IR later.
 
 These questions must be resolved before executing the corresponding operations;
-they do not block the supported scalar/conditional subset.
+they do not block the supported scalar/control-flow subset.

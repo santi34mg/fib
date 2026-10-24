@@ -2,7 +2,9 @@
 
 Unit tests live beside implementation under `src/`. `tests/executable.rs` is an
 LLVM-feature-gated acceptance suite requiring LLVM 21 and host `cc`. Its fixtures
-include `tests/programs/return_42.fib` and `conditionals.fib`; the rest of `samples/` still has parser coverage.
+include `tests/programs/return_42.fib`, `conditionals.fib`, and
+`samples/scalar_loops.fib`; other samples have parser coverage, with
+`builtin_scalars.fib` additionally covered by scalar acceptance tests.
 
 ## What tests actually establish
 
@@ -17,7 +19,7 @@ include `tests/programs/return_42.fib` and `conditionals.fib`; the rest of `samp
   implemented name resolver. Separate type tests establish semantic typing and
   members; neither suite establishes execution.
 - `diagnostics.rs`: parser conversion and rendering/line extraction.
-- `driver/test.rs`: scalar/conditional SSA, scopes/returns, source paths, invalid plans and subset rejection.
+- `driver/test.rs`: scalar/control-flow SSA, loops, scopes/returns, source paths, invalid plans and subset rejection.
 - `ir/test.rs`: raw records, transactional construction, ownership/signature/dominance checks.
 - `backend/lowering/test.rs`: malformed input, scalar calls and LLVM target validation.
 - `backend/lowering/abi/test.rs`: classification without LLVM and invalid boundary maps.
@@ -110,12 +112,24 @@ cargo clippy --offline --all-targets -- -D warnings
 
 The LSP's previously verified 11 tests use `node --test` from `lsp/`. Those
 highlighting/protocol tests do not establish a working compiler pipeline.
-The scalar/conditional subset runs through verified SSA and multi-block LLVM to
+The scalar/control-flow subset runs through verified SSA and multi-block LLVM to
 linked executables. Test-first changes were observed failing at their missing
-phase before implementation. Source loops, storage and full production Fib ABI remain unfinished.
+phase before implementation. Defer, storage and full production Fib ABI remain unfinished.
+Loop acceptance covers zero/multiple iterations, nested loops, break/continue,
+returns, short-circuit conditions, and all numeric widths plus bool. Executable
+loop cases have a five-second execution timeout. Build-file CFG rejection is
+checked before operations mutate the plan builder.
 Scalar coverage now includes full-width numeric literals, exact IEEE constant
 evaluation, wrapping integer operations, explicit conversions, scalar fastcc
 helpers/PHIs, short-circuit booleans and guarded runtime traps.
+
+## Loop milestone validation (2026-10-24)
+
+Formatting, check, tests and all-target Clippy with warnings denied passed both
+without LLVM and with LLVM 21 (`LLVM_SYS_211_PREFIX=/usr/lib/llvm/21`), offline.
+The no-default suite passed 688 library tests; the LLVM-enabled suite passed
+695 library tests and 16 executable acceptance tests. The parser sample sweep
+includes `scalar_loops.fib`.
 
 ## Change guidance
 

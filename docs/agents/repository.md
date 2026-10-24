@@ -26,7 +26,7 @@ cargo clippy --offline --no-default-features --all-targets -- -D warnings
 The unfiltered no-default-features suite passes, including all six former pending
 acceptance cases. See
 [test commands and measured results](tests/README.md). Offline mode requires a
-populated cache and is optional outside restricted environments. The CLI builds the single-file scalar/conditional subset with LLVM and host `cc`;
+populated cache and is optional outside restricted environments. The CLI builds the single-file scalar/control-flow subset with LLVM and host `cc`;
 other commands remain unfinished.
 
 Useful focused commands: `cargo test --no-default-features frontend::parser`,

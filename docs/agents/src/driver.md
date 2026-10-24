@@ -12,7 +12,7 @@ module with ordinary declaration/type identities. The driver validates `main` or
 independently revalidates analysis. The normal executable subset is one file with `main() int32`, fixed-width
 integer/float/bool helper definitions and calls, initialized locals (including
 const), assignments, scalar arithmetic/bitwise/shifts, explicit numeric casts,
-short-circuit booleans, comparisons, nested if/else and returns.
+short-circuit booleans, comparisons, nested if/else, while loops, break/continue and returns.
 All source forms are prevalidated, including dead branches. Unsupported constructs
 produce Backend diagnostics with spans and original plan paths retained by
 `AnalyzedProject::source_paths`.
@@ -21,8 +21,13 @@ Lowering predeclares function identities and constants, then transactionally
 constructs verified SSA. Locals map resolved identities to immutable operands;
 assignments replace mappings without allocating storage. Conditional joins merge
 changed outer bindings through block parameters. Returning arms do not contribute
-to joins; branch-local bindings do not escape. Known bool conditions use the same
-evaluator as frontend flow checking. Helpers have deterministic identity-based
+to joins; branch-local bindings do not escape. Loops carry all bindings visible at
+entry through ordered header/exit block parameters. Continues return current values
+to the header; breaks merge current values at the innermost loop exit. Dynamic
+conditions are reevaluated on every iteration, including short-circuit conditions.
+Absent/known-true conditions have no condition-false exit; exit blocks are created
+only when reachable. Known-false bodies are prevalidated without emitting blocks.
+Known bool conditions use the same evaluator as frontend flow checking. Helpers have deterministic identity-based
 linker names, internal linkage and the limited scalar Fib fastcc convention; physical ABI
 argument placement belongs exclusively to the backend.
 
@@ -47,8 +52,9 @@ the UTF-8 stem and chooses an executable beside it without its source extension
 
 Build-file interpretation is only an initial straight-line subset: `interpret_ir`
 validates IR and dispatches the three build operations by builtin identity into
-host-owned `PlanBuilder` state. General CFG/value/function interpretation,
-general `BuilderObject` orchestration remains unfinished. The current finalizer resolves
+host-owned `PlanBuilder` state. Multi-block control flow is rejected before
+applying build operations. General CFG/value/function interpretation and
+`BuilderObject` orchestration remain unfinished. The current finalizer resolves
 source/output paths against the build-file directory, assigns deterministic IDs and
 stem-derived logical names, validates the selected entry, and rejects duplicate,
 missing, escaping or overwriting paths. The path remains fixed as `<cwd>/build.fib` discovery, bootstrap
@@ -58,5 +64,5 @@ build-file executable and will not expose Rust ABI or Rust object layouts. See t
 [interpreted build-file plan](../../roadmap/08-interpreted-build-files.md). `run`,
 `test` remains unimplemented; `build --build-file PATH` supports the narrow interpreted
 subset and then enters the normal binary pipeline.
-Source loops/defer, uninitialized declarations, globals/storage,
+Defer, uninitialized declarations, globals/storage,
 aggregates, indirect calls and concrete generic bodies remain unsupported.

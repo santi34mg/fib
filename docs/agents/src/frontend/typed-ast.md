@@ -26,7 +26,7 @@ and deferred computations with arguments/dependencies. Readonly container layers
 and explicit compile-time function eligibility participate in type identity.
 `never` coerces only from a top-level found bottom type; composite compatibility
 remains invariant.
-The supported scalar/conditional lowering translates frontend identities into
+The supported scalar/control-flow lowering translates frontend identities into
 owned SSA IDs/types and never falls back to direct AST emission. General source
 lowering remains unfinished.
 

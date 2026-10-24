@@ -20,10 +20,11 @@ are removed. Numeric literals use arbitrary-precision integer magnitudes and dir
 rounding; constant evaluation implements fixed-width wrapping and exact IEEE
 operations. Single-file compilation supports fixed-width signed/unsigned integers
 through 128 bits, float16/32/64/128 and bool through locals, arithmetic,
-bitwise/shifts, explicit casts, short-circuit logic, helpers/calls, conditionals and
-returns. Typed numeric values require explicit conversions. Native helpers use a
-limited scalar Fib fastcc ABI; main keeps the C int32 entry contract. Source loops,
-storage and broader runtime representations remain unfinished. See
+bitwise/shifts, explicit casts, short-circuit logic, helpers/calls, conditionals,
+while loops, break/continue and returns. Typed numeric values require explicit
+conversions. Native helpers use a limited scalar Fib fastcc ABI; main keeps the
+C int32 entry contract. Defer, storage and broader runtime representations remain
+unfinished. See
 [scalar semantics](../scalar-semantics.md) for numeric and trap rules.
 `build.fib` has an
 initial synthetic-module build API and shared-lowering/interpreter subset for
@@ -35,11 +36,11 @@ and [tests](tests/README.md) for exact limits.
 ```text
 build --single-file PATH -> BuildPlan -> parse_files -> Analyzer
   -> AnalyzedProject -> ir::lowering::lower -> verified Ir -> verified LLVM
-  -> object -> cc -> executable (scalar/conditional subset)
+  -> object -> cc -> executable (scalar/control-flow subset)
 
 build.fib + synthetic build_api -> Analyzer -> ir::lowering::lower -> verified IR
   -> limited IR interpreter -> PlanBuilder state (partial)
-  -> validated project BuildPlan (unimplemented)
+  -> validated project BuildPlan (narrow literal-operation subset)
 ```
 
 The [future build-file plan](../roadmap/08-interpreted-build-files.md) fixes IR

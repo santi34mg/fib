@@ -17,7 +17,7 @@ currently valid only for interpreted build-API calls and have no LLVM ABI loweri
 
 `ir::lowering::lower` produces verified SSA for fixed-width integer/float/bool
 helpers/calls, initialized locals, assignments, arithmetic/bitwise/shifts,
-comparisons, explicit casts, short-circuit booleans, if/else and returns.
+comparisons, explicit casts, short-circuit booleans, if/else, while loops, break/continue and returns.
 See [scalar semantics](../../../scalar-semantics.md) for operation rules.
-Variable merges use block parameters rather than storage. Tests cover valid scalar graphs, invalid references,
+Variable merges and loop-carried values use block parameters rather than storage. Tests cover valid scalar graphs, invalid references,
 ownership, signatures, forward uses, dominance and transactional construction.

@@ -1,6 +1,6 @@
 # Samples: parser regression coverage
 
-[`samples/`](../../../samples) contains 16 `.fib` examples for output, arithmetic,
+[`samples/`](../../../samples) contains `.fib` examples for output, arithmetic,
 arrays/slices, enums, pointers, aggregates, and generic-related syntax. They use
 bare bit-width types, direct indexing/slicing, `.len`, and current postfix pointer
 syntax. Obsolete import declarations are removed; qualified `libc::` calls remain.
@@ -13,9 +13,9 @@ discovers every top-level `.fib` file, parses it using the real tokenizer and
 cargo test --no-default-features samples_parse_with_current_frontend
 ```
 
-The discovery sweep is parser-only coverage. `builtin_scalars.fib` additionally
-has LLVM compile/link/run coverage in `tests/executable.rs`, returning 42. Build
-it with `fibc build --single-file samples/builtin_scalars.fib`. Other samples'
+The discovery sweep is parser-only coverage. `builtin_scalars.fib` and
+`scalar_loops.fib` additionally have LLVM compile/link/run coverage in `tests/executable.rs`, returning 42. Build
+either with `fibc build --single-file PATH`. Other samples'
 output comments remain intended/unverified. Historical positional-file and `-I`
 commands remain unsupported.
 
@@ -28,4 +28,4 @@ example operations when migrating syntax; do not remove behavior just to parse.
 
 For new syntax, retain positive/malformed in-memory parser tests as well as sample
 discovery. When analysis/lowering works, add semantic and executable regression
-coverage with explicit output/failure policies. `builtin_scalars.fib` is covered as an executable regression.
+coverage with explicit output/failure policies. The scalar and loop samples are covered as executable regressions.
