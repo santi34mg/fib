@@ -1,27 +1,32 @@
 # 05 — Redesign strings and the C boundary
 
 **Status:** future representation proposal. **Related:**
-[generic data types](04-generic-types.md), [builtin cleanup](01-builtin-sigil.md).
+[metatype specialization](../language-specification.md#declarations-generics-and-lexical-scope), [builtin cleanup](01-builtin-sigil.md).
 
 ## Current baseline versus history
 
-The tokenizer/parser retain `string`, string/character literals and builtin
-string calls. No semantic literal typing, allocation, NUL layout or LLVM string
-emission executes. The old opaque-pointer/NUL implementation, pointer equality
-bug and fixed 64-bit slice/payload layouts are historical motivation, not
+The tokenizer/parser retain `string` and string/character literals. String
+helpers are ordinary identifiers, not builtin calls. Semantic literal typing
+exists, and literal strings reach the
+narrow build API as interpreter-owned bytes. General runtime string allocation,
+NUL layout and LLVM string emission remain unfinished. The old opaque-pointer/NUL
+implementation, pointer equality bug and fixed 64-bit slice/payload layouts are
+historical motivation, not
 verified current runtime behavior. `c"..."` is not implemented C-string syntax.
 
 ## Retained proposal
 
 | Proposed form | Intended meaning | Decisions still required |
 | --- | --- | --- |
-| `"hola"` | Fixed byte/character array, e.g. `[4]char` | Encoding, length unit, mutability and storage lifetime |
+| `"hola"` | Fixed byte/character array, e.g. `char[4]` | Encoding, length unit, mutability and storage lifetime |
 | `c"hola"` | NUL-terminated storage addressed as `*char` | Embedded NUL, encoding, FFI ownership and escapes |
-| `[]char` | Borrowed view | Lifetime, mutation, target-width length/layout |
-| `Vec[char]` | Owning generic buffer | Allocation failure, destruction and explicit C conversion |
+| `char[]` | Borrowed view | Lifetime, mutation, target-width length/layout |
+| Metatype-based owning buffer | Owning generic buffer | Allocation failure, destruction and explicit C conversion |
 
-All prefix/generic forms in the table are proposals. Do not promise that
-`char` has a working i8 runtime representation or that Unicode escapes fit one
+The literal representations, view ownership and buffer API in the table remain
+proposals; array/slice types use suffix syntax. Generic library types use
+metatype parameters and type
+computation. Do not promise that `char` has a working i8 runtime representation or that Unicode escapes fit one
 byte without an explicit encoding policy. Do not hard-code `{ptr, i64}` or
 aggregate sizes: target layout and ABI work are prerequisites.
 
@@ -38,17 +43,18 @@ aggregate sizes: target layout and ABI work are prerequisites.
       Historical token/declaration counts and opaque-pointer behavior are not
       proof that declarations are correct.
 - [ ] Provide owning/view APIs and explicit runtime-built NUL conversion before
-      migrating std, format strings, samples and builtin calls.
+      migrating std, format strings, samples and ordinary string helper calls.
 - [ ] Decide array/slice equality: reject with a directed library hint or define
       content equality explicitly. Never accidentally use pointer equality or
       attempt scalar LLVM conversion of aggregates.
-- [ ] Validate enum payload layout/alignment and every affected call/return ABI
-      through SSA and target-aware backend plans.
+- [ ] Extend existing enum payload layout/alignment and internal ABI coverage to
+      the chosen string/view representations and their C boundaries.
 
 ## Acceptance tests
 
 Tokenizer/parser malformed and successful C-string forms; encoding and embedded
 NUL; literal length and view lifetime; explicit C conversion and allocation
 failure; equality diagnostics; target-dependent aggregate layouts. Add actual
-printf/link/run tests only once a harness and backend exist. Current samples
+printf/link/run tests through the existing harness once string lowering and
+external C interoperability exist. Current samples
 and stub tests do not validate this proposal.

@@ -5,59 +5,85 @@
 This roadmap describes reconstruction and future language work. Source and
 executable tests take precedence over historical release notes, samples, and
 checklists. See the [current implementation guide](../agents/README.md).
+The [language specification](../language-specification.md) defines the
+package/prelude, suffix-array, numeric, mutability and exhaustive-switch design;
+several rules require implementation changes beyond this baseline.
 
 | Area | Current implementation |
 | --- | --- |
 | Tokenizer/parser | Working source AST construction with pending analysis annotations. |
 | Analysis | Names, visibility, aliases, types/members, explicit metatype specialization, bounded type computation, initialization/control flow and completion validation on the original AST. |
-| Driver/build | Single-file pipeline and deterministic plan finalization; build files have a narrow interpreted literal-operation API. General interpretation and default discovery remain unfinished. |
-| SSA IR | Transactional construction and scalar verification of ownership, signatures, reachability and dominance. Source lowering supports scalar helpers/calls, initialized locals, arithmetic/casts, short-circuit logic, conditionals, while loops, break/continue and returns. Struct/pointer values, stack storage, partial initialization and checked/unchecked dereference are supported. |
-| Backend | LLVM 21 emits verified multi-block SSA/PHIs/backedges and scalar operations. C int32 entry and internal direct scalar/struct/pointer Fib fastcc ABI, objects and host linking work; full production ABI and broader representations remain unfinished. |
+| Driver/build | Multi-file pipeline, explicit package metadata and deterministic plan finalization; build files have a narrow interpreted literal-operation API. General interpretation and default discovery remain unfinished. |
+| SSA IR | Transactional construction and scalar/aggregate verification of ownership, signatures, reachability and dominance. Source lowering supports scalar helpers/calls, initialized locals, arithmetic/casts, short-circuit logic, conditionals, while loops, break/continue and returns. Struct/pointer values, stack storage, partial initialization and checked/unchecked dereference are supported. Enums support constructors, payload copies, switches, storage and internal calls. |
+| Backend | LLVM 21 emits verified multi-block SSA/PHIs/backedges, fixed-array aggregates and scalar operations. C int32 entry and internal direct scalar/struct/enum/pointer Fib fastcc ABI, objects and host linking work; full production ABI and broader representations remain unfinished. |
 | CLI/execution | `build --single-file PATH` and narrow `build --build-file PATH` work. `run` and `test` report explicit errors. |
-| Tests/corpus | Frontend, driver, IR and backend suites plus LLVM-enabled executable acceptance tests. Most samples have parser coverage; scalar, loop and struct samples additionally have execution coverage. |
+| Tests/corpus | Frontend, driver, IR and backend suites plus LLVM-enabled executable acceptance tests. All top-level samples have parser coverage; scalar, loop, struct and enum samples additionally have execution coverage. |
 
-## Open proposals
+## Active design and implementation work
 
-These proposals need design reconciliation or implementation beyond the current
+These documents track remaining design or implementation beyond the current
 compiler. Their numbering is not an implementation order. Current syntax and
 semantics are documented in the [implementation guide](../agents/README.md),
 [typing reference](../type-resolution.md), and [scalar semantics](../scalar-semantics.md).
 
 | # | Proposal | Remaining work |
 | --- | --- | --- |
-| 00 | [Canonical cross-file linkage](00-cross-module-linkage.md) | Cross-file executable lowering, stable symbol encoding and collision policy |
-| 02 | [Explicit generic functions](02-generic-functions.md) | Decide bracket syntax and type-value compatibility; lower concrete specializations |
-| 03 | [Prefix arrays and slices](03-prefix-array-syntax.md) | Decide type-value expression grammar and implement the chosen syntax |
-| 04 | [Generic data types](04-generic-types.md) | Reconcile explicit generic syntax with metatype specialization; implement runtime layout/lowering |
+| 00 | [Package paths and canonical linkage](00-cross-module-linkage.md) | Implement confirmed package-rooted lookup/visibility, cross-file lowering and stable symbol identity |
 | 05 | [String representation redesign](05-remove-string.md) | Literal/FFI/ownership policy and ordinary standard-library string APIs |
 | 06 | [Function overloading](06-function-overloading.md) | Overload selection, return-type policy and canonical overload identity |
 | 07 | [Interfaces and constraints](07-interfaces.md) | Constraint syntax, conformance identity and specialization checking |
-| 08 | [Interpreted build files](08-interpreted-build-files.md) | Default discovery, general IR interpretation and broader builder orchestration |
+| 08 | [Interpreted build files](08-interpreted-build-files.md) | Package source roots, recursive source discovery, default build-file discovery and general interpretation |
+
+## Language specification
+
+The [specification](../language-specification.md) defines package-rooted file
+namespaces, scoped visibility, implicit-prelude type identifiers, metatype
+specialization, suffix arrays/slices, numeric behavior, mutability and exhaustive
+switches. Semantic specialization, caching and concrete body rechecking work;
+concrete rechecked instances also execute through verified IR and LLVM.
 
 ## Remaining implementation work
 
+### Frontend and selected language changes
+
+- [x] Resolve all type names as ordinary identifiers through a protected implicit
+      prelude; preserve unified bindings and metatype specialization.
+- [ ] Implement package/source-root identities, `root` paths and namespace aliases;
+      normalize case/hyphens for package/directory/file segments, reject collisions,
+      and retain case-sensitive declaration/local names.
+- [x] Add `pub(dir)` and `pub(root)`, preserving file-private/default and public
+      access; permit explicit re-exports of accessible restricted targets.
+- [x] Give direct same-family literal cast operands destination context; implement
+      explicit numeric/bool conversions with zero/nonzero and 0/1 semantics.
+- [x] Permit shallow writable-to-readonly pointer/slice views and warned one-layer
+      implicit pointer field dereference, preserving null checks and permissions.
+- [x] Require exhaustive enum switches, allowing `when else` for remaining variants.
+
 ### Runtime lowering and SSA
 
-- [ ] Lower tuples, arrays, slices, enum payloads, multiple results,
+- [ ] Lower tuples, runtime indexing/slices, multiple results,
       globals and dynamic bounds checks.
-- [ ] Lower concrete generic specializations and calls across explicitly planned
+- [x] Lower concrete generic specializations and calls across explicitly planned
       source files, preserving canonical declaration/instance identities.
-- [ ] Lower switch and lexical defer, including cleanup on return, break and
+- [ ] Lower lexical defer, including cleanup on return, break and
       continue, according to [implemented flow semantics](../type-resolution.md).
 
 See the [SSA contract](../../src/ir/README.md) for representation boundaries.
 
 ### Backend and orchestration
 
-- [ ] Extend target-derived layout to slices, tuples, arrays and enums.
-- [ ] Extend shared ABI classification beyond the internal direct scalar/struct/pointer Fib subset;
+- [ ] Extend target-derived layout to slices and tuples; fixed-array values are implemented.
+- [ ] Extend shared ABI classification beyond the internal direct scalar/struct/enum/pointer Fib subset;
       implement external scalar C interoperability and broader representations.
 - [ ] Specify and implement C vararg promotions, callbacks and indirect calls.
 - [ ] Add configurable linker arguments, targets, sysroots, library paths and
       toolchain diagnostics beyond the current host-linking path.
+- [ ] Add build-API recursive source discovery under explicit package source roots:
+      select `.fib` files, skip symlinks, exclude the active build file, support
+      explicit exclusions and deduplicate selections into a deterministic plan.
 - [ ] Implement default build-file discovery, general CFG/value/function
-      interpretation and broader build API orchestration through the shared IR
-      path. Preserve centralized plan validation and the opaque host-owned API.
+      interpretation and broader build API orchestration through shared IR.
+      Preserve centralized validation and the opaque host-owned API.
 - [ ] Implement the `run` and `test` commands with explicit execution contracts.
 
 See the [backend contract](../../src/backend/README.md) and
@@ -85,7 +111,7 @@ See the [backend contract](../../src/backend/README.md) and
 - [ ] Classify modules as stub/unsafe/platform-specific/validated; first make
       them parse under current syntax, then add semantic and runtime tests as
       the corresponding compiler stages become executable.
-- [ ] Design `Result[T, E]`, `Option[T]`, owned/borrowed bytes, UTF-8 text,
+- [ ] Design metatype-based result/option types, owned/borrowed bytes, UTF-8 text,
       paths and move-only files; specify allocation failure and embedded NUL.
 - [ ] Replace public libc dependencies with a private platform layer, immediate
       errno translation, retry handling and C shims for ABI-sensitive structures.
@@ -115,8 +141,8 @@ See the [backend contract](../../src/backend/README.md) and
 - [ ] Test unsaved/transitive files, stale-result suppression, diagnostic clearing,
       Unicode and operation without LLVM; then add hover/navigation/rename and
       semantic tokens rather than relying on heuristic highlighting.
-- [ ] Define package discovery and editor configuration around explicit build
-      membership.
+- [ ] Implement editor configuration around finalized package/source membership;
+      specify package acquisition and version identity separately from source discovery.
 - [ ] Later: formatter and package tooling.
 
 ## Validation

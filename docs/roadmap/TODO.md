@@ -1,4 +1,9 @@
-# My TODOs
+# Implementation follow-up
 
-- Go over documenatation. Clean up old/rejected syntax.
-- Idea: make builtin types not be sepcially tokenized but actually just be resolved during semantic type identification.
+- Settle Unicode namespace normalization, then integrate package-rooted lookup.
+- Define package/source-discovery build-API signatures and implement deterministic
+  recursive selection, exclusions, symlink skipping and deduplication.
+- Review runtime indexing/slicing bounds and lifetime rules before native lowering.
+- Choose the public compiler namespace spelling.
+
+See the [implementation guide](../agents/README.md) for implemented specification features.

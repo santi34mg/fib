@@ -1,19 +1,31 @@
 # 00 — Canonical cross-file linkage names
 
-**Status:** future identity/linkage design. **Related:**
+The package path and visibility direction is now confirmed in
+[language specification](../language-specification.md#names-packages-and-source-discovery).
+Each package has a source root; `root` identifies the defining package; fully
+qualified paths use package/directory/file segments, with explicit aliases for
+shortened paths. This replaces the current longest-file-prefix lookup policy.
+File namespaces remain; explicit namespace blocks are not being introduced.
+Package/directory/file segments are case-insensitive, hyphens normalize to
+underscores, and collisions are errors. Declarations and locals stay case-sensitive.
+`pub(dir)`, `pub(root)` and public re-exports are implemented using explicit
+package/file regions. Internal package IDs and multi-file declaration-based
+linkage exist; acquisition/version identity and public linker encoding remain open.
+
+**Status:** confirmed package-path direction; identity/linkage details remain open. **Related:**
 [06 — Overloading](06-function-overloading.md).
 
 ## Baseline and historical motivation
 
 The old compiler could derive a call symbol from an import alias while emitting
 the definition under another name. That is historical motivation, not a
-reproducible link failure in the current checkout: analysis, lowering and linking
-are unfinished. Removed `TypedFunction`, `TypedModule`, `decl_key`,
+reproducible link failure in the current checkout: analysis, lowering and linking work across explicitly planned files. Internal
+symbols include declaration identity to distinguish same-spelled helpers. Removed `TypedFunction`, `TypedModule`, `decl_key`,
 `dedupe_declarations`, `analyze_in_module` and `--emit=typed` are not APIs to patch.
 
 Current contracts use explicit `BuildPlan` file membership, `FileId`, `DeclId`,
-`ResolvedName`, and project symbol tables. Qualified paths parse, but lookup does
-not execute. Follow [planned name resolution](../name-resolution.md), not legacy
+`ResolvedName`, and project symbol tables. Qualified paths parse and resolve across explicitly planned files.
+Follow [implemented name resolution](../name-resolution.md), not legacy
 recursive imports. The [architecture](../compiler-architecture.md) maps identities
 into owned IR functions/globals before the backend consumes them.
 
@@ -33,13 +45,16 @@ into owned IR functions/globals before the backend consumes them.
 
 ## Work and acceptance tests
 
-- [ ] Implement declaration collection and alias/file resolution first.
-- [ ] Define canonical symbol encoding, instance keys and collision handling.
-- [ ] Carry identities through AST annotations and `lower_to_ir` maps into
+- [x] Implement declaration collection and alias/file resolution in analysis.
+- [ ] Add package/source-root identities, package-relative dependency environments,
+      path normalization/collision checks, scoped visibility and re-export access.
+- [ ] Define canonical symbol encoding and instance keys independent of local
+      dependency aliases and filesystem spelling/case.
+- [ ] Carry identities through AST annotations and `ir::lowering::lower` maps into
       `FunctionId`/`GlobalId`; predeclare before emitting bodies.
 - [ ] Test two local names in different files, multiple aliases to one entity,
       repeated/diamond references, foreign symbols and entry policy.
-- [ ] Once an execution harness exists, prove cross-file calls link and run,
+- [ ] Extend the existing executable harness to prove cross-file calls link and run,
       with one definition per canonical entity and deterministic output.
 
 Renaming future symbols can affect foreign consumers; specify that compatibility

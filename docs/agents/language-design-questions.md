@@ -1,23 +1,30 @@
 # Open design boundaries
 
-These are implementation questions, not completed features. Compare source and
-[parser behavior](src/frontend/parser.md) before extending the language.
+The [language specification](../language-specification.md) defines file namespaces,
+package-rooted paths, `root`, source roots/discovery, scoped visibility, protected
+prelude type names, suffix arrays, lexical order, numeric/Boolean behavior,
+mutability and exhaustive switches. The independently specified semantic features now execute. Package/discovery
+integration and runtime indexing/slices still depend on open details; implementing
+the other settled choices is not a new language-design question. Compare the implementation guides before claiming
+support; the current compiler predates several decisions.
 
-- Which source signature, namespace mechanism, opaque value representations and
-  recoverable-error model will expose the decided interpreted `build.fib` API? The
-  execution route itself is fixed in the
-  [future plan](../roadmap/08-interpreted-build-files.md): verified owned IR,
-  host-owned builder state and no native build-file loading.
-- How will declaration collection reconcile forward visibility with initialization order?
-- How will nested no-capture functions and generic identities extend the existing
-  file visibility, alias-cycle, and lexical name-resolution rules?
-- What syntax will labels and generic parameters have? Current reserved annotation
-  slots/string lists do not define that syntax.
-- How will source records/ranges survive analysis and SSA lowering for diagnostics?
-- How will annotation completion, SSA dominance/edges and target/ABI legality be
-  verified before emission can return an artifact?
+Remaining questions include:
 
-The intended boundary remains original AST plus semantic annotations -> owned SSA
-IR -> target-aware backend. A second typed AST or silent direct-emission fallback
-would contradict the checked-in sketches. Resolve questions with explicit tests
-and update the relevant implementation page when behavior becomes real.
+- How will package acquisition/version identity and canonical linkage distinguish
+  dependencies independently of local dependency names and checkout paths?
+- What Unicode folding/normalization defines case-insensitive package/file names?
+- What exact source-discovery API shape, compiler namespace spelling and warning
+  controls will expose the decided behavior?
+- How will the existing `build() int32` and synthetic build API evolve to opaque
+  values, recoverable errors, general interpretation and broader capabilities?
+- How will future runtime globals reconcile forward visibility with initialization?
+- What syntax will labels and constraints on ordinary metatype parameters have?
+  How will nested no-capture functions extend existing lexical rules?
+- What broader array-size expressions, ownership/lifetime rules, string APIs,
+  overloading, interface constraints and external ABI policy will be adopted?
+- How will source ranges/context and validation extend to remaining representations?
+
+The implemented boundary remains original AST plus semantic annotations -> owned
+SSA IR -> target-aware backend. Add positive/negative tests as confirmed changes
+are implemented, and update implementation status alongside them. Unreviewed
+proposals and current parser restrictions are not automatically language decisions.

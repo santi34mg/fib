@@ -7,8 +7,10 @@ initial synthetic `build_api` namespace, shared analysis, verified straight-line
 for literal source/entry/output calls, and identity-based interpreter dispatch into
 `PlanBuilder`. Initial deterministic project-plan finalization validates root-relative
 sources, names, entry and output safety. General CFG/value interpretation and broader
-builder orchestration are not implemented. `fib build --single-file PATH` remains the only
-complete build entry while this plan is unfinished.
+builder orchestration are not implemented. Both `fib build --single-file PATH`
+and the narrow `fib build --build-file PATH` route compile supported programs.
+Explicit multi-file plans now lower and execute. Package metadata/scoped visibility
+are represented, while package-rooted lookup/discovery integration remains deferred.
 
 The chosen direction is to compile `build.fib` through the normal frontend into
 verified, backend-independent IR and interpret that IR inside `fibc`. The compiler
@@ -28,8 +30,9 @@ will not emit, load or execute a native build-file binary.
 ## Discovery and project root
 
 `fib build` will look for exactly `build.fib` in the process working directory. The
-initial implementation will not walk parent directories. A future explicit
-`--build-file PATH` option may select another file without changing the default.
+discovery implementation will not walk parent directories. The existing explicit
+`--build-file PATH` option selects a build file today; bare `fib build` still
+returns an error.
 
 The directory containing the selected build file is the project root. Relative
 source, dependency and output paths supplied by the build file are resolved against
@@ -63,10 +66,21 @@ they must never be treated as successful no-ops.
 
 ## Build entry and API boundary
 
-A build file will provide exactly one distinguished `build` entry with a
-compiler-defined signature. Its final source syntax remains to be specified after
-opaque handles, paths, strings and build errors have stable semantic
-representations. Conceptually, it receives a host-owned plan builder and mutates it:
+The current build file provides `build() int32` and calls the synthetic
+`build_api` namespace with literal strings:
+
+```fib
+fn build() int32 {
+    build_api::add_source("src/main.fib");
+    build_api::set_entry("main");
+    build_api::set_output("build/app");
+    return 0;
+}
+```
+
+The broader API's source signature remains open until opaque handles, paths,
+strings and recoverable build errors have stable representations. Conceptually,
+a future API could receive a host-owned plan builder and mutate it:
 
 ```fib
 // Illustrative future API; this is not guaranteed parser syntax.
@@ -119,8 +133,33 @@ model should distinguish at least:
 - declared build inputs such as files or environment variables.
 
 Build-script dependencies, if supported later, are a separate bootstrap concern.
-Package resolution itself is outside this plan and must not reintroduce implicit
-recursive source discovery.
+Package acquisition/version resolution remains outside this plan. Recursive source
+selection is explicitly enabled through a build-API operation; name resolution
+never recursively loads files on demand. See the confirmed source-discovery rules
+below.
+
+## Confirmed package source discovery
+
+Each package has an explicit source root, separate from the directory containing
+`build.fib` used to anchor build operations. A recursive discovery operation
+(exact API name/signature pending) selects `.fib` files beneath a requested directory
+inside that root. Namespace paths remain relative to the package source root,
+not the discovery subtree. It skips symlinks and the active build file, supports
+explicit exclusions, and otherwise includes hidden/test/build directories without
+conventional-name filtering. Repeated selection of one file includes it once.
+
+Finalize the selected source tree deterministically before analysis. Normalize
+hyphens to underscores and compare package/directory/file names without case;
+reject spaces, language keywords, normalized-name collisions and file/directory
+conflicts. Declaration/local names remain case-sensitive. The confirmed spelling
+`root` means the package containing the source, including in dependencies; package
+names cannot be shadowed, and explicit namespace aliases can shorten paths.
+
+`BuildPlan::packages` represents package IDs, source roots, dependency maps and
+file membership for host-created plans. The build API does not expose that metadata
+yet; current finalization still uses file-stem names and rejects duplicate source selections. It must be extended rather than claiming discovery already
+works. Unicode folding and package acquisition/version identity remain open.
+See [language specification](../language-specification.md) for scoped visibility and exports.
 
 ## Interpretation and capabilities
 
@@ -146,7 +185,8 @@ After `build` returns successfully, the host finalizes the builder and validates
 complete plan before compiling project sources. Validation must include:
 
 - exactly one entry source that belongs to the explicit file set;
-- unique file IDs, logical names and normalized memberships;
+- unique file IDs and normalized namespace paths, with repeated selection of
+  the same source deduplicated under the confirmed discovery policy;
 - deterministic ordering and compiler-assigned identities;
 - existence and kind checks for all required source paths;
 - project-root-relative path resolution with a documented policy for absolute paths
@@ -176,20 +216,18 @@ interpreter API should eventually record allowed observations as they occur.
 
 ## Implementation sequence
 
-1. Replace ad-hoc build-file discovery with exact `<cwd>/build.fib` discovery and
-   project-root path anchoring, while preserving the current explicit error until
-   interpretation is available.
-2. Define and validate the bootstrap plan and distinguished build entry without
-   adding a second frontend or direct AST execution path.
-3. Define opaque interpreter values and a minimal versioned `PlanBuilder` API. Keep
-   Rust types and native calling conventions out of the contract.
-4. Implement the required IR interpreter operations with source-aware traps and
-   strict rejection of unsupported IR.
-5. Finalize and centrally validate `BuildPlan`, including deterministic file-ID
-   allocation and path/output safety.
-6. Connect `fib build` to bootstrap lowering, verified interpretation and the
-   existing project pipeline. Preserve `--single-file` as a bypass.
-7. Add declared inputs, caching and broader capabilities only after their
+1. Extend plan data and finalization with package source roots and the confirmed
+   recursive source-discovery/normalization rules, retaining project-root anchoring
+   for build operations. Add exact `<cwd>/build.fib` discovery using the existing
+   explicit build-file bootstrap path.
+2. Extend the literal-operation API and straight-line interpreter to general
+   CFG/value/function interpretation, with source-aware traps and explicit errors
+   for unsupported IR. Keep Rust layouts and native ABI out of the API.
+3. Extend centralized finalization as target/profile/linker operations are added;
+   preserve existing deterministic source IDs and path/name/entry/output checks.
+4. Support executable cross-file lowering before promising multi-file builds;
+   plan finalization and analysis already support explicit multi-file membership.
+5. Add declared inputs, caching and broader capabilities only after their
    invalidation and security semantics are specified.
 
 Each step must update the current implementation guide when it becomes real. The
@@ -204,7 +242,10 @@ The first complete milestone requires tests proving that:
 - malformed or semantically invalid build files produce normal diagnostics;
 - invalid IR is rejected before interpretation;
 - a valid build file creates a deterministic multi-file `BuildPlan`;
-- duplicate names, missing entry files and source-overwriting outputs are rejected;
+- overlapping source selections include each file once; normalized namespace
+  collisions, missing entries and source-overwriting outputs are rejected;
+- recursive discovery preserves source-root paths, applies explicit exclusions,
+  skips symlinks and the active build file, and has deterministic results;
 - unsupported interpreter operations fail rather than succeeding silently;
 - plan construction works without the LLVM feature or a host linker;
 - `--single-file` does not execute a neighboring build file; and
@@ -214,7 +255,8 @@ The first complete milestone requires tests proving that:
 
 The architectural route is decided, but these details remain open:
 
-- the exact source signature and namespace/import mechanism for the build API;
+- the broader API signature and namespace evolution beyond `build() int32`
+  and the existing synthetic `build_api` namespace;
 - semantic representations for opaque handles, paths, strings and recoverable build
   errors;
 - the minimum IR operation set required by useful build files;
