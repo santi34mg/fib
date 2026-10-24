@@ -1,5 +1,9 @@
 # Variables
 
+Unified declarations are confirmed. The reviewed
+[visibility design](../language-specification.md#names-packages-and-source-discovery)
+supports bare `pub`, `pub(dir)` and `pub(root)` on declarations.
+
 > **Verified parser behavior:** Declarations and assignments below parse into syntax ASTs.
 
 ## Explicit and inferred declarations

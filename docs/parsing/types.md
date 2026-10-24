@@ -1,5 +1,9 @@
 # Types
 
+Primitive names are ordinary identifier tokens. Analysis resolves their
+[prelude declarations](../language-specification.md) and prevents lexical shadowing. Suffix array/slice syntax
+is the language syntax.
+
 > **Verified parser behavior:** The names and composite forms below are recognized as type syntax.
 
 ## Built-in names
@@ -20,8 +24,10 @@ Types do **not** use `@`. Numeric suffixes are widths in **bits**, not bytes.
 | `usize` | Intended pointer-width unsigned size type |
 | `type` | Metatype, used in annotations such as `Name: type = ...;` |
 
-These spellings are builtin tokens, not ordinary identifiers: they cannot be
-used as variable, parameter, field, or variant names.
+These spellings parse as ordinary names. Analysis protects the bare prelude names
+from lexical shadowing; fields and variants have separate member namespaces.
+In expression positions, analysis distinguishes type construction (`T[N]`, `T[]`)
+from indexing or slicing a runtime value.
 
 Old names such as `@int4`, `@void`, and `@uint8` are not current type syntax.
 Use `int32`, `void`, and `uint64` respectively; do not mechanically remove `@`
@@ -51,9 +57,9 @@ Remote: type = other::Thing;
   syntax. Function **declarations** have no arrow; see [Functions](functions.md).
 - Qualified names such as `other::Thing` parse as named type references.
 
-The type parser consumes one array/slice suffix at each recursive level, not
-an arbitrary suffix chain. Do not assume `int32[2][3]` is supported. Pointer
-pointees are parsed recursively: `*int32[3]` is a pointer to an array.
+The type parser loops over array/slice suffixes and recursively parses pointer
+pointees: `*int32[3]` is a pointer to an array. Parser representation does not
+imply native lowering for arrays or slices.
 
 ## Named types and type values
 
@@ -75,9 +81,10 @@ fn identity(T: type, value: T) T { return value; }
 ```
 
 The latter preserves a metatype parameter and named type references in the AST;
-it does not implement generics. See [Generics](generics.md).
-`comp Name: type = ...;` records the binding's `is_comp` flag; compile-time
-resolution/evaluation remains unfinished. See [Name resolution](../name-resolution.md).
+analysis implements specialization and concrete body rechecking, and concrete
+generic instances lower for supported runtime representations. See [Generics](generics.md).
+`comp Name: type = ...;` records the binding's `is_comp` flag; analysis requires
+that modifier on type bindings and supports bounded eligible `comp fn` computation. See [Name resolution](../name-resolution.md).
 
 Parser coverage: `builtin_type_spellings_have_expected_ast_variants`,
 `composite_type_expressions_preserve_nesting`, and

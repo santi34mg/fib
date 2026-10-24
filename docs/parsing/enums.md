@@ -1,5 +1,9 @@
 # Enums and payload variants
 
+Construction and payload-copy semantics are recorded in [enum semantics](../enum-semantics.md).
+The confirmed design requires exhaustive switches, using `when else` as default;
+analysis enforces coverage, including unreachable switches.
+
 > **Verified parser behavior:** Enum type declarations, member expressions, and switch patterns parse.
 
 ## Declaring enum types

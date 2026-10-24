@@ -1,5 +1,10 @@
 # Pointers and memory
 
+The confirmed [pointer rules](../struct-storage-semantics.md) add shallow
+writable-to-readonly pointer/slice views and `pointer.field` shorthand with exactly
+one implicit dereference and a warning. Both are implemented; slice execution remains deferred. The shorthand
+preserves readonly permissions and ordinary null checks.
+
 > **Verified parser behavior:** Raw pointer types, null literals, restricted postfix address/deref expressions, and casts parse.
 
 ## Pointer types and null

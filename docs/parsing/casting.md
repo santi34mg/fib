@@ -1,5 +1,10 @@
 # Casting
 
+The confirmed [cast rules](../scalar-semantics.md) give direct same-family
+literals destination context and allow explicit numeric/bool conversion. Both
+are implemented through analysis and native execution. A parsed cast AST does not certify a legal
+conversion; typed expressions and cross-family casts retain conversion semantics.
+
 > **Verified parser behavior:** `as` builds a cast AST node with a type-expression target.
 
 ## Syntax

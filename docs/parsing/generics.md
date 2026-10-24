@@ -23,7 +23,7 @@ in expression position remains an unresolved name. Resolution must determine
 whether it denotes a type, value, or invalid argument.
 
 ```fib
-Count: type = int32;
+comp Count: type = int32;
 fn first(T: type, values: *T) T {
     return values[0];
 }
@@ -38,10 +38,11 @@ arrays, and slices.
 The parser always initializes `FunctionSignature.generic_parameters` to an
 empty vector. It does not classify `type` parameters into generic metadata.
 
-There is no angle-bracket generic declaration or call grammar. Positional
-metatype arguments are parsed syntax, not a settled generic API. Specialization
-and generic API proposals are discussed in the [roadmap](../roadmap/) and
-[Name resolution](../name-resolution.md).
+Ordinary metatype parameters and type-value arguments provide generic
+specialization. Analysis performs specialization and concrete
+body rechecking; functions computing types require explicit `comp fn`. This
+parser snapshot alone does not establish semantic or executable support. See
+[type resolution](../type-resolution.md) and the [roadmap](../roadmap/README.md).
 
 See [Functions](functions.md) and [Types](types.md). Related follow-up is collected in this [GitHub issue #12](https://github.com/santi34mg/fib/issues/12).
 

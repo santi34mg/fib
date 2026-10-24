@@ -88,13 +88,16 @@ message := "line one\nline two\n";
 
 An identifier starts with an alphabetic character or `_`, followed by alphanumeric
 characters or `_` (using Rust character predicates, not an ASCII-only rule).
-Keywords and builtin names are classified before ordinary identifiers.
+Current keywords and builtin type names are classified before ordinary
+identifiers. The confirmed [prelude design](../language-specification.md) moves type
+names into ordinary identifier resolution, preserving their no-shadowing rule.
+The case-insensitive package/file policy does not change identifier token spelling
+or case-sensitive declaration/local lookup.
 
 Double-underscore names are described in a tokenizer comment as intended for
 compiler internals, but the tokenizer does **not** reject them. Do not describe
-this as an enforced reservation. `var`, `for`, `import`, `comp`, and `pub` are
-currently ordinary identifiers, not active keywords; that does not give them
-the old or planned declaration semantics.
+this as an enforced reservation. `var`, `for` and `import` are ordinary
+identifiers, not active keywords; `comp` and `pub` are active declaration keywords.
 
 See [`src/frontend/tokenizer/test.rs`](../../src/frontend/tokenizer/test.rs) for lexical tests and
 [`src/frontend/parser/test.rs`](../../src/frontend/parser/test.rs) for literal-expression and lexer-error propagation tests.

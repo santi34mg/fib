@@ -1,5 +1,10 @@
 # Structs
 
+The confirmed [value rules](../language-specification.md#values-initialization-and-mutability)
+retain nominal identity, complete construction, written initializer evaluation order
+and plain-data copies. Pointer field shorthand and shallow readonly-view
+conversion are implemented by analysis and lowering.
+
 > **Verified parser behavior:** Struct type expressions, named constructions, field expressions, and name-starting field assignments parse.
 
 ## Declarations

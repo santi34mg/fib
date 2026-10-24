@@ -1,5 +1,12 @@
 # Files, qualified paths, and planned modules
 
+The confirmed [package model](../language-specification.md#names-packages-and-source-discovery)
+uses `root::directory::file::binding` or dependency-package paths, with explicit
+namespace aliases. Case-insensitive package/directory/file lookup, source roots,
+scoped visibility and recursive build-API source discovery remain unimplemented.
+Declarations and locals remain case-sensitive. Parsed paths alone prove none of
+these lookup behaviors.
+
 > **Verified parser behavior:** Qualified names parse; source-level import declarations do not.
 
 ## Qualified syntax that parses
@@ -38,10 +45,11 @@ cast operator, not an import alias declaration.
 
 `const File := other::file;` parses as an ordinary const variable declaration,
 not a resolved module-alias declaration. `comp` and `pub` are parsed as unified
-binding modifiers (`is_comp` and `is_pub`); namespace/visibility semantics remain
-unfinished.
-The proposed namespace model is detailed in [Name resolution](../name-resolution.md)
-and the [roadmap](../roadmap/).
+binding modifiers (`is_comp` and `is_pub`). Current analysis resolves file aliases
+and file/directory/package/public visibility through explicit file regions.
+Package-rooted lookup and discovery remain deferred. Use `comp File := other::file;` for a namespace alias, not `const`.
+See [current name resolution](../name-resolution.md) and
+[confirmed package design](../language-specification.md).
 
 Related follow-up is collected in this [GitHub issue #9](https://github.com/santi34mg/fib/issues/9).
 

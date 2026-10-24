@@ -1,5 +1,10 @@
 # Control flow
 
+The confirmed [Boolean and switch rules](../language-specification.md) require bool
+conditions and exhaustive enum switches; `&&`/`||` short-circuit left-to-right.
+Explicit numeric/bool casts are implemented. Defer
+syntax below is an implementation snapshot, not a newly confirmed design choice.
+
 > **Verified parser behavior:** The constructs below parse into statement nodes.
 
 ## `if` / `else`

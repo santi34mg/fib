@@ -1,5 +1,9 @@
 # Switch
 
+The confirmed [enum-switch design](../enum-semantics.md) requires exhaustive
+coverage, either all variants or `when else` for the remainder. Parsing does not
+check coverage; analysis enforces it even in unreachable code. Payload bindings are arm-local mutable copies.
+
 > **Verified parser behavior:** Switch statements and variant/wildcard patterns parse.
 
 ## Statement syntax

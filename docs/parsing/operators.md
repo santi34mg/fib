@@ -83,9 +83,9 @@ design rule.
 
 - `::` separates unresolved static name segments; see [Imports](imports.md).
 - `->` is consumed in function types, not function declarations.
-- `...` is consumed as the final variadic parameter marker; it is not a general
-  expression spread/range operator.
-- `@` may prefix recognized builtin functions, not types or `.len`.
+- Variadic parameter syntax is removed; `...` is not a working spread operator.
+- Former `@` builtin calls and types are rejected. Compiler intrinsics resolve
+  through ordinary synthetic namespace declarations.
 
 Parser coverage includes `test_binary_levels_are_left_associative`,
 `test_binary_shift_binds_looser_than_additive`, `test_binary_logical_or_loosest`,

@@ -1,5 +1,12 @@
 # Arrays and slices
 
+Array and slice types use suffix syntax: `T[N]` and `T[]`.
+The [chosen value/mutability rules](../language-specification.md#values-initialization-and-mutability)
+keep fixed arrays inline: binding const forbids whole-array replacement, while
+element const independently forbids element writes. Type/index disambiguation
+is implemented. Native fixed-array literals, storage, copies, assignment, calls
+and `.len` work; runtime indexing/slicing remains deferred.
+
 > **Verified parser behavior:** Array/slice types, literals, indexing, and range syntax parse.
 
 ## Types and literals
@@ -61,7 +68,8 @@ length := items.len;
 
 `.len` parses as ordinary member access. 
 
-Proposed array syntax is tracked in the [roadmap](../roadmap/).
+The [language specification](../language-specification.md#declarations-generics-and-lexical-scope)
+defines suffix type syntax; runtime representations remain roadmap work.
 
 Related follow-up is collected in this [GitHub issue #13](https://github.com/santi34mg/fib/issues/13).
 

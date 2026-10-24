@@ -1,5 +1,8 @@
 # Primitive types and ordinary function calls
 
+The [prelude design](../language-specification.md) is implemented: primitive
+types lex as ordinary identifiers and resolve to protected compiler-owned type values. Compiler intrinsics remain identity-based synthetic declarations.
+
 > **Verified parser behavior:** primitive types use bare names; functions use ordinary identifiers.
 
 Types such as `int32`, `string`, `bool`, `usize` and `type` are recognized by the
