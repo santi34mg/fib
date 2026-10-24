@@ -1,162 +1,83 @@
 # Fib roadmap
 
-## Implementation and test baseline (2026-10-19)
+## Implementation and test baseline (2026-10-24)
 
-This roadmap describes reconstruction and future language work, not completed
-compiler features. Source and executable tests take precedence over historical
-release notes, samples, and earlier roadmap decisions. See the
-[current implementation guide](../agents/README.md) and
-[compiler architecture](../compiler-architecture.md).
+This roadmap describes reconstruction and future language work. Source and
+executable tests take precedence over historical release notes, samples, and
+checklists. See the [current implementation guide](../agents/README.md).
 
 | Area | Current implementation |
 | --- | --- |
-| Tokenizer/parser | Working independently, producing the source AST with pending analysis annotations. |
-| Supporting utilities | Lexical scope storage, diagnostics, source/file identity records, raw IR access and formatting work. These do not implement language-level analysis. |
-| Analysis | Plan/unit validation, annotated declaration collection, names/aliases, visibility, and name-slot completion work. Type/member resolution and full completion validation remain stubs. No separate typed AST exists. |
-| Driver/build | `run_pipeline`, `run_frontend`, `parse_files`, `lower_to_ir` are error stubs. `BuildPlan` names files explicitly; single-file loading, build-file interpretation and builder orchestration are unfinished. |
-| SSA IR | Owned arenas, types, instructions, blocks, values and storage records exist. `FunctionBuilder` and `verify_ir` return unimplemented errors. |
-| Backend | IR-only phase contracts; no LLVM emission, objects, linking or direct AST fallback. The inactive `backend/lowering/next/` prototype is not a supported route. |
-| CLI/execution | Help accepts `build [--single-file PATH]`, `run`, `test`; command execution is `todo!()`. IR interpretation is also unfinished. |
-| Tests/corpus | Unit tests exercise parsing, data and stub contracts. `analyzer/test.rs` contains six passing inline name-resolution specification phases; see [validation](../agents/tests/README.md). No integration/e2e harness exists; samples and `std` are not evidence of compilation or execution. |
+| Tokenizer/parser | Working source AST construction with pending analysis annotations. |
+| Analysis | Names, visibility, aliases, types/members, explicit metatype specialization, bounded type computation, initialization/control flow and completion validation on the original AST. |
+| Driver/build | Single-file pipeline and deterministic plan finalization; build files have a narrow interpreted literal-operation API. General interpretation and default discovery remain unfinished. |
+| SSA IR | Transactional construction and scalar verification of ownership, signatures, reachability and dominance. Source lowering supports scalar helpers/calls, initialized locals, arithmetic/casts, short-circuit logic, conditionals, while loops, break/continue and returns. Storage remains unsupported. |
+| Backend | LLVM 21 emits verified multi-block SSA/PHIs/backedges and scalar operations. C int32 entry and internal scalar Fib fastcc ABI, objects and host linking work; full production ABI and broader representations remain unfinished. |
+| CLI/execution | `build --single-file PATH` and narrow `build --build-file PATH` work. `run` and `test` report explicit errors. |
+| Tests/corpus | Frontend, driver, IR and backend suites plus LLVM-enabled executable acceptance tests. Most samples have parser coverage; scalar and loop samples additionally have execution coverage. |
 
-### Implemented syntax, not implemented semantics
+## Open proposals
 
-- Bare bit-width types: `int32`, `uint64`, `float32`; `int`/`uint` alias
-  32-bit types. Historical byte-width `int4` and `@` type spellings are not
-  current source guidance. Some token display helpers/comments still lag.
-- Bindings: `x := 1;`, `const x := 1;`, `x: int32;`.
-- Functions: `fn f(x: int32) int32 { return x; }`.
-- Loops: `while (condition) { ... };`, not legacy `for`.
-- Type syntax is still suffix: `int32[8]`, `int32[]`. Prefix forms are proposed.
-- Values use `a[i]`, `a[a..b]`, `.len`, and postfix pointer operations
-  (`p*`, `x&`), not historical dot-indexing.
-- Qualified names retain arbitrary `::` segments. Name resolution selects registered
-  build-plan files and aliases without filesystem import loading; legacy `import`
-  declarations are not working grammar.
-- Functions use ordinary identifiers; builtin functions are removed. Primitive type values
-  still parse in expression position. Neither fact implements generic analysis.
+These proposals need design reconciliation or implementation beyond the current
+compiler. Their numbering is not an implementation order. Current syntax and
+semantics are documented in the [implementation guide](../agents/README.md),
+[typing reference](../type-resolution.md), and [scalar semantics](../scalar-semantics.md).
 
-See the [parser audit](../agents/src/frontend/parser.md) for details and limits.
-
-## Proposal series
-
-Numbering preserves useful design history; it is not a completion sequence or a
-promise that old dependencies still hold. Each page distinguishes the baseline
-from proposals. There are no completed semantic or backend milestones here.
-
-| # | Proposal | Prerequisites / reconciliation |
+| # | Proposal | Remaining work |
 | --- | --- | --- |
-| 00 | [Canonical cross-file linkage](00-cross-module-linkage.md) | File/declaration resolution and explicit build-plan membership |
-| 01 | [Builtin sigil cleanup](01-builtin-sigil.md) | Type/property spelling already changed; function removal remains a proposal |
-| 02 | [Explicit generic functions](02-generic-functions.md) | Decide bracket ambiguity and type-value policy; implement analysis |
-| 03 | [Prefix arrays and slices](03-prefix-array-syntax.md) | Decide type-value expression grammar; independent of completed generic support |
-| 04 | [Generic data types](04-generic-types.md) | Generic syntax, canonical semantic identity, recursion and layout rules |
-| 05 | [String representation redesign](05-remove-string.md) | Literal/FFI/ownership policy; generic owning container for the proposed library model |
-| 06 | [Function overloading](06-function-overloading.md) | Canonical declaration identity, complete declaration collection and typing |
-| 07 | [Interfaces and constraints](07-interfaces.md) | Generic types/functions, overload rules and conformance identity |
-| 08 | [Interpreted build files](08-interpreted-build-files.md) | Verified owned IR, interpreter operations, opaque build API and centralized `BuildPlan` validation |
+| 00 | [Canonical cross-file linkage](00-cross-module-linkage.md) | Cross-file executable lowering, stable symbol encoding and collision policy |
+| 02 | [Explicit generic functions](02-generic-functions.md) | Decide bracket syntax and type-value compatibility; lower concrete specializations |
+| 03 | [Prefix arrays and slices](03-prefix-array-syntax.md) | Decide type-value expression grammar and implement the chosen syntax |
+| 04 | [Generic data types](04-generic-types.md) | Reconcile explicit generic syntax with metatype specialization; implement runtime layout/lowering |
+| 05 | [String representation redesign](05-remove-string.md) | Literal/FFI/ownership policy and ordinary standard-library string APIs |
+| 06 | [Function overloading](06-function-overloading.md) | Overload selection, return-type policy and canonical overload identity |
+| 07 | [Interfaces and constraints](07-interfaces.md) | Constraint syntax, conformance identity and specialization checking |
+| 08 | [Interpreted build files](08-interpreted-build-files.md) | Default discovery, general IR interpretation and broader builder orchestration |
 
-Earlier plans called these decisions “locked.” They remain design inputs, not
-implemented guarantees. In particular, removing type values, deleting builtin
-functions, return-type overloading and per-instantiation constraint checking
-require explicit reconciliation with the current architecture before adoption.
+## Remaining implementation work
 
-## Reconstruction priorities
+### Runtime lowering and SSA
 
-### 1. Complete the frontend boundary
+- [ ] Lower uninitialized declarations after definite-initialization analysis,
+      without inventing values on paths where a binding is not initialized.
+- [ ] Implement storage operations and verification; lower nested lvalues through
+      explicit addresses/projections.
+- [ ] Lower aggregates, tuples, arrays, slices, enum payloads, multiple results,
+      globals and dynamic bounds checks.
+- [ ] Lower concrete generic specializations and calls across explicitly planned
+      source files, preserving canonical declaration/instance identities.
+- [ ] Lower switch and lexical defer, including cleanup on return, break and
+      continue, according to [implemented flow semantics](../type-resolution.md).
 
-- [ ] Load only files explicitly named by `BuildPlan`, preserving file identity
-      and source context. Specify build.fib interpretation and single-file plans.
-- [ ] Complete declaration binding annotations and lexical/file-name and alias
-      resolution, then implement type/member resolution, initialization checking
-      and annotation completion on the original AST.
-- [ ] Enforce [planned name-resolution rules](../name-resolution.md), including
-      redeclarations, visibility, aliases, separate labels and forward visibility
-      versus initialization. Storage utilities are not enforcement.
-- [ ] Define one conversion/cast matrix; contextual literal ranges; operator,
-      assignment, call and return legality; pointer/null and `never` rules.
-- [ ] Validate control flow, conditions, reachable returns, enum payload use,
-      switch duplicates and definite initialization.
-- [ ] Detect alias cycles and infinite by-value types before lowering.
-- [ ] Make the six name-resolution specification phases pass, then extend
-      positive/negative analysis coverage to types and initialization with source
-      locations. Never replace an unfinished pass with successful empty output.
+See the [SSA contract](../../src/ir/README.md) for representation boundaries.
 
-### 2. Build and verify the owned SSA IR
+### Backend and orchestration
 
-The flat instruction-stream importer and direct typed-AST LLVM route are
-historical, not migration targets. There is no fallback to restore.
+- [ ] Derive pointer, slice, aggregate and enum layouts from target data.
+- [ ] Extend shared ABI classification beyond the internal scalar Fib subset;
+      implement external scalar C interoperability and broader representations.
+- [ ] Specify and implement C vararg promotions, callbacks and indirect calls.
+- [ ] Add configurable linker arguments, targets, sysroots, library paths and
+      toolchain diagnostics beyond the current host-linking path.
+- [ ] Implement default build-file discovery, general CFG/value/function
+      interpretation and broader build API orchestration through the shared IR
+      path. Preserve centralized plan validation and the opaque host-owned API.
+- [ ] Implement the `run` and `test` commands with explicit execution contracts.
 
-- [ ] Implement `lower_to_ir(&AnalyzedProject)` with a validated-analysis gate,
-      canonical declaration/instance maps and IR-owned runtime types.
-- [ ] Implement function-scoped construction: ownership, fresh definitions,
-      explicit terminators, block parameters and edge arguments, explicit memory.
-- [ ] Implement verification of IDs, ownership, declarations, constants, types,
-      dominance, edge arity/types, calls and returns; reject malformed input.
-- [ ] Lower short-circuiting and mutable bindings with correct joins and loops;
-      model nested lvalues as explicit addresses/projections.
-- [ ] Cover aggregates, tuples, arrays, slices, enum payloads, multiple results,
-      bounds checks, globals, qualified calls and specified runtime builtins.
-- [ ] Preserve diagnostics and source provenance through lowering. Raw records
-      and diagnostic dumps are not verified executable IR.
-
-See the [SSA contract](../../src/ir/README.md) for representation details and
-open semantic decisions.
-
-### 3. Implement target-aware backend and orchestration
-
-- [ ] Verify input before target/type planning; derive layout from target data,
-      including pointer widths, slices, aggregates and aligned enum payloads.
-- [ ] Share ABI classification across declarations, definitions, calls and
-      returns; specify C vararg promotions, callbacks and unsupported cases.
-- [ ] Predeclare all symbols, emit blocks/PHIs, patch forward/back/parallel
-      edges using actual emitted predecessors, then verify LLVM before artifacts.
-- [ ] Keep language traps, bounds policy and arithmetic semantics explicit; do
-      not guess LLVM flags or repair invalid input during emission.
-- [ ] Wire driver goals, object production, configured linker arguments, target,
-      sysroot, library paths and toolchain diagnostics. No obsolete `--emit`,
-      include-root, check or release CLI flags are available today.
-- [ ] Implement build-file discovery, bootstrap lowering, the opaque build API,
-      verified IR interpretation and centralized plan validation according to the
-      [interpreted build-file plan](08-interpreted-build-files.md). Do not emit or
-      load a native build-file artifact.
-
-The [backend plan](../../src/backend/README.md) is an IR-only contract. A future
-native backend consumes the same IR; it is not a second frontend lowering route.
-
-## Retained semantic policy proposals
-
-Fixed-width scalar arithmetic and explicit numeric conversions are implemented;
-see [scalar semantics](../scalar-semantics.md). They use wrapping integers,
-checked division/shift failures, truncating integer casts and IEEE floats.
-Implicit widening was not adopted: typed values require explicit conversions,
-including at assignment, argument and return boundaries. Full external ABI and
-checked-operation APIs remain future work.
-
-Remaining proposals require specification and tests; they are not declarations
-of current analyzer/runtime behavior:
-
-- Restrict `null` to pointers, with unconstrained type `*void`; restrict `never`
-  to return types with no normal return. Neither rule is currently enforced.
-- Require commas between list elements, allow one trailing comma and keep
-  newlines insignificant. Audit each parser list: current acceptance is not a
-  guarantee of consistent strict separator enforcement.
-- Lexically scoped `defer`, reverse order on every scope exit, return value
-  evaluated first, deferred references evaluated when work starts. Reject
-  nested `defer` and `return` within it; decide break/continue behavior.
-
-## Further work retained from earlier phases
+See the [backend contract](../../src/backend/README.md) and
+[interpreted build-file plan](08-interpreted-build-files.md).
 
 ### Diagnostics, parser reliability and determinism
 
 - [ ] Harden delimited lists and malformed/truncated input with success and
-      negative tokenizer/parser tests; add recovery and no-panic fuzzing.
+      negative tokenizer/parser tests; audit comma/trailing-comma consistency,
+      add recovery and no-panic fuzzing.
 - [ ] Extend point spans to byte ranges, retaining existing `FileId` identities
       and source context. There is no central source-map store today.
 - [ ] Define public diagnostic categories, source chains and machine-readable
       output for the actual driver APIs, not removed compile/check APIs.
-- [ ] Use deterministic declaration/instance ordering and repeated-build tests.
-- [ ] Add independently callable stages before proposing stage-emission CLI flags.
+- [ ] Extend determinism coverage to cross-file symbols, generic instances and
+      complete repeated-build artifacts.
 
 ### Ownership, strings and standard library
 
@@ -164,7 +85,7 @@ of current analyzer/runtime behavior:
       deterministic destruction and suppression, including all control-flow exits.
 - [ ] Audit experimental `std` for success-returning no-ops, fake atomics,
       allocation/reallocation failure, overflow, hard-coded pthread layouts and
-      signed FFI returns. Old corpus counts and old ABI claims need re-auditing.
+      signed FFI returns.
 - [ ] Classify modules as stub/unsafe/platform-specific/validated; first make
       them parse under current syntax, then add semantic and runtime tests as
       the corresponding compiler stages become executable.
@@ -187,10 +108,8 @@ of current analyzer/runtime behavior:
 
 ### Tooling, tests and performance
 
-- [ ] Establish an executable integration harness with explicit sample policies
-      (output, compile-only, expected error). No `tests/e2e.rs` exists today.
-- [ ] Add semantic/backend regressions as those stages work, not old-route
-      differential tests or historical probe-file migrations.
+- [ ] Extend the existing executable harness to broader sample policies:
+      expected output, compile-only cases and expected diagnostics.
 - [ ] Separate optimization from bounds policy; add target and CLI policy tests.
 - [ ] Measure lowering before optimizing allocation placement or aggregate spills.
 - [ ] Audit dependencies and package metadata; keep toolchain/MSRV changes deliberate.
@@ -201,12 +120,12 @@ of current analyzer/runtime behavior:
       Unicode and operation without LLVM; then add hover/navigation/rename and
       semantic tokens rather than relying on heuristic highlighting.
 - [ ] Define package discovery and editor configuration around explicit build
-      membership, not resurrected recursive import/include-root loading.
+      membership.
 - [ ] Later: formatter and package tooling.
 
 ## Validation
 
-Use the [validation guide](../agents/tests/README.md). No-default-feature
-check/test/help exercise this checkout without LLVM; passing stub tests does not
-prove semantic analysis, SSA verification, ABI correctness or execution. Default
-`llvm` enables Inkwell 0.8 / LLVM 21 dependencies, not working code generation.
+Use the [validation guide](../agents/tests/README.md). Run frontend/IR checks
+without default features and LLVM-enabled checks for backend changes. Executable
+acceptance tests require LLVM 21 and host `cc`. Add positive and negative coverage
+for each newly supported behavior and update the implementation guide alongside it.
