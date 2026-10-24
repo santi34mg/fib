@@ -1,4 +1,4 @@
-//! Verification for scalar/struct SSA and typed stack memory. Unsupported representation/operation families fail closed.
+//! Verification for scalar/struct/enum SSA and typed stack memory. Unsupported representation/operation families fail closed.
 use super::*;
 use std::collections::HashSet;
 
@@ -42,6 +42,23 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                 }
                 check_sized(ir, TypeId(index), &mut sized)?;
             }
+            IrType::Enum { variants, .. } => {
+                let mut tags = HashSet::new();
+                for variant in variants {
+                    require(
+                        tags.insert(variant.discriminant),
+                        "duplicate enum discriminant",
+                    )?;
+                    for field in &variant.fields {
+                        require(ir.get_type(*field).is_some(), "unknown enum field type")?;
+                        require(
+                            !matches!(ir.get_type(*field), Some(IrType::Bytes)),
+                            "Bytes has no enum field representation",
+                        )?;
+                    }
+                }
+                check_sized(ir, TypeId(index), &mut sized)?;
+            }
             _ => return Err(unsupported("verification of type family")),
         }
     }
@@ -74,6 +91,15 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                     "float constant exceeds width",
                 )?;
             }
+            (ConstantKind::Aggregate(elements), Some(IrType::Struct { fields, .. })) => {
+                constant_fields(ir, elements, fields)?;
+            }
+            (ConstantKind::Enum { variant, fields }, Some(IrType::Enum { variants, .. })) => {
+                let variant = variants.get(*variant).ok_or(IrError::Invalid {
+                    message: "invalid enum constant variant",
+                })?;
+                constant_fields(ir, fields, &variant.fields)?;
+            }
             _ => {
                 return Err(IrError::Invalid {
                     message: "constant does not match type",
@@ -81,6 +107,7 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
             }
         }
     }
+    check_constant_cycles(ir)?;
     for (function, builtin) in &ir.builtin_functions {
         require(
             !builtin.is_intrinsic(),
@@ -410,6 +437,58 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                         )?;
                         results.clone()
                     }
+                    InstructionKind::Enum { variant, fields } => {
+                        require(results.len() == 1, "enum requires one result")?;
+                        let variant = enum_variant(ir, results[0], *variant)?;
+                        let actual = fields
+                            .iter()
+                            .map(|f| operand(*f, position))
+                            .collect::<IrResult<Vec<_>>>()?;
+                        require(actual == variant.fields, "enum field signature mismatch")?;
+                        results.clone()
+                    }
+                    InstructionKind::EnumTag { value } => {
+                        let ty = operand(*value, position)?;
+                        let Some(IrType::Enum { variants, .. }) = ir.get_type(ty) else {
+                            return Err(IrError::Invalid {
+                                message: "enum tag requires an enum",
+                            });
+                        };
+                        require(results.len() == 1, "enum tag requires one result")?;
+                        let Some(IrType::Integer {
+                            width: IntegerWidth::Bits(width),
+                            signed,
+                        }) = ir.get_type(results[0])
+                        else {
+                            return Err(IrError::Invalid {
+                                message: "enum tag requires an integer result",
+                            });
+                        };
+                        let bits = width - u16::from(*signed);
+                        require(
+                            variants
+                                .iter()
+                                .all(|v| bits == 128 || v.discriminant < (1u128 << bits)),
+                            "enum tag result cannot represent discriminants",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::EnumField {
+                        value,
+                        variant,
+                        field,
+                    } => {
+                        let ty = operand(*value, position)?;
+                        let selected = enum_variant(ir, ty, *variant)?;
+                        let field_ty = *selected.fields.get(*field).ok_or(IrError::Invalid {
+                            message: "enum field index out of bounds",
+                        })?;
+                        require(
+                            active_variant(ir, *value, *variant, &dom[bid.0], &predecessors),
+                            "enum extraction requires an established active variant",
+                        )?;
+                        vec![field_ty]
+                    }
                     InstructionKind::Call { callee, args } => {
                         let callee = ir.get_function(*callee).ok_or(IrError::Invalid {
                             message: "unknown callee",
@@ -458,7 +537,30 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                     "branch requires bool",
                 )?,
                 Terminator::Jump(_) | Terminator::Trap(_) | Terminator::Unreachable => (),
-                Terminator::Switch { .. } => return Err(unsupported("verification of switch")),
+                Terminator::Switch { subject, cases, .. } => {
+                    let ty = operand(*subject, position)?;
+                    require(
+                        matches!(ir.get_type(ty), Some(IrType::Integer { .. } | IrType::Bool)),
+                        "switch requires integer or bool",
+                    )?;
+                    let mut seen = HashSet::new();
+                    for case in cases {
+                        let c = ir.get_constant(case.value).ok_or(IrError::Invalid {
+                            message: "unknown switch constant",
+                        })?;
+                        require(c.ty == ty, "switch case type mismatch")?;
+                        let bits = match c.kind {
+                            ConstantKind::Integer { bits } => bits,
+                            ConstantKind::Bool(b) => u128::from(b),
+                            _ => {
+                                return Err(IrError::Invalid {
+                                    message: "switch case requires integer or bool constant",
+                                });
+                            }
+                        };
+                        require(seen.insert(bits), "duplicate switch case")?;
+                    }
+                }
             }
         }
     }
@@ -479,7 +581,11 @@ fn edges(terminator: &Terminator) -> IrResult<Vec<&Edge>> {
             ..
         } => vec![then_edge, else_edge],
         Terminator::Return { .. } | Terminator::Trap(_) | Terminator::Unreachable => vec![],
-        Terminator::Switch { .. } => return Err(unsupported("verification of switch")),
+        Terminator::Switch { cases, default, .. } => cases
+            .iter()
+            .map(|c| &c.edge)
+            .chain(std::iter::once(default))
+            .collect(),
     })
 }
 
@@ -495,12 +601,16 @@ fn check_sized(ir: &Ir, ty: TypeId, done: &mut HashSet<TypeId>) -> IrResult<()> 
             done.insert(ty);
             continue;
         }
-        require(active.insert(ty), "recursive by-value struct")?;
+        require(active.insert(ty), "recursive by-value struct or enum")?;
         pending.push((ty, true));
-        if let Some(IrType::Struct { fields, .. }) = ir.get_type(ty) {
-            for &field in fields {
-                pending.push((field, false));
+        match ir.get_type(ty) {
+            Some(IrType::Struct { fields, .. }) => {
+                pending.extend(fields.iter().map(|f| (*f, false)))
             }
+            Some(IrType::Enum { variants, .. }) => {
+                pending.extend(variants.iter().flat_map(|v| &v.fields).map(|f| (*f, false)))
+            }
+            _ => (),
         }
     }
     Ok(())
@@ -524,5 +634,102 @@ fn fields(ir: &Ir, ty: TypeId) -> IrResult<&Vec<TypeId>> {
 fn field_type(ir: &Ir, ty: TypeId, field: usize) -> IrResult<TypeId> {
     fields(ir, ty)?.get(field).copied().ok_or(IrError::Invalid {
         message: "field index out of bounds",
+    })
+}
+
+fn enum_variant(ir: &Ir, ty: TypeId, variant: usize) -> IrResult<&EnumVariant> {
+    match ir.get_type(ty) {
+        Some(IrType::Enum { variants, .. }) => variants.get(variant).ok_or(IrError::Invalid {
+            message: "enum variant index out of bounds",
+        }),
+        _ => Err(IrError::Invalid {
+            message: "enum operation requires an enum",
+        }),
+    }
+}
+fn constant_fields(ir: &Ir, values: &[ConstantId], fields: &[TypeId]) -> IrResult<()> {
+    let actual = values
+        .iter()
+        .map(|id| {
+            ir.get_constant(*id).map(|c| c.ty).ok_or(IrError::Invalid {
+                message: "unknown aggregate constant field",
+            })
+        })
+        .collect::<IrResult<Vec<_>>>()?;
+    require(actual == fields, "constant field signature mismatch")
+}
+fn check_constant_cycles(ir: &Ir) -> IrResult<()> {
+    let mut done = HashSet::new();
+    let mut active = HashSet::new();
+    for index in 0..ir.constants.len() {
+        let mut pending = vec![(ConstantId(index), false)];
+        while let Some((id, finish)) = pending.pop() {
+            if done.contains(&id) {
+                continue;
+            }
+            if finish {
+                active.remove(&id);
+                done.insert(id);
+                continue;
+            }
+            require(active.insert(id), "cyclic constant graph")?;
+            pending.push((id, true));
+            match &ir.constants[id.0].kind {
+                ConstantKind::Aggregate(fields) | ConstantKind::Enum { fields, .. } => {
+                    pending.extend(fields.iter().map(|id| (*id, false)))
+                }
+                _ => (),
+            }
+        }
+    }
+    Ok(())
+}
+fn defining_instruction(ir: &Ir, value: Operand) -> Option<&InstructionKind> {
+    let Operand::Value(id) = value else {
+        return None;
+    };
+    let ValueDefinition::InstructionResult {
+        block, instruction, ..
+    } = ir.get_value(id)?.definition
+    else {
+        return None;
+    };
+    Some(&ir.get_block(block)?.instructions.get(instruction)?.kind)
+}
+fn active_variant(
+    ir: &Ir,
+    value: Operand,
+    variant: usize,
+    dominators: &HashSet<BlockId>,
+    predecessors: &[Vec<BlockId>],
+) -> bool {
+    let mut definition = value;
+    loop {
+        match definition {
+            Operand::Constant(id) => {
+                if matches!(ir.get_constant(id).map(|c| &c.kind), Some(ConstantKind::Enum { variant: v, .. }) if *v == variant)
+                {
+                    return true;
+                }
+                break;
+            }
+            Operand::Value(_) => match defining_instruction(ir, definition) {
+                Some(InstructionKind::Enum { variant: v, .. }) if *v == variant => return true,
+                Some(InstructionKind::Constant(id)) => definition = Operand::Constant(*id),
+                _ => break,
+            },
+        }
+    }
+    let Some(ty) = ir.operand_type(value) else {
+        return false;
+    };
+    let Ok(selected) = enum_variant(ir, ty, variant) else {
+        return false;
+    };
+    dominators.iter().any(|target| {
+        let [source] = predecessors[target.0].as_slice() else { return false; };
+        let Terminator::Switch { subject, cases, .. } = &ir.blocks[source.0].terminator else { return false; };
+        if !matches!(defining_instruction(ir, *subject), Some(InstructionKind::EnumTag { value: v }) if *v == value) { return false; }
+        cases.iter().any(|c| c.edge.target == *target && matches!(ir.get_constant(c.value).map(|c| &c.kind), Some(ConstantKind::Integer { bits }) if *bits == selected.discriminant))
     })
 }

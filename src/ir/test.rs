@@ -868,3 +868,305 @@ fn failed_memory_builder_does_not_publish_stack_slots() {
     assert!(b.finish(entry).is_err());
     assert_eq!(before, ir.to_string());
 }
+
+fn enum_ir() -> Ir {
+    let mut ir = Ir::new();
+    ir.types = vec![
+        IrType::Integer {
+            width: IntegerWidth::Bits(32),
+            signed: false,
+        },
+        IrType::Bool,
+        IrType::Enum {
+            name: Some("E".into()),
+            variants: vec![
+                EnumVariant {
+                    name: Some("Flag".into()),
+                    discriminant: 7,
+                    fields: vec![TypeId(1)],
+                },
+                EnumVariant {
+                    name: Some("Value".into()),
+                    discriminant: 42,
+                    fields: vec![TypeId(0)],
+                },
+            ],
+        },
+    ];
+    ir.constants = vec![
+        Constant {
+            ty: TypeId(0),
+            kind: ConstantKind::Integer { bits: 42 },
+        },
+        Constant {
+            ty: TypeId(0),
+            kind: ConstantKind::Integer { bits: 7 },
+        },
+    ];
+    ir.functions.push(Function {
+        identifier: "read".into(),
+        signature: Signature {
+            params: vec![TypeId(2)],
+            results: vec![TypeId(0)],
+            calling_convention: CallingConvention::Fib,
+        },
+        linkage: Linkage::Internal,
+        body: FunctionBody::Declaration,
+    });
+    let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let entry = b.create_block(&[TypeId(2)]).unwrap();
+    let value = Operand::Value(b.block_params(entry).unwrap()[0]);
+    let arm = b.create_block(&[]).unwrap();
+    let default = b.create_block(&[]).unwrap();
+    let tag = b
+        .append_instruction(entry, InstructionKind::EnumTag { value }, &[TypeId(0)])
+        .unwrap()[0];
+    b.set_terminator(
+        entry,
+        Terminator::Switch {
+            subject: Operand::Value(tag),
+            cases: vec![SwitchCase {
+                value: ConstantId(0),
+                edge: Edge {
+                    target: arm,
+                    args: vec![],
+                },
+            }],
+            default: Edge {
+                target: default,
+                args: vec![],
+            },
+        },
+    )
+    .unwrap();
+    let field = b
+        .append_instruction(
+            arm,
+            InstructionKind::EnumField {
+                value,
+                variant: 1,
+                field: 0,
+            },
+            &[TypeId(0)],
+        )
+        .unwrap()[0];
+    b.set_terminator(
+        arm,
+        Terminator::Return {
+            values: vec![Operand::Value(field)],
+        },
+    )
+    .unwrap();
+    b.set_terminator(
+        default,
+        Terminator::Return {
+            values: vec![Operand::Constant(ConstantId(1))],
+        },
+    )
+    .unwrap();
+    b.finish(entry).unwrap();
+    ir
+}
+
+#[test]
+fn enums_verify_payloads_tags_switch_edges_and_active_variant_proofs() {
+    let ir = enum_ir();
+    verify_ir(&ir).unwrap();
+    let mutations: &[fn(&mut Ir)] = &[
+        |ir| {
+            if let IrType::Enum { variants, .. } = &mut ir.types[2] {
+                variants[1].discriminant = 7;
+            }
+        },
+        |ir| {
+            if let IrType::Enum { variants, .. } = &mut ir.types[2] {
+                variants[1].fields[0] = TypeId(99);
+            }
+        },
+        |ir| {
+            if let IrType::Enum { variants, .. } = &mut ir.types[2] {
+                variants[1].fields[0] = TypeId(2);
+            }
+        },
+        |ir| {
+            if let IrType::Enum { variants, .. } = &mut ir.types[2] {
+                variants[1].discriminant = u128::MAX;
+            }
+        },
+        |ir| ir.values[1].ty = TypeId(1),
+        |ir| {
+            if let Terminator::Switch { subject, .. } = &mut ir.blocks[0].terminator {
+                *subject = Operand::Constant(ConstantId(0));
+            }
+        },
+        |ir| {
+            if let Terminator::Switch { cases, .. } = &mut ir.blocks[0].terminator {
+                cases.push(cases[0].clone());
+            }
+        },
+        |ir| {
+            if let Terminator::Switch { cases, .. } = &mut ir.blocks[0].terminator {
+                cases[0].value = ConstantId(99);
+            }
+        },
+        |ir| {
+            if let Terminator::Switch { cases, .. } = &mut ir.blocks[0].terminator {
+                cases[0].edge.args.push(Operand::Constant(ConstantId(0)));
+            }
+        },
+        |ir| {
+            if let Terminator::Switch { default, .. } = &mut ir.blocks[0].terminator {
+                default.target = BlockId(1);
+            }
+        },
+        |ir| {
+            if let InstructionKind::EnumField { variant, .. } =
+                &mut ir.blocks[1].instructions[0].kind
+            {
+                *variant = 0;
+            }
+        },
+        |ir| {
+            if let InstructionKind::EnumField { field, .. } = &mut ir.blocks[1].instructions[0].kind
+            {
+                *field = 1;
+            }
+        },
+        |ir| ir.blocks[1].instructions[0].results.clear(),
+    ];
+    for (index, mutate) in mutations.iter().enumerate() {
+        let mut bad = ir.clone();
+        mutate(&mut bad);
+        assert!(verify_ir(&bad).is_err(), "mutation {index}");
+    }
+}
+
+#[test]
+fn enum_construction_and_constant_graphs_have_exact_signatures() {
+    let mut ir = enum_ir();
+    // An enum constant with forward-referenced aggregate payload.
+    ir.types.push(IrType::Struct {
+        name: None,
+        fields: vec![TypeId(0)],
+    });
+    ir.types.push(IrType::Enum {
+        name: None,
+        variants: vec![EnumVariant {
+            name: None,
+            discriminant: u128::MAX,
+            fields: vec![TypeId(3)],
+        }],
+    });
+    ir.constants.push(Constant {
+        ty: TypeId(4),
+        kind: ConstantKind::Enum {
+            variant: 0,
+            fields: vec![ConstantId(3)],
+        },
+    });
+    ir.constants.push(Constant {
+        ty: TypeId(3),
+        kind: ConstantKind::Aggregate(vec![ConstantId(0)]),
+    });
+    verify_ir(&ir).unwrap();
+    for mutate in [
+        |ir: &mut Ir| {
+            if let ConstantKind::Enum { variant, .. } = &mut ir.constants[2].kind {
+                *variant = 1;
+            }
+        },
+        |ir: &mut Ir| {
+            if let ConstantKind::Enum { fields, .. } = &mut ir.constants[2].kind {
+                fields[0] = ConstantId(0);
+            }
+        },
+        |ir: &mut Ir| {
+            if let ConstantKind::Aggregate(fields) = &mut ir.constants[3].kind {
+                fields[0] = ConstantId(99);
+            }
+        },
+        |ir: &mut Ir| {
+            if let ConstantKind::Aggregate(fields) = &mut ir.constants[3].kind {
+                fields[0] = ConstantId(3);
+            }
+        },
+    ] {
+        let mut bad = ir.clone();
+        mutate(&mut bad);
+        assert!(verify_ir(&bad).is_err());
+    }
+    // Construction establishes the extraction precondition without a switch.
+    ir.functions.push(Function {
+        identifier: "construct".into(),
+        signature: Signature {
+            params: vec![],
+            results: vec![TypeId(0)],
+            calling_convention: CallingConvention::Fib,
+        },
+        linkage: Linkage::Internal,
+        body: FunctionBody::Declaration,
+    });
+    let mut b = FunctionBuilder::new(&mut ir, FunctionId(1)).unwrap();
+    let entry = b.create_block(&[]).unwrap();
+    let value = b
+        .append_instruction(
+            entry,
+            InstructionKind::Enum {
+                variant: 1,
+                fields: vec![Operand::Constant(ConstantId(0))],
+            },
+            &[TypeId(2)],
+        )
+        .unwrap()[0];
+    let result = b
+        .append_instruction(
+            entry,
+            InstructionKind::EnumField {
+                value: Operand::Value(value),
+                variant: 1,
+                field: 0,
+            },
+            &[TypeId(0)],
+        )
+        .unwrap()[0];
+    b.set_terminator(
+        entry,
+        Terminator::Return {
+            values: vec![Operand::Value(result)],
+        },
+    )
+    .unwrap();
+    b.finish(entry).unwrap();
+    let mut bad = ir.clone();
+    if let InstructionKind::Enum { fields, .. } = &mut bad.blocks[3].instructions[0].kind {
+        fields.clear();
+    }
+    assert!(verify_ir(&bad).is_err());
+}
+
+#[test]
+fn enum_pointer_recursion_is_finite() {
+    let mut ir = Ir::new();
+    ir.types = vec![
+        IrType::Enum {
+            name: None,
+            variants: vec![EnumVariant {
+                name: None,
+                discriminant: 0,
+                fields: vec![TypeId(1)],
+            }],
+        },
+        IrType::Pointer { pointee: TypeId(0) },
+    ];
+    verify_ir(&ir).unwrap();
+    ir.types[1] = IrType::Struct {
+        name: None,
+        fields: vec![TypeId(0)],
+    };
+    assert!(
+        verify_ir(&ir)
+            .unwrap_err()
+            .to_string()
+            .contains("recursive")
+    );
+}
