@@ -1,239 +1,309 @@
-# Compiler architecture sketches
+# Compiler architecture
 
-Analysis/test status updated against the implementation on 2026-10-19. See the
-[current implementation guide](agents/README.md) and [roadmap](roadmap/README.md).
+Reviewed against the current checkout on 2026-10-24. This document describes the
+working pipeline and its extension boundaries. Detailed implementation references
+live in the [agent guide](agents/README.md); future work belongs in the
+[roadmap](roadmap/README.md).
 
-The first executable compiler milestone now works: a single-file
-`fn main() int32 { return 42; }` passes source analysis, owned SSA construction
-and verification, LLVM verification, PIC object emission and host `cc` linking.
-The supported subset now includes int32 helpers/calls, initialized int32/bool
-locals, assignment, comparisons and conditionals. Broader runtime representations,
-production Fib ABI, storage, arithmetic, source loops and build.fib are unfinished.
+## Pipeline and subsystem ownership
 
-## Present baseline and orchestration
-
-`driver::{parse_files, run_frontend, run_pipeline}` orchestrate the frontend and
-pipeline; `ir::lowering::lower` owns the single AST-to-IR entry point for source and
-synthetic modules. The supported subset implements the single-file scalar/conditional subset. `BuildPlan` explicitly enumerates files;
-`BuildPlan::single_file` canonicalizes the input and chooses an executable beside
-it. Check and IR goals need no LLVM; object/binary goals need LLVM 21, and binaries
-also need host `cc`. Output is staged and published after success. Source-overwrite
-paths are rejected. Unsupported programs fail explicitly.
-
-`build --single-file PATH` supports scalar helpers and conditionals with an int32 main.
-Build without that flag, `run`, `test`, build.fib interpretation and IR
-interpretation remain unimplemented. Historical positional-file, include-root,
-check/emit/link/release options and `compile_project`/`check_project` are absent.
-
-## Planned build-file interpretation
-
-The future `fib build` path will discover exactly `<cwd>/build.fib`, compile it in
-an internal bootstrap plan through the normal frontend and lowering boundary,
-verify its owned IR and interpret that IR to populate a host-owned plan builder.
-The finalized `BuildPlan` will then enter the existing project pipeline. Relative
-paths are anchored to the build-file directory; `--single-file` remains a separate
-mode that does not execute a build file.
-
-The interpreter boundary is a versioned Fib API using opaque host-owned state. It
-must not expose Rust values or Rust ABI, return the current `BuilderObject` by
-value, invoke LLVM, emit a host executable, use a JIT fallback or load native code
-into the compiler. Source syntax for the distinguished `build` entry and API types
-remains open until their semantic representations are defined. See the
-[interpreted build-file plan](roadmap/08-interpreted-build-files.md) for staged
-implementation, validation and acceptance criteria. This is intended architecture,
-not current behavior.
-
-## Working subset boundaries
+Fib analyzes the original source AST, lowers it into owned SSA IR, and sends that
+IR to either LLVM or the build-file interpreter. There is one source-to-IR entry
+point, `ir::lowering::lower`, shared by normal programs and bootstrap build files.
+Analysis does not produce a separate typed AST or emit backend instructions.
 
 ```text
-BuildPlan -> parse_files -> Analyzer -> AnalyzedProject
-  -> ir::lowering::lower -> owned Ir -> verify_ir -> LLVM emitter
-  -> LLVM verification -> object -> cc -> executable
+build --single-file PATH
+  -> BuildPlan::single_file
+  -> parse_files -> Analyzer::analyze -> AnalyzedProject
+  -> validate main entry -> ir::lowering::lower -> verified Ir
+  -> emit_llvm -> verified LLVM -> PIC object -> host cc -> executable
+
+build --build-file PATH
+  -> isolated bootstrap BuildPlan + synthetic build_api namespace
+  -> parse_files -> Analyzer::analyze -> validate build entry
+  -> ir::lowering::lower -> verified Ir -> interpret_ir -> PlanBuilder
+  -> finalized project BuildPlan -> normal program pipeline
 ```
 
-The builder stages changes and verifies before publication. The scalar verifier
-checks ownership, definitions, reachability/dominance and signatures across
-blocks. The LLVM emitter supports multi-block SSA/PHIs, backedges, comparisons, direct
-calls and branches/returns. Each signature selects its ABI; a shared description
-controls declarations, incoming arguments, calls to the function and its returns.
-Only C 32-bit integer/void ABI ships. Broader representations/storage and Fib ABI
-remain unsupported.
-
-There is no separate typed AST or direct AST-to-LLVM fallback. See the
-[IR contract](../src/ir/README.md) and [LLVM backend](../src/backend/README.md)
-for exact implemented limits. Broader design sections below describe intended
-contracts and do not imply that all frontend constructs can be emitted.
-
-## Parser and source identities
-
-The tokenizer emits `Identifier(String)`. Parser identifier helpers return
-strings; single and qualified expression paths both use `QualifiedIdentifier`.
-Type-declaration dispatch consumes the `MetaType` builtin, not a separate `type`
-keyword. Member-access spelling is `accessed_identifier`.
-
-Current source uses bare bit-width types (`int32`, `uint64`; `int`/`uint`
-mean 32-bit), `x := 1;`, `const x := 1;`, `x: int32;`, and
-`fn f(x: int32) int32 { return x; }`. Loops use `while (condition) { ... };`.
-Array/slice **types** still use suffixes (`int32[8]`, `int32[]`); value access
-uses `a[i]`, `a[a..b]`, `.len` and postfix pointer operations (`p*`, `x&`).
-Functions are ordinary identifiers; builtin functions and their `@` calls have
-been removed. Primitive type values still parse in expressions.
-Some display helpers/comments retain old spellings and are not grammar authority.
-Legacy `@` types, byte-width `int4`, `var`, `for`, dot-index and import declarations
-are not current working syntax. Generic parameter lists, prefix array types,
-C-string literals, interfaces and constraints remain
-[proposals](roadmap/README.md), not parsed feature guarantees.
-
-`FileId`, `FileName` and paths live in `build_plan.rs`; `AnalyzedProject::source_paths` retains original plan paths for later diagnostics;
-there is no central source-text store. Spans are point locations, not complete byte ranges.
-`Parser::with_source` preserves in-memory diagnostic context.
-
-Parsing preserves spelling and source spans. It does not assign resolved names,
-infer even builtin expression types, or turn fields into lexical bindings.
-
-## Analysis contracts
-
-`Analyzer::new(BuildPlan, Vec<CompilationUnit>)` validates plan/unit IDs through
-`ProjectSymbols::from_plan` and retains paths for diagnostics. Collection annotates
-source-ordered file bindings and reserves private local compile-time type slots.
-`resolve_names` resolves file aliases, traverses names on the original AST, and
-validates name/binding completeness. The name stages and `resolve_types` run once in order;
-failed passes cannot be retried. No additional project wrapper is introduced.
-`Analyzer::analyze` returns the validated source project. The pass order is:
-
-1. Register only files named in the build plan and collect file declarations.
-2. Resolve lexical names, file paths, visibility, and compile-time aliases.
-3. Resolve semantic types and members on the same AST nodes.
-4. Validate type-pass annotations, definite initialization and structured
-   control-flow completion.
-5. Return `AnalyzedProject { units, symbols, types, source_paths }`.
-
-`ResolveContext` combines the current file, shared `ProjectSymbols`, and a lexical
-`SymbolTable`; namespaces are not scope stacks. `TypeContext` can resolve members
-without inserting their spellings into lexical scopes. The name pass enforces
-lexical order, scope lifetime, file fallback, alias visibility, and cycle detection.
-Semantic typing, contextual expression inference and owner-based member lookup
-now execute, along with explicit metatype specialization, bounded type-return
-evaluation, initialization and structured flow; see [type-resolution rules](type-resolution.md).
-
-Identities live separately from source strings:
-
-- `DeclId` identifies a file binding or a private, lexically scoped compile-time type.
-- `LocalId` and `LabelId` are intended to be project-unique allocations, in separate
-  namespaces.
-- `ResolvedName` identifies a file/declaration entity or local binding.
-- Semantic `TypeId` indexes one project's `SemanticTypes`, not a backend layout.
-
-See [name resolution](name-resolution.md) for the implemented rules and remaining
-semantic boundary. Forward name visibility does not permit reading a later
-uninitialized variable. Local value declarations instead resolve all initializer
-expressions before introducing any new bindings, including all members of a
-multi-binding. File aliases support forward chains; local aliases follow declaration
-order and cannot reuse registered file names/roots. Type bindings require explicit
-`comp`, including inline local types and aliases to those types. Aliases do not
-allocate runtime storage.
-
-### AST annotations
-
-`frontend::analysis_annotation` defines pending slots embedded in the source AST:
-
-| Syntax | Annotation |
+| Subsystem | Responsibility |
 | --- | --- |
-| Expression | Semantic type, value/place category, optional denoted type |
-| Qualified identifier | Resolved name identity |
-| Type expression | Denoted semantic type |
-| Function signature, parameter, type/variable declaration | Binding identity |
-| Member selection and struct field | Resolved member identity/type |
-| Enum pattern and payload binding | Member and local-binding annotations |
+| `plan` | File identities, explicit source membership, single-file plans and interpreted build-plan finalization |
+| `frontend` | Tokenization, parsing, lexical names, semantic types, specialization, initialization and structured flow |
+| `driver` | Parsing planned files, selecting entry contracts and pipeline goals, object staging and host linking |
+| `ir::lowering` | Validating the supported source subset and translating analyzed identities into scalar SSA |
+| `ir` | Owned runtime records, transactional construction and shared verification |
+| `backend` | Target selection, per-function ABI classification, LLVM emission and PIC object output |
+| `ir_interpreter` | Narrow build-API execution against host-owned `PlanBuilder` state |
+| `diagnostics` | Structured compiler errors, source positions and rendering |
 
-Every applicable slot starts as `None`; this is pending analysis, not an unknown
-but valid semantic result. Function declaration identity lives once on its
-signature. Multi-bindings reuse each variable declaration's slot. Named-label
-syntax and the reserved generic-parameter string list need binding-bearing nodes
-when their syntax is specified; they are not falsely marked as analyzed now.
+`run_pipeline(plan, goal)` exposes `Check`, `Ir`, `Objects` and `Binary` goals.
+`Check` runs complete analysis and executable-entry validation; it does not certify
+that the program belongs to the lowering subset. `Ir` additionally lowers and
+verifies SSA. `Objects` emits one object, and `Binary` links an executable.
 
-The public records are currently raw data. Constructing an `AnalyzedProject`
-struct does not establish that analysis or completion validation ran.
+## Build plans and executable entries
 
-## Lowering and ownership
+`src/plan.rs` owns `FileId`, `FileName`, `SourceFile`, `BuildPlan` and `PlanBuilder`.
+A plan explicitly enumerates source files, their logical names, an entry file ID
+and an output path. Parsing and analysis do not discover additional files from
+qualified names or filesystem imports. `parse_files` validates plan names/IDs and
+the presence of the entry file; `Analyzer::new` requires compilation-unit IDs to
+match the plan exactly.
 
-`ir::lowering::lower` is the single lowering boundary. Orchestration validates the
-entry contract and selects the consumer before or after this boundary; lowering maps canonical frontend declaration/instance IDs,
-semantic type IDs, and local bindings into IR-owned identities. Source names are
-not runtime lookup keys. A mutable source binding can map to several SSA values.
-Generic instances must be distinguished by declaration and type arguments.
+`BuildPlan::single_file` canonicalizes a source file, derives its logical name
+from its UTF-8 stem, and chooses an executable beside it by removing the source
+extension (`.exe` on Windows). It rejects inputs without a distinct output name.
 
-The IR owns runtime types, function signatures, globals, constants, blocks, values,
-and stack slots. Its IDs are not frontend IDs; dropping source ASTs must not make
-IR data invalid. Functions retain explicit ownership of blocks and storage even
-though records live in shared arenas.
+The normal pipeline requires exactly one `main` definition with no parameters
+and an `int32` result. Bootstrap compilation instead requires `build() int32`.
+These entry checks belong to the driver. Source lowering currently accepts only
+one source unit, even though plans and analysis support multiple planned files.
+A successfully finalized multi-file plan therefore does not imply executable
+cross-file support.
 
-SSA merges use block parameters and edge arguments. There is no implicit
-fallthrough. Every block has a separate terminator, and each value has one typed
-definition. Memory is explicit through addresses, loads, and stores; memory SSA
-is not required for this initial design. No verifier or SSA algorithm has been
-implemented by declaring these records.
+The CLI supports `build --single-file PATH` and `build --build-file PATH`,
+requiring exactly one option. Bare `build`, `run` and `test` return explicit
+errors. Automatic `<cwd>/build.fib` discovery remains future work.
 
-## LLVM and future native code generation
+## Source representation and diagnostics
 
-The LLVM boundary consumes only `Ir` and an explicit target specification.
-It plans verification, target layout, shared ABI classification, predeclarations,
-block/PHI setup, emission, edge patching, and final LLVM verification. All phase
-entry points currently reject execution. These contracts are compiled without
-LLVM as well; `backend/lowering/next/ir_lower.rs` is an inactive legacy prototype
-outside the module tree, still referencing removed APIs. It is not a supported
-backend, compatibility layer or fallback.
+The tokenizer/parser construct source AST nodes with spellings, point spans and
+initially pending analysis slots. Ordinary and qualified identifier expressions
+use `QualifiedIdentifier`; member selection remains separate from lexical name
+lookup. Parsing alone establishes syntax, not semantic or runtime support.
 
-The adapter must handle block arguments on parallel edges and loop backedges,
-track actual predecessors after block splitting, and use target-derived aggregate
-and pointer layouts. Declaration, definition, call, and return ABIs must agree.
-It must not guess external signatures, silently insert terminators, or invent
-LLVM semantic flags. These constraints also inform a future native backend;
-LLVM types and conventions do not belong in the core IR.
+Current source uses bare bit-width types, `int`/`uint` aliases for 32-bit integers,
+`x := 1;`, `const x := 1;`, `x: int32;`, and
+`fn f(x: int32) int32 { return x; }`. Loops use
+`while (condition) { ... };`; `while () { ... };` is unconditional. Type bindings
+require explicit `comp` during analysis. Array/slice types use suffix syntax,
+value indexing/slicing uses brackets, and pointer operations are postfix.
+See the [parsing reference](parsing/README.md) for the verified grammar snapshot.
 
-Before execution is implemented, explicitly decide arithmetic/trap semantics,
-layout and ABI policies, indirect calls/intrinsics, pointer validity, and how a
-verified IR is exposed. The detailed subsystem plans record these open choices.
+`CompilationUnit` pairs an AST with its source `FileId`. `Parser::with_source`
+provides filename/text context for parsing errors; `AnalyzedProject::source_paths`
+retains plan paths for later diagnostics. There is no central retained source-text
+store, and spans are not byte ranges. Lowering errors identify unsupported source
+forms with Backend diagnostics, spans and retained paths.
 
-## Migration and validation
+## Analysis and semantic identities
 
-Obsolete analyzer, typed-AST lowering, flat instruction-stream builder, and direct
-LLVM lowering bodies have been replaced by the new contracts rather than retained
-behind compatibility aliases. Existing parser/tokenizer tests were migrated;
-small tests cover pending annotations, model structure, and explicit unsupported
-operations. Deleted integration tests were not restored. These tests demonstrate
-contracts, **not end-to-end compilation**.
+`Analyzer::analyze` performs declaration collection, name resolution, semantic
+typing, independent annotation validation, and definite-initialization/structured
+flow checks. It returns
+`AnalyzedProject { units, symbols, types, builtins, source_paths }`.
+The original units remain annotated source ASTs. Staged collection, name and type
+entry points run once in order; a failed pass cannot be retried on partial state.
+`resolve_types` alone does not certify initialization or flow safety.
 
-All analyzer tests and helpers are in
-[`src/frontend/analyzer/test.rs`](../src/frontend/analyzer/test.rs). Its inline
-`name_resolution` module has six independently runnable phases for files,
-parameters/locals, references/functions, aliases, type/member names and traversal.
-The name phases, type-resolution acceptance cases and all six former pending
-completion cases pass, with additional completion regressions. See
-[validation commands](agents/tests/README.md). These name-resolution
-checks do not establish type correctness or executable compilation.
+`ResolveContext` combines a current file, shared project namespaces, a lexical
+symbol table and local-ID allocation. File namespaces are not copied into lexical
+scopes. Resolution enforces declaration order for locals, file fallback,
+visibility, alias identity and cycle checks. Local initializer expressions resolve
+before their new bindings are introduced, including every initializer in a
+multi-binding. Forward file-name visibility does not authorize uninitialized
+reads. Compile-time aliases do not allocate runtime storage.
 
-`tests/executable.rs` compiles, links and runs the scalar/conditional subset.
-Samples and the experimental standard library are not automatically compiled
-or run. Tests of explicit stub errors do not demonstrate successful analysis,
-construction, verification, interpretation, layout or emission.
+`TypeContext` and project-owned `SemanticTypes` resolve expressions and members
+without inserting member spellings into lexical scopes. Structs/enums have nominal
+identity; structural type families are canonicalized. Binding mutability and
+pointee/element mutability are independent. Numeric literals retain arbitrary
+integer magnitudes or decimal spellings until contextual validation and rounding;
+typed numeric values require explicit conversions.
 
-Useful checks at this stage (commands, not a claim they all pass):
+Analysis supports explicit metatype signature specialization, cached concrete
+body rechecking, and bounded type computation through eligible `comp fn`
+declarations. These facilities do not yet imply runtime generic lowering or a
+general compile-time interpreter. Complete analysis also checks `never` bottom
+coercion/divergence, partial initialization, branches, loops, enum-switch coverage
+and lexical defer exits. See [type resolution](type-resolution.md) for exact rules
+and limits.
+
+### Identities and annotation slots
+
+| Identity | Meaning |
+| --- | --- |
+| `FileId` / `FileName` | Plan-local source identity / logical namespace name |
+| `DeclId` | Declaration slot in its owning file namespace, including private local compile-time types |
+| `LocalId` | Binding identity allocated across one analyzed project |
+| `ResolvedName` | Resolved file/declaration entity or local binding |
+| Semantic `TypeId` | Index into one project's semantic types; not a runtime layout |
+| IR IDs | Independent indices into one owned IR's arenas |
+
+AST annotations record binding identities, resolved qualified names, denoted
+types, expression types/value-or-place categories, and owner-based member facts.
+Function identity lives on its signature; each multi-binding has its own binding
+slot. Enum patterns and payload bindings retain member/local identities.
+Applicable slots start pending and must be resolved consistently before handoff.
+Label identities/annotations and bracket-style generic parameter syntax remain
+reserved rather than implemented language features.
+
+Public AST and semantic records can be constructed or modified directly;
+`AnalyzedProject` is not an opaque proof type. `validate_analysis` independently
+rechecks annotations, semantic facts, initialization and flow. Lowering invokes
+that validation before constructing IR.
+
+## Source lowering and SSA construction
+
+`ir::lowering::lower` predeclares function identities and signatures, then checks
+the entire supported source subset and gathers constants before building bodies.
+Prevalidation includes dead branches, constant-false loop bodies and source after
+control-flow exits. Unsupported syntax must fail even when emission would skip it.
+Calls use resolved declaration-to-`FunctionId` mappings, not spelling-based lookup.
+
+The executable subset supports signed/unsigned 8/16/32/64/128-bit integers,
+float16/32/64/128 and bool; scalar helper parameters/results; void helpers; direct
+calls; initialized locals; assignment; arithmetic/bitwise/shifts; explicit numeric
+casts; comparisons; short-circuit logic; nested if/else; while; break/continue; and
+returns. Source helpers use internal linkage and the limited scalar Fib convention;
+the entry uses the C convention.
+
+Mutable locals map to immutable SSA operands. Assignment replaces the current
+mapping. Conditional joins merge differing continuing values through block
+parameters; returning arms contribute no edge, and branch-local bindings do not
+escape. Loops carry all bindings visible at entry through deterministically
+ordered header/exit parameters. Continues and body fallthrough send current values
+to the header; breaks send them to the innermost exit. Dynamic conditions execute
+on every iteration, including their short-circuit CFG. Known-false loops emit no
+body, and unconditional loops create an exit only for reachable breaks. Diverging
+functions need no artificial return or unreachable block.
+
+Uninitialized declarations, runtime globals, storage, aggregates, switches,
+defer, indirect calls, multiple-result source functions and concrete generic
+bodies remain unsupported by lowering. Analysis may accept these constructs;
+that does not make them executable.
+
+## Owned IR and verification
+
+`Ir` owns types, functions/signatures, globals, constants, blocks, values and stack
+slots. Records refer to IR IDs rather than AST nodes, semantic types or LLVM
+objects. The IR can outlive source analysis. Functions explicitly own their
+blocks and storage records even though arenas are shared across the IR.
+
+Blocks have positional parameters, instructions and one separate terminator.
+Edges carry positional arguments; arena order never implies fallthrough. Entry
+parameters receive call arguments, and edges cannot target function entry.
+Each SSA value has one typed definition and uses must obey dominance.
+
+`FunctionBuilder` stages a cloned transaction, allocates owned records and rejects
+insertion after termination or duplicate terminators. `finish` requires every
+block to be terminated and verifies the staged IR before publishing. Failure or
+dropping an unfinished builder leaves the original IR unchanged.
+
+`verify_ir` checks supported types/constants, references, symbol uniqueness,
+reciprocal ownership/definition records, signatures, instruction/result types,
+edge arguments, reachability and dominance, including cycles. It rejects orphan
+records and unreachable blocks. Supported operations include scalar constants,
+direct calls, arithmetic/unary/comparisons/numeric casts and
+jump/branch/return/trap/unreachable terminators. Interpreter-only Bytes are also
+verified; LLVM does not lower them.
+
+Pointer/aggregate/global/storage/switch records describe extension interfaces;
+their presence is not verification support. Even allocated stack slots cannot
+currently pass verification. Memory operations require future explicit
+addresses/loads/stores rather than treating SSA local bindings as storage.
+See the [IR contract](../src/ir/README.md).
+
+## LLVM, ABI and artifacts
+
+`backend::emit_llvm(&Ir, &TargetSpec)` is the public emission boundary. It verifies
+IR, resolves an LLVM 21 target machine and data layout, classifies every function's
+ABI, predeclares functions, emits scalar CFGs and verifies the final LLVM module.
+`TargetSpec` carries a triple, CPU and features; only generic CPU/default features
+are supported. The driver requests the host target.
+
+ABI classification is per signature. One shared description governs declarations,
+incoming parameters, calls and returns. The C subset supports 32-bit integer
+parameters/results and void; internal Fib helpers use direct scalar LLVM fastcc.
+Full production Fib ABI, broader external C interoperability, aggregates, varargs
+and callbacks remain unfinished.
+
+Emission allocates entry first, precreates non-entry PHIs, traverses reverse
+postorder and patches incoming operands after definitions exist. Parallel branch
+arms targeting one block get distinct trampoline predecessors. Runtime guard
+splits update actual predecessor mappings, so PHIs remain correct across checks
+and backedges.
+
+Integer operations wrap; invalid division, shifts and float-to-integer casts trap.
+Floating operations follow IEEE rules, with exact literal/constant evaluation and
+explicit conversions. Guards precede LLVM operations that could otherwise produce
+poison. These are shared scalar semantics, not optimization-dependent choices;
+see [scalar semantics](scalar-semantics.md).
+
+`LlvmArtifact` owns verified LLVM text and target metadata. Object writing
+reparses/verifies it and emits PIC code. The driver stages object/binary output in
+a temporary directory beside the destination, invokes host `cc` for binaries,
+and renames output only after success. Source-overwriting paths are rejected;
+linker failures preserve existing output and report stderr.
+
+Without the default `llvm` feature, frontend/IR and ABI classification remain
+available; host-target selection, LLVM emission and object output fail explicitly.
+The separate backend context/type/general-instruction planning APIs remain
+explicit-error sketches. `backend/lowering/next/` is inactive legacy code, not a
+fallback. Broader layout, optimization and cross-linker orchestration remain
+future work. See the [backend contract](../src/backend/README.md).
+
+## Interpreted build files
+
+`compile_build_file_to_ir` configures the ordinary analyzer with a synthetic
+`build_api` module, validates `build() int32`, and uses the same source lowering.
+Synthetic declarations have ordinary semantic identities but no source AST/path.
+Their `DeclId` identities map to builtin functions and survive lowering through
+an IR `FunctionId -> BuiltinFunction` table.
+
+The interpreter verifies IR and supports a single returning entry block containing
+direct `build_api::{add_source, set_entry, set_output}` calls with constant UTF-8
+byte arguments. It dispatches by builtin identity into host-owned `PlanBuilder`
+state. Multi-block/non-returning control flow is rejected before applying build
+operations. General value evaluation, helper execution and CFG interpretation
+remain unsupported, even when shared lowering can construct their IR.
+
+Finalization anchors paths to the build-file directory, assigns deterministic
+source IDs in declaration order, derives logical names from file stems, validates
+the selected entry and output, and rejects duplicate paths/names, escaping paths,
+missing sources, and source/build-file overwrites. Output parent directories must
+already exist. The resulting plan enters the normal program pipeline, including
+its current single-source lowering restriction.
+
+Build-file execution uses neither LLVM nor native artifact loading. The versioned
+opaque build API and broader interpreter capabilities are extended through this
+same IR path; see the [build-file plan](roadmap/08-interpreted-build-files.md).
+
+## Validation and extension discipline
+
+Frontend tests cover syntax, names, types, specialization and analysis completion.
+Driver tests exercise analyzed-source lowering, source diagnostics, scopes,
+loop-carried values and build-file rejection. IR tests check construction and
+malformed graphs; backend tests cover ABI classification and emitted CFGs.
+`tests/executable.rs` compiles, links and runs scalar/control-flow programs,
+including all numeric widths, guarded failures and bounded loop cases.
+
+The parser sample sweep parses every top-level sample. `builtin_scalars.fib` and
+`scalar_loops.fib` additionally have executable acceptance coverage. Other samples
+and the experimental standard library are not automatically compiled or run.
+
+The loop milestone passed 688 no-default-feature library tests, 695 LLVM-enabled
+library tests and 16 executable acceptance tests, plus formatting, check and
+all-target Clippy with warnings denied in both configurations. Rust 1.98.0 is
+pinned by `rust-toolchain.toml`; the package uses Rust 2024 and Inkwell 0.8/LLVM 21.
 
 ```sh
 cargo fmt --check
 cargo check --offline --no-default-features
 cargo test --offline --no-default-features
-cargo run --offline --no-default-features -- --help
-cargo check
-cargo clippy --all-targets -- -D warnings
-cargo build
-cargo test
-cargo test --all-features
+cargo clippy --offline --no-default-features --all-targets -- -D warnings
+LLVM_SYS_211_PREFIX=/usr/lib/llvm/21 cargo check --offline
+LLVM_SYS_211_PREFIX=/usr/lib/llvm/21 cargo test --offline
+LLVM_SYS_211_PREFIX=/usr/lib/llvm/21 cargo clippy --offline --all-targets -- -D warnings
 ```
 
-The retained default `llvm` Cargo feature still brings in the existing LLVM 21
-dependency used by the initial scalar LLVM emitter. Default-feature
-checks require the compatible LLVM installation. Offline commands additionally
-require cached dependencies. See the [validation guide](agents/tests/README.md)
-for toolchain, formatting and environment limitations.
+The LLVM prefix above is this environment's installation path; adjust it for
+other systems. Offline commands require cached dependencies. For further checks
+and CI gates see the [validation guide](agents/tests/README.md).
+
+Extend support across analysis, source lowering, verification and the selected
+consumer together. Raw representation records and positive parsing tests do not
+establish executable behavior. Add meaningful positive/negative regressions,
+preserve source identities and diagnostics, and keep unsupported operations as
+explicit errors until their invariants and semantics are implemented.
