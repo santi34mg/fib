@@ -1,0 +1,30 @@
+// Enum construction, payload copies, internal calls, and switches. Returns 42.
+comp Point: type = struct { x: int32, y: int32 };
+comp Message: type = enum { Empty, Unit {}, Number { value: int32 }, Position { point: Point } };
+comp Alias := Message;
+
+fn identity(value: Message) Message { return value; }
+
+fn score(value: Message) int32 {
+    switch (value) {
+        when .Empty { return 0; }
+        when .Unit(payload) { return 1; }
+        when .Number(payload) { return payload.value; }
+        when .Position(payload) { return payload.point.x + payload.point.y; }
+    };
+}
+
+fn main() int32 {
+    value := Alias.Number(42);
+    copy := identity(value);
+    switch (copy) {
+        when .Number(payload) { payload.value = 7; }
+        when else {}
+    };
+    position := Message.Position(Point { y: 22, x: 20 });
+    if (score(value) == 42 && score(copy) == 42
+        && score(Message.Empty) == 0 && score(Message.Unit()) == 1) {
+        return score(identity(position));
+    };
+    return 7;
+}

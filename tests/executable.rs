@@ -601,3 +601,64 @@ fn structs_preserve_mixed_layout_and_every_numeric_field_width_across_calls() {
         assert_eq!(bounded_program(&text).code(), Some(42), "{ty}");
     }
 }
+
+#[test]
+fn enums_construct_switch_copy_and_cross_helper_boundaries() {
+    for text in [
+        include_str!("../samples/enum_runtime.fib"),
+        "comp E: type = enum {}; fn impossible(e: E) int32 { switch(e) {}; } fn main() int32 { return 42; }",
+        "comp E: type = enum { A { x: int32 }, B { y: int32 } }; fn main() int32 { switch(E.A(42)) { when .A(v) { return v.x; } when .B(v) { return v.y; } }; }",
+        "comp E: type = enum { Large { a: uint64, b: uint64, c: uint64, d: uint64, e: uint64 }, Aligned { x: int128 } }; fn copy(e: E) E { return e; } fn main() int32 { large := copy(E.Large(1, 2, 3, 4, 42)); aligned := copy(E.Aligned(42)); switch(large) { when .Large(v) { if (v.a != 1 || v.b != 2 || v.c != 3 || v.d != 4 || v.e != 42) { return 7; }; } when else { return 1; } }; switch(aligned) { when .Aligned(v) { return v.x as int32; } when else { return 7; } }; }",
+        "comp E: type = enum { A, B }; fn main() int32 { x := 7; switch(E.B) { when .A { x = 0; } when .B { x = 42; } }; return x; }",
+        "comp E: type = enum { A, B }; fn main() int32 { x := 42; switch(E.B) { when .A { x = 7; } }; return x; }",
+        "comp E: type = enum { N { x: int32 }, End }; fn main() int32 { e: E; p := e&; p* = E.N(42); switch(p*) { when .N(v) { return v.x; } when else { return 7; } }; }",
+        "comp E: type = enum { N { x: int32 }, End }; fn main() int32 { x := 0; e := E.N(0); while (x < 42) { x += 1; e = E.N(x); switch(e) { when .N(v) { if v.x < 42 { continue; }; break; } when else { return 7; } }; }; switch(e) { when .N(v) { return v.x; } when else { return 7; } }; }",
+        "comp E: type = enum { N { x: int32 }, End }; comp S: type = struct { e: E }; comp Outer: type = enum { Wrapped { s: S }, Empty }; fn copy(e: Outer) Outer { return e; } fn main() int32 { e := copy(Outer.Wrapped(S { e: E.N(42) })); switch(e) { when .Wrapped(v) { switch(v.s.e) { when .N(n) { return n.x; } when else {} }; } when else {} }; return 7; }",
+        "comp E: type = enum { Ref { p: *int32 }, Empty }; fn copy(e: E) E { return e; } fn main() int32 { x := 7; e := copy(E.Ref(x&)); switch(e) { when .Ref(v) { (v.p)* = 42; } when else {} }; return x; }",
+        "comp E: type = enum { Next { next: *E }, End }; fn main() int32 { e := E.End; link := E.Next(e&); switch(link) { when .Next(v) { switch((v.next)*) { when .End { return 42; } when else {} }; } when else {} }; return 7; }",
+    ] {
+        assert_eq!(bounded_program(text).code(), Some(42), "{text}");
+    }
+}
+
+#[test]
+fn enum_payloads_preserve_target_alignment_and_numeric_widths() {
+    for ty in [
+        "int8", "uint16", "int32", "uint64", "int128", "uint128", "float16", "float32", "float64",
+        "float128",
+    ] {
+        let text = format!(
+            r#"
+            comp E: type = enum {{ Small {{ x: uint8 }}, Wide {{ flag: bool, x: {ty}, tail: uint8 }} }};
+            fn copy(e: E) E {{ return e; }}
+            fn main() int32 {{
+                e := copy(E.Wide(true, 42, 7));
+                switch(e) {{
+                    when .Wide(v) {{ if (v.flag && v.x == 42 && v.tail == 7) {{ return (v.x as int32); }}; }}
+                    when .Small(v) {{ return (v.x as int32); }}
+                }};
+                return 1;
+            }}
+        "#
+        );
+        assert_eq!(bounded_program(&text).code(), Some(42), "{text}");
+    }
+}
+
+#[test]
+fn enum_subjects_and_constructor_arguments_evaluate_once_in_order() {
+    let text = r#"
+        comp E: type = enum { Pair { first: int32, second: int32 }, Empty };
+        fn mark(p: *int32, digit: int32) int32 { p* = (p*) * 10 + digit; return digit; }
+        fn make(p: *int32) E { return E.Pair(mark(p, 1), mark(p, 2)); }
+        fn main() int32 {
+            trace := 0;
+            switch(make(trace&)) {
+                when .Pair(v) { if (trace == 12 && v.first == 1 && v.second == 2) { return 42; }; }
+                when else {}
+            };
+            return 7;
+        }
+    "#;
+    assert_eq!(bounded_program(text).code(), Some(42));
+}

@@ -12,7 +12,10 @@ pub(super) fn register_runtime_types(
     ) -> anyhow::Result<bool> {
         let ty = project.types.canonical(ty)?;
         if !seen.insert(ty) {
-            return Ok(matches!(project.types.get(ty)?, SemanticType::Struct(_)));
+            return Ok(matches!(
+                project.types.get(ty)?,
+                SemanticType::Struct(_) | SemanticType::Enum(_)
+            ));
         }
         let result = match project.types.get(ty)? {
             SemanticType::Builtin(b) => SCALARS[..15].contains(b),
@@ -21,6 +24,15 @@ pub(super) fn register_runtime_types(
                 let mut result = true;
                 for f in fields {
                     result &= supported(project, f.ty, seen)?;
+                }
+                result
+            }
+            SemanticType::Enum(variants) => {
+                let mut result = true;
+                for v in variants {
+                    if let Some(payload) = v.payload {
+                        result &= supported(project, payload, seen)?;
+                    }
                 }
                 result
             }
@@ -74,6 +86,35 @@ pub(super) fn register_runtime_types(
                 ir.types[id.0] = IrType::Struct { name: None, fields };
                 id
             }
+            SemanticType::Enum(variants) => {
+                let id = TypeId(ir.types.len());
+                map.insert(canonical, id);
+                ir.types.push(IrType::Enum {
+                    name: None,
+                    variants: vec![],
+                });
+                let variants = variants
+                    .iter()
+                    .enumerate()
+                    .map(|(index, v)| {
+                        Ok(EnumVariant {
+                            name: Some(v.spelling.clone()),
+                            discriminant: index as u128,
+                            fields: v
+                                .payload
+                                .map(|p| register(project, ir, map, p))
+                                .transpose()?
+                                .into_iter()
+                                .collect(),
+                        })
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                ir.types[id.0] = IrType::Enum {
+                    name: None,
+                    variants,
+                };
+                id
+            }
             _ => anyhow::bail!("unsupported runtime type registration"),
         };
         map.insert(original, ty);
@@ -81,12 +122,11 @@ pub(super) fn register_runtime_types(
         Ok(ty)
     }
     let mut map = HashMap::new();
-    let mut structs = Vec::new();
-    // Reserve every nominal struct before any pointer registration. This makes
-    // recursive fields finite and interns pointers after alias/readonly erasure.
+    // Reserve all supported nominal identities before resolving recursive pointers.
+    let mut nominal = Vec::new();
     for (index, ty) in project.types.types.iter().enumerate() {
         let id = SemanticId(index as u32);
-        if let SemanticType::Struct(fields) = ty
+        if matches!(ty, SemanticType::Struct(_) | SemanticType::Enum(_))
             && supported(project, id, &mut std::collections::HashSet::new())?
         {
             let runtime = TypeId(ir.types.len());
@@ -95,15 +135,39 @@ pub(super) fn register_runtime_types(
                 name: None,
                 fields: vec![],
             });
-            structs.push((runtime, fields));
+            nominal.push((id, runtime));
         }
     }
-    for (runtime, fields) in structs {
-        let fields = fields
-            .iter()
-            .map(|f| register(project, ir, &mut map, f.ty))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        ir.types[runtime.0] = IrType::Struct { name: None, fields };
+    for (id, runtime) in nominal {
+        ir.types[runtime.0] = match project.types.get(id)? {
+            SemanticType::Struct(fields) => IrType::Struct {
+                name: None,
+                fields: fields
+                    .iter()
+                    .map(|f| register(project, ir, &mut map, f.ty))
+                    .collect::<anyhow::Result<_>>()?,
+            },
+            SemanticType::Enum(variants) => IrType::Enum {
+                name: None,
+                variants: variants
+                    .iter()
+                    .enumerate()
+                    .map(|(index, v)| {
+                        Ok(EnumVariant {
+                            name: Some(v.spelling.clone()),
+                            discriminant: index as u128,
+                            fields: v
+                                .payload
+                                .map(|p| register(project, ir, &mut map, p))
+                                .transpose()?
+                                .into_iter()
+                                .collect(),
+                        })
+                    })
+                    .collect::<anyhow::Result<_>>()?,
+            },
+            _ => unreachable!(),
+        };
     }
     for (index, ty) in project.types.types.iter().enumerate() {
         let id = SemanticId(index as u32);

@@ -49,7 +49,7 @@ pub(super) fn storage_bindings(
             match &node.kind {
                 S::VariableDeclaration(v) if !v.is_comp => {
                     if let Some(BindingId::Local(id)) = v.annotation.binding
-                        && (v.expression.is_none() || source.is_struct_local(id)?)
+                        && (v.expression.is_none() || source.is_aggregate_local(id)?)
                     {
                         stored.insert(id);
                     }
@@ -72,6 +72,20 @@ pub(super) fn storage_bindings(
                         expression(e, stored);
                     }
                     statements(body, source, stored)?;
+                }
+                S::Switch { subject, arms } => {
+                    expression(subject, stored);
+                    for arm in arms {
+                        if let Pattern::EnumVariant {
+                            binding: Some(binding),
+                            ..
+                        } = &arm.pattern
+                            && let Some(BindingId::Local(id)) = binding.annotation.binding
+                        {
+                            stored.insert(id);
+                        }
+                        statements(&arm.body, source, stored)?;
+                    }
                 }
                 S::If {
                     condition,

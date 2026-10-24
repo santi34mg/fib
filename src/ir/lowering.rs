@@ -7,7 +7,9 @@ use crate::{
         analyzer::{AnalyzedProject, evaluate_numeric, known_boolean, validate_analysis},
         ast::{
             expression::{Expression, ExpressionKind as E},
+            pattern::Pattern,
             statement::{Statement, StatementKind as S},
+            switch::SwitchArm,
         },
         identifier::{DeclId, Entity, LocalId, ResolvedName},
         semantic_type::{SemanticType, TypeId as SemanticId},
@@ -127,6 +129,15 @@ impl Source<'_> {
             .ok_or_else(|| self.error(expr.span, "missing expression annotation"))?;
         self.value_type(info.ty, expr.span)
     }
+    fn variant(&self, expr: &Expression) -> Option<(SemanticId, usize)> {
+        if let E::ExprAcess { member, .. } = &expr.kind {
+            let info = member.resolved?;
+            if let MemberKind::EnumVariant(index) = info.kind {
+                return Some((info.owner, index as usize));
+            }
+        }
+        None
+    }
     fn signature(&self, declaration: DeclId, span: Span) -> anyhow::Result<Signature> {
         let semantic = self
             .project
@@ -212,6 +223,26 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
                 ty: TypeId(index),
                 kind: ConstantKind::Null,
             });
+        }
+    }
+    // Source enum tags are declaration-order ordinals, bounded by semantic IDs.
+    for ty in &ir.types {
+        if let IrType::Enum { variants, .. } = ty {
+            for v in variants {
+                let c = Constant {
+                    ty: scalar_id(&BuiltinType::UInt32),
+                    kind: ConstantKind::Integer {
+                        bits: v.discriminant,
+                    },
+                };
+                if !ir
+                    .constants
+                    .iter()
+                    .any(|x| x.ty == c.ty && x.kind == c.kind)
+                {
+                    ir.constants.push(c);
+                }
+            }
         }
     }
     let mut functions = HashMap::new();
@@ -357,7 +388,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         let mut stored = storage_bindings(body, &source)?;
         for parameter in &function.signature.parameters {
             if let Some(BindingId::Local(id)) = parameter.annotation.binding
-                && source.is_struct_local(id)?
+                && source.is_aggregate_local(id)?
             {
                 stored.insert(id);
             }
@@ -502,6 +533,19 @@ struct Checker<'a, 'p> {
 }
 impl Checker<'_, '_> {
     fn expression(&mut self, expr: &Expression) -> anyhow::Result<()> {
+        if self.source.variant(expr).is_some() {
+            self.source.expression_type(expr)?;
+            return Ok(());
+        }
+        if let E::Call { callee, args } = &expr.kind
+            && self.source.variant(callee).is_some()
+        {
+            self.source.expression_type(expr)?;
+            for arg in args {
+                self.expression(arg)?;
+            }
+            return Ok(());
+        }
         self.source.expression_type(expr)?;
         if let Some(constant) = literal(self.source, expr)? {
             if !self
@@ -626,6 +670,12 @@ impl Checker<'_, '_> {
                     }
                     self.statements(body)?;
                 }
+                S::Switch { subject, arms } => {
+                    self.expression(subject)?;
+                    for arm in arms {
+                        self.statements(&arm.body)?;
+                    }
+                }
                 S::Break | S::Continue => {}
                 S::Return(None) => {}
                 S::Return(Some(values)) if values.len() == 1 => self.expression(&values[0])?,
@@ -685,6 +735,39 @@ impl Lowerer<'_, '_, '_> {
                 .position(|c| c.ty == constant.ty && c.kind == constant.kind)
                 .ok_or_else(|| self.source.error(expr.span, "missing prepared constant"))?;
             return Ok(Operand::Constant(ConstantId(index)));
+        }
+        let construction = match &expr.kind {
+            E::Call { callee, args } => self.source.variant(callee).map(|v| (v, args.as_slice())),
+            _ => self.source.variant(expr).map(|v| (v, &[][..])),
+        };
+        if let Some(((owner, variant), args)) = construction {
+            let SemanticType::Enum(variants) = self
+                .source
+                .project
+                .types
+                .get(self.source.project.types.canonical(owner)?)?
+            else {
+                unreachable!()
+            };
+            let payload = variants[variant].payload;
+            let mut elements = Vec::new();
+            for arg in args {
+                elements.push(self.value_expression(state, arg)?);
+            }
+            let fields = if let Some(payload) = payload {
+                vec![self.instruction(
+                    state,
+                    InstructionKind::Aggregate { elements },
+                    self.source.value_type(payload, expr.span)?,
+                )?]
+            } else {
+                vec![]
+            };
+            return self.instruction(
+                state,
+                InstructionKind::Enum { variant, fields },
+                self.source.expression_type(expr)?,
+            );
         }
         if self.is_place(expr) {
             let address = self.place(state, expr)?;
@@ -1003,6 +1086,10 @@ impl Lowerer<'_, '_, '_> {
                 S::ExpressionStatement(expression) => {
                     self.expression_statement(&mut state, expression)?;
                 }
+                S::Switch { subject, arms } => {
+                    current = self.switch(state, subject, arms)?;
+                    continue;
+                }
                 S::While { condition, body } => {
                     current = self.while_loop(state, condition.as_ref(), body, node.span)?;
                     continue;
@@ -1044,6 +1131,180 @@ impl Lowerer<'_, '_, '_> {
             current = Some(state);
         }
         Ok(current)
+    }
+    fn switch(
+        &mut self,
+        mut state: State,
+        subject: &Expression,
+        arms: &[SwitchArm],
+    ) -> anyhow::Result<Option<State>> {
+        let value = self.value_expression(&mut state, subject)?;
+        let tag = self.instruction(
+            &state,
+            InstructionKind::EnumTag { value },
+            scalar_id(&BuiltinType::UInt32),
+        )?;
+        let ty = subject.annotation.resolved.expect("validated switch").ty;
+        let SemanticType::Enum(variants) = self
+            .source
+            .project
+            .types
+            .get(self.source.project.types.canonical(ty)?)?
+        else {
+            unreachable!()
+        };
+        let mut cases = Vec::new();
+        let mut default = None;
+        let mut branches = Vec::new();
+        for arm in arms {
+            let block = self.builder.create_block(&[])?;
+            match &arm.pattern {
+                Pattern::EnumVariant { member, .. } => {
+                    let MemberKind::EnumVariant(index) =
+                        member.resolved.expect("validated pattern").kind
+                    else {
+                        unreachable!()
+                    };
+                    let constant = self
+                        .constants
+                        .iter()
+                        .position(|c| {
+                            c.ty == scalar_id(&BuiltinType::UInt32)
+                                && c.kind
+                                    == (ConstantKind::Integer {
+                                        bits: index as u128,
+                                    })
+                        })
+                        .expect("prepared enum tag");
+                    cases.push(SwitchCase {
+                        value: ConstantId(constant),
+                        edge: Edge {
+                            target: block,
+                            args: vec![],
+                        },
+                    });
+                }
+                Pattern::Wildcard => {
+                    default = Some(Edge {
+                        target: block,
+                        args: vec![],
+                    })
+                }
+            }
+            branches.push((block, arm));
+        }
+        let mut continuing = Vec::new();
+        let default = match default {
+            Some(edge) => edge,
+            None => {
+                let block = self.builder.create_block(&[])?;
+                if cases.len() == variants.len() {
+                    self.builder
+                        .set_terminator(block, Terminator::Unreachable)?;
+                } else {
+                    continuing.push(State {
+                        block,
+                        locals: state.locals.clone(),
+                    });
+                }
+                Edge {
+                    target: block,
+                    args: vec![],
+                }
+            }
+        };
+        self.builder.set_terminator(
+            state.block,
+            Terminator::Switch {
+                subject: tag,
+                cases,
+                default,
+            },
+        )?;
+        for (block, arm) in branches {
+            let branch = State {
+                block,
+                locals: state.locals.clone(),
+            };
+            if let Pattern::EnumVariant {
+                member,
+                binding: Some(binding),
+                ..
+            } = &arm.pattern
+            {
+                let MemberKind::EnumVariant(index) =
+                    member.resolved.expect("validated pattern").kind
+                else {
+                    unreachable!()
+                };
+                let Some(BindingId::Local(id)) = binding.annotation.binding else {
+                    return Err(self
+                        .source
+                        .error(subject.span, "missing pattern binding identity"));
+                };
+                let payload = self.instruction(
+                    &branch,
+                    InstructionKind::EnumField {
+                        value,
+                        variant: index as usize,
+                        field: 0,
+                    },
+                    self.source.value_type(
+                        variants[index as usize].payload.expect("validated payload"),
+                        subject.span,
+                    )?,
+                )?;
+                let address = self.slots[&id];
+                self.builder.append_instruction(
+                    block,
+                    InstructionKind::Store {
+                        address: Address(address),
+                        value: payload,
+                    },
+                    &[],
+                )?;
+            }
+            if let Some(mut next) = self.statements(&arm.body, branch)? {
+                next.locals.retain(|id, _| state.locals.contains_key(id));
+                continuing.push(next);
+            }
+        }
+        if continuing.is_empty() {
+            return Ok(None);
+        }
+        if continuing.len() == 1 {
+            return Ok(continuing.pop());
+        }
+        let locals = state.locals.keys().copied().collect::<Vec<_>>();
+        let types = locals
+            .iter()
+            .map(|id| {
+                self.source
+                    .value_type(self.source.project.types.locals[id], subject.span)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let join = self.builder.create_block(&types)?;
+        for branch in continuing {
+            self.builder.set_terminator(
+                branch.block,
+                Terminator::Jump(Edge {
+                    target: join,
+                    args: locals.iter().map(|id| branch.locals[id]).collect(),
+                }),
+            )?;
+        }
+        state.block = join;
+        state.locals = locals
+            .into_iter()
+            .zip(
+                self.builder
+                    .block_params(join)?
+                    .iter()
+                    .copied()
+                    .map(Operand::Value),
+            )
+            .collect();
+        Ok(Some(state))
     }
     fn scope(&mut self, nodes: &[Statement], state: State) -> anyhow::Result<Option<State>> {
         let visible = state.locals.clone();
@@ -1272,7 +1533,7 @@ impl Lowerer<'_, '_, '_> {
 }
 
 impl Source<'_> {
-    fn is_struct_local(&self, id: LocalId) -> anyhow::Result<bool> {
+    fn is_aggregate_local(&self, id: LocalId) -> anyhow::Result<bool> {
         let ty = self
             .project
             .types
@@ -1281,7 +1542,7 @@ impl Source<'_> {
             .ok_or_else(|| self.error(Span::new(1, 1), "missing local semantic type"))?;
         Ok(matches!(
             self.project.types.get(self.project.types.canonical(*ty)?)?,
-            SemanticType::Struct(_)
+            SemanticType::Struct(_) | SemanticType::Enum(_)
         ))
     }
 }

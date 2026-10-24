@@ -393,3 +393,62 @@ fn unsupported_struct_fields_and_dead_memory_syntax_fail_before_artifacts() {
         assert!(!plan.output.exists());
     }
 }
+
+#[test]
+fn enums_lower_to_verified_switches_and_payload_copies() {
+    use crate::ir::{InstructionKind, IrType, Terminator};
+    let (_directory, plan) = source(include_str!("../../samples/enum_runtime.fib"));
+    let project = run_frontend(&plan).unwrap();
+    let ir = crate::ir::lowering::lower(&project).unwrap();
+    crate::ir::verify_ir(&ir).unwrap();
+    assert!(
+        ir.types
+            .iter()
+            .any(|ty| matches!(ty, IrType::Enum { variants, .. } if variants.len() == 4))
+    );
+    assert!(
+        ir.blocks
+            .iter()
+            .any(|b| matches!(b.terminator, Terminator::Switch { .. }))
+    );
+    assert!(
+        ir.blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .any(|i| matches!(i.kind, InstructionKind::EnumField { .. }))
+    );
+    assert_eq!(
+        ir.to_string(),
+        crate::ir::lowering::lower(&project).unwrap().to_string()
+    );
+}
+
+#[test]
+fn enum_lowering_checks_unmatched_and_dead_arms() {
+    for text in [
+        "comp E: type = enum { A, B }; fn main() int32 { e := E.B; x := 42; switch(e) { when .A { x = 7; } }; return x; }",
+        "comp E: type = enum { A, B }; fn main() int32 { e := E.A; switch(e) { when .A {} when .B {} }; return 42; }",
+        "comp E: type = enum {}; fn impossible(e: E) int32 { switch(e) {}; } fn main() int32 { return 42; }",
+        "comp E: type = enum { Next { next: *E }, End }; fn main() int32 { e := E.End; return 42; }",
+    ] {
+        let (_directory, plan) = source(text);
+        crate::ir::lowering::lower(&run_frontend(&plan).unwrap()).unwrap();
+    }
+    for text in [
+        "comp E: type = enum { A, Bad { values: int32[2] } }; fn main() int32 { e := E.A; return 42; }",
+        "comp E: type = enum { A, B }; fn main() int32 { switch(E.A) { when .A {} when .B { data := [1, 2]; } }; return 42; }",
+        "comp E: type = enum { A }; fn main() int32 { x := 0; if false { switch(E.A) { when .A { defer x = 1; } }; }; return 42; }",
+    ] {
+        let (_directory, plan) = source(text);
+        let project = run_frontend(&plan).unwrap();
+        let error = crate::ir::lowering::lower(&project).unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<crate::diagnostics::CompilerError>()
+                .is_some(),
+            "{error:#}"
+        );
+        assert!(error.to_string().contains("unsupported"), "{error:#}");
+        assert!(!plan.output.exists());
+    }
+}
