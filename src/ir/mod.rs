@@ -20,7 +20,7 @@ mod verify;
 pub use builder::FunctionBuilder;
 pub use expressions::{Address, Constant, ConstantKind, Operand, Value, ValueDefinition};
 pub use instruction::{BinaryOp, CastKind, Instruction, InstructionKind, UnaryOp};
-pub use statements::{BasicBlock, Edge, SwitchCase, Terminator};
+pub use statements::{BasicBlock, Edge, SwitchCase, Terminator, TrapReason};
 pub use types::{CallingConvention, EnumVariant, FloatWidth, IntegerWidth, IrType, Signature};
 pub use verify::verify_ir;
 

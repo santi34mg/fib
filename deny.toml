@@ -4,3 +4,8 @@ allow = [
     "MIT",
     "Unicode-3.0",
 ]
+
+# LLVM's software floating-point implementation supplies exact IEEE semantics.
+[[licenses.exceptions]]
+name = "rustc_apfloat"
+allow = ["Apache-2.0 WITH LLVM-exception"]

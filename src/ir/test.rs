@@ -576,3 +576,84 @@ fn comparisons_validate_operands_and_boolean_result() {
         }
     }
 }
+
+#[test]
+fn numeric_instruction_signatures_and_traps_are_verified() {
+    let mut ir = declaration_ir();
+    ir.types
+        .extend([IrType::Float(FloatWidth::F32), IrType::Bool]);
+    ir.constants.extend([
+        Constant {
+            ty: TypeId(1),
+            kind: ConstantKind::Float { bits: 0x3f800000 },
+        },
+        Constant {
+            ty: TypeId(2),
+            kind: ConstantKind::Bool(true),
+        },
+    ]);
+    let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let entry = b.create_block(&[]).unwrap();
+    let float = b
+        .append_instruction(
+            entry,
+            InstructionKind::Cast {
+                kind: CastKind::Numeric,
+                operand: Operand::Constant(ConstantId(0)),
+            },
+            &[TypeId(1)],
+        )
+        .unwrap()[0];
+    let sum = b
+        .append_instruction(
+            entry,
+            InstructionKind::Binary {
+                op: BinaryOp::Add,
+                lhs: Operand::Value(float),
+                rhs: Operand::Constant(ConstantId(1)),
+            },
+            &[TypeId(1)],
+        )
+        .unwrap()[0];
+    b.append_instruction(
+        entry,
+        InstructionKind::Unary {
+            op: UnaryOp::Neg,
+            operand: Operand::Value(sum),
+        },
+        &[TypeId(1)],
+    )
+    .unwrap();
+    b.set_terminator(entry, Terminator::Trap(TrapReason::InvalidFloatToInteger))
+        .unwrap();
+    b.finish(entry).unwrap();
+    assert!(ir.to_string().contains("InvalidFloatToInteger"));
+    for change in 0..6 {
+        let mut bad = ir.clone();
+        match change {
+            0 => bad.constants[1].kind = ConstantKind::Float { bits: 1u128 << 32 },
+            1 => {
+                bad.blocks[0].instructions[0].kind = InstructionKind::Cast {
+                    kind: CastKind::Numeric,
+                    operand: Operand::Constant(ConstantId(2)),
+                }
+            }
+            2 => bad.values[float.0].ty = TypeId(2),
+            3 => {
+                if let InstructionKind::Binary { op, .. } = &mut bad.blocks[0].instructions[1].kind
+                {
+                    *op = BinaryOp::Rem;
+                }
+            }
+            4 => {
+                bad.blocks[0].instructions[2].kind = InstructionKind::Unary {
+                    op: UnaryOp::Not,
+                    operand: Operand::Value(sum),
+                }
+            }
+            5 => bad.constants[1].kind = ConstantKind::Integer { bits: 1 },
+            _ => unreachable!(),
+        }
+        assert!(verify_ir(&bad).is_err(), "corruption {change}");
+    }
+}

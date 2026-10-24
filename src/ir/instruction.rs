@@ -15,7 +15,10 @@ pub enum InstructionKind {
     Constant(ConstantId),
     /// Arithmetic/bitwise operands have the same type; comparisons return Bool.
     /// Signedness and float semantics come from the operand types, not the
-    /// result type (which may be Bool).
+    /// result type (which may be Bool). Integer arithmetic wraps; division by
+    /// zero and invalid shift counts trap. Signed MIN/-1 wraps, MIN%-1 is zero.
+    /// Shift counts may have a different integer type and are checked before
+    /// conversion to the left width. Float operations use IEEE nearest/ties-even.
     Binary {
         op: BinaryOp,
         lhs: Operand,
@@ -26,6 +29,9 @@ pub enum InstructionKind {
         operand: Operand,
     },
     /// Source type comes from the operand; destination from the result value.
+    /// Numeric integer casts retain low bits or extend using source signedness.
+    /// Float-to-integer truncates toward zero and traps on nonfinite or out-of-
+    /// range results. Other numeric conversions round to nearest, ties to even.
     Cast {
         kind: CastKind,
         operand: Operand,

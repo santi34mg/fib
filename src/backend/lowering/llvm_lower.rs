@@ -124,7 +124,7 @@ pub(super) fn emit_classified(
 ) -> Result<LlvmArtifact, BackendError> {
     super::ir_lower::verify_input(ir)?;
     use crate::ir::*;
-    use inkwell::context::Context;
+    use inkwell::{context::Context, types::BasicTypeEnum, values::BasicValueEnum};
     let context = Context::create();
     let module = context.create_module("fib");
     let machine = machine(target)?;
@@ -134,11 +134,18 @@ pub(super) fn emit_classified(
         .types
         .iter()
         .map(|ty| match ty {
-            IrType::Bool => Ok(context.bool_type()),
+            IrType::Bool => Ok(BasicTypeEnum::from(context.bool_type())),
             IrType::Integer {
                 width: IntegerWidth::Bits(width),
                 ..
-            } => Ok(context.custom_width_int_type(u32::from(*width))),
+            } => Ok(context.custom_width_int_type(u32::from(*width)).into()),
+            IrType::Float(width) => Ok(match width {
+                FloatWidth::F16 => context.f16_type(),
+                FloatWidth::F32 => context.f32_type(),
+                FloatWidth::F64 => context.f64_type(),
+                FloatWidth::F128 => context.f128_type(),
+            }
+            .into()),
             _ => Err(error("unsupported LLVM type")),
         })
         .collect::<Result<_, _>>()?;
@@ -162,17 +169,26 @@ pub(super) fn emit_classified(
         .enumerate()
         .map(|(i, f)| abi.declare(&module, FunctionId(i), f))
         .collect::<Result<Vec<_>, _>>()?;
-    let constants: Vec<_> = ir
+    let constants: Vec<BasicValueEnum<'_>> = ir
         .constants
         .iter()
         .map(|c| match c.kind {
-            ConstantKind::Bool(b) => types[c.ty.0].const_int(u64::from(b), false),
-            ConstantKind::Integer { bits } => {
-                types[c.ty.0].const_int_arbitrary_precision(&[bits as u64, (bits >> 64) as u64])
-            }
-            _ => unreachable!("verified scalar constant"),
+            ConstantKind::Bool(b) => Ok(types[c.ty.0]
+                .into_int_type()
+                .const_int(u64::from(b), false)
+                .into()),
+            ConstantKind::Integer { bits } => Ok(types[c.ty.0]
+                .into_int_type()
+                .const_int_arbitrary_precision(&[bits as u64, (bits >> 64) as u64])
+                .into()),
+            ConstantKind::Float { bits } => Ok(super::llvm_scalar::float_constant(
+                types[c.ty.0].into_float_type(),
+                bits,
+            )
+            .into()),
+            _ => Err(error("unsupported LLVM constant")),
         })
-        .collect();
+        .collect::<Result<_, BackendError>>()?;
     let builder = context.create_builder();
     for (fi, f) in ir.functions.iter().enumerate() {
         let FunctionBody::Definition { entry, blocks, .. } = &f.body else {
@@ -208,7 +224,7 @@ pub(super) fn emit_classified(
                         &format!("v{}", parameter.0),
                     )
                     .map_err(error)?;
-                values.insert(parameter, phi.as_basic_value().into_int_value());
+                values.insert(parameter, phi.as_basic_value());
                 phis.insert(parameter, phi);
             }
         }
@@ -225,18 +241,42 @@ pub(super) fn emit_classified(
                     InstructionKind::Binary { op, lhs, rhs } => {
                         let ty = ir
                             .operand_type(*lhs)
-                            .ok_or_else(|| error("missing comparison operand type"))?;
-                        let signed =
-                            matches!(ir.get_type(ty), Some(IrType::Integer { signed: true, .. }));
-                        let predicate = comparison_predicate(*op, signed)?;
-                        let value = builder
-                            .build_int_compare(
-                                predicate,
-                                operand(*lhs, &constants, &values)?,
-                                operand(*rhs, &constants, &values)?,
-                                "compare",
-                            )
-                            .map_err(error)?;
+                            .ok_or_else(|| error("missing scalar operand type"))?;
+                        let rhs_ty = ir
+                            .operand_type(*rhs)
+                            .ok_or_else(|| error("missing scalar operand type"))?;
+                        let value = super::llvm_scalar::binary(
+                            &builder,
+                            &module,
+                            *op,
+                            &ir.types[ty.0],
+                            &ir.types[rhs_ty.0],
+                            operand(*lhs, &constants, &values)?,
+                            operand(*rhs, &constants, &values)?,
+                        )?;
+                        values.insert(inst.results[0], value);
+                    }
+                    InstructionKind::Unary { op, operand: value } => {
+                        let value = super::llvm_scalar::unary(
+                            &builder,
+                            *op,
+                            operand(*value, &constants, &values)?,
+                        )?;
+                        values.insert(inst.results[0], value);
+                    }
+                    InstructionKind::Cast { operand: value, .. } => {
+                        let source_ty = ir
+                            .operand_type(*value)
+                            .ok_or_else(|| error("missing cast source type"))?;
+                        let dest = ir.values[inst.results[0].0].ty;
+                        let value = super::llvm_scalar::cast(
+                            &builder,
+                            &module,
+                            &ir.types[source_ty.0],
+                            &ir.types[dest.0],
+                            types[dest.0],
+                            operand(*value, &constants, &values)?,
+                        )?;
                         values.insert(inst.results[0], value);
                     }
                     InstructionKind::Call { callee, args } => {
@@ -253,6 +293,10 @@ pub(super) fn emit_classified(
                     _ => return Err(error("unsupported LLVM instruction")),
                 }
             }
+            // Scalar guards may split an LLVM block; PHIs need its final predecessor.
+            let predecessor = builder
+                .get_insert_block()
+                .ok_or_else(|| error("missing insertion block"))?;
             match &block.terminator {
                 Terminator::Return { values: result } => {
                     let value = result
@@ -261,6 +305,7 @@ pub(super) fn emit_classified(
                         .transpose()?;
                     abi.return_value(&builder, function_id, value)?;
                 }
+                Terminator::Trap(reason) => super::llvm_scalar::trap(&builder, &module, *reason)?,
                 Terminator::Unreachable => {
                     builder.build_unreachable().map_err(error)?;
                 }
@@ -275,7 +320,7 @@ pub(super) fn emit_classified(
                     then_edge,
                     else_edge,
                 } => {
-                    let condition = operand(*condition, &constants, &values)?;
+                    let condition = operand(*condition, &constants, &values)?.into_int_value();
                     if then_edge.target == else_edge.target {
                         // Each successor occurrence needs its own LLVM predecessor
                         // when the two arms supply different values to one PHI.
@@ -333,9 +378,9 @@ pub(super) fn emit_classified(
 #[cfg(feature = "llvm")]
 fn operand<'ctx>(
     op: crate::ir::Operand,
-    constants: &[inkwell::values::IntValue<'ctx>],
-    values: &std::collections::HashMap<crate::ir::ValueId, inkwell::values::IntValue<'ctx>>,
-) -> Result<inkwell::values::IntValue<'ctx>, BackendError> {
+    constants: &[inkwell::values::BasicValueEnum<'ctx>],
+    values: &std::collections::HashMap<crate::ir::ValueId, inkwell::values::BasicValueEnum<'ctx>>,
+) -> Result<inkwell::values::BasicValueEnum<'ctx>, BackendError> {
     match op {
         crate::ir::Operand::Constant(id) => constants
             .get(id.0)
@@ -376,32 +421,10 @@ fn reverse_postorder(
                 pending.push((else_edge.target, false));
                 pending.push((then_edge.target, false));
             }
-            Terminator::Return { .. } | Terminator::Unreachable => (),
+            Terminator::Return { .. } | Terminator::Trap(_) | Terminator::Unreachable => (),
             _ => return Err(error("unsupported CFG terminator")),
         }
     }
     order.reverse();
     Ok(order)
-}
-
-#[cfg(feature = "llvm")]
-fn comparison_predicate(
-    op: crate::ir::BinaryOp,
-    signed: bool,
-) -> Result<inkwell::IntPredicate, BackendError> {
-    use crate::ir::BinaryOp;
-    use inkwell::IntPredicate as P;
-    Ok(match (op, signed) {
-        (BinaryOp::Eq, _) => P::EQ,
-        (BinaryOp::Ne, _) => P::NE,
-        (BinaryOp::Lt, true) => P::SLT,
-        (BinaryOp::Lt, false) => P::ULT,
-        (BinaryOp::Le, true) => P::SLE,
-        (BinaryOp::Le, false) => P::ULE,
-        (BinaryOp::Gt, true) => P::SGT,
-        (BinaryOp::Gt, false) => P::UGT,
-        (BinaryOp::Ge, true) => P::SGE,
-        (BinaryOp::Ge, false) => P::UGE,
-        _ => return Err(error("unsupported binary operator")),
-    })
 }

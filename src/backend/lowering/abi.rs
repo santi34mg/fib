@@ -12,6 +12,7 @@ pub struct AbiTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhysicalConvention {
     C,
+    FibScalar,
 }
 
 /// Direct scalar boundary mapping. Positions map logical arguments to physical
@@ -45,6 +46,7 @@ impl FunctionAbi {
                 types.get(ty.0),
                 Some(
                     IrType::Bool
+                        | IrType::Float(_)
                         | IrType::Integer {
                             width: IntegerWidth::Bits(1..=128),
                             ..
@@ -112,9 +114,19 @@ pub fn classify_signature(
 ) -> Result<FunctionAbi, BackendError> {
     match signature.calling_convention {
         CallingConvention::C => CScalar.classify(signature, types, target),
-        CallingConvention::Fib => Err(BackendError::NotImplemented {
-            operation: "Fib ABI classification",
-        }),
+        CallingConvention::Fib => {
+            if target.triple.is_empty() || target.data_layout.is_empty() {
+                return Err(failure("ABI classification requires a resolved target"));
+            }
+            let abi = FunctionAbi {
+                parameters: signature.params.clone(),
+                parameter_positions: (0..signature.params.len()).collect(),
+                result: signature.results.first().copied(),
+                convention: PhysicalConvention::FibScalar,
+            };
+            abi.validate(signature, types)?;
+            Ok(abi)
+        }
     }
 }
 

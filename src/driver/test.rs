@@ -59,7 +59,6 @@ fn frontend_and_ir_pipeline_preserve_file_identity() {
 fn unsupported_programs_and_invalid_analysis_fail_before_artifacts() {
     for text in [
         "fn main() int32 { x: int32; x = 42; return x; }",
-        "fn main() int32 { return 20 + 22; }",
         "fn main() int64 { return 42; }",
         "fn other() int32 { return 42; }",
     ] {
@@ -122,9 +121,8 @@ fn helpers_conditionals_and_mutable_locals_lower_to_verified_ssa() {
 fn scalar_subset_rejections_are_located_backend_diagnostics_even_in_dead_code() {
     use crate::diagnostics::{CompilerError, ErrorKind};
     for text in [
-        "fn main() int32 { return 20 + 22; }",
         "fn main() int32 { x: int32; x = 42; return x; }",
-        "fn main() int32 { if false { x := 1 + 2; }; return 42; }",
+        "fn main() int32 { if false { x := [1, 2]; }; return 42; }",
         "fn main() int32 { while (false) { }; return 42; }",
         "fn main() int32 { comp T: type = int32; return 42; }",
         "fn main() int32 { x, y := 1, 2; return x; }",

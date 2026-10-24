@@ -582,3 +582,5 @@ mod walk;
 
 #[cfg(test)]
 mod test;
+
+pub(crate) use constant::evaluate_numeric;

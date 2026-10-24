@@ -249,13 +249,12 @@ mod tests {
         let ast = get_ast(test_string);
         let stmts = module_statements(&ast);
         assert_eq!(stmts.len(), 1);
-        assert!(matches!(
-            stmts[0],
-            StatementKind::ExpressionStatement(Expression {
-                kind: ExpressionKind::Literal(Literal::Integer(1)),
+        assert!(
+            matches!(&stmts[0], StatementKind::ExpressionStatement(Expression {
+                kind: ExpressionKind::Literal(Literal::Integer(value)),
                 ..
-            })
-        ));
+            }) if value == &num_bigint::BigUint::from(1u64))
+        );
     }
 
     #[test]
@@ -277,20 +276,14 @@ mod tests {
             let l_expr = *left.clone();
             let op = operator;
             let r_expr = *right.clone();
-            assert!(matches!(
-                l_expr,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+            assert!(matches!(&l_expr, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
-            assert!(matches!(
-                r_expr,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                } if value == &num_bigint::BigUint::from(1u64)));
+            assert!(matches!(&r_expr, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
+                } if value == &num_bigint::BigUint::from(2u64)));
             assert!(matches!(op, Operator::Plus));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -316,20 +309,14 @@ mod tests {
             let l_expr = *left.clone();
             let op = operator;
             let r_expr = *right.clone();
-            assert!(matches!(
-                l_expr,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+            assert!(matches!(&l_expr, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
-            assert!(matches!(
-                r_expr,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                } if value == &num_bigint::BigUint::from(1u64)));
+            assert!(matches!(&r_expr, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
+                } if value == &num_bigint::BigUint::from(2u64)));
             assert!(matches!(op, Operator::Minus));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -355,20 +342,14 @@ mod tests {
             let l_expr = *left.clone();
             let op = operator;
             let r_expr = *right.clone();
-            assert!(matches!(
-                l_expr,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+            assert!(matches!(&l_expr, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
-            assert!(matches!(
-                r_expr,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                } if value == &num_bigint::BigUint::from(1u64)));
+            assert!(matches!(&r_expr, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
+                } if value == &num_bigint::BigUint::from(2u64)));
             assert!(matches!(op, Operator::Star));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -394,20 +375,14 @@ mod tests {
             let l_expr = *left.clone();
             let op = operator;
             let r_expr = *right.clone();
-            assert!(matches!(
-                l_expr,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+            assert!(matches!(&l_expr, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
-            assert!(matches!(
-                r_expr,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+                } if value == &num_bigint::BigUint::from(1u64)));
+            assert!(matches!(&r_expr, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
+                } if value == &num_bigint::BigUint::from(2u64)));
             assert!(matches!(op, Operator::Slash));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -440,13 +415,10 @@ mod tests {
                     ..
                 }
             ));
-            assert!(matches!(
-                r_expr,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+            assert!(matches!(&r_expr, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
+                } if value == &num_bigint::BigUint::from(2u64)));
             assert!(matches!(op, Operator::Plus));
         } else {
             panic!("AST statement did not match expected Expression");
@@ -468,12 +440,13 @@ mod tests {
                 }),
             expression:
                 Some(Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(0)),
+                    kind: ExpressionKind::Literal(Literal::Integer(zero)),
                     ..
                 }),
             ..
         }) = stmts[0]
         {
+            assert_eq!(zero, &num_bigint::BigUint::from(0u8));
             assert_eq!(identifier, "count");
         } else {
             panic!("unexpected AST: {:#?}", stmts[0]);
@@ -571,12 +544,13 @@ mod tests {
                 }),
             expression:
                 Some(Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(0)),
+                    kind: ExpressionKind::Literal(Literal::Integer(zero)),
                     ..
                 }),
             ..
         }) = stmts[0]
         {
+            assert_eq!(zero, &num_bigint::BigUint::from(0u8));
             assert_eq!(identifier, "count");
         } else {
             panic!("unexpected AST: {:#?}", stmts[0]);
@@ -594,12 +568,13 @@ mod tests {
             ty: None,
             expression:
                 Some(Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(0)),
+                    kind: ExpressionKind::Literal(Literal::Integer(zero)),
                     ..
                 }),
             ..
         }) = stmts[0]
         {
+            assert_eq!(zero, &num_bigint::BigUint::from(0u8));
             assert_eq!(identifier, "count");
         } else {
             panic!("unexpected AST: {:#?}", stmts[0]);
@@ -753,7 +728,7 @@ mod tests {
             &body.statements[0].kind,
             StatementKind::Return(Some(exprs))
                 if exprs.len() == 1
-                    && matches!(exprs[0], Expression { kind: ExpressionKind::Literal(Literal::Integer(42)), .. })
+                    && matches!(&exprs[0], Expression { kind: ExpressionKind::Literal(Literal::Integer(value)), .. } if value == &num_bigint::BigUint::from(42u64))
         ));
     }
 
@@ -839,10 +814,9 @@ mod tests {
             );
             assert_eq!(fields.len(), 1);
             assert_eq!(fields[0].field_identifier, "my_field");
-            assert!(matches!(
-                fields[0].expression.kind,
-                ExpressionKind::Literal(Literal::Integer(10))
-            ));
+            assert!(
+                matches!(&fields[0].expression.kind, ExpressionKind::Literal(Literal::Integer(value)) if value == &num_bigint::BigUint::from(10u64))
+            );
             assert!(matches!(
                 then_branch.as_slice(),
                 [crate::frontend::ast::statement::Statement {
@@ -1374,13 +1348,10 @@ mod tests {
         }) = stmts[0]
         {
             assert!(matches!(operator, Operator::Plus));
-            assert!(matches!(
-                **left,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+            assert!(matches!(&**left, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
+                } if value == &num_bigint::BigUint::from(1u64)));
             assert!(matches!(
                 **right,
                 Expression {
@@ -1502,13 +1473,10 @@ mod tests {
         }) = stmts[0]
         {
             assert!(matches!(operator, Operator::Minus));
-            assert!(matches!(
-                **right,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(2)),
+            assert!(matches!(&**right, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
+                } if value == &num_bigint::BigUint::from(2u64)));
             assert!(matches!(
                 **left,
                 Expression {
@@ -1537,13 +1505,10 @@ mod tests {
         }) = stmts[0]
         {
             assert!(matches!(operator, Operator::LeftShift));
-            assert!(matches!(
-                **left,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(1)),
+            assert!(matches!(&**left, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
+                } if value == &num_bigint::BigUint::from(1u64)));
             if let Expression {
                 kind:
                     ExpressionKind::BinaryExpresison(BinaryExpression {
@@ -1617,13 +1582,10 @@ mod tests {
         }) = stmts[0]
         {
             assert!(matches!(operator, Operator::DoubleEquals));
-            assert!(matches!(
-                **right,
-                Expression {
-                    kind: ExpressionKind::Literal(Literal::Integer(3)),
+            assert!(matches!(&**right, Expression {
+                    kind: ExpressionKind::Literal(Literal::Integer(value)),
                     ..
-                }
-            ));
+                } if value == &num_bigint::BigUint::from(3u64)));
             assert!(matches!(
                 **left,
                 Expression {
@@ -1710,10 +1672,9 @@ mod tests {
         assert_eq!(struct_name.segments[0], "MyStruct");
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].field_identifier, "my_field");
-        assert!(matches!(
-            fields[0].expression.kind,
-            ExpressionKind::Literal(Literal::Integer(10))
-        ));
+        assert!(
+            matches!(&fields[0].expression.kind, ExpressionKind::Literal(Literal::Integer(value)) if value == &num_bigint::BigUint::from(10u64))
+        );
     }
 
     #[test]
@@ -1767,7 +1728,10 @@ mod tests {
                     assert_eq!(name.segments, ["Color"]);
                     assert_eq!(accessed_identifier, "Red");
                     assert_eq!(args.len(), 1);
-                    assert_eq!(args[0].kind, ExpressionKind::Literal(Literal::Integer(1)));
+                    assert_eq!(
+                        args[0].kind,
+                        ExpressionKind::Literal(Literal::Integer(1u64.into()))
+                    );
                 } else {
                     panic!("unexpected callee: {:#?}", callee);
                 }
@@ -2038,10 +2002,9 @@ mod tests {
         else {
             panic!("expected continued comparison: {condition:#?}");
         };
-        assert!(matches!(
-            right.kind,
-            ExpressionKind::Literal(Literal::Integer(1))
-        ));
+        assert!(
+            matches!(&right.kind, ExpressionKind::Literal(Literal::Integer(value)) if value == &num_bigint::BigUint::from(1u64))
+        );
         let ExpressionKind::ExprAcess {
             expr,
             accessed_identifier,
@@ -2070,7 +2033,7 @@ mod tests {
         assert_eq!(struct_name.segments[0], "Box");
         assert_eq!(fields[0].field_identifier, "item");
         assert!(
-            matches!(&fields[0].expression.kind, ExpressionKind::StructConstruct { struct_identifier, fields } if struct_identifier.segments[0] == "Inner" && matches!(fields.as_slice(), [field] if field.field_identifier == "value" && matches!(field.expression.kind, ExpressionKind::Literal(Literal::Integer(1)))))
+            matches!(&fields[0].expression.kind, ExpressionKind::StructConstruct { struct_identifier, fields } if struct_identifier.segments[0] == "Inner" && matches!(fields.as_slice(), [field] if field.field_identifier == "value" && matches!(&field.expression.kind, ExpressionKind::Literal(Literal::Integer(value)) if value == &num_bigint::BigUint::from(1u64))))
         );
         assert_eq!(then_branch.len(), 1);
         let [inner] = otherwise.as_slice() else {
@@ -2113,7 +2076,7 @@ mod tests {
                 "{source}"
             );
             assert!(
-                matches!(&right.kind, ExpressionKind::BinaryExpresison(BinaryExpression { left, operator: actual, right }) if *actual == operator && matches!(&left.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["x"]) && matches!(right.kind, ExpressionKind::Literal(Literal::Integer(2)))),
+                matches!(&right.kind, ExpressionKind::BinaryExpresison(BinaryExpression { left, operator: actual, right }) if *actual == operator && matches!(&left.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["x"]) && matches!(&right.kind, ExpressionKind::Literal(Literal::Integer(value)) if value == &num_bigint::BigUint::from(2u64))),
                 "{source}: {right:#?}"
             );
         }
@@ -2135,10 +2098,9 @@ mod tests {
         assert!(
             matches!(&index.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["i"])
         );
-        assert!(matches!(
-            right.kind,
-            ExpressionKind::Literal(Literal::Integer(5))
-        ));
+        assert!(
+            matches!(&right.kind, ExpressionKind::Literal(Literal::Integer(value)) if value == &num_bigint::BigUint::from(5u64))
+        );
     }
 
     #[test]
@@ -2339,7 +2301,7 @@ mod tests {
             }
             kinds.extend([
                 TokenKind::Operator(Operator::Def),
-                TokenKind::Literal(Literal::Integer(1)),
+                TokenKind::Literal(Literal::Integer(1u64.into())),
                 TokenKind::Punctuation(Punctuation::Semicolon),
             ]);
             let tokens = kinds.into_iter().map(|kind| Token::new(kind, 1, 1));

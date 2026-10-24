@@ -19,7 +19,7 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
     }
     for ty in &ir.types {
         match ty {
-            IrType::Bool | IrType::Bytes => (),
+            IrType::Bool | IrType::Bytes | IrType::Float(_) => (),
             IrType::Integer {
                 width: IntegerWidth::Bits(bits),
                 ..
@@ -43,6 +43,18 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                 *width == 128 || *bits < (1u128 << width),
                 "integer constant exceeds width",
             )?,
+            (ConstantKind::Float { bits }, Some(IrType::Float(width))) => {
+                let width = match width {
+                    FloatWidth::F16 => 16,
+                    FloatWidth::F32 => 32,
+                    FloatWidth::F64 => 64,
+                    FloatWidth::F128 => 128,
+                };
+                require(
+                    width == 128 || *bits < (1u128 << width),
+                    "float constant exceeds width",
+                )?;
+            }
             _ => {
                 return Err(IrError::Invalid {
                     message: "constant does not match type",
@@ -225,15 +237,78 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                         let rhs = operand(*rhs, position)?;
                         require(lhs == rhs, "comparison operand type mismatch")?;
                         require(
-                            matches!(ir.get_type(lhs), Some(IrType::Integer { .. }))
-                                || (matches!(ir.get_type(lhs), Some(IrType::Bool))
-                                    && matches!(op, BinaryOp::Eq | BinaryOp::Ne)),
+                            matches!(
+                                ir.get_type(lhs),
+                                Some(IrType::Integer { .. } | IrType::Float(_))
+                            ) || (matches!(ir.get_type(lhs), Some(IrType::Bool))
+                                && matches!(op, BinaryOp::Eq | BinaryOp::Ne)),
                             "invalid comparison operand type",
                         )?;
                         require(
                             results.len() == 1
                                 && matches!(ir.get_type(results[0]), Some(IrType::Bool)),
                             "comparison requires one Bool result",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::Binary { op, lhs, rhs } => {
+                        let lhs = operand(*lhs, position)?;
+                        let rhs = operand(*rhs, position)?;
+                        let integer = matches!(ir.get_type(lhs), Some(IrType::Integer { .. }));
+                        let shift = matches!(op, BinaryOp::Shl | BinaryOp::Shr);
+                        require(
+                            if shift {
+                                integer && matches!(ir.get_type(rhs), Some(IrType::Integer { .. }))
+                            } else {
+                                lhs == rhs
+                            },
+                            "binary operand type mismatch",
+                        )?;
+                        require(
+                            integer
+                                || (matches!(ir.get_type(lhs), Some(IrType::Float(_)))
+                                    && matches!(
+                                        op,
+                                        BinaryOp::Add
+                                            | BinaryOp::Sub
+                                            | BinaryOp::Mul
+                                            | BinaryOp::Div
+                                    )),
+                            "invalid arithmetic operand type",
+                        )?;
+                        vec![lhs]
+                    }
+                    InstructionKind::Unary { op, operand: value } => {
+                        let ty = operand(*value, position)?;
+                        require(
+                            match op {
+                                UnaryOp::Neg => matches!(
+                                    ir.get_type(ty),
+                                    Some(IrType::Integer { .. } | IrType::Float(_))
+                                ),
+                                UnaryOp::Not => matches!(
+                                    ir.get_type(ty),
+                                    Some(IrType::Integer { .. } | IrType::Bool)
+                                ),
+                            },
+                            "invalid unary operand type",
+                        )?;
+                        vec![ty]
+                    }
+                    InstructionKind::Cast {
+                        kind: CastKind::Numeric,
+                        operand: value,
+                    } => {
+                        let source = operand(*value, position)?;
+                        require(
+                            results.len() == 1
+                                && [source, results[0]].iter().all(|ty| {
+                                    matches!(
+                                        ir.get_type(*ty),
+                                        Some(IrType::Integer { .. } | IrType::Float(_))
+                                    )
+                                }),
+                            "invalid numeric cast",
                         )?;
                         results.clone()
                     }
@@ -284,7 +359,7 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                     ),
                     "branch requires bool",
                 )?,
-                Terminator::Jump(_) | Terminator::Unreachable => (),
+                Terminator::Jump(_) | Terminator::Trap(_) | Terminator::Unreachable => (),
                 Terminator::Switch { .. } => return Err(unsupported("verification of switch")),
             }
         }
@@ -303,7 +378,7 @@ fn edges(terminator: &Terminator) -> IrResult<Vec<&Edge>> {
             else_edge,
             ..
         } => vec![then_edge, else_edge],
-        Terminator::Return { .. } | Terminator::Unreachable => vec![],
+        Terminator::Return { .. } | Terminator::Trap(_) | Terminator::Unreachable => vec![],
         Terminator::Switch { .. } => return Err(unsupported("verification of switch")),
     })
 }

@@ -43,5 +43,14 @@ pub enum Terminator {
     Return {
         values: Vec<Operand>,
     },
+    Trap(TrapReason),
     Unreachable,
+}
+
+/// Defined failures of scalar operations, independent of backend implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrapReason {
+    DivisionByZero,
+    InvalidShift,
+    InvalidFloatToInteger,
 }

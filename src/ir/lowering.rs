@@ -4,7 +4,7 @@ use crate::{
     diagnostics::{CompilerError, ErrorKind, Span},
     frontend::{
         analysis_annotation::BindingId,
-        analyzer::{AnalyzedProject, known_boolean, validate_analysis},
+        analyzer::{AnalyzedProject, evaluate_numeric, known_boolean, validate_analysis},
         ast::{
             expression::{Expression, ExpressionKind as E},
             statement::{Statement, StatementKind as S},
@@ -17,9 +17,52 @@ use crate::{
     plan::FileId,
 };
 use std::collections::{BTreeMap, HashMap};
-const I32: TypeId = TypeId(0);
-const BOOL: TypeId = TypeId(1);
-const BYTES: TypeId = TypeId(2);
+const SCALARS: [BuiltinType; 16] = [
+    BuiltinType::Int32,
+    BuiltinType::Boolean,
+    BuiltinType::Int8,
+    BuiltinType::Int16,
+    BuiltinType::Int64,
+    BuiltinType::Int128,
+    BuiltinType::UInt8,
+    BuiltinType::UInt16,
+    BuiltinType::UInt32,
+    BuiltinType::UInt64,
+    BuiltinType::UInt128,
+    BuiltinType::Float16,
+    BuiltinType::Float32,
+    BuiltinType::Float64,
+    BuiltinType::Float128,
+    BuiltinType::String,
+];
+fn scalar_id(b: &BuiltinType) -> TypeId {
+    TypeId(
+        SCALARS
+            .iter()
+            .position(|ty| ty == b)
+            .expect("registered scalar"),
+    )
+}
+fn scalar_type(b: &BuiltinType) -> IrType {
+    use crate::numeric::NumericType;
+    match b {
+        BuiltinType::Boolean => IrType::Bool,
+        BuiltinType::String => IrType::Bytes,
+        _ => match NumericType::builtin(b).expect("registered scalar") {
+            NumericType::Integer { width, signed } => IrType::Integer {
+                width: IntegerWidth::Bits(width),
+                signed,
+            },
+            NumericType::Float(width) => IrType::Float(match width {
+                16 => FloatWidth::F16,
+                32 => FloatWidth::F32,
+                64 => FloatWidth::F64,
+                128 => FloatWidth::F128,
+                _ => unreachable!(),
+            }),
+        },
+    }
+}
 
 struct Source<'a> {
     project: &'a AnalyzedProject,
@@ -36,13 +79,11 @@ impl Source<'_> {
     }
     fn ir_type(&self, ty: SemanticId, span: Span) -> anyhow::Result<Option<TypeId>> {
         match self.project.types.get(self.project.types.canonical(ty)?)? {
-            SemanticType::Builtin(BuiltinType::Int32) => Ok(Some(I32)),
-            SemanticType::Builtin(BuiltinType::Boolean) => Ok(Some(BOOL)),
-            SemanticType::Builtin(BuiltinType::String) => Ok(Some(BYTES)),
             SemanticType::Builtin(BuiltinType::Void) => Ok(None),
+            SemanticType::Builtin(b) if SCALARS.contains(b) => Ok(Some(scalar_id(b))),
             _ => Err(self.error(
                 span,
-                "IR lowering supports only int32, bool, string, and void types",
+                "IR lowering supports only fixed-width numeric, bool, string, and void types",
             )),
         }
     }
@@ -89,7 +130,16 @@ impl Source<'_> {
     }
 }
 
-/// Lower the currently supported analyzed-source subset through one common path.
+/// Lowers the validated, analyzed source subset into owned SSA IR.
+///
+/// This entry point requires exactly one source unit. It first registers builtin
+/// and user function identities so calls can refer to later declarations, then
+/// checks supported constructs and gathers constants before building function
+/// bodies. The resulting IR is verified before it is returned.
+///
+/// Unsupported declarations, expressions, or statements produce a diagnostic
+/// associated with their source span. Functions that can reach their end must
+/// have no return values; value-returning functions must return explicitly.
 pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     validate_analysis(project)?;
     anyhow::ensure!(
@@ -97,13 +147,11 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         "IR lowering currently requires one source file"
     );
     let mut ir = Ir::new();
-    ir.types = vec![
-        IrType::Integer {
-            width: IntegerWidth::Bits(32),
-            signed: true,
-        },
-        IrType::Bool,
-    ];
+    ir.types = SCALARS[..scalar_id(&BuiltinType::String).0]
+        .iter()
+        .map(scalar_type)
+        .collect();
+    // NOTE: This conditional Bytes-type registration probably needs to be approached differently in the future.
     if !project.builtins.is_empty()
         || project
             .types
@@ -116,6 +164,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     let mut functions = HashMap::new();
     let mut declarations = Vec::new();
 
+    // Sort builtins to assign stable function IDs regardless of map iteration order.
     let mut builtins = project.builtins.iter().collect::<Vec<_>>();
     builtins.sort_by_key(|(declaration, _)| (declaration.file_id, declaration.index));
     for (&declaration, &builtin) in builtins {
@@ -137,6 +186,11 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         ir.builtin_functions.insert(function_id, builtin);
     }
 
+    let entry_name = if project.builtins.is_empty() {
+        "main"
+    } else {
+        "build"
+    };
     for unit in &project.units {
         let source = Source {
             project,
@@ -165,10 +219,19 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             if functions.insert(declaration, function_id).is_some() {
                 return Err(source.error(node.span, "duplicate lowered function identity"));
             }
+            let entry = signature.identifier == entry_name;
+            let mut lowered_signature = source.signature(declaration, node.span)?;
+            if !entry {
+                lowered_signature.calling_convention = CallingConvention::Fib;
+            }
             ir.functions.push(Function {
                 identifier: signature.identifier.clone(),
-                signature: source.signature(declaration, node.span)?,
-                linkage: Linkage::External,
+                signature: lowered_signature,
+                linkage: if entry {
+                    Linkage::External
+                } else {
+                    Linkage::Internal
+                },
                 body: FunctionBody::Declaration,
             });
             declarations.push((function_id, function, node.span, unit.source_file_id));
@@ -269,8 +332,18 @@ fn callee(expr: &Expression, functions: &HashMap<DeclId, FunctionId>) -> Option<
         None
     }
 }
-fn comparison(operator: Operator) -> Option<BinaryOp> {
+fn binary_op(operator: Operator) -> Option<BinaryOp> {
     Some(match operator {
+        Operator::Plus => BinaryOp::Add,
+        Operator::Minus => BinaryOp::Sub,
+        Operator::Star => BinaryOp::Mul,
+        Operator::Slash => BinaryOp::Div,
+        Operator::Percent => BinaryOp::Rem,
+        Operator::LeftShift => BinaryOp::Shl,
+        Operator::RightShift => BinaryOp::Shr,
+        Operator::Ampersand => BinaryOp::And,
+        Operator::Pipe => BinaryOp::Or,
+        Operator::Caret => BinaryOp::Xor,
         Operator::DoubleEquals => BinaryOp::Eq,
         Operator::Different => BinaryOp::Ne,
         Operator::LesserThan => BinaryOp::Lt,
@@ -280,38 +353,32 @@ fn comparison(operator: Operator) -> Option<BinaryOp> {
         _ => return None,
     })
 }
-fn literal(expr: &Expression) -> Option<Constant> {
-    match &expr.kind {
-        E::Literal(Literal::Integer(bits)) if *bits <= i32::MAX as u64 => Some(Constant {
-            ty: I32,
-            kind: ConstantKind::Integer {
-                bits: u128::from(*bits),
-            },
-        }),
+fn literal(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Constant>> {
+    if let Some(value) = evaluate_numeric(expr, &source.project.types)
+        .map_err(|e| source.error(expr.span, e.to_string()))?
+    {
+        let kind = match value.ty {
+            crate::numeric::NumericType::Integer { .. } => {
+                ConstantKind::Integer { bits: value.bits }
+            }
+            crate::numeric::NumericType::Float(_) => ConstantKind::Float { bits: value.bits },
+        };
+        return Ok(Some(Constant {
+            ty: source.expression_type(expr)?,
+            kind,
+        }));
+    }
+    Ok(match &expr.kind {
         E::Literal(Literal::Boolean(value)) => Some(Constant {
-            ty: BOOL,
+            ty: source.expression_type(expr)?,
             kind: ConstantKind::Bool(*value),
         }),
         E::Literal(Literal::String(value)) => Some(Constant {
-            ty: BYTES,
+            ty: source.expression_type(expr)?,
             kind: ConstantKind::Bytes(value.as_bytes().to_vec()),
         }),
-        E::UnaryExpression(unary) if unary.operator == Operator::Minus => {
-            if let E::Literal(Literal::Integer(bits)) = unary.expression.kind
-                && bits <= 1u64 << 31
-            {
-                Some(Constant {
-                    ty: I32,
-                    kind: ConstantKind::Integer {
-                        bits: u128::from(0u32.wrapping_sub(bits as u32)),
-                    },
-                })
-            } else {
-                None
-            }
-        }
         _ => None,
-    }
+    })
 }
 struct Checker<'a, 'p> {
     source: &'a Source<'p>,
@@ -321,7 +388,7 @@ struct Checker<'a, 'p> {
 impl Checker<'_, '_> {
     fn expression(&mut self, expr: &Expression) -> anyhow::Result<()> {
         self.source.expression_type(expr)?;
-        if let Some(constant) = literal(expr) {
+        if let Some(constant) = literal(self.source, expr)? {
             if !self
                 .constants
                 .iter()
@@ -342,7 +409,19 @@ impl Checker<'_, '_> {
                 }
                 Ok(())
             }
-            E::BinaryExpresison(binary) if comparison(binary.operator).is_some() => {
+            E::UnaryExpression(unary)
+                if matches!(
+                    unary.operator,
+                    Operator::Minus | Operator::Tilde | Operator::LogicalNot
+                ) =>
+            {
+                self.expression(&unary.expression)
+            }
+            E::Cast { expr, .. } => self.expression(expr),
+            E::BinaryExpresison(binary)
+                if binary_op(binary.operator).is_some()
+                    || matches!(binary.operator, Operator::LogicalAnd | Operator::LogicalOr) =>
+            {
                 self.expression(&binary.left)?;
                 self.expression(&binary.right)
             }
@@ -455,7 +534,7 @@ impl Lowerer<'_, '_, '_> {
         state: &mut State,
         expr: &Expression,
     ) -> anyhow::Result<Operand> {
-        if let Some(constant) = literal(expr) {
+        if let Some(constant) = literal(self.source, expr)? {
             let index = self
                 .constants
                 .iter()
@@ -468,6 +547,52 @@ impl Lowerer<'_, '_, '_> {
                 self.source
                     .error(expr.span, "missing initialized local SSA value")
             });
+        }
+        if let E::Cast { expr: source, .. } = &expr.kind
+            && self.source.expression_type(source)? == self.source.expression_type(expr)?
+        {
+            return self.value_expression(state, source);
+        }
+        if let E::BinaryExpresison(binary) = &expr.kind
+            && matches!(binary.operator, Operator::LogicalAnd | Operator::LogicalOr)
+        {
+            let left = self.value_expression(state, &binary.left)?;
+            let rhs_block = self.builder.create_block(&[])?;
+            let join = self
+                .builder
+                .create_block(&[scalar_id(&BuiltinType::Boolean)])?;
+            let rhs_edge = Edge {
+                target: rhs_block,
+                args: vec![],
+            };
+            let skip_edge = Edge {
+                target: join,
+                args: vec![left],
+            };
+            let (then_edge, else_edge) = if binary.operator == Operator::LogicalAnd {
+                (rhs_edge, skip_edge)
+            } else {
+                (skip_edge, rhs_edge)
+            };
+            self.builder.set_terminator(
+                state.block,
+                Terminator::Branch {
+                    condition: left,
+                    then_edge,
+                    else_edge,
+                },
+            )?;
+            state.block = rhs_block;
+            let right = self.value_expression(state, &binary.right)?;
+            self.builder.set_terminator(
+                state.block,
+                Terminator::Jump(Edge {
+                    target: join,
+                    args: vec![right],
+                }),
+            )?;
+            state.block = join;
+            return Ok(Operand::Value(self.builder.block_params(join)?[0]));
         }
         let kind = match &expr.kind {
             E::Call {
@@ -482,8 +607,20 @@ impl Lowerer<'_, '_, '_> {
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 InstructionKind::Call { callee, args }
             }
+            E::UnaryExpression(unary) => InstructionKind::Unary {
+                op: if unary.operator == Operator::Minus {
+                    UnaryOp::Neg
+                } else {
+                    UnaryOp::Not
+                },
+                operand: self.value_expression(state, &unary.expression)?,
+            },
+            E::Cast { expr, .. } => InstructionKind::Cast {
+                kind: CastKind::Numeric,
+                operand: self.value_expression(state, expr)?,
+            },
             E::BinaryExpresison(binary) => InstructionKind::Binary {
-                op: comparison(binary.operator)
+                op: binary_op(binary.operator)
                     .ok_or_else(|| self.source.error(expr.span, "unsupported binary operator"))?,
                 lhs: self.value_expression(state, &binary.left)?,
                 rhs: self.value_expression(state, &binary.right)?,

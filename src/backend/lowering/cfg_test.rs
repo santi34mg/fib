@@ -212,13 +212,13 @@ fn each_functions_abi_controls_its_calls_and_returns() {
     .unwrap();
     b.finish(entry).unwrap();
     let target = host_target().unwrap();
-    assert!(emit_llvm(&ir, &target).is_err());
+    assert_eq!(run(emit_llvm(&ir, &target).unwrap()), 42);
     let artifact = emit_classified(&ir, &target, |ir, target| {
         classify_with(ir, target, |signature, types, target| {
             let mut c_signature = signature.clone();
             c_signature.calling_convention = CallingConvention::C;
             let mut abi = classify_signature(&c_signature, types, target)?;
-            // Test-only Fib policy, not a production definition of Fib ABI.
+            // Test-only permutation exercises logical-to-physical argument placement.
             if signature.calling_convention == CallingConvention::Fib {
                 abi.parameter_positions.reverse();
             }
@@ -296,5 +296,100 @@ fn comparisons_use_operand_signedness_and_boolean_types() {
             run(emit_llvm(&ir, &host_target().unwrap()).unwrap()),
             expected
         );
+    }
+}
+
+#[test]
+fn signed_single_bit_division_and_remainder_have_defined_overflow() {
+    for (op, expected) in [(BinaryOp::Div, 4), (BinaryOp::Rem, 5)] {
+        let mut ir = module();
+        ir.types.push(IrType::Integer {
+            width: IntegerWidth::Bits(1),
+            signed: true,
+        });
+        for bits in [1, 0] {
+            ir.constants.push(Constant {
+                ty: TypeId(2),
+                kind: ConstantKind::Integer { bits },
+            });
+        }
+        ir.functions.push(Function {
+            identifier: "tiny".into(),
+            signature: Signature {
+                params: vec![TypeId(2); 2],
+                results: vec![TypeId(2)],
+                calling_convention: CallingConvention::Fib,
+            },
+            linkage: Linkage::Internal,
+            body: FunctionBody::Declaration,
+        });
+        let mut b = FunctionBuilder::new(&mut ir, FunctionId(1)).unwrap();
+        let entry = b.create_block(&[TypeId(2); 2]).unwrap();
+        let params = b.block_params(entry).unwrap().to_vec();
+        let result = b
+            .append_instruction(
+                entry,
+                InstructionKind::Binary {
+                    op,
+                    lhs: Operand::Value(params[0]),
+                    rhs: Operand::Value(params[1]),
+                },
+                &[TypeId(2)],
+            )
+            .unwrap()[0];
+        b.set_terminator(
+            entry,
+            Terminator::Return {
+                values: vec![Operand::Value(result)],
+            },
+        )
+        .unwrap();
+        b.finish(entry).unwrap();
+        let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+        let entry = b.create_block(&[]).unwrap();
+        let success = b.create_block(&[]).unwrap();
+        let fail = b.create_block(&[]).unwrap();
+        let result = b
+            .append_instruction(
+                entry,
+                InstructionKind::Call {
+                    callee: FunctionId(1),
+                    args: vec![c(4), c(4)],
+                },
+                &[TypeId(2)],
+            )
+            .unwrap()[0];
+        let condition = b
+            .append_instruction(
+                entry,
+                InstructionKind::Binary {
+                    op: BinaryOp::Eq,
+                    lhs: Operand::Value(result),
+                    rhs: c(expected),
+                },
+                &[TypeId(1)],
+            )
+            .unwrap()[0];
+        b.set_terminator(
+            entry,
+            Terminator::Branch {
+                condition: Operand::Value(condition),
+                then_edge: Edge {
+                    target: success,
+                    args: vec![],
+                },
+                else_edge: Edge {
+                    target: fail,
+                    args: vec![],
+                },
+            },
+        )
+        .unwrap();
+        b.set_terminator(success, Terminator::Return { values: vec![c(0)] })
+            .unwrap();
+        b.set_terminator(fail, Terminator::Return { values: vec![c(1)] })
+            .unwrap();
+        b.finish(entry).unwrap();
+        assert_eq!(run(emit_llvm(&ir, &host_target().unwrap()).unwrap()), 42);
     }
 }

@@ -46,7 +46,7 @@ mod tests {
             TokenKind::Identifier("x".to_string()),
             TokenKind::Punctuation(Punctuation::Colon),
             TokenKind::Operator(Operator::Assign),
-            TokenKind::Literal(Literal::Integer(5)),
+            TokenKind::Literal(Literal::Integer(5u64.into())),
             TokenKind::Punctuation(Punctuation::Semicolon),
         ];
         let tokenizer = Tokenizer::new(&test_string);
@@ -63,9 +63,12 @@ mod tests {
         let test_string = "1234 01234 0x12AB 0b1100";
         let expected = [1234, 1234, 0x12AB, 0b1100];
         let tokenizer = Tokenizer::new(test_string);
-        tokenizer
-            .zip(expected)
-            .for_each(|(t, e)| assert_eq!(t.kind, TokenKind::Literal(Literal::Integer(e))))
+        tokenizer.zip(expected).for_each(|(t, e)| {
+            assert_eq!(
+                t.kind,
+                TokenKind::Literal(Literal::Integer((e as u64).into()))
+            )
+        })
     }
 
     #[test]
@@ -80,11 +83,11 @@ mod tests {
     fn test_literal_float() {
         let test_string = "3.14 0.14 12.4 1.0";
         #[allow(clippy::approx_constant)]
-        let expected = [3.14, 0.14, 12.4, 1.0];
+        let expected = ["3.14", "0.14", "12.4", "1.0"];
         let tokenizer = Tokenizer::new(test_string);
-        tokenizer
-            .zip(expected)
-            .for_each(|(t, e)| assert_eq!(t.kind, TokenKind::Literal(Literal::Float(e))))
+        tokenizer.zip(expected).for_each(|(t, e)| {
+            assert_eq!(t.kind, TokenKind::Literal(Literal::Float(e.to_string())))
+        })
     }
 
     #[test]
@@ -357,7 +360,10 @@ mod tests {
         let expected: Vec<u64> = vec![0xff, 0xdeadbeef];
         let tokens: Vec<_> = Tokenizer::new(test_string).collect();
         for (tok, val) in tokens.iter().zip(expected.iter()) {
-            assert_eq!(tok.kind, TokenKind::Literal(Literal::Integer(*val)));
+            assert_eq!(
+                tok.kind,
+                TokenKind::Literal(Literal::Integer((*val).into()))
+            );
         }
     }
 
@@ -367,7 +373,10 @@ mod tests {
         let expected: Vec<u64> = vec![0o77, 0o17];
         let tokens: Vec<_> = Tokenizer::new(test_string).collect();
         for (tok, val) in tokens.iter().zip(expected.iter()) {
-            assert_eq!(tok.kind, TokenKind::Literal(Literal::Integer(*val)));
+            assert_eq!(
+                tok.kind,
+                TokenKind::Literal(Literal::Integer((*val).into()))
+            );
         }
     }
 
@@ -377,7 +386,10 @@ mod tests {
         let expected: Vec<u64> = vec![0b1010, 0b1111];
         let tokens: Vec<_> = Tokenizer::new(test_string).collect();
         for (tok, val) in tokens.iter().zip(expected.iter()) {
-            assert_eq!(tok.kind, TokenKind::Literal(Literal::Integer(*val)));
+            assert_eq!(
+                tok.kind,
+                TokenKind::Literal(Literal::Integer((*val).into()))
+            );
         }
     }
 
@@ -571,9 +583,9 @@ mod tests {
         let expected = [
             TokenKind::Identifier("x".to_string()),
             TokenKind::Operator(Operator::PlusAssign),
-            TokenKind::Literal(Literal::Integer(42)),
+            TokenKind::Literal(Literal::Integer(42u64.into())),
             TokenKind::Operator(Operator::Star),
-            TokenKind::Literal(Literal::Integer(3)),
+            TokenKind::Literal(Literal::Integer(3u64.into())),
             TokenKind::Punctuation(Punctuation::Semicolon),
         ];
         let tokens: Vec<_> = Tokenizer::new(test_string).collect();
@@ -778,4 +790,26 @@ fn former_builtin_function_names_are_identifiers() {
     for (token, name) in tokens.iter().zip(["concat", "str_len", "str_eq"]) {
         assert_eq!(token.kind, TokenKind::Identifier(name.into()));
     }
+}
+
+#[test]
+fn wide_numeric_literals_retain_every_digit() {
+    use super::Tokenizer;
+    use crate::frontend::tokens::{Literal, TokenKind};
+    let integer = "340282366920938463463374607431768211456";
+    let decimal = "1.0000000596046447753906250000000000000000001";
+    let source = format!("{integer} {decimal} 1..2");
+    let tokens = Tokenizer::new(&source).collect::<Vec<_>>();
+    assert_eq!(
+        tokens[0].kind,
+        TokenKind::Literal(Literal::Integer(integer.parse().unwrap()))
+    );
+    assert_eq!(
+        tokens[1].kind,
+        TokenKind::Literal(Literal::Float(decimal.into()))
+    );
+    assert!(matches!(
+        tokens[3].kind,
+        TokenKind::Operator(crate::frontend::tokens::Operator::DoubleDot)
+    ));
 }

@@ -37,44 +37,23 @@ pub(super) fn numeric(t: &T) -> bool {
 pub(super) fn is_integral_type(t: &T) -> bool {
     matches!(t, T::Builtin(b) if integer(b).is_some())
 }
-fn fits_integer(value: i128, ty: &T) -> anyhow::Result<()> {
+fn check_literal(literal: &Literal, ty: &T, negative: bool) -> anyhow::Result<()> {
     let T::Builtin(b) = ty else {
-        return Err(type_error("integer literal requires a numeric type"));
+        return Err(type_error("literal requires a numeric type"));
     };
-    let Some((signed, width)) = integer(b) else {
-        return Err(type_error("integer literal requires an integer type"));
-    };
-    let fits = match (signed, width) {
-        (true, Some(128)) => true,
-        (true, Some(w)) => value >= -(1i128 << (w - 1)) && value < (1i128 << (w - 1)),
-        (false, Some(128)) => value >= 0,
-        (false, Some(w)) => value >= 0 && (value as u128) < (1u128 << w),
-        // usize is symbolic; target-width overflow belongs to target validation.
-        (false, None) => value >= 0,
-        _ => false,
-    };
-    if fits {
-        Ok(())
+    let numeric = if *b == B::Usize {
+        crate::numeric::NumericType::Integer {
+            width: 128,
+            signed: false,
+        }
     } else {
-        Err(type_error(format!(
-            "integer value {value} is out of range for {}",
-            b.name()
-        )))
-    }
-}
-fn fits_float(value: f64, ty: &T) -> anyhow::Result<()> {
-    let limit = match ty {
-        T::Builtin(B::Float16) => 65504.0,
-        T::Builtin(B::Float32) => f32::MAX as f64,
-        T::Builtin(B::Float64 | B::Float128) => f64::MAX,
-        _ => return Err(type_error("float literal requires a floating-point type")),
+        crate::numeric::NumericType::builtin(b)
+            .ok_or_else(|| type_error("literal requires a numeric type"))?
     };
-    if !value.is_finite() || value.abs() > limit {
-        return Err(type_error("floating-point value is out of range"));
-    }
-    Ok(())
+    crate::numeric::NumericValue::literal(literal, numeric, negative)
+        .map(|_| ())
+        .map_err(|e| type_error(e.to_string()))
 }
-
 /// Determines the value category produced by indexing an array or slice, along
 /// with the element type and (for arrays) its known length.
 ///
@@ -322,22 +301,18 @@ impl TypeContext<'_> {
     ) -> anyhow::Result<ExpressionInfo> {
         let ty = match &mut expr.kind {
             E::Literal(literal) => match literal {
-                Literal::Integer(v) => {
+                Literal::Integer(_) => {
                     let ty = expected
                         .filter(|t| self.types.get(*t).is_ok_and(numeric))
                         .unwrap_or_else(|| self.types.builtin(B::Int32));
-                    if matches!(self.types.get(ty)?,T::Builtin(b) if float(b)) {
-                        fits_float(*v as f64, self.types.get(ty)?)?;
-                    } else {
-                        fits_integer(*v as i128, self.types.get(ty)?)?;
-                    }
+                    check_literal(literal, self.types.get(ty)?, false)?;
                     ty
                 }
-                Literal::Float(v) => {
+                Literal::Float(_) => {
                     let ty = expected
                         .filter(|t| matches!(self.types.get(*t),Ok(T::Builtin(b)) if float(b)))
                         .unwrap_or_else(|| self.types.builtin(B::Float64));
-                    fits_float(*v, self.types.get(ty)?)?;
+                    check_literal(literal, self.types.get(ty)?, false)?;
                     ty
                 }
                 Literal::Boolean(_) => self.types.builtin(B::Boolean),
@@ -361,16 +336,12 @@ impl TypeContext<'_> {
             E::VoidExpression => self.types.builtin(B::Void),
             E::UnaryExpression(u) => {
                 if u.operator == O::Minus
-                    && let E::Literal(Literal::Integer(v)) = &u.expression.kind
+                    && let E::Literal(literal @ Literal::Integer(_)) = &u.expression.kind
                 {
                     let ty = expected
                         .filter(|t| self.types.get(*t).is_ok_and(numeric))
                         .unwrap_or_else(|| self.types.builtin(B::Int32));
-                    if matches!(self.types.get(ty)?,T::Builtin(b) if float(b)) {
-                        fits_float(-(*v as f64), self.types.get(ty)?)?;
-                    } else {
-                        fits_integer(-(*v as i128), self.types.get(ty)?)?;
-                    }
+                    check_literal(literal, self.types.get(ty)?, true)?;
                     u.expression.annotation.resolved = Some(self.value(ty));
                     return Ok(self.value(ty));
                 }
@@ -509,6 +480,7 @@ impl TypeContext<'_> {
                 let operand = if left_never { right.ty } else { left.ty };
                 let lt = self.types.get(operand)?;
                 if matches!(b.operator, O::Percent | O::Slash)
+                    && is_integral_type(lt)
                     && super::constant::is_zero(&b.right, self.types)?
                 {
                     return Err(type_error(if b.operator == O::Percent {

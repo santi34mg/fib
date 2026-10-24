@@ -10,7 +10,7 @@ impl<'input> Tokenizer<'input> {
         let base: u32 = if first == '0' {
             self.bump();
             match self.peek() {
-                None => return Some(TokenKind::Literal(Literal::Integer(0))),
+                None => return Some(TokenKind::Literal(Literal::Integer(0u8.into()))),
                 Some('x') => {
                     self.bump();
                     start = self.position;
@@ -56,23 +56,18 @@ impl<'input> Tokenizer<'input> {
         }
         let num_str = &self.input[start..self.position];
         if is_float {
-            match ("0".to_string() + num_str).parse::<f64>() {
-                Ok(value) => Some(TokenKind::Literal(Literal::Float(value))),
-                Err(e) => Some(TokenKind::Error(format!(
-                    "Invalid float literal '{}': {}",
-                    num_str, e
-                ))),
-            }
+            Some(TokenKind::Literal(Literal::Float(num_str.to_owned())))
         } else {
-            let value = match u64::from_str_radix(num_str, base) {
-                Ok(v) => v,
-                Err(e) => {
-                    return Some(TokenKind::Error(format!(
-                        "Invalid integer literal '{}': {}",
-                        num_str, e
-                    )));
-                }
-            };
+            let value =
+                match <num_bigint::BigUint as num_traits::Num>::from_str_radix(num_str, base) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Some(TokenKind::Error(format!(
+                            "Invalid integer literal '{}': {}",
+                            num_str, e
+                        )));
+                    }
+                };
             Some(TokenKind::Literal(Literal::Integer(value)))
         }
     }

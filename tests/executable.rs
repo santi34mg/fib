@@ -72,14 +72,14 @@ fn object_goal_emits_linkable_object_and_source_is_protected() {
 fn unsupported_source_exits_unsuccessfully_without_binary() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("main.fib");
-    std::fs::write(&source, "fn main() int32 { return 20 + 22; }").unwrap();
+    std::fs::write(&source, "fn main() int32 { while (false) {}; return 42; }").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
         .args(["build", "--single-file"])
         .arg(&source)
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported binary operator"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported statement"));
     assert!(!source.with_extension("").exists());
 }
 

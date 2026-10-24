@@ -6,6 +6,7 @@ pub mod driver;
 pub mod frontend;
 pub mod ir;
 pub mod ir_interpreter;
+pub(crate) mod numeric;
 pub mod plan;
 
 pub use diagnostics::CompilerError;

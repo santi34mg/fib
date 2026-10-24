@@ -2755,6 +2755,70 @@ mod type_resolution {
         };
     }
 
+    #[test]
+    fn machine_numeric_semantics_require_explicit_conversions() {
+        good(
+            "x: uint128 = 340282366920938463463374607431768211455; y: int128 = -170141183460469231731687303715884105728;",
+        );
+        good("a: int8 = 127; b: int16 = (a + 1) as int16;");
+        good("a: int8 = 127; b: int16 = (a as int16) + 1;");
+        good("a := 128 as int8; b := -1 as uint128;");
+        for source in [
+            "a: int8 = 1; b: int16 = a;",
+            "a: int8 = 1; b: int16 = 2; c := a + b;",
+            "fn f(x: int16) {} fn g() { a: int8 = 1; f(a); }",
+            "fn f(x: int8) int16 { return x; }",
+            "fn f(x: int8) int16 { return x + 1; }",
+        ] {
+            bad(source, "incompatible");
+        }
+        bad(
+            "x: uint128 = 340282366920938463463374607431768211456;",
+            "range",
+        );
+        bad(
+            "x: int128 = 170141183460469231731687303715884105728;",
+            "range",
+        );
+        bad("x: uint128 = -1;", "range");
+        bad("x: float16 = 70000.0;", "range");
+    }
+
+    #[test]
+    fn machine_constant_values_wrap_at_their_own_width() {
+        for (source, expected) in [
+            ("x: uint8 = 255 + 1;", 0),
+            ("x: int8 = 127 + 1;", 128),
+            ("x: int16 = ((127 as int8) + 1) as int16;", 65408),
+            ("x: int16 = ((127 as int8) as int16) + 1;", 128),
+            (
+                "x: int128 = -170141183460469231731687303715884105728 / -1;",
+                1u128 << 127,
+            ),
+            (
+                "x: uint128 = 340282366920938463463374607431768211455 + 1;",
+                0,
+            ),
+        ] {
+            let (analyzer, types) = run(source).unwrap();
+            let StatementKind::VariableDeclaration(var) = &analyzer.units[0].ast.statements[0].kind
+            else {
+                panic!()
+            };
+            assert_eq!(
+                crate::frontend::analyzer::evaluate_numeric(
+                    var.expression.as_ref().unwrap(),
+                    &types
+                )
+                .unwrap()
+                .unwrap()
+                .bits,
+                expected,
+                "{source}"
+            );
+        }
+    }
+
     ok!(
         inference_and_context,
         "small: int8 = 127; negative: int8 = -128; count := 1; fraction := 1.5; flag := true;"
@@ -2881,7 +2945,7 @@ mod type_resolution {
     );
     err!(division_zero, "x := 1 / 0;", "zero");
     err!(shift_range, "x := 1 << 32;", "shift");
-    err!(constant_overflow, "x: int8 = 127 + 1;", "range");
+    ok!(constant_wrapping, "x: int8 = 127 + 1;");
     err!(
         immutable_write,
         "fn f() { const x := 1; x = 2; }",
@@ -3024,16 +3088,12 @@ mod type_resolution {
         const_binding_mutable_array_elements,
         "fn f() { const a := [1]; a[0] = 2; }"
     );
-    err!(
-        constant_float_overflow,
-        "x: float16 = 65504.0 + 65504.0;",
-        "range"
-    );
+    ok!(constant_float_infinity, "x: float16 = 65504.0 + 65504.0;");
     err!(negative_float_cast_range, "x := -300.0 as int8;", "range");
     #[test]
     fn nonfinite_float_arithmetic() {
         let large = format!("1{}.0", "0".repeat(308));
-        bad(&format!("x := {large} * {large};"), "range");
+        good(&format!("x := {large} * {large};"));
     }
     err!(
         aggregate_equality,
@@ -3441,15 +3501,11 @@ mod type_resolution {
         "a: int32 = b; b: int32 = a;"
     );
     err!(inference_cycle, "a := b; b := a;", "cycle");
-    err!(
-        float_constant_division_zero,
-        "x := 1.0 / (2.0 - 2.0);",
-        "zero"
-    );
-    err!(unsigned_constant_underflow, "x: uint8 = 0 - 1;", "range");
-    err!(unsigned_constant_overflow, "x: uint8 = 255 + 1;", "range");
+    ok!(float_constant_division_zero, "x := 1.0 / (2.0 - 2.0);");
+    ok!(unsigned_constant_underflow, "x: uint8 = 0 - 1;");
+    ok!(unsigned_constant_overflow, "x: uint8 = 255 + 1;");
     ok!(unsigned_complement, "x: uint8 = ~1;");
-    err!(shift_result_overflow, "x: int8 = 1 << 7;", "range");
+    ok!(shift_result_wrap, "x: int8 = 1 << 7;");
     ok!(
         zero_length_full_slice,
         "items: int32[0] = []; x := items[..];"
@@ -4553,7 +4609,10 @@ mod type_resolution {
                 "fn f(T: type, x: T) bool { return x < true; }",
                 "invalid binary",
             );
-            bad("fn f(T: type, x: T) T { return x / 0; }", "zero");
+            bad(
+                "fn f(T: type, x: T) T { return x / 0; } a := f(int32, 1);",
+                "zero",
+            );
             bad("fn f(T: type, x: T) T { return x << -1; }", "range");
         }
 
@@ -5033,7 +5092,7 @@ mod validation_regressions {
         let mut project = analyze("fn f() never { return f(); }");
         let int32 = project.types.builtin(B::Int32);
         let expr = &mut returns(function(&mut project, 0)).as_mut().unwrap()[0];
-        expr.kind = E::Literal(Literal::Integer(1));
+        expr.kind = E::Literal(Literal::Integer(1u64.into()));
         expr.annotation.resolved = Some(ExpressionInfo {
             ty: int32,
             category: C::Value,
@@ -5130,9 +5189,15 @@ mod validation_regressions {
     #[test]
     fn literals_must_match_their_kind_and_fit_their_context() {
         for (source, replacement) in [
-            ("fn f() int8 { return 1; }", Literal::Integer(128)),
-            ("fn f() uint8 { return 1; }", Literal::Integer(256)),
-            ("fn f() float16 { return 1.0; }", Literal::Float(70000.0)),
+            ("fn f() int8 { return 1; }", Literal::Integer(128u64.into())),
+            (
+                "fn f() uint8 { return 1; }",
+                Literal::Integer(256u64.into()),
+            ),
+            (
+                "fn f() float16 { return 1.0; }",
+                Literal::Float("70000.0".into()),
+            ),
         ] {
             let mut project = analyze(source);
             returns(function(&mut project, 0)).as_mut().unwrap()[0].kind = E::Literal(replacement);
@@ -5237,7 +5302,7 @@ mod validation_regressions {
 
     #[test]
     fn numeric_cast_ranges_are_revalidated() {
-        let mut project = analyze("fn f() { result := 127 as int8; }");
+        let mut project = analyze("fn f() { result := 127.0 as int8; }");
         let fun = function(&mut project, 0);
         let S::VariableDeclaration(var) = &mut fun.body.as_mut().unwrap().statements[0].kind else {
             panic!("expected binding");
@@ -5245,7 +5310,7 @@ mod validation_regressions {
         let E::Cast { expr, .. } = &mut var.expression.as_mut().unwrap().kind else {
             panic!("expected cast");
         };
-        expr.kind = E::Literal(Literal::Integer(128));
+        expr.kind = E::Literal(Literal::Float("128.0".into()));
         reject(&project, "cast value is out of range");
     }
 

@@ -8,14 +8,14 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::{Linkage as LlvmLinkage, Module},
-    types::IntType,
-    values::{BasicValue, FunctionValue, IntValue},
+    types::{BasicType, BasicTypeEnum},
+    values::{BasicValue, BasicValueEnum, FunctionValue},
 };
 
 pub(super) struct LlvmAbi<'a, 'ctx> {
     pub context: &'ctx Context,
     pub plan: &'a AbiPlan,
-    pub types: &'a [IntType<'ctx>],
+    pub types: &'a [BasicTypeEnum<'ctx>],
 }
 impl<'ctx> LlvmAbi<'_, 'ctx> {
     pub fn declare(
@@ -46,7 +46,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
         &self,
         id: FunctionId,
         function: FunctionValue<'ctx>,
-    ) -> Result<Vec<IntValue<'ctx>>, BackendError> {
+    ) -> Result<Vec<BasicValueEnum<'ctx>>, BackendError> {
         self.plan
             .function(id)?
             .parameter_positions
@@ -54,7 +54,6 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
             .map(|&position| {
                 function
                     .get_nth_param(position as u32)
-                    .map(|v| v.into_int_value())
                     .ok_or_else(|| error("missing physical argument"))
             })
             .collect()
@@ -64,8 +63,8 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
         builder: &Builder<'ctx>,
         id: FunctionId,
         function: FunctionValue<'ctx>,
-        arguments: &[IntValue<'ctx>],
-    ) -> Result<Option<IntValue<'ctx>>, BackendError> {
+        arguments: &[BasicValueEnum<'ctx>],
+    ) -> Result<Option<BasicValueEnum<'ctx>>, BackendError> {
         let abi = self.plan.function(id)?;
         if arguments.len() != abi.parameter_positions.len() {
             return Err(error("ABI argument count mismatch"));
@@ -90,8 +89,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
             Some(_) => Ok(Some(
                 call.try_as_basic_value()
                     .basic()
-                    .ok_or_else(|| error("missing ABI call result"))?
-                    .into_int_value(),
+                    .ok_or_else(|| error("missing ABI call result"))?,
             )),
             None => Ok(None),
         }
@@ -100,7 +98,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
         &self,
         builder: &Builder<'ctx>,
         id: FunctionId,
-        value: Option<IntValue<'ctx>>,
+        value: Option<BasicValueEnum<'ctx>>,
     ) -> Result<(), BackendError> {
         let abi = self.plan.function(id)?;
         if abi.result.is_some() != value.is_some() {
@@ -115,6 +113,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
 fn convention(convention: PhysicalConvention) -> u32 {
     match convention {
         PhysicalConvention::C => 0,
+        PhysicalConvention::FibScalar => 8,
     }
 }
 fn error(message: impl ToString) -> BackendError {

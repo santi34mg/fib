@@ -126,7 +126,13 @@ where
             } else {
                 let size_token = self.expect_next("expected array size")?;
                 let size = if let TokenKind::Literal(Literal::Integer(n)) = size_token.kind {
-                    n
+                    num_traits::ToPrimitive::to_u64(&n).ok_or_else(|| {
+                        self.error(
+                            "array size exceeds uint64",
+                            size_token.line,
+                            size_token.column,
+                        )
+                    })?
                 } else {
                     return Err(self.error(
                         "expected integer array size",

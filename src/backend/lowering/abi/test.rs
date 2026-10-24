@@ -36,7 +36,6 @@ fn c_scalar_classification_is_logical_to_physical_and_target_aware() {
 #[test]
 fn unsupported_conventions_and_types_never_fall_back_to_c() {
     for mutate in [
-        |s: &mut Signature| s.calling_convention = CallingConvention::Fib,
         |s: &mut Signature| s.params[0] = TypeId(1),
         |s: &mut Signature| s.results.push(TypeId(0)),
         |s: &mut Signature| s.params[0] = TypeId(99),

@@ -11,6 +11,8 @@ pub mod ir_lower;
 #[cfg(feature = "llvm")]
 mod llvm_abi;
 pub mod llvm_lower;
+#[cfg(feature = "llvm")]
+mod llvm_scalar;
 pub mod statements;
 pub mod types;
 

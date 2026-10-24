@@ -168,10 +168,10 @@ fn scalar_calls_preserve_parameters_results_and_void_returns() {
     assert!(artifact.ir_text().contains("call i32 @identity(i32 42)"));
     assert!(artifact.ir_text().contains("call void @effect()"));
     ir.functions[0].signature.calling_convention = CallingConvention::Fib;
+    let artifact = emit_llvm(&ir, &target()).unwrap();
     assert!(
-        emit_llvm(&ir, &target())
-            .unwrap_err()
-            .to_string()
-            .contains("ABI")
+        artifact
+            .ir_text()
+            .contains("call fastcc i32 @identity(i32 42)")
     );
 }
