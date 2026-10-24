@@ -28,9 +28,8 @@ LLVM identified unpacked structs, target-derived field GEPs, aggregate operation
 entry stack allocations and typed loads/stores are emitted. Pointer equality and
 explicit null-check CFGs work; arbitrary accesses use conservative alignment.
 Enums use target-derived tag-plus-union layout, typed payload operations and entry-materialized constants; see [enum semantics](../../../enum-semantics.md). Only generic CPU/default features are accepted. Broader ABI/layout, globals and
-remaining instruction families are unfinished. Separate context/type/general
-instruction planning sketches remain unused. Classification works without LLVM;
-emission then reports an explicit feature error. `next/` is inactive legacy code.
+remaining instruction families are unfinished. Classification works without LLVM;
+emission then reports an explicit feature error.
 
 Fixed arrays use a private named wrapper containing an LLVM array; completion
 waits for the element layout and uses target-derived storage/alignment. Aggregate

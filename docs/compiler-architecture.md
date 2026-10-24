@@ -279,10 +279,8 @@ linker failures preserve existing output and report stderr.
 
 Without the default `llvm` feature, frontend/IR and ABI classification remain
 available; host-target selection, LLVM emission and object output fail explicitly.
-The separate backend context/type/general-instruction planning APIs remain
-explicit-error sketches. `backend/lowering/next/` is inactive legacy code, not a
-fallback. Broader layout, optimization and cross-linker orchestration remain
-future work. See the [backend contract](../src/backend/README.md).
+Broader layout, optimization and cross-linker
+orchestration remain future work. See the [backend contract](../src/backend/README.md).
 
 ## Interpreted build files
 

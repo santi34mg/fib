@@ -73,13 +73,10 @@ Optimization and cross-linker orchestration are not implemented.
 The API remains callable without the `llvm` feature: input verification works,
 but LLVM emission, object output and host-target selection report explicit errors.
 
-## Future phase APIs
+## Verification and remaining work
 
 `ir_lower::verify_input` returns a borrowed proof after shared verification.
-The separate `types`, `context`, `expressions` and `statements` planning
-APIs remain explicit-error sketches. They are not used to claim broader support
-than the initial emitter in `llvm_lower`. The inactive `next/ir_lower.rs` still
-references removed APIs and is not compiled.
+Working emission uses private state in `llvm_lower`.
 
 Future implementation needs target-aware representations for all runtime types,
 broader ABI classification, global initialization and the remaining
@@ -209,9 +206,9 @@ SSA values are not variables secretly backed by allocas.
 3. Emit in a dependency-respecting traversal. Precreated PHIs support joins and
    loops; deferred fixups support backedge arguments whose values are not emitted
    yet. Block order in the arena does not establish dominance or define execution.
-4. Record each **successor occurrence**, using `EdgeSite { source, successor }`:
-   jump, then, else, each indexed switch case, and switch default. Store its
-   target and positional arguments plus the eventual LLVM predecessor. A map
+4. Record each **successor occurrence**. The emitter stores each IR edge and
+   its actual emitted LLVM predecessor in an incoming-edge list, including
+   jump, branch and switch successors with their positional arguments. A map
    keyed only by `(source, target)` loses parallel edges and is incorrect.
 5. LLVM PHI operands name predecessor **blocks**, not branch-arm identities. For
    example, `branch cond, join(a), join(b)` with `a != b` cannot become two

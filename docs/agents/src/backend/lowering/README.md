@@ -12,9 +12,6 @@ blocks/PHIs, traverses reverse postorder, and patches incoming edges after body
 emission. Parallel same-target branch arms are split. Artifacts require LLVM
 verification and can emit PIC objects. `host_target()` selects the host triple.
 
-The separate `types::{resolve_target, plan_types}`, `context`, `expressions` and
-`statements` planning APIs remain explicit-error sketches. Working emission uses
-private state instead of claiming these general APIs are complete. Classification
-and shared verification work without LLVM; emission requires the feature.
-
-`next/ir_lower.rs` remains inactive legacy source and is not a fallback.
+`types::TargetSpec` supplies explicit target selection. Working emission uses
+private state in `llvm_lower`; unused phase-planning sketches have been removed.
+Classification and shared verification work without LLVM; emission requires the feature.

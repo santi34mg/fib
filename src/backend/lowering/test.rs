@@ -1,11 +1,6 @@
-use crate::ir::{BlockId, Function, FunctionBody, Ir, Linkage, Signature};
+use crate::ir::{Function, FunctionBody, Ir, Linkage, Signature};
 
-use super::{
-    BackendError, TargetSpec, emit_llvm,
-    ir_lower::verify_input,
-    statements::{EdgeSite, Successor},
-    types::resolve_target,
-};
+use super::{BackendError, TargetSpec, emit_llvm, ir_lower::verify_input};
 
 fn target() -> TargetSpec {
     TargetSpec {
@@ -39,8 +34,6 @@ fn malformed_ir_is_rejected_before_emission() {
 fn input_verification_runs_real_verifier() {
     let ir = Ir::new();
     assert!(verify_input(&ir).is_ok());
-    // The older phase-planning API remains an explicit sketch.
-    assert!(resolve_target(&target()).is_err());
 }
 
 #[cfg(feature = "llvm")]
@@ -59,30 +52,12 @@ fn target_validation_and_llvm_verification_run() {
 }
 
 #[test]
-fn edge_sites_distinguish_parallel_successors() {
-    let sites = [
-        Successor::Jump,
-        Successor::Then,
-        Successor::Else,
-        Successor::SwitchCase(0),
-        Successor::SwitchCase(1),
-        Successor::SwitchDefault,
-    ]
-    .map(|successor| EdgeSite {
-        source: BlockId(7),
-        successor,
-    });
-    let unique: std::collections::HashSet<_> = sites.into_iter().collect();
-    assert_eq!(unique.len(), sites.len());
-}
-
-#[test]
 fn errors_identify_the_unfinished_operation() {
     let error = BackendError::NotImplemented {
-        operation: "patch_edges",
+        operation: "unsupported_operation",
     };
     let as_error: &dyn std::error::Error = &error;
-    assert!(as_error.to_string().contains("patch_edges"));
+    assert!(as_error.to_string().contains("unsupported_operation"));
     assert!(as_error.to_string().contains("not implemented"));
 }
 
