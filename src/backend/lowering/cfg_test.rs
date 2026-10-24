@@ -393,3 +393,93 @@ fn signed_single_bit_division_and_remainder_have_defined_overflow() {
         assert_eq!(run(emit_llvm(&ir, &host_target().unwrap()).unwrap()), 42);
     }
 }
+
+#[test]
+fn aggregate_insert_extract_parallel_phi_and_memory_round_trip_execute() {
+    let mut ir = module();
+    ir.types.push(IrType::Struct {
+        name: None,
+        fields: vec![TypeId(0)],
+    });
+    ir.types.push(IrType::Pointer { pointee: TypeId(2) });
+    let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let entry = b.create_block(&[]).unwrap();
+    let join = b.create_block(&[TypeId(2)]).unwrap();
+    let merged = b.block_params(join).unwrap()[0];
+    let slot = b.create_stack_slot(TypeId(2), None).unwrap();
+    let address = b
+        .append_instruction(entry, InstructionKind::StackAddress(slot), &[TypeId(3)])
+        .unwrap()[0];
+    let initial = b
+        .append_instruction(
+            entry,
+            InstructionKind::Aggregate {
+                elements: vec![c(1)],
+            },
+            &[TypeId(2)],
+        )
+        .unwrap()[0];
+    let updated = b
+        .append_instruction(
+            entry,
+            InstructionKind::InsertField {
+                aggregate: Operand::Value(initial),
+                field: 0,
+                value: c(0),
+            },
+            &[TypeId(2)],
+        )
+        .unwrap()[0];
+    b.set_terminator(
+        entry,
+        Terminator::Branch {
+            condition: c(3),
+            then_edge: Edge {
+                target: join,
+                args: vec![Operand::Value(initial)],
+            },
+            else_edge: Edge {
+                target: join,
+                args: vec![Operand::Value(updated)],
+            },
+        },
+    )
+    .unwrap();
+    b.append_instruction(
+        join,
+        InstructionKind::Store {
+            address: Address(Operand::Value(address)),
+            value: Operand::Value(merged),
+        },
+        &[],
+    )
+    .unwrap();
+    let loaded = b
+        .append_instruction(
+            join,
+            InstructionKind::Load {
+                address: Address(Operand::Value(address)),
+            },
+            &[TypeId(2)],
+        )
+        .unwrap()[0];
+    let result = b
+        .append_instruction(
+            join,
+            InstructionKind::ExtractField {
+                aggregate: Operand::Value(loaded),
+                field: 0,
+            },
+            &[TypeId(0)],
+        )
+        .unwrap()[0];
+    b.set_terminator(
+        join,
+        Terminator::Return {
+            values: vec![Operand::Value(result)],
+        },
+    )
+    .unwrap();
+    b.finish(entry).unwrap();
+    assert_eq!(run(emit_llvm(&ir, &host_target().unwrap()).unwrap()), 42);
+}

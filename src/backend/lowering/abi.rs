@@ -12,10 +12,10 @@ pub struct AbiTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhysicalConvention {
     C,
-    FibScalar,
+    FibDirect,
 }
 
-/// Direct scalar boundary mapping. Positions map logical arguments to physical
+/// Direct value boundary mapping. Positions map logical arguments to physical
 /// parameters. Wider legalization needs explicit additional representations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionAbi {
@@ -27,7 +27,7 @@ pub struct FunctionAbi {
 
 impl FunctionAbi {
     pub fn validate(&self, signature: &Signature, types: &[IrType]) -> Result<(), BackendError> {
-        let invalid = || failure("invalid direct scalar ABI mapping");
+        let invalid = || failure("invalid direct ABI mapping");
         if signature.results.len() > 1
             || self.parameters.len() != signature.params.len()
             || self.parameter_positions.len() != signature.params.len()
@@ -42,18 +42,19 @@ impl FunctionAbi {
             }
         }
         for &ty in self.parameters.iter().chain(self.result.iter()) {
-            if !matches!(
-                types.get(ty.0),
-                Some(
-                    IrType::Bool
-                        | IrType::Float(_)
-                        | IrType::Integer {
-                            width: IntegerWidth::Bits(1..=128),
-                            ..
-                        }
+            if self.convention == PhysicalConvention::C
+                && !matches!(
+                    types.get(ty.0),
+                    Some(IrType::Integer {
+                        width: IntegerWidth::Bits(32),
+                        ..
+                    })
                 )
-            ) {
-                return Err(failure("invalid direct scalar ABI type"));
+            {
+                return Err(failure("only the C 32-bit integer/void ABI is supported"));
+            }
+            if !direct_type(ty, types, &mut std::collections::HashSet::new()) {
+                return Err(failure("invalid direct Fib ABI type"));
             }
         }
         Ok(())
@@ -122,7 +123,7 @@ pub fn classify_signature(
                 parameters: signature.params.clone(),
                 parameter_positions: (0..signature.params.len()).collect(),
                 result: signature.results.first().copied(),
-                convention: PhysicalConvention::FibScalar,
+                convention: PhysicalConvention::FibDirect,
             };
             abi.validate(signature, types)?;
             Ok(abi)
@@ -173,3 +174,32 @@ fn failure(message: &str) -> BackendError {
 
 #[cfg(test)]
 mod test;
+
+fn direct_type(
+    ty: TypeId,
+    types: &[IrType],
+    active: &mut std::collections::HashSet<TypeId>,
+) -> bool {
+    match types.get(ty.0) {
+        Some(
+            IrType::Bool
+            | IrType::Float(_)
+            | IrType::Integer {
+                width: IntegerWidth::Bits(1..=128),
+                ..
+            },
+        ) => true,
+        Some(IrType::Pointer { pointee }) => types.get(pointee.0).is_some(),
+        Some(IrType::Struct { fields, .. }) => {
+            if !active.insert(ty) {
+                return false;
+            }
+            let valid = fields
+                .iter()
+                .all(|field| direct_type(*field, types, active));
+            active.remove(&ty);
+            valid
+        }
+        _ => false,
+    }
+}

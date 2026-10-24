@@ -657,3 +657,214 @@ fn numeric_instruction_signatures_and_traps_are_verified() {
         assert!(verify_ir(&bad).is_err(), "corruption {change}");
     }
 }
+
+fn memory_ir() -> Ir {
+    let mut ir = Ir::new();
+    ir.types = vec![
+        IrType::Integer {
+            width: IntegerWidth::Bits(32),
+            signed: true,
+        },
+        IrType::Bool,
+        IrType::Struct {
+            name: Some("Pair".into()),
+            fields: vec![TypeId(0), TypeId(1)],
+        },
+        IrType::Pointer { pointee: TypeId(2) },
+        IrType::Pointer { pointee: TypeId(0) },
+    ];
+    ir.constants = vec![
+        Constant {
+            ty: TypeId(0),
+            kind: ConstantKind::Integer { bits: 42 },
+        },
+        Constant {
+            ty: TypeId(1),
+            kind: ConstantKind::Bool(true),
+        },
+    ];
+    ir.functions.push(Function {
+        identifier: "memory".into(),
+        signature: Signature {
+            params: vec![],
+            results: vec![TypeId(0)],
+            calling_convention: CallingConvention::Fib,
+        },
+        linkage: Linkage::Internal,
+        body: FunctionBody::Declaration,
+    });
+    let mut b = FunctionBuilder::new(&mut ir, FunctionId(0)).unwrap();
+    let entry = b.create_block(&[]).unwrap();
+    let slot = b.create_stack_slot(TypeId(2), None).unwrap();
+    let pointer = b
+        .append_instruction(entry, InstructionKind::StackAddress(slot), &[TypeId(3)])
+        .unwrap()[0];
+    let field = b
+        .append_instruction(
+            entry,
+            InstructionKind::FieldAddress {
+                base: Address(Operand::Value(pointer)),
+                field: 0,
+            },
+            &[TypeId(4)],
+        )
+        .unwrap()[0];
+    let pair = b
+        .append_instruction(
+            entry,
+            InstructionKind::Aggregate {
+                elements: vec![
+                    Operand::Constant(ConstantId(0)),
+                    Operand::Constant(ConstantId(1)),
+                ],
+            },
+            &[TypeId(2)],
+        )
+        .unwrap()[0];
+    b.append_instruction(
+        entry,
+        InstructionKind::Store {
+            address: Address(Operand::Value(pointer)),
+            value: Operand::Value(pair),
+        },
+        &[],
+    )
+    .unwrap();
+    let result = b
+        .append_instruction(
+            entry,
+            InstructionKind::Load {
+                address: Address(Operand::Value(field)),
+            },
+            &[TypeId(0)],
+        )
+        .unwrap()[0];
+    b.set_terminator(
+        entry,
+        Terminator::Return {
+            values: vec![Operand::Value(result)],
+        },
+    )
+    .unwrap();
+    b.finish(entry).unwrap();
+    ir
+}
+
+#[test]
+fn memory_verification_checks_slots_projections_and_signatures() {
+    let ir = memory_ir();
+    verify_ir(&ir).unwrap();
+    let mutations: &[fn(&mut Ir)] = &[
+        |ir| ir.stack_slots[0].owner = FunctionId(99),
+        |ir| ir.stack_slots[0].ty = TypeId(99),
+        |ir| ir.stack_slots.push(ir.stack_slots[0].clone()),
+        |ir| {
+            if let FunctionBody::Definition { stack_slots, .. } = &mut ir.functions[0].body {
+                stack_slots.clear();
+            }
+        },
+        |ir| {
+            if let FunctionBody::Definition { stack_slots, .. } = &mut ir.functions[0].body {
+                stack_slots.push(StackSlotId(0));
+            }
+        },
+        |ir| ir.blocks[0].instructions[0].kind = InstructionKind::StackAddress(StackSlotId(99)),
+        |ir| {
+            if let InstructionKind::FieldAddress { field, .. } =
+                &mut ir.blocks[0].instructions[1].kind
+            {
+                *field = 2;
+            }
+        },
+        |ir| {
+            if let InstructionKind::FieldAddress { base, .. } =
+                &mut ir.blocks[0].instructions[1].kind
+            {
+                base.0 = Operand::Constant(ConstantId(0));
+            }
+        },
+        |ir| {
+            if let InstructionKind::Aggregate { elements } = &mut ir.blocks[0].instructions[2].kind
+            {
+                elements.pop();
+            }
+        },
+        |ir| {
+            if let InstructionKind::Store { value, .. } = &mut ir.blocks[0].instructions[3].kind {
+                *value = Operand::Constant(ConstantId(0));
+            }
+        },
+        |ir| ir.values[3].ty = TypeId(1),
+        |ir| {
+            ir.types[3] = IrType::Pointer {
+                pointee: TypeId(99),
+            }
+        },
+        |ir| {
+            ir.types[2] = IrType::Struct {
+                name: None,
+                fields: vec![TypeId(2)],
+            }
+        },
+        |ir| ir.blocks[0].instructions.swap(0, 1),
+    ];
+    for mutate in mutations {
+        let mut invalid = ir.clone();
+        mutate(&mut invalid);
+        assert!(verify_ir(&invalid).is_err());
+    }
+}
+
+#[test]
+fn pointer_recursion_is_sized_but_by_value_cycles_and_bad_nulls_are_rejected() {
+    let mut ir = Ir::new();
+    ir.types = vec![
+        IrType::Struct {
+            name: None,
+            fields: vec![TypeId(1)],
+        },
+        IrType::Pointer { pointee: TypeId(0) },
+    ];
+    ir.constants.push(Constant {
+        ty: TypeId(1),
+        kind: ConstantKind::Null,
+    });
+    verify_ir(&ir).unwrap();
+    ir.constants[0].ty = TypeId(0);
+    assert!(verify_ir(&ir).is_err());
+    ir.constants.clear();
+    ir.types[1] = IrType::Struct {
+        name: None,
+        fields: vec![TypeId(0)],
+    };
+    assert!(
+        verify_ir(&ir)
+            .unwrap_err()
+            .to_string()
+            .contains("recursive")
+    );
+}
+
+#[test]
+fn failed_memory_builder_does_not_publish_stack_slots() {
+    let mut ir = memory_ir();
+    let mut declaration = ir.functions[0].clone();
+    declaration.identifier = "bad".into();
+    declaration.body = FunctionBody::Declaration;
+    ir.functions.push(declaration);
+    let before = ir.to_string();
+    let mut b = FunctionBuilder::new(&mut ir, FunctionId(1)).unwrap();
+    let entry = b.create_block(&[]).unwrap();
+    let slot = b.create_stack_slot(TypeId(2), None).unwrap();
+    b.append_instruction(entry, InstructionKind::StackAddress(slot), &[TypeId(4)])
+        .unwrap();
+    b.set_terminator(
+        entry,
+        Terminator::Return {
+            values: vec![Operand::Constant(ConstantId(0))],
+        },
+    )
+    .unwrap();
+    assert!(b.finish(entry).is_err());
+    assert_eq!(before, ir.to_string());
+}

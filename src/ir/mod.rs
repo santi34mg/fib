@@ -1,7 +1,7 @@
-//! Self-owned SSA IR with transactional construction and scalar verification.
+//! Self-owned SSA IR with transactional construction and typed memory/SSA verification.
 //!
-//! The intended boundary is `AnalyzedProject -> Ir`; the driver owns that
-//! lowering entry point. All runtime types, identities and constants here are
+//! The boundary is `AnalyzedProject -> ir::lowering::lower -> Ir`; the driver
+//! owns pipeline orchestration. All runtime types, identities and constants here are
 //! independent of the frontend and of any backend. See README.md for invariants
 //! and the currently verified subset. Public records are deliberately raw,
 //! unverified data; neither construction nor formatting certifies validity.

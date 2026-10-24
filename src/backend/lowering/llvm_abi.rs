@@ -113,7 +113,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
 fn convention(convention: PhysicalConvention) -> u32 {
     match convention {
         PhysicalConvention::C => 0,
-        PhysicalConvention::FibScalar => 8,
+        PhysicalConvention::FibDirect => 8,
     }
 }
 fn error(message: impl ToString) -> BackendError {

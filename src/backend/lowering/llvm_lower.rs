@@ -124,7 +124,11 @@ pub(super) fn emit_classified(
 ) -> Result<LlvmArtifact, BackendError> {
     super::ir_lower::verify_input(ir)?;
     use crate::ir::*;
-    use inkwell::{context::Context, types::BasicTypeEnum, values::BasicValueEnum};
+    use inkwell::{
+        context::Context,
+        types::BasicTypeEnum,
+        values::{BasicValue, BasicValueEnum},
+    };
     let context = Context::create();
     let module = context.create_module("fib");
     let machine = machine(target)?;
@@ -133,7 +137,8 @@ pub(super) fn emit_classified(
     let types: Vec<_> = ir
         .types
         .iter()
-        .map(|ty| match ty {
+        .enumerate()
+        .map(|(index, ty)| match ty {
             IrType::Bool => Ok(BasicTypeEnum::from(context.bool_type())),
             IrType::Integer {
                 width: IntegerWidth::Bits(width),
@@ -146,9 +151,21 @@ pub(super) fn emit_classified(
                 FloatWidth::F128 => context.f128_type(),
             }
             .into()),
+            IrType::Pointer { .. } => Ok(context.ptr_type(Default::default()).into()),
+            IrType::Struct { .. } => Ok(context
+                .opaque_struct_type(&format!("fib.struct.{index}"))
+                .into()),
             _ => Err(error("unsupported LLVM type")),
         })
         .collect::<Result<_, _>>()?;
+    for (index, ty) in ir.types.iter().enumerate() {
+        if let IrType::Struct { fields, .. } = ty {
+            types[index].into_struct_type().set_body(
+                &fields.iter().map(|ty| types[ty.0]).collect::<Vec<_>>(),
+                false,
+            );
+        }
+    }
     let abi_target = super::abi::AbiTarget {
         triple: machine.get_triple().as_str().to_string_lossy().into_owned(),
         data_layout: module
@@ -173,6 +190,7 @@ pub(super) fn emit_classified(
         .constants
         .iter()
         .map(|c| match c.kind {
+            ConstantKind::Null => Ok(types[c.ty.0].into_pointer_type().const_null().into()),
             ConstantKind::Bool(b) => Ok(types[c.ty.0]
                 .into_int_type()
                 .const_int(u64::from(b), false)
@@ -191,7 +209,12 @@ pub(super) fn emit_classified(
         .collect::<Result<_, BackendError>>()?;
     let builder = context.create_builder();
     for (fi, f) in ir.functions.iter().enumerate() {
-        let FunctionBody::Definition { entry, blocks, .. } = &f.body else {
+        let FunctionBody::Definition {
+            entry,
+            blocks,
+            stack_slots,
+        } = &f.body
+        else {
             continue;
         };
         let function_id = FunctionId(fi);
@@ -202,6 +225,14 @@ pub(super) fn emit_classified(
                 *bid,
                 context.append_basic_block(functions[fi], &format!("bb{}", bid.0)),
             );
+        }
+        builder.position_at_end(llvm_blocks[entry]);
+        let mut slots = std::collections::HashMap::new();
+        for &slot in stack_slots {
+            let allocation = builder
+                .build_alloca(types[ir.stack_slots[slot.0].ty.0], "slot")
+                .map_err(error)?;
+            slots.insert(slot, allocation);
         }
         let mut values = std::collections::HashMap::new();
         for (&id, arg) in ir.blocks[entry.0]
@@ -245,6 +276,23 @@ pub(super) fn emit_classified(
                         let rhs_ty = ir
                             .operand_type(*rhs)
                             .ok_or_else(|| error("missing scalar operand type"))?;
+                        if matches!(ir.types[ty.0], IrType::Pointer { .. }) {
+                            let predicate = match op {
+                                BinaryOp::Eq => inkwell::IntPredicate::EQ,
+                                BinaryOp::Ne => inkwell::IntPredicate::NE,
+                                _ => return Err(error("unsupported pointer comparison")),
+                            };
+                            let value = builder
+                                .build_int_compare(
+                                    predicate,
+                                    operand(*lhs, &constants, &values)?.into_pointer_value(),
+                                    operand(*rhs, &constants, &values)?.into_pointer_value(),
+                                    "pointer.cmp",
+                                )
+                                .map_err(error)?;
+                            values.insert(inst.results[0], value.into());
+                            continue;
+                        }
                         let value = super::llvm_scalar::binary(
                             &builder,
                             &module,
@@ -278,6 +326,99 @@ pub(super) fn emit_classified(
                             operand(*value, &constants, &values)?,
                         )?;
                         values.insert(inst.results[0], value);
+                    }
+                    InstructionKind::StackAddress(slot) => {
+                        values.insert(
+                            inst.results[0],
+                            (*slots.get(slot).ok_or_else(|| error("missing stack slot"))?).into(),
+                        );
+                    }
+                    InstructionKind::Load { address } => {
+                        let value = builder
+                            .build_load(
+                                types[ir.values[inst.results[0].0].ty.0],
+                                operand(address.0, &constants, &values)?.into_pointer_value(),
+                                "load",
+                            )
+                            .map_err(error)?;
+                        value
+                            .as_instruction_value()
+                            .ok_or_else(|| error("missing load instruction"))?
+                            .set_alignment(1)
+                            .map_err(error)?;
+                        values.insert(inst.results[0], value);
+                    }
+                    InstructionKind::Store { address, value } => {
+                        builder
+                            .build_store(
+                                operand(address.0, &constants, &values)?.into_pointer_value(),
+                                operand(*value, &constants, &values)?,
+                            )
+                            .map_err(error)?
+                            .set_alignment(1)
+                            .map_err(error)?;
+                    }
+                    InstructionKind::FieldAddress { base, field } => {
+                        let pointer = operand(base.0, &constants, &values)?.into_pointer_value();
+                        let Some(IrType::Pointer { pointee }) =
+                            ir.operand_type(base.0).and_then(|ty| ir.get_type(ty))
+                        else {
+                            return Err(error("missing projection pointee"));
+                        };
+                        let indices = [
+                            context.i32_type().const_zero(),
+                            context.i32_type().const_int(*field as u64, false),
+                        ];
+                        // Shared verification proves that the pointee is a struct
+                        // and the field index belongs to it. Do not promise inbounds.
+                        let value = unsafe {
+                            builder.build_gep(types[pointee.0], pointer, &indices, "field.address")
+                        }
+                        .map_err(error)?;
+                        values.insert(inst.results[0], value.into());
+                    }
+                    InstructionKind::Aggregate { elements } => {
+                        let mut value = types[ir.values[inst.results[0].0].ty.0]
+                            .into_struct_type()
+                            .const_zero();
+                        for (index, element) in elements.iter().enumerate() {
+                            value = builder
+                                .build_insert_value(
+                                    value,
+                                    operand(*element, &constants, &values)?,
+                                    index as u32,
+                                    "field.insert",
+                                )
+                                .map_err(error)?
+                                .into_struct_value();
+                        }
+                        values.insert(inst.results[0], value.into());
+                    }
+                    InstructionKind::ExtractField { aggregate, field } => {
+                        let value = builder
+                            .build_extract_value(
+                                operand(*aggregate, &constants, &values)?.into_struct_value(),
+                                *field as u32,
+                                "field.extract",
+                            )
+                            .map_err(error)?;
+                        values.insert(inst.results[0], value);
+                    }
+                    InstructionKind::InsertField {
+                        aggregate,
+                        field,
+                        value,
+                    } => {
+                        let value = builder
+                            .build_insert_value(
+                                operand(*aggregate, &constants, &values)?.into_struct_value(),
+                                operand(*value, &constants, &values)?,
+                                *field as u32,
+                                "field.insert",
+                            )
+                            .map_err(error)?
+                            .into_struct_value();
+                        values.insert(inst.results[0], value.into());
                     }
                     InstructionKind::Call { callee, args } => {
                         let args = args

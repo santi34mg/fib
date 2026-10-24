@@ -53,4 +53,5 @@ pub enum TrapReason {
     DivisionByZero,
     InvalidShift,
     InvalidFloatToInteger,
+    NullPointerDereference,
 }

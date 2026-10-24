@@ -58,3 +58,25 @@ fn void_and_invalid_physical_mappings_are_checked() {
     abi.parameter_positions = vec![0, 99];
     assert!(abi.validate(&signature, &types()).is_err());
 }
+
+#[test]
+fn fib_struct_and_pointer_boundaries_remain_distinct_from_c() {
+    let mut types = types();
+    types.push(IrType::Struct {
+        name: None,
+        fields: vec![TypeId(0), TypeId(1)],
+    });
+    types.push(IrType::Pointer { pointee: TypeId(2) });
+    let mut signature = Signature {
+        params: vec![TypeId(2), TypeId(3)],
+        results: vec![TypeId(2)],
+        calling_convention: CallingConvention::Fib,
+    };
+    let mut abi = classify_signature(&signature, &types, &target()).unwrap();
+    assert_eq!(abi.convention, PhysicalConvention::FibDirect);
+    abi.validate(&signature, &types).unwrap();
+    abi.convention = PhysicalConvention::C;
+    assert!(abi.validate(&signature, &types).is_err());
+    signature.calling_convention = CallingConvention::C;
+    assert!(classify_signature(&signature, &types, &target()).is_err());
+}

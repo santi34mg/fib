@@ -10,7 +10,7 @@ pub enum Operand {
 }
 
 /// An explicitly pointer-typed operand used as an address. This wrapper makes
-/// memory operations visible; a future verifier must check its pointee type.
+/// memory operations visible; verification checks its pointee and operation types.
 /// Constants may hold global addresses or null, never an implicit global load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Address(pub Operand);

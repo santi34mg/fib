@@ -1,4 +1,4 @@
-//! Verification for scalar SSA. Unsupported representation/operation families fail closed.
+//! Verification for scalar/struct SSA and typed stack memory. Unsupported representation/operation families fail closed.
 use super::*;
 use std::collections::HashSet;
 
@@ -14,17 +14,35 @@ fn unsupported(operation: &'static str) -> IrError {
 }
 
 pub fn verify_ir(ir: &Ir) -> IrResult<()> {
-    if !ir.globals.is_empty() || !ir.stack_slots.is_empty() {
-        return Err(unsupported("verification of storage"));
+    if !ir.globals.is_empty() {
+        return Err(unsupported("verification of globals"));
     }
-    for ty in &ir.types {
+    let mut sized = HashSet::new();
+    for (index, ty) in ir.types.iter().enumerate() {
         match ty {
             IrType::Bool | IrType::Bytes | IrType::Float(_) => (),
             IrType::Integer {
                 width: IntegerWidth::Bits(bits),
                 ..
             } => require((1..=128).contains(bits), "invalid integer width")?,
-            _ => return Err(unsupported("verification of non-scalar types")),
+            IrType::Pointer { pointee } => {
+                require(ir.get_type(*pointee).is_some(), "unknown pointee type")?;
+                require(
+                    !matches!(ir.get_type(*pointee), Some(IrType::Bytes)),
+                    "Bytes has no memory representation",
+                )?
+            }
+            IrType::Struct { fields, .. } => {
+                for field in fields {
+                    require(ir.get_type(*field).is_some(), "unknown field type")?;
+                    require(
+                        !matches!(ir.get_type(*field), Some(IrType::Bytes)),
+                        "Bytes has no struct field representation",
+                    )?;
+                }
+                check_sized(ir, TypeId(index), &mut sized)?;
+            }
+            _ => return Err(unsupported("verification of type family")),
         }
     }
     let valid_type = |ty: TypeId| require(ir.get_type(ty).is_some(), "unknown type");
@@ -32,6 +50,7 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
         valid_type(c.ty)?;
         match (&c.kind, ir.get_type(c.ty)) {
             (ConstantKind::Bool(_), Some(IrType::Bool)) => (),
+            (ConstantKind::Null, Some(IrType::Pointer { .. })) => (),
             (ConstantKind::Bytes(_), Some(IrType::Bytes)) => (),
             (
                 ConstantKind::Integer { bits },
@@ -73,6 +92,7 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
     }
     let mut names = HashSet::new();
     let mut owned_blocks = HashSet::new();
+    let mut owned_slots = HashSet::new();
     let mut definitions = HashSet::new();
     for (fi, f) in ir.functions.iter().enumerate() {
         let owner = FunctionId(fi);
@@ -91,7 +111,20 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
         else {
             continue;
         };
-        require(stack_slots.is_empty(), "unexpected stack slots")?;
+        for &slot in stack_slots {
+            let record = ir.get_stack_slot(slot).ok_or(IrError::Invalid {
+                message: "unknown stack slot",
+            })?;
+            require(
+                owned_slots.insert(slot) && record.owner == owner,
+                "stack slot ownership mismatch",
+            )?;
+            valid_type(record.ty)?;
+            require(
+                !matches!(ir.get_type(record.ty), Some(IrType::Bytes)),
+                "unsupported stack slot type",
+            )?;
+        }
         let members: HashSet<_> = blocks.iter().copied().collect();
         require(
             members.len() == blocks.len() && members.contains(entry),
@@ -240,8 +273,10 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                             matches!(
                                 ir.get_type(lhs),
                                 Some(IrType::Integer { .. } | IrType::Float(_))
-                            ) || (matches!(ir.get_type(lhs), Some(IrType::Bool))
-                                && matches!(op, BinaryOp::Eq | BinaryOp::Ne)),
+                            ) || (matches!(
+                                ir.get_type(lhs),
+                                Some(IrType::Bool | IrType::Pointer { .. })
+                            ) && matches!(op, BinaryOp::Eq | BinaryOp::Ne)),
                             "invalid comparison operand type",
                         )?;
                         require(
@@ -312,6 +347,65 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                         )?;
                         results.clone()
                     }
+                    InstructionKind::StackAddress(slot) => {
+                        require(stack_slots.contains(slot), "foreign stack slot")?;
+                        let slot = ir.get_stack_slot(*slot).ok_or(IrError::Invalid {
+                            message: "unknown stack slot",
+                        })?;
+                        require(slot.owner == owner, "foreign stack slot")?;
+                        require(
+                            results.len() == 1
+                                && matches!(ir.get_type(results[0]), Some(IrType::Pointer { pointee }) if *pointee == slot.ty),
+                            "stack address result type mismatch",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::Load { address } => {
+                        vec![pointee(ir, operand(address.0, position)?)?]
+                    }
+                    InstructionKind::Store { address, value } => {
+                        require(
+                            pointee(ir, operand(address.0, position)?)?
+                                == operand(*value, position)?,
+                            "store pointee type mismatch",
+                        )?;
+                        vec![]
+                    }
+                    InstructionKind::Aggregate { elements } => {
+                        require(results.len() == 1, "aggregate requires one result")?;
+                        let fields = fields(ir, results[0])?;
+                        let actual = elements
+                            .iter()
+                            .map(|e| operand(*e, position))
+                            .collect::<IrResult<Vec<_>>>()?;
+                        require(*fields == actual, "aggregate field signature mismatch")?;
+                        results.clone()
+                    }
+                    InstructionKind::ExtractField { aggregate, field } => {
+                        vec![field_type(ir, operand(*aggregate, position)?, *field)?]
+                    }
+                    InstructionKind::InsertField {
+                        aggregate,
+                        field,
+                        value,
+                    } => {
+                        let ty = operand(*aggregate, position)?;
+                        require(
+                            field_type(ir, ty, *field)? == operand(*value, position)?,
+                            "insert field type mismatch",
+                        )?;
+                        vec![ty]
+                    }
+                    InstructionKind::FieldAddress { base, field } => {
+                        let field =
+                            field_type(ir, pointee(ir, operand(base.0, position)?)?, *field)?;
+                        require(
+                            results.len() == 1
+                                && matches!(ir.get_type(results[0]), Some(IrType::Pointer { pointee }) if *pointee == field),
+                            "field address result type mismatch",
+                        )?;
+                        results.clone()
+                    }
                     InstructionKind::Call { callee, args } => {
                         let callee = ir.get_function(*callee).ok_or(IrError::Invalid {
                             message: "unknown callee",
@@ -365,8 +459,10 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
         }
     }
     require(
-        owned_blocks.len() == ir.blocks.len() && definitions.len() == ir.values.len(),
-        "orphan blocks or values",
+        owned_blocks.len() == ir.blocks.len()
+            && definitions.len() == ir.values.len()
+            && owned_slots.len() == ir.stack_slots.len(),
+        "orphan blocks, values or stack slots",
     )
 }
 
@@ -380,5 +476,49 @@ fn edges(terminator: &Terminator) -> IrResult<Vec<&Edge>> {
         } => vec![then_edge, else_edge],
         Terminator::Return { .. } | Terminator::Trap(_) | Terminator::Unreachable => vec![],
         Terminator::Switch { .. } => return Err(unsupported("verification of switch")),
+    })
+}
+
+fn check_sized(ir: &Ir, ty: TypeId, done: &mut HashSet<TypeId>) -> IrResult<()> {
+    let mut active = HashSet::new();
+    let mut pending = vec![(ty, false)];
+    while let Some((ty, finished)) = pending.pop() {
+        if done.contains(&ty) {
+            continue;
+        }
+        if finished {
+            active.remove(&ty);
+            done.insert(ty);
+            continue;
+        }
+        require(active.insert(ty), "recursive by-value struct")?;
+        pending.push((ty, true));
+        if let Some(IrType::Struct { fields, .. }) = ir.get_type(ty) {
+            for &field in fields {
+                pending.push((field, false));
+            }
+        }
+    }
+    Ok(())
+}
+fn pointee(ir: &Ir, ty: TypeId) -> IrResult<TypeId> {
+    match ir.get_type(ty) {
+        Some(IrType::Pointer { pointee }) => Ok(*pointee),
+        _ => Err(IrError::Invalid {
+            message: "memory address must be a pointer",
+        }),
+    }
+}
+fn fields(ir: &Ir, ty: TypeId) -> IrResult<&Vec<TypeId>> {
+    match ir.get_type(ty) {
+        Some(IrType::Struct { fields, .. }) => Ok(fields),
+        _ => Err(IrError::Invalid {
+            message: "field operation requires a struct",
+        }),
+    }
+}
+fn field_type(ir: &Ir, ty: TypeId, field: usize) -> IrResult<TypeId> {
+    fields(ir, ty)?.get(field).copied().ok_or(IrError::Invalid {
+        message: "field index out of bounds",
     })
 }
