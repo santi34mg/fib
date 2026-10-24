@@ -71,6 +71,26 @@ pub(super) fn resolve_project_with_paths(
         ));
     }
     types.started = true;
+    if let Some(prelude) = symbols
+        .namespaces
+        .get(&crate::frontend::namespace::PRELUDE_FILE)
+    {
+        let meta = types.builtin(B::MetaType);
+        for (index, declaration) in prelude.declarations.iter().enumerate() {
+            let ty = types.builtin(B::from_name(&declaration.name).expect("prelude type"));
+            types.bind(
+                BindingId::Declaration(DeclId {
+                    file_id: prelude.file_id,
+                    index: index as u32,
+                }),
+                ExpressionInfo {
+                    ty: meta,
+                    category: ValueCategory::Value,
+                    type_value: Some(ty),
+                },
+            );
+        }
+    }
     for unit in units.iter_mut() {
         super::validate_names(&mut unit.ast)?;
     }
@@ -281,7 +301,10 @@ impl TypeContext<'_> {
         signature: &mut FunctionSignature,
     ) -> anyhow::Result<TypeId> {
         for p in &signature.parameters {
-            if matches!(p.parameter_type.kind, K::Builtin(B::MetaType)) {
+            if self
+                .symbols
+                .is_metatype_syntax(self.file, &p.parameter_type)
+            {
                 let Some(BindingId::Local(id)) = p.annotation.binding else {
                     return Err(type_error("pending parameter binding"));
                 };
@@ -328,7 +351,10 @@ impl TypeContext<'_> {
                 .parameters
                 .iter()
                 .filter_map(|p| {
-                    if matches!(p.parameter_type.kind, K::Builtin(B::MetaType)) {
+                    if self
+                        .symbols
+                        .is_metatype_syntax(self.file, &p.parameter_type)
+                    {
                         match p.annotation.binding {
                             Some(BindingId::Local(id)) => Some(id),
                             _ => None,

@@ -36,6 +36,8 @@ use crate::plan::{BuildPlan, FileId, FileName};
 /// do not certify that the completion-validation pass has run.
 #[derive(Debug, Clone)]
 pub struct AnalyzedProject {
+    pub entry: FileId,
+    pub warnings: Vec<crate::diagnostics::CompilerWarning>,
     pub units: Vec<CompilationUnit>,
     pub symbols: ProjectSymbols,
     pub types: SemanticTypes,
@@ -108,6 +110,7 @@ impl LocalIdAllocator {
 
 #[derive(Clone)]
 pub struct Analyzer {
+    entry: FileId,
     units: Vec<CompilationUnit>,
     symbols: ProjectSymbols,
     local_ids: LocalIdAllocator,
@@ -147,6 +150,7 @@ impl Analyzer {
             ));
         }
         Self {
+            entry: plan.entry,
             units,
             symbols,
             local_ids: LocalIdAllocator::default(),
@@ -196,7 +200,9 @@ impl Analyzer {
         self.collect_declarations()?;
         self.resolve_names()?;
         let types = self.resolve_types()?;
-        let project = AnalyzedProject {
+        let mut project = AnalyzedProject {
+            entry: self.entry,
+            warnings: Vec::new(),
             units: self.units,
             symbols: self.symbols,
             types,
@@ -204,6 +210,63 @@ impl Analyzer {
             source_paths: self.paths.clone(),
         };
         validate_analysis_with_paths(&project, Some(&self.paths))?;
+        struct Warnings(
+            Vec<crate::diagnostics::CompilerWarning>,
+            Option<std::path::PathBuf>,
+        );
+        impl walk::Visitor for Warnings {
+            fn expression(
+                &mut self,
+                node: &mut crate::frontend::ast::expression::Expression,
+            ) -> anyhow::Result<()> {
+                if matches!(&node.kind, crate::frontend::ast::expression::ExpressionKind::ExprAcess { member, .. } if member.implicit_deref)
+                {
+                    let mut diagnostic = CompilerError::new(
+                        crate::diagnostics::ErrorKind::Type,
+                        "implicit pointer dereference in field access".into(),
+                    )
+                    .with_span(node.span)
+                    .with_hint("use an explicit postfix dereference to make the access explicit");
+                    diagnostic.filename = self.1.clone();
+                    self.0
+                        .push(crate::diagnostics::CompilerWarning { diagnostic });
+                }
+                Ok(())
+            }
+        }
+        for unit in &mut project.units {
+            let mut warnings = Warnings(Vec::new(), self.paths.get(&unit.source_file_id).cloned());
+            walk::statements(&mut warnings, &mut unit.ast.statements, true)?;
+            project.warnings.extend(warnings.0);
+        }
+        let mut counts = HashMap::new();
+        for warning in &project.warnings {
+            *counts
+                .entry((warning.diagnostic.filename.clone(), warning.diagnostic.span))
+                .or_insert(0usize) += 1;
+        }
+        for instance in project.types.generic_instances.values_mut() {
+            if let Some(function) = &mut instance.body
+                && let Some(body) = &mut function.body
+            {
+                let mut warnings = Warnings(
+                    Vec::new(),
+                    self.paths.get(&instance.key.template.file_id).cloned(),
+                );
+                walk::statements(&mut warnings, &mut body.statements, false)?;
+                let mut instance_counts = HashMap::new();
+                for warning in warnings.0 {
+                    let key = (warning.diagnostic.filename.clone(), warning.diagnostic.span);
+                    let current = instance_counts.entry(key.clone()).or_insert(0usize);
+                    *current += 1;
+                    let count = counts.entry(key).or_insert(0usize);
+                    if *current > *count {
+                        *count = *current;
+                        project.warnings.push(warning);
+                    }
+                }
+            }
+        }
         Ok(project)
     }
 
@@ -241,6 +304,13 @@ impl Analyzer {
                                     span,
                                     true,
                                 )?));
+                            if let Some(scope) = fun.pub_scope {
+                                namespace
+                                    .declarations
+                                    .last_mut()
+                                    .expect("function declaration")
+                                    .visibility = scope;
+                            }
                         }
                         StatementKind::MultiVariableDeclaration { bindings, values } => {
                             for (i, binding) in bindings.iter_mut().enumerate() {
@@ -387,6 +457,12 @@ fn add_declaration(
     span: Span,
     file: bool,
 ) -> anyhow::Result<DeclId> {
+    if crate::frontend::tokens::builtin::BuiltinType::from_name(name).is_some() {
+        return Err(at_span(
+            name_error(format!("prelude type name '{name}' cannot be shadowed")),
+            span,
+        ));
+    }
     if file && ns.names.contains_key(name) {
         return Err(at_span(
             name_error(format!("duplicate identifier '{name}'")),
@@ -421,7 +497,14 @@ fn inline_type(expr: Option<&crate::frontend::ast::expression::Expression>) -> b
 }
 
 fn computed_type(expr: Option<&crate::frontend::ast::expression::Expression>) -> bool {
-    matches!(expr.map(|e| &e.kind), Some(ExpressionKind::Call { .. }))
+    matches!(
+        expr.map(|e| &e.kind),
+        Some(
+            ExpressionKind::Call { .. }
+                | ExpressionKind::IndexAccess { .. }
+                | ExpressionKind::SliceLiteral { .. }
+        )
+    )
 }
 
 fn collect_variable(
@@ -450,6 +533,12 @@ fn collect_variable(
         span,
         true,
     )?));
+    if let Some(scope) = var.pub_scope {
+        ns.declarations
+            .last_mut()
+            .expect("variable declaration")
+            .visibility = scope;
+    }
     Ok(())
 }
 
@@ -607,4 +696,4 @@ mod walk;
 #[cfg(test)]
 mod test;
 
-pub(crate) use constant::evaluate_numeric;
+pub(crate) use constant::{evaluate_boolean, evaluate_numeric};

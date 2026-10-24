@@ -42,7 +42,10 @@ pub(super) fn definitions(
         let ExpressionKind::QualifiedIdentifier(name) = &expr.kind else {
             if matches!(
                 expr.kind,
-                ExpressionKind::TypeValue(_) | ExpressionKind::Call { .. }
+                ExpressionKind::TypeValue(_)
+                    | ExpressionKind::Call { .. }
+                    | ExpressionKind::IndexAccess { .. }
+                    | ExpressionKind::SliceLiteral { .. }
             ) {
                 return Ok(());
             }

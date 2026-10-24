@@ -99,4 +99,6 @@ pub struct MemberInfo {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MemberAnnotation {
     pub resolved: Option<MemberInfo>,
+    /// Exactly one pointer layer is dereferenced before selecting this field.
+    pub implicit_deref: bool,
 }

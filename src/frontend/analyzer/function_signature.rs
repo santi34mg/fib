@@ -19,9 +19,6 @@ impl Analyzer {
         }
         // Only metatype parameters participate in signature type lookup.
         // Runtime parameters retain the existing signature-before-value scope.
-        use crate::frontend::{
-            ast::type_expression::TypeExpressionKind, tokens::builtin::BuiltinType,
-        };
         let mut names = std::collections::HashSet::new();
         for parameter in &mut fun_sig.parameters {
             Self::check_local_name(&parameter.parameter_identifier, false, context)
@@ -37,10 +34,10 @@ impl Analyzer {
             }
             let id = context.local_ids.allocate()?;
             parameter.annotation.binding = Some(BindingId::Local(id));
-            if matches!(
-                parameter.parameter_type.kind,
-                TypeExpressionKind::Builtin(BuiltinType::MetaType)
-            ) {
+            if context
+                .symbols
+                .is_metatype_syntax(context.file_id, &parameter.parameter_type)
+            {
                 context.lexical.insert_binding(
                     parameter.parameter_identifier.clone(),
                     LocalBinding::Local(id),
@@ -52,10 +49,10 @@ impl Analyzer {
         }
         fun_sig.return_type.resolve_name(context)?;
         for parameter in &fun_sig.parameters {
-            if !matches!(
-                parameter.parameter_type.kind,
-                TypeExpressionKind::Builtin(BuiltinType::MetaType)
-            ) {
+            if !context
+                .symbols
+                .is_metatype_syntax(context.file_id, &parameter.parameter_type)
+            {
                 let Some(BindingId::Local(id)) = parameter.annotation.binding else {
                     unreachable!()
                 };

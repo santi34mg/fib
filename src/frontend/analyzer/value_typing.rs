@@ -31,6 +31,28 @@ fn float(b: &B) -> bool {
 pub(super) fn numeric(t: &T) -> bool {
     matches!(t, T::Builtin(b) if integer(b).is_some() || float(b))
 }
+/// Only direct same-family literals receive cast destination context.
+pub(super) fn cast_context(
+    source: &Expression,
+    target: TypeId,
+    types: &SemanticTypes,
+) -> Option<TypeId> {
+    let literal = match &source.kind {
+        E::Literal(literal) => literal,
+        E::UnaryExpression(u) if u.operator == O::Minus => match &u.expression.kind {
+            E::Literal(literal) => literal,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let target_kind = types.get(types.canonical(target).ok()?).ok()?;
+    match (literal, target_kind) {
+        (Literal::Null, _) => Some(target),
+        (Literal::Integer(_), T::Builtin(b)) if integer(b).is_some() => Some(target),
+        (Literal::Float(_), T::Builtin(b)) if float(b) => Some(target),
+        _ => None,
+    }
+}
 /// Returns whether a semantic type is an integer builtin. Unlike `integer`,
 /// which also provides signedness and width, this predicate is convenient when
 /// an operation only needs to enforce that its operand is is_integral_type.
@@ -115,7 +137,8 @@ pub(super) fn is_cast_allowed(
     types: &SemanticTypes,
 ) -> anyhow::Result<bool> {
     Ok(matches!(types.get(from)?, T::Builtin(B::Never))
-        || (numeric(types.get(from)?) && numeric(types.get(to)?))
+        || ((numeric(types.get(from)?) || matches!(types.get(from)?, T::Builtin(B::Boolean)))
+            && (numeric(types.get(to)?) || matches!(types.get(to)?, T::Builtin(B::Boolean))))
         || is_pointer_cast(from, to, types)?
         || check_assignable(to, from, types).is_ok())
 }
@@ -134,7 +157,9 @@ pub(super) fn is_pointer_cast(
     if ar != br {
         return Ok(false);
     }
-    if super::types::check_assignable(*a, *b, types).is_ok() {
+    if super::types::check_assignable(*a, *b, types).is_ok()
+        && super::types::check_assignable(*b, *a, types).is_ok()
+    {
         return Ok(true);
     }
     // Opaque casts must not erase nested readonly qualifications and later
@@ -229,6 +254,17 @@ pub(super) fn member(
         _ => return Err(type_error(format!("inapplicable member '{spelling}'"))),
     };
     Ok(MemberInfo { owner, kind, ty })
+}
+
+/// A field receiver may insert one checked dereference; never recurse here.
+pub(super) fn field_receiver(
+    info: ExpressionInfo,
+    types: &SemanticTypes,
+) -> anyhow::Result<(ExpressionInfo, bool)> {
+    if info.type_value.is_none() && matches!(types.container(info.ty)?, (T::Pointer(_), _)) {
+        return Ok((dereference_info(info.ty, types)?, true));
+    }
+    Ok((info, false))
 }
 
 /// Whether evaluation is guaranteed not to complete. A short-circuit RHS is
@@ -567,6 +603,7 @@ impl TypeContext<'_> {
                 member: slot,
             } => {
                 let info = self.expression(receiver, None)?;
+                let (info, implicit_deref) = field_receiver(info, self.types)?;
                 let owner = info.type_value.unwrap_or(info.ty);
                 self.types.builtin(B::Usize);
                 let canonical = self.types.canonical(owner)?;
@@ -594,6 +631,7 @@ impl TypeContext<'_> {
                 }
                 *slot = crate::frontend::analysis_annotation::MemberAnnotation {
                     resolved: Some(selected),
+                    implicit_deref,
                 };
                 return Ok(ExpressionInfo {
                     ty: selected.ty,
@@ -688,6 +726,17 @@ impl TypeContext<'_> {
             }
             E::IndexAccess { object, index } => {
                 let receiver = self.expression(object, None)?;
+                if let Some(element) = receiver.type_value {
+                    let length_type = self.types.builtin(B::UInt64);
+                    self.expression(index, Some(length_type))?;
+                    let length = super::constant::integer_as_i128(index, self.types)?
+                        .and_then(|n| u64::try_from(n).ok())
+                        .ok_or_else(|| {
+                            type_error("array type length must be a nonnegative integer constant")
+                        })?;
+                    let array = self.types.intern(T::Array { element, length });
+                    return Ok(self.metatype(array));
+                }
                 self.prepare_index(receiver.ty)?;
                 let (element, length, category) = indexed(receiver, self.types)?;
                 self.index(index, length, false)?;
@@ -704,6 +753,13 @@ impl TypeContext<'_> {
                 inclusive,
             } => {
                 let receiver = self.expression(object, None)?;
+                if let Some(element) = receiver.type_value {
+                    if start.is_some() || end.is_some() || *inclusive {
+                        return Err(type_error("slice type requires empty brackets"));
+                    }
+                    let slice = self.types.intern(T::Slice(element));
+                    return Ok(self.metatype(slice));
+                }
                 self.prepare_index(receiver.ty)?;
                 let (element, length, category) = indexed(receiver, self.types)?;
                 let from = if let Some(start) = start {
@@ -744,15 +800,8 @@ impl TypeContext<'_> {
                 target_type,
             } => {
                 let target = self.type_expression(target_type, false, false)?;
-                // Explicit casts supply context only for null, not numeric source values.
-                let info = self.expression(
-                    source,
-                    if matches!(source.kind, E::Literal(Literal::Null)) {
-                        Some(target)
-                    } else {
-                        None
-                    },
-                )?;
+                let context = cast_context(source, target, self.types);
+                let info = self.expression(source, context)?;
                 let from = self.types.get(info.ty)?;
                 let allowed = is_cast_allowed(info.ty, target, self.types)?;
                 if matches!(from, T::Builtin(B::Never)) {

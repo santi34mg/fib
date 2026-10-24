@@ -9,13 +9,51 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
+    pub(super) fn parse_visibility(
+        &mut self,
+    ) -> anyhow::Result<(bool, Option<crate::frontend::namespace::Visibility>)> {
+        use crate::frontend::namespace::Visibility;
+        if self
+            .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Pub)))
+            .is_none()
+        {
+            return Ok((false, None));
+        }
+        if self
+            .consume_if(|t| {
+                matches!(
+                    t.kind,
+                    TokenKind::Punctuation(Punctuation::OpeningParenthesis)
+                )
+            })
+            .is_none()
+        {
+            return Ok((true, None));
+        }
+        let token = self.expect_next("expected 'dir' or 'root' after 'pub('")?;
+        let scope = match &token.kind {
+            TokenKind::Identifier(name) if name == "dir" => Visibility::Directory,
+            TokenKind::Identifier(name) if name == "root" => Visibility::Package,
+            _ => {
+                return Err(self.error(
+                    "expected 'dir' or 'root' after 'pub('",
+                    token.line,
+                    token.column,
+                ));
+            }
+        };
+        self.expect_token(
+            TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+            "expected ')' after visibility scope",
+        )?;
+        Ok((true, Some(scope)))
+    }
+
     /// Parse a declaration's left-hand side once per binding, including its
     /// own `[pub] [const | comp]` modifiers and optional type. The final `:=` is split into
     /// `:` and `=` tokens by the tokenizer.
     fn parse_declaration_binding(&mut self) -> anyhow::Result<(VariableDeclaration, bool)> {
-        let is_pub = self
-            .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Pub)))
-            .is_some();
+        let (is_pub, pub_scope) = self.parse_visibility()?;
         let modifier = self
             .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Const | Keyword::Comp)));
         let is_const = matches!(
@@ -56,6 +94,7 @@ where
         let mut binding = VariableDeclaration::new(name, ty, None);
         binding.is_const = is_const;
         binding.is_pub = is_pub;
+        binding.pub_scope = pub_scope;
         binding.is_comp = is_comp;
         Ok((binding, inferred))
     }

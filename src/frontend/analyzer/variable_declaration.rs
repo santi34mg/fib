@@ -4,7 +4,6 @@ use crate::frontend::{
     analyzer::Analyzer,
     ast::{
         expression::{Expression, ExpressionKind},
-        type_expression::TypeExpressionKind,
         variable_declaration::VariableDeclaration,
     },
     namespace::{Entity, ResolvedName, name_error},
@@ -87,6 +86,11 @@ impl Analyzer {
         alias: bool,
         context: &ResolveContext<'_>,
     ) -> anyhow::Result<()> {
+        if BuiltinType::from_name(name).is_some() {
+            return Err(name_error(format!(
+                "prelude type name '{name}' cannot be shadowed"
+            )));
+        }
         if context.lexical.resolve_lexical(name).is_some() {
             return Err(name_error(format!("duplicate lexical identifier '{name}'")));
         }
@@ -105,10 +109,10 @@ impl Analyzer {
         expr: Option<&Expression>,
         context: &ResolveContext<'_>,
     ) -> anyhow::Result<Option<Entity>> {
-        let type_annotation = matches!(
-            var.ty.as_ref().map(|t| &t.kind),
-            Some(TypeExpressionKind::Builtin(BuiltinType::MetaType))
-        );
+        let type_annotation = var
+            .ty
+            .as_ref()
+            .is_some_and(|t| context.symbols.is_metatype_syntax(context.file_id, t));
         let reference = match expr.map(|e| &e.kind) {
             Some(ExpressionKind::QualifiedIdentifier(name)) => name.annotation.resolved,
             _ => None,
@@ -133,7 +137,14 @@ impl Analyzer {
             return Ok(Some(Entity::Declaration(id)));
         }
         // Computed values retain their own binding; typing evaluates the call.
-        if matches!(expr.map(|e| &e.kind), Some(ExpressionKind::Call { .. })) {
+        if matches!(
+            expr.map(|e| &e.kind),
+            Some(
+                ExpressionKind::Call { .. }
+                    | ExpressionKind::IndexAccess { .. }
+                    | ExpressionKind::SliceLiteral { .. }
+            )
+        ) {
             return Ok(None);
         }
         match reference {

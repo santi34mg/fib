@@ -239,6 +239,9 @@ fn place(expr: &Expression, types: &SemanticTypes) -> anyhow::Result<Option<Plac
     }
     match &expr.kind {
         E::ExprAcess { expr, member, .. } => {
+            if member.implicit_deref {
+                return Ok(None);
+            }
             if let Some(mut p) = place(expr, types)?
                 && let Some(info) = member.resolved
                 && let MemberKind::Field(index) = info.kind
@@ -445,7 +448,13 @@ impl Flow<'_> {
     fn address(&mut self, expr: &Expression, state: &State) -> anyhow::Result<()> {
         match &expr.kind {
             E::QualifiedIdentifier(_) => Ok(()),
-            E::ExprAcess { expr, .. } => self.address(expr, state),
+            E::ExprAcess { expr, member, .. } => {
+                if member.implicit_deref {
+                    self.read(expr, state)
+                } else {
+                    self.address(expr, state)
+                }
+            }
             E::IndexAccess { object, index } => {
                 self.read(index, state)?;
                 if matches!(
@@ -778,7 +787,7 @@ impl Flow<'_> {
                     .ty;
                 let complete = matches!(self.types.get(ty)?, T::Enum(vs) if vs.len() == seen.len());
                 if !wildcard && !complete {
-                    exits.push(Exit { kind, state });
+                    return Err(type_error("non-exhaustive enum switch"));
                 }
                 return Ok(exits);
             }

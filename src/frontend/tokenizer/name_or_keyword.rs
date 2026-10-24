@@ -1,9 +1,6 @@
 use crate::frontend::{
     tokenizer::Tokenizer,
-    tokens::{
-        Keyword, Literal, TokenKind,
-        builtin::{Builtin, BuiltinType},
-    },
+    tokens::{Keyword, Literal, TokenKind},
 };
 
 impl<'input> Tokenizer<'input> {
@@ -36,12 +33,7 @@ impl<'input> Tokenizer<'input> {
             "false" => TokenKind::Literal(Literal::Boolean(false)),
             "null" => TokenKind::Literal(Literal::Null),
 
-            "type" => TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::MetaType)),
-
             _ => {
-                if let Some(ty) = BuiltinType::from_name(identifier) {
-                    return TokenKind::Builtin(Builtin::BuiltinType(ty));
-                }
                 self.last_identifier_id += 1;
                 TokenKind::Identifier(identifier.to_string())
             }

@@ -52,9 +52,24 @@ pub(crate) fn evaluate_numeric(
             (Some(a), Some(c)) => Some(a.binary(c, b.operator)?),
             _ => None,
         },
-        E::Cast { expr, .. } => evaluate_numeric(expr, types)?
-            .map(|v| v.cast(ty))
-            .transpose()?,
+        E::Cast { expr, .. } => {
+            if let Some(value) = evaluate_numeric(expr, types)? {
+                Some(value.cast(ty)?)
+            } else {
+                evaluate_boolean(expr, types)?
+                    .map(|b| {
+                        NumericValue {
+                            ty: NumericType::Integer {
+                                width: 8,
+                                signed: false,
+                            },
+                            bits: u128::from(b),
+                        }
+                        .cast(ty)
+                    })
+                    .transpose()?
+            }
+        }
         _ => None,
     })
 }
@@ -108,4 +123,29 @@ pub(super) fn check_cast(
         value.cast(ty).map_err(|e| type_error(e.to_string()))?;
     }
     Ok(())
+}
+
+/// Constant Boolean casts use the same zero test as runtime (NaN is nonzero).
+pub(crate) fn evaluate_boolean(
+    e: &Expression,
+    types: &SemanticTypes,
+) -> anyhow::Result<Option<bool>> {
+    Ok(match &e.kind {
+        E::Literal(Literal::Boolean(value)) => Some(*value),
+        E::UnaryExpression(u) if u.operator == O::LogicalNot => {
+            evaluate_boolean(&u.expression, types)?.map(|b| !b)
+        }
+        E::Cast { expr, .. }
+            if e.annotation
+                .resolved
+                .is_some_and(|i| matches!(types.get(i.ty), Ok(T::Builtin(B::Boolean)))) =>
+        {
+            if let Some(value) = evaluate_numeric(expr, types)? {
+                Some(!value.is_zero())
+            } else {
+                evaluate_boolean(expr, types)?
+            }
+        }
+        _ => None,
+    })
 }

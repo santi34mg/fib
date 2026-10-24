@@ -5,9 +5,11 @@ use crate::plan::{BuildPlan, FileId, FileName};
 
 pub use crate::frontend::identifier::{DeclId, Entity, LocalId, ResolvedName};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Visibility {
     Private,
+    Directory,
+    Package,
     Public,
 }
 
@@ -38,6 +40,7 @@ pub struct Namespace {
 
 #[derive(Debug, Clone)]
 pub struct ProjectSymbols {
+    pub regions: HashMap<FileId, crate::plan::FileRegion>,
     pub files_by_name: HashMap<FileName, FileId>,
     pub namespaces: HashMap<FileId, Namespace>,
 }
@@ -61,10 +64,58 @@ impl ProjectSymbols {
                 return Err(name_error(format!("duplicate file name '{}'", file.name.0)));
             }
         }
-        Ok(Self {
+        let mut symbols = Self {
             files_by_name,
             namespaces: HashMap::new(),
-        })
+            regions: plan.file_regions()?,
+        };
+        if ids.contains(&PRELUDE_FILE) {
+            return Err(name_error("reserved prelude file identity"));
+        }
+        let mut namespace = Namespace {
+            file_id: PRELUDE_FILE,
+            declarations: Vec::new(),
+            names: HashMap::new(),
+        };
+        for name in PRELUDE_NAMES {
+            let id = DeclId {
+                file_id: PRELUDE_FILE,
+                index: namespace.declarations.len() as u32,
+            };
+            namespace.names.insert((*name).into(), id);
+            namespace.declarations.push(Declaration {
+                name: (*name).into(),
+                visibility: Visibility::Public,
+                span: Span::new(1, 1),
+                kind: DeclarationKind::Type,
+                alias_target: None,
+            });
+        }
+        symbols.namespaces.insert(PRELUDE_FILE, namespace);
+        Ok(symbols)
+    }
+
+    pub(crate) fn prelude_name(&self, name: &str) -> Option<DeclId> {
+        self.namespaces.get(&PRELUDE_FILE)?.names.get(name).copied()
+    }
+
+    pub(crate) fn is_metatype_syntax(
+        &self,
+        from: FileId,
+        node: &crate::frontend::ast::type_expression::TypeExpression,
+    ) -> bool {
+        use crate::frontend::{
+            ast::type_expression::TypeExpressionKind as K, tokens::builtin::BuiltinType as B,
+        };
+        match &node.kind {
+            K::Builtin(B::MetaType) => true,
+            K::QualifiedIdentifier(name) => {
+                self.resolve_path_using(from, &name.segments, &mut |e| self.canonical(e)).ok()
+                    .is_some_and(|e| matches!(e, Entity::Declaration(id) if Some(id) == self.prelude_name("type")))
+                || name.annotation.resolved.is_some_and(|n| matches!(n, ResolvedName::Entity(Entity::Declaration(id)) if Some(id) == self.prelude_name("type")))
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn declaration(&self, id: DeclId) -> anyhow::Result<&Declaration> {
@@ -96,6 +147,12 @@ impl ProjectSymbols {
             return Err(name_error("empty qualified name"));
         }
         let full = segments.join("::");
+        if segments.len() == 1
+            && let Some(id) = self.prelude_name(&segments[0])
+        {
+            return normalize(Entity::Declaration(id));
+        }
+
         // Unqualified declarations take precedence over a same-spelled file.
         let local = self
             .namespaces
@@ -154,12 +211,27 @@ impl ProjectSymbols {
                 .copied()
                 .ok_or_else(|| name_error(format!("unresolved declaration '{segment}'")))?;
             let declaration = self.declaration(id)?;
-            if from != file && declaration.visibility != Visibility::Public {
+            if !self.accessible(from, file, declaration.visibility) {
                 return Err(name_error(format!("declaration '{segment}' is private")));
             }
             entity = normalize(Entity::Declaration(id))?;
         }
         Ok(entity)
+    }
+
+    pub(crate) fn accessible(&self, from: FileId, owner: FileId, visibility: Visibility) -> bool {
+        if from == owner || visibility == Visibility::Public {
+            return true;
+        }
+        let (Some(from), Some(owner)) = (self.regions.get(&from), self.regions.get(&owner)) else {
+            return false;
+        };
+        from.package == owner.package
+            && match visibility {
+                Visibility::Package => true,
+                Visibility::Directory => from.directory.starts_with(&owner.directory),
+                Visibility::Private | Visibility::Public => false,
+            }
     }
 
     pub(crate) fn canonical(&self, mut entity: Entity) -> anyhow::Result<Entity> {
@@ -187,3 +259,11 @@ impl ProjectSymbols {
         matches!(entity, Entity::Declaration(id) if self.declaration(id).is_ok_and(|d| d.kind == DeclarationKind::Type))
     }
 }
+
+/// Internal identity only; no public qualified compiler namespace is introduced.
+pub(crate) const PRELUDE_FILE: FileId = FileId(u32::MAX);
+pub(crate) const PRELUDE_NAMES: &[&str] = &[
+    "type", "void", "int", "uint", "int8", "int16", "int32", "int64", "int128", "uint8", "uint16",
+    "uint32", "uint64", "uint128", "float16", "float32", "float64", "float128", "bool", "char",
+    "string", "never", "usize",
+];

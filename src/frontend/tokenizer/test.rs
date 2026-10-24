@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::frontend::tokens::builtin::{Builtin, BuiltinType};
+    use crate::frontend::tokens::builtin::BuiltinType;
     use crate::frontend::{
         tokenizer::Tokenizer,
         tokens::{Keyword, Literal, Operator, Punctuation, TokenKind},
@@ -29,12 +29,7 @@ mod tests {
         let metatype = BuiltinType::MetaType;
         assert_eq!(BuiltinType::from_name(metatype.name()), Some(metatype));
         let tokens: Vec<_> = Tokenizer::new("type").map(|token| token.kind).collect();
-        assert_eq!(
-            tokens,
-            vec![TokenKind::Builtin(Builtin::BuiltinType(
-                BuiltinType::MetaType
-            ))]
-        );
+        assert_eq!(tokens, vec![TokenKind::Identifier("type".into())]);
     }
 
     #[test]
@@ -333,7 +328,7 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::MetaType)),
+                TokenKind::Identifier(BuiltinType::MetaType.name().into()),
                 TokenKind::Identifier("type_name".to_owned()),
                 TokenKind::Identifier("Type".to_owned()),
             ]
@@ -487,13 +482,13 @@ mod tests {
 
     #[test]
     fn test_builtins() {
-        use crate::frontend::tokens::builtin::{Builtin, BuiltinType};
+        use crate::frontend::tokens::builtin::BuiltinType;
 
         // Bare builtin type names are recognized without an `@` prefix.
         let toks: Vec<_> = Tokenizer::new("int8 string bool").collect();
         assert!(
             toks.iter()
-                .all(|t| matches!(t.kind, TokenKind::Builtin(Builtin::BuiltinType(_)))),
+                .all(|t| matches!(t.kind, TokenKind::Identifier(_))),
             "builtin type names should lex as builtins: {:?}",
             toks
         );
@@ -502,11 +497,11 @@ mod tests {
         let toks: Vec<_> = Tokenizer::new("int8 string").collect();
         assert_eq!(
             toks[0].kind,
-            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::Int8))
+            TokenKind::Identifier(BuiltinType::Int8.name().into())
         );
         assert_eq!(
             toks[1].kind,
-            TokenKind::Builtin(Builtin::BuiltinType(BuiltinType::String))
+            TokenKind::Identifier(BuiltinType::String.name().into())
         );
 
         for (spelling, expected) in [
@@ -539,13 +534,14 @@ mod tests {
             assert_eq!(tokens.len(), 1, "{spelling}");
             assert_eq!(
                 tokens[0].kind,
-                TokenKind::Builtin(Builtin::BuiltinType(expected)),
+                TokenKind::Identifier(spelling.into()),
                 "{spelling}"
             );
         }
         for (alias, ty) in [("int", BuiltinType::Int32), ("uint", BuiltinType::UInt32)] {
             let tokens: Vec<_> = Tokenizer::new(alias).collect();
-            assert_eq!(tokens[0].kind, TokenKind::Builtin(Builtin::BuiltinType(ty)));
+            assert_eq!(BuiltinType::from_name(alias), Some(ty));
+            assert_eq!(tokens[0].kind, TokenKind::Identifier(alias.into()));
         }
         for old_spelling in [
             "int2", "int4", "uint2", "uint4", "float2", "float4", "float8",

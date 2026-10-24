@@ -289,3 +289,14 @@ mod tests {
         assert_eq!(ce.to_string(), ce.render());
     }
 }
+
+/// A nonfatal source diagnostic. Warnings do not alter compilation success.
+#[derive(Debug, Clone)]
+pub struct CompilerWarning {
+    pub diagnostic: CompilerError,
+}
+impl CompilerWarning {
+    pub fn render(&self) -> String {
+        self.diagnostic.render().replacen("error[", "warning[", 1)
+    }
+}

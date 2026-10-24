@@ -17,6 +17,16 @@ pub fn check_assignable(
     ) {
         return Ok(());
     }
+    // Only the outer pointer/slice layer may gain readonly permission.
+    if let T::Readonly(inner) = types.get(types.canonical(expected)?)?
+        && !matches!(types.get(types.canonical(found)?)?, T::Readonly(_))
+        && matches!(
+            types.get(types.canonical(*inner)?)?,
+            T::Pointer(_) | T::Slice(_)
+        )
+    {
+        return check_assignable(*inner, found, types);
+    }
     let mut pending = vec![(expected, found)];
     let mut seen = HashSet::new();
     while let Some((a, b)) = pending.pop() {

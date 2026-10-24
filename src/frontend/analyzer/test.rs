@@ -35,6 +35,7 @@ use super::{
 
 fn symbols() -> ProjectSymbols {
     ProjectSymbols {
+        regions: HashMap::new(),
         files_by_name: HashMap::new(),
         namespaces: HashMap::new(),
     }
@@ -150,6 +151,7 @@ fn annotation_defaults_are_explicitly_pending() {
 #[test]
 fn complete_analysis_validates_an_empty_type_pass() {
     let analyzer = Analyzer {
+        entry: FileId(0),
         units: Vec::new(),
         symbols: symbols(),
         local_ids: LocalIdAllocator::default(),
@@ -166,6 +168,8 @@ fn complete_analysis_validates_an_empty_type_pass() {
     resolve_types(&mut units, &registry, &mut types).unwrap();
     assert!(resolve_types(&mut units, &registry, &mut types).is_err());
     validate_analysis(&AnalyzedProject {
+        entry: FileId(0),
+        warnings: Vec::new(),
         units,
         symbols: registry,
         types,
@@ -194,6 +198,7 @@ fn synthetic_builtins_resolve_type_and_survive_analysis_only_when_configured() {
             .unwrap();
         (
             BuildPlan {
+                packages: Vec::new(),
                 files: vec![SourceFile {
                     id: FileId(0),
                     name: FileName("build".into()),
@@ -264,6 +269,7 @@ fn synthetic_builtin_namespace_does_not_collide_with_source_names() {
         .parse()
         .unwrap();
     let plan = BuildPlan {
+        packages: Vec::new(),
         files: vec![SourceFile {
             id: FileId(0),
             name: FileName("build".into()),
@@ -351,7 +357,7 @@ mod name_resolution {
     //! Executable specification of name resolution and its explicit semantic boundary.
     //! Run one entity phase with `cargo test --no-default-features name_resolution::phase_01`.
 
-    use std::{collections::HashMap, path::Path};
+    use std::path::Path;
 
     use super::{Analyzer, LocalIdAllocator, ResolveContext};
     use crate::{
@@ -395,7 +401,7 @@ mod name_resolution {
                     .get(&"pkg::util".to_string().into()),
                 Some(&FileId(1))
             );
-            assert!(analyzer.symbols.namespaces.is_empty());
+            assert_eq!(analyzer.symbols.namespaces.len(), 1); // implicit prelude
         }
 
         #[test]
@@ -1571,7 +1577,14 @@ mod name_resolution {
             let mut observed = Observed::default();
             observed.ty(&mut ty);
             assert_eq!(
-                observed.names,
+                observed
+                    .names
+                    .into_iter()
+                    .filter(
+                        |(name, _)| crate::frontend::tokens::builtin::BuiltinType::from_name(name)
+                            .is_none()
+                    )
+                    .collect::<Vec<_>>(),
                 vec![("T".into(), Some(ResolvedName::Local(LocalId(103)))); count]
             );
             assert_eq!(ty, original, "only name annotations may change");
@@ -1775,7 +1788,24 @@ mod name_resolution {
                 "main",
                 "comp A, comp B := int32, int64; fn f() { comp C, comp D := int32, int64; c: C; d: D; }",
             )]);
-            names(&analyzer, 0, &[("C", target(0, 3)), ("D", target(0, 4))]);
+            names(
+                &analyzer,
+                0,
+                &[
+                    (
+                        "C",
+                        ResolvedName::Entity(Entity::Declaration(
+                            analyzer.symbols.prelude_name("int32").unwrap(),
+                        )),
+                    ),
+                    (
+                        "D",
+                        ResolvedName::Entity(Entity::Declaration(
+                            analyzer.symbols.prelude_name("int64").unwrap(),
+                        )),
+                    ),
+                ],
+            );
             assert_eq!(analyzer.symbols.namespaces[&FileId(0)].names.len(), 3);
         }
 
@@ -2312,6 +2342,7 @@ mod name_resolution {
 
     fn inputs(files: &[(&str, &str)]) -> (BuildPlan, Vec<CompilationUnit>) {
         let plan = BuildPlan {
+            packages: Vec::new(),
             files: files
                 .iter()
                 .enumerate()
@@ -2618,10 +2649,24 @@ mod name_resolution {
     }
     fn names(analyzer: &Analyzer, file: usize, expected: &[(&str, ResolvedName)]) {
         assert_eq!(
-            observe(&analyzer.units[file].ast).names,
+            observe(&analyzer.units[file].ast)
+                .names
+                .into_iter()
+                .filter(
+                    |(name, _)| crate::frontend::tokens::builtin::BuiltinType::from_name(name)
+                        .is_none()
+                )
+                .collect::<Vec<_>>(),
             expected
                 .iter()
-                .map(|(name, id)| ((*name).into(), Some(*id)))
+                .map(|(name, id)| (
+                    (*name).into(),
+                    Some(match id {
+                        ResolvedName::Entity(entity) =>
+                            ResolvedName::Entity(analyzer.symbols.canonical(*entity).unwrap()),
+                        other => *other,
+                    })
+                ))
                 .collect::<Vec<_>>()
         );
     }
@@ -2670,10 +2715,13 @@ mod name_resolution {
         }
     }
     fn empty_symbols() -> ProjectSymbols {
-        ProjectSymbols {
-            files_by_name: HashMap::new(),
-            namespaces: HashMap::new(),
-        }
+        ProjectSymbols::from_plan(&BuildPlan {
+            packages: Vec::new(),
+            files: Vec::new(),
+            entry: FileId(0),
+            output: "unused".into(),
+        })
+        .unwrap()
     }
     fn named(name: &str) -> Expression {
         Expression::at(
@@ -2703,6 +2751,7 @@ mod type_resolution {
             .unwrap_or_else(|e| panic!("fixture did not parse: {source}\n{e:#}"));
         Analyzer::new(
             BuildPlan {
+                packages: Vec::new(),
                 files: vec![SourceFile {
                     id: FileId(0),
                     name: "main".to_string().into(),
@@ -2776,7 +2825,7 @@ mod type_resolution {
         );
         good("a: int8 = 127; b: int16 = (a + 1) as int16;");
         good("a: int8 = 127; b: int16 = (a as int16) + 1;");
-        good("a := 128 as int8; b := -1 as uint128;");
+        good("x := 128; y := -1; a := x as int8; b := y as uint128;");
         for source in [
             "a: int8 = 1; b: int16 = a;",
             "a: int8 = 1; b: int16 = 2; c := a + b;",
@@ -3129,7 +3178,7 @@ mod type_resolution {
         "a := [1]; view := a as int32[];",
         "cast"
     );
-    err!(bool_numeric_cast, "x := true as int32;", "cast");
+    ok!(bool_numeric_cast, "x := true as int32; y := 1 as bool;");
     err!(
         bad_payload_argument,
         "comp E: type = enum { N { value: int32 } }; x := E.N(true);",
@@ -3271,25 +3320,24 @@ mod type_resolution {
         fn exact_compatibility_at_all_boundaries() {
             for source in [
                 "fn f(p: const *int32) { q: *int32 = p; }",
-                "fn f(p: *int32) { q: const *int32 = p; }",
                 "fn f(p: const int32[]) { q: int32[] = p; }",
-                "fn f(p: int32[]) { q: const int32[] = p; }",
                 "fn f() { p: const int32[1] = [1]; q: int32[1] = p; }",
                 "fn f() { p: int32[1] = [1]; q: const int32[1] = p; }",
                 "fn f(p: const *int32) *int32 { return p; }",
                 "fn take(p: *int32) {} fn f(p: const *int32) { take(p); }",
                 "fn f(p: *const *int32) { q: **int32 = p; }",
-                "fn f(p: *int32) { q: const *int32 = null; q = p; }",
             ] {
                 bad(source, "incompatible");
             }
+            pass("fn f(p: *int32) { q: const *int32 = p; }");
+            pass("fn f(p: int32[]) { q: const int32[] = p; }");
+            pass("fn f(p: *int32) { q: const *int32 = null; q = p; }");
         }
 
         #[test]
         fn casts_cannot_erase_qualifiers() {
             for source in [
                 "fn f(p: const *int32) { q := p as *int32; }",
-                "fn f(p: *int32) { q := p as const *int32; }",
                 "fn f(p: const *int32) { q := p as *void; }",
                 "fn f(p: *const *int32) { q := p as *void; }",
                 "fn f(p: const int32[]) { q := p as int32[]; }",
@@ -3432,9 +3480,8 @@ mod type_resolution {
             assert_ne!(readonly, pointer);
             assert_eq!(types.canonical(readonly).unwrap(), readonly);
             types.validate_type(readonly).unwrap();
-            for (a, b) in [(readonly, pointer), (pointer, readonly)] {
-                assert!(check_assignable(a, b, &types).is_err());
-            }
+            assert!(check_assignable(readonly, pointer, &types).is_ok());
+            assert!(check_assignable(pointer, readonly, &types).is_err());
             let invalid = types.intern(SemanticType::Readonly(int));
             assert!(types.validate_type(invalid).is_err());
             let invalid = types.intern(SemanticType::Readonly(TypeId(999)));
@@ -3619,6 +3666,7 @@ mod type_resolution {
         use crate::driver::CompilationUnit;
         use crate::plan::{BuildPlan, SourceFile};
         let plan = BuildPlan {
+            packages: Vec::new(),
             files: files
                 .iter()
                 .enumerate()
@@ -4019,7 +4067,7 @@ mod type_resolution {
         fail!(
             missing_enum_path,
             "comp E: type = enum { A, B }; fn f(e: E) int32 { switch(e) { when .A { return 1; } }; }",
-            "return"
+            "non-exhaustive"
         );
         fail!(
             duplicate_enum_arm,
@@ -4144,6 +4192,7 @@ mod type_resolution {
             let main = analyzer("comp ident := lib::identity; a := ident(int8, 1); comp maker := lib::box; comp Box := maker(int32); b: Box = Box { x: 1 };").units.remove(0);
             let mut a = Analyzer::new(
                 BuildPlan {
+                    packages: Vec::new(),
                     files: vec![
                         SourceFile {
                             id: FileId(0),
@@ -4795,6 +4844,7 @@ mod generic_flow_regressions {
         .unwrap_or_else(|error| panic!("fixture did not parse: {source}\n{error:#}"));
         Analyzer::new(
             BuildPlan {
+                packages: Vec::new(),
                 files: vec![SourceFile {
                     id: FileId(0),
                     name: "main".to_string().into(),
@@ -4829,6 +4879,106 @@ mod generic_flow_regressions {
         assert!(
             diagnostic.message.contains(fragment),
             "expected {fragment:?}: {error:#}"
+        );
+    }
+
+    #[test]
+    fn specification_cast_context_and_readonly_views() {
+        for source in [
+            "fn f() { a := 4294967296 as uint64; b := 0.1 as float32; c := (-128) as int8; }",
+            "fn f() { a := true as int128; b := false as float16; c := 3.9 as bool; }",
+            "fn f(p: *int32) const *int32 { q: const *int32 = p; return q; }",
+            "fn f(p: int32[]) const int32[] { return p; }",
+        ] {
+            analyze(source);
+        }
+        for source in [
+            "fn f() { a := 300 as uint8; }",
+            "fn f() { a := (-1) as uint8; }",
+        ] {
+            reject(source, "literal");
+        }
+        reject("fn f(p: const *int32) *int32 { return p; }", "incompatible");
+        reject(
+            "fn f(p: **int32) *const *int32 { return p; }",
+            "incompatible",
+        );
+        reject(
+            "comp E: type = enum { A, B }; fn f(e:E) { if(false) { switch(e) { when .A {} }; }; }",
+            "non-exhaustive",
+        );
+    }
+
+    #[test]
+    fn prelude_identifiers_type_brackets_and_pointer_warnings() {
+        analyze(
+            "comp Meta:type = type; fn id(T:Meta, x:T) T { return x; } fn f() { x := id(int32,1); comp A:type = int32[2]; a:A = [1,2]; comp V:type = int32[]; }",
+        );
+        let project =
+            analyze("comp S:type = struct { x:int32 }; fn f(p:*S) int32 { p.x = 42; return p.x; }");
+        assert_eq!(project.warnings.len(), 2);
+        assert!(
+            project
+                .warnings
+                .iter()
+                .all(|w| w.diagnostic.span.is_some() && w.render().starts_with("warning["))
+        );
+        reject(
+            "comp S:type = struct { x:int32 }; fn f(p:**S) int32 { return p.x; }",
+            "inapplicable",
+        );
+        reject(
+            "comp S:type = struct { x:int32 }; fn f(p:const *S) { p.x = 1; }",
+            "immutable",
+        );
+        reject(
+            "comp S:type = struct { x:int32 }; fn f() { p:*S; p.x = 1; }",
+            "uninitialized",
+        );
+        for source in [
+            "fn int32() {}",
+            "fn f(int32:int32) {}",
+            "fn f() { int32 := 1; }",
+            "comp int32:type = int64;",
+        ] {
+            let error = analyzer(source).analyze().unwrap_err();
+            assert!(
+                error.to_string().contains("cannot be shadowed"),
+                "{error:#}"
+            );
+        }
+        reject(
+            "fn f() { const a:int32[2] = [1,2]; a = [3,4]; }",
+            "immutable",
+        );
+        analyze(
+            "fn f() { const a:int32[2] = [1,2]; a[0] = 3; b:const int32[2] = [1,2]; b = [3,4]; }",
+        );
+        reject(
+            "fn f() { b:const int32[2] = [1,2]; b[0] = 3; }",
+            "immutable",
+        );
+    }
+
+    #[test]
+    fn readonly_casts_cannot_change_nested_pointer_permissions() {
+        reject("fn f(p:*const *int32) { q := p as **int32; }", "cast");
+        reject("fn f(p:**int32) { q := p as *const *int32; }", "cast");
+        let project = analyze(
+            "comp S:type = struct { next:*S, x:int32 }; fn f(p:*S) int32 { return p.next.x; }",
+        );
+        assert_eq!(
+            project.warnings.len(),
+            2,
+            "each field access inserts its own dereference"
+        );
+        let project = analyze(
+            "comp S:type = struct { x:int32 }; fn read(T:type, x:T) int32 { return x.x; } fn f(p:*S) int32 { return read(*S,p)+read(*S,p); }",
+        );
+        assert_eq!(
+            project.warnings.len(),
+            1,
+            "concrete-only implicit accesses warn once per source site"
         );
     }
 
@@ -5024,6 +5174,7 @@ mod validation_regressions {
             .unwrap_or_else(|error| panic!("fixture did not parse: {source}\n{error:#}"));
         Analyzer::new(
             BuildPlan {
+                packages: Vec::new(),
                 files: vec![SourceFile {
                     id: FileId(0),
                     name: "main".to_string().into(),
@@ -5122,7 +5273,7 @@ mod validation_regressions {
             ("const int32[]", "int32[]"),
             ("const int32[1]", "int32[1]"),
         ] {
-            let source = format!("fn f(p: {from}, q: {to}) {from} {{ q; return p; }}");
+            let source = format!("fn f(p: {from}, q: {to}) {to} {{ p; return q; }}");
             let mut project = analyze(&source);
             let nodes = &mut function(&mut project, 0).body.as_mut().unwrap().statements;
             let S::ExpressionStatement(replacement) = &nodes[0].kind else {
@@ -5286,8 +5437,6 @@ mod validation_regressions {
             ("const int32[][1]", "int32[][1]"),
             ("int32[]", "bool"),
             ("int32[1]", "int32[2]"),
-            ("int32", "bool"),
-            ("bool", "int32"),
             ("*int32", "int64"),
             ("int64", "*int32"),
         ] {
@@ -5358,6 +5507,7 @@ mod memory_intrinsics {
     fn analyze(text: &str) -> anyhow::Result<AnalyzedProject> {
         let ast = Parser::with_source(Tokenizer::new(text), Path::new("main.fib"), text).parse()?;
         let plan = BuildPlan {
+            packages: Vec::new(),
             files: vec![SourceFile {
                 id: FileId(0),
                 name: FileName("main".into()),
@@ -5468,6 +5618,7 @@ mod memory_intrinsics {
         let mut units = project.units;
         units[0].source_file_id = FileId(0);
         let plan = BuildPlan {
+            packages: Vec::new(),
             files: vec![SourceFile {
                 id: FileId(0),
                 name: FileName("memory".into()),
@@ -5478,5 +5629,104 @@ mod memory_intrinsics {
         };
         let result = Analyzer::new(plan, units);
         assert!(result.err().unwrap().to_string().contains("duplicate"));
+    }
+}
+
+mod package_visibility {
+    use super::*;
+    use crate::{
+        driver::CompilationUnit,
+        frontend::{parser::Parser, tokenizer::Tokenizer},
+        plan::{BuildPlan, PackageId, PackageSpec, SourceFile},
+    };
+    use std::path::Path;
+
+    fn project(accessor: usize, expression: &str) -> anyhow::Result<AnalyzedProject> {
+        let paths = [
+            "/app/src/dir/owner.fib",
+            "/app/src/dir/child/use.fib",
+            "/app/src/other/use.fib",
+            "/dep/src/main.fib",
+        ];
+        let mut files = Vec::new();
+        let mut units = Vec::new();
+        for (index, path) in paths.iter().enumerate() {
+            let source = if index == 0 {
+                "pub(dir) fn directory() int32 { return 1; } pub(root) fn package() int32 { return 2; } fn hidden() int32 { return 3; } pub comp published := hidden;".to_string()
+            } else if index == accessor {
+                format!("fn use_value() int32 {{ return {expression}; }}")
+            } else {
+                String::new()
+            };
+            let ast =
+                Parser::with_source(Tokenizer::new(&source), Path::new(path), &source).parse()?;
+            files.push(SourceFile {
+                id: FileId(index as u32),
+                name: ["owner", "child", "sibling", "external"][index]
+                    .to_string()
+                    .into(),
+                path: (*path).into(),
+            });
+            units.push(CompilationUnit {
+                source_file_id: FileId(index as u32),
+                ast,
+            });
+        }
+        Analyzer::new(
+            BuildPlan {
+                files,
+                entry: FileId(0),
+                output: "unused".into(),
+                packages: vec![
+                    PackageSpec {
+                        id: PackageId(0),
+                        source_root: "/app/src".into(),
+                        dependencies: Default::default(),
+                        files: vec![FileId(0), FileId(1), FileId(2)],
+                    },
+                    PackageSpec {
+                        id: PackageId(1),
+                        source_root: "/dep/src".into(),
+                        dependencies: [("App".into(), PackageId(0))].into(),
+                        files: vec![FileId(3)],
+                    },
+                ],
+            },
+            units,
+        )?
+        .analyze()
+    }
+
+    #[test]
+    fn directory_subtrees_and_package_visibility_are_distinct() {
+        project(1, "owner::directory()").unwrap();
+        project(1, "owner::package()").unwrap();
+        project(2, "owner::package()").unwrap();
+        for (accessor, path) in [
+            (2, "owner::directory()"),
+            (3, "owner::directory()"),
+            (3, "owner::package()"),
+            (1, "owner::hidden()"),
+        ] {
+            let error = project(accessor, path).unwrap_err();
+            assert!(error.to_string().contains("private"), "{error:#}");
+        }
+    }
+
+    #[test]
+    fn public_reexports_keep_identity_without_exposing_the_original_path() {
+        let project = project(3, "owner::published()").unwrap();
+        let ns = &project.symbols.namespaces[&FileId(0)];
+        let hidden = ns.names["hidden"];
+        let alias = ns.names["published"];
+        assert_eq!(
+            project
+                .symbols
+                .canonical(Entity::Declaration(alias))
+                .unwrap(),
+            Entity::Declaration(hidden)
+        );
+        let error = super::package_visibility::project(3, "owner::hidden()").unwrap_err();
+        assert!(error.to_string().contains("private"));
     }
 }

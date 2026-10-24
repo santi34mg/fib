@@ -128,6 +128,15 @@ where
         )?;
         if let Some(t) = self.peek() {
             match t.kind {
+                TokenKind::Punctuation(Punctuation::ClosingSquareBrace) => {
+                    self.next();
+                    Ok(ExpressionKind::SliceLiteral {
+                        object: Box::new(expr),
+                        start: None,
+                        end: None,
+                        inclusive: false,
+                    })
+                }
                 // `[..]` or `[..b]`
                 TokenKind::Operator(Operator::DoubleDot) => {
                     self.next();

@@ -73,6 +73,12 @@ impl TypeContext<'_> {
                 expected.ok_or_else(|| type_error("binding requires a type or initializer"))?;
             self.value(ty)
         };
+        let mut info = info;
+        if !var.is_comp
+            && let Some(expected) = expected
+        {
+            info.ty = expected;
+        }
         self.store_binding(binding, var.is_comp, var.is_const, info)
     }
     fn store_binding(
@@ -296,9 +302,10 @@ impl TypeContext<'_> {
             }
             S::Switch { subject, arms } => {
                 let info = self.expression(subject, None)?;
-                for arm in arms {
+                for arm in arms.iter_mut() {
                     self.switch_arm(arm, info.ty, Some(node.span))?;
                 }
+                validate_switch(info.ty, arms, self.types)?;
             }
             S::Defer(node) => {
                 if self.state.return_type.is_none() {
@@ -366,4 +373,36 @@ impl TypeContext<'_> {
         }
         self.statements(&mut arm.body)
     }
+}
+
+/// Coverage is checked independently of reachability and annotation inference.
+pub(super) fn validate_switch(
+    owner: TypeId,
+    arms: &[SwitchArm],
+    types: &crate::frontend::semantic_type::SemanticTypes,
+) -> anyhow::Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    let mut wildcard = false;
+    for arm in arms {
+        if wildcard {
+            return Err(type_error("switch arm after wildcard is unreachable"));
+        }
+        match &arm.pattern {
+            Pattern::Wildcard => wildcard = true,
+            Pattern::EnumVariant { variant, .. } => {
+                if !seen.insert(variant) {
+                    return Err(type_error("duplicate switch variant"));
+                }
+            }
+        }
+    }
+    if let T::Enum(variants) = types.get(types.canonical(owner)?)?
+        && !wildcard
+        && seen.len() != variants.len()
+    {
+        return Err(type_error(
+            "non-exhaustive enum switch: cover every variant or use 'when else'",
+        ));
+    }
+    Ok(())
 }

@@ -516,6 +516,11 @@ impl Validator<'_> {
         owner: TypeId,
         spelling: &str,
     ) -> anyhow::Result<()> {
+        if slot.implicit_deref {
+            return Err(type_error(
+                "unexpected implicit dereference on a direct member",
+            ));
+        }
         let info = slot
             .resolved
             .ok_or_else(|| type_error("pending member annotation"))?;
@@ -739,8 +744,16 @@ impl Validator<'_> {
                     member,
                 } => {
                     let receiver = self.expression(expr)?;
+                    let (receiver, implicit_deref) =
+                        super::value_typing::field_receiver(receiver, self.types)?;
+                    if member.implicit_deref != implicit_deref {
+                        return Err(type_error("implicit dereference annotation mismatch"));
+                    }
                     self.selected(
-                        *member,
+                        MemberAnnotation {
+                            resolved: member.resolved,
+                            implicit_deref: false,
+                        },
                         receiver.type_value.unwrap_or(receiver.ty),
                         accessed_identifier,
                     )?;
@@ -1040,11 +1053,7 @@ impl Validator<'_> {
                     let target = self.ty(target_type)?;
                     let source = self.contextual_expression(
                         expr,
-                        if matches!(expr.kind, E::Literal(Literal::Null)) {
-                            Some(target)
-                        } else {
-                            None
-                        },
+                        super::value_typing::cast_context(expr, target, self.types),
                     )?;
                     if !super::value_typing::is_cast_allowed(source.ty, target, self.types)? {
                         return Err(type_error("unsupported cast annotation"));
@@ -1059,6 +1068,20 @@ impl Validator<'_> {
                 }
                 E::IndexAccess { object, index } => {
                     let receiver = self.expression(object)?;
+                    if let Some(element) = receiver.type_value {
+                        let length_info = self.expression(index)?;
+                        if !matches!(self.types.get(length_info.ty)?, T::Builtin(B::UInt64)) {
+                            return Err(type_error("array type length annotation mismatch"));
+                        }
+                        let length = super::constant::integer_as_i128(index, self.types)?
+                            .and_then(|n| u64::try_from(n).ok());
+                        if info.category != C::Value
+                            || !matches!(info.type_value.and_then(|t| self.types.get(t).ok()), Some(T::Array { element: actual, length: n }) if *actual == element && Some(*n) == length)
+                        {
+                            return Err(type_error("array type construction annotation mismatch"));
+                        }
+                        return Ok(info);
+                    }
                     self.expression(index)?;
                     if !super::value_typing::diverges(node, self.types) {
                         let (element, _, category) =
@@ -1069,9 +1092,23 @@ impl Validator<'_> {
                     }
                 }
                 E::SliceLiteral {
-                    object, start, end, ..
+                    object,
+                    start,
+                    end,
+                    inclusive,
                 } => {
                     let receiver = self.expression(object)?;
+                    if let Some(element) = receiver.type_value {
+                        if start.is_some()
+                            || end.is_some()
+                            || *inclusive
+                            || info.category != C::Value
+                            || !matches!(info.type_value.and_then(|t| self.types.get(t).ok()), Some(T::Slice(actual)) if *actual == element)
+                        {
+                            return Err(type_error("slice type construction annotation mismatch"));
+                        }
+                        return Ok(info);
+                    }
                     for bound in start.iter().chain(end) {
                         self.expression(bound)?;
                     }
@@ -1235,7 +1272,13 @@ impl Validator<'_> {
                     .parameters
                     .iter()
                     .filter_map(|p| {
-                        if matches!(p.parameter_type.kind, K::Builtin(B::MetaType)) {
+                        if matches!(
+                            p.parameter_type
+                                .annotation
+                                .resolved
+                                .and_then(|t| self.types.get(t).ok()),
+                            Some(T::Builtin(B::MetaType))
+                        ) {
                             match p.annotation.binding {
                                 Some(BindingId::Local(id)) => Some(id),
                                 _ => None,
@@ -1372,6 +1415,7 @@ impl Validator<'_> {
             }
             S::Switch { subject, arms } => {
                 let owner = self.expression(subject)?.ty;
+                super::statement_typing::validate_switch(owner, arms, self.types)?;
                 for arm in arms {
                     if let Pattern::EnumVariant {
                         variant,

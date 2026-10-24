@@ -17,6 +17,7 @@ where
     I: Iterator<Item = Token>,
 {
     pub fn parse_function_declaration(&mut self) -> anyhow::Result<FunctionDeclaration> {
+        let (is_pub, pub_scope) = self.parse_visibility()?;
         let is_comp = self
             .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Comp)))
             .is_some();
@@ -138,7 +139,8 @@ where
             body,
             is_extern,
             // FIXME: parse function visibility properly
-            is_pub: false,
+            is_pub,
+            pub_scope,
         })
     }
 }

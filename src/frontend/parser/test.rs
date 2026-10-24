@@ -30,8 +30,7 @@ mod tests {
         };
         assert!(matches!(
             &args[0].kind,
-            ExpressionKind::TypeValue(ty)
-                if ty.kind == TypeExpressionKind::Builtin(BuiltinType::Void)
+            ExpressionKind::QualifiedIdentifier(name) if name.segments == ["void"]
         ));
     }
 
@@ -435,7 +434,7 @@ mod tests {
             identifier,
             ty:
                 Some(TypeExpression {
-                    kind: TypeExpressionKind::Builtin(_),
+                    kind: TypeExpressionKind::QualifiedIdentifier(_),
                     ..
                 }),
             expression:
@@ -462,7 +461,7 @@ mod tests {
             "x as @int32;",
         ] {
             let error = get_ast_err(source);
-            assert!(error.contains("types do not use '@'"), "{source}: {error}");
+            assert!(error.contains("unknown builtin"), "{source}: {error}");
         }
     }
 
@@ -479,7 +478,7 @@ mod tests {
             stmts[0],
             StatementKind::VariableDeclaration(VariableDeclaration {
                 ty: Some(TypeExpression {
-                    kind: TypeExpressionKind::Builtin(_),
+                    kind: TypeExpressionKind::QualifiedIdentifier(_),
                     ..
                 }),
                 expression: None,
@@ -508,7 +507,7 @@ mod tests {
             stmts[0],
             StatementKind::VariableDeclaration(VariableDeclaration {
                 ty: Some(TypeExpression {
-                    kind: TypeExpressionKind::Builtin(_),
+                    kind: TypeExpressionKind::QualifiedIdentifier(_),
                     ..
                 }),
                 expression: Some(_),
@@ -539,7 +538,7 @@ mod tests {
             identifier,
             ty:
                 Some(TypeExpression {
-                    kind: TypeExpressionKind::Builtin(_),
+                    kind: TypeExpressionKind::QualifiedIdentifier(_),
                     ..
                 }),
             expression:
@@ -645,7 +644,7 @@ mod tests {
             assert!(bindings.iter().all(|b| matches!(
                 b.ty,
                 Some(TypeExpression {
-                    kind: TypeExpressionKind::Builtin(_),
+                    kind: TypeExpressionKind::QualifiedIdentifier(_),
                     ..
                 })
             ) && b.expression.is_none()));
@@ -1174,7 +1173,6 @@ mod tests {
         for src in [
             "arr[0.=];",
             "arr[.=];",
-            "arr[];",
             "arr[0..=2];",
             "arr[..=2];",
             "arr[0..=];",
@@ -1794,6 +1792,7 @@ mod tests {
             ("never", BuiltinType::Never),
             ("usize", BuiltinType::Usize),
         ] {
+            assert_eq!(BuiltinType::from_name(spelling), Some(expected));
             let source = format!("value: {spelling};");
             let ast = get_ast(&source);
             let stmts = module_statements(&ast);
@@ -1801,13 +1800,14 @@ mod tests {
                 panic!("{source}: expected variable declaration: {:?}", stmts[0]);
             };
             assert!(
-                matches!(decl.ty.as_ref(), Some(TypeExpression { kind: TypeExpressionKind::Builtin(actual), .. }) if *actual == expected),
+                matches!(decl.ty.as_ref(), Some(TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(actual), .. }) if actual.segments == [spelling]),
                 "{source}: unexpected type: {:?}",
                 decl.ty
             );
             assert_eq!(decl.ty.as_ref().expect("type").to_string(), spelling);
         }
         for (alias, expected) in [("int", BuiltinType::Int32), ("uint", BuiltinType::UInt32)] {
+            assert_eq!(BuiltinType::from_name(alias), Some(expected));
             let source = format!("value: {alias};");
             let ast = get_ast(&source);
             let stmts = module_statements(&ast);
@@ -1815,9 +1815,9 @@ mod tests {
                 panic!("{source}: expected variable declaration");
             };
             assert!(
-                matches!(decl.ty.as_ref(), Some(TypeExpression { kind: TypeExpressionKind::Builtin(actual), .. }) if *actual == expected)
+                matches!(decl.ty.as_ref(), Some(TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(actual), .. }) if actual.segments == [alias])
             );
-            assert_eq!(decl.ty.as_ref().expect("type").to_string(), expected.name());
+            assert_eq!(decl.ty.as_ref().expect("type").to_string(), alias);
         }
     }
 
@@ -1849,7 +1849,7 @@ mod tests {
         assert!(matches!(
             &fields[0].expression.kind,
             ExpressionKind::TypeValue(TypeExpression {
-                kind: TypeExpressionKind::Builtin(BuiltinType::Int32),
+                kind: TypeExpressionKind::QualifiedIdentifier(_),
                 ..
             })
         ));
@@ -1880,12 +1880,12 @@ mod tests {
         assert_eq!(ok.len(), 1);
         assert_eq!(ok[0].field_identifier, "value");
         assert!(
-            matches!(&ok[0].expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Tuple { elements }, .. }) if matches!(elements.as_slice(), [TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::Int32), .. }, TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::String), .. }]))
+            matches!(&ok[0].expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Tuple { elements }, .. }) if matches!(elements.as_slice(), [TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(_), .. }, TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(_), .. }]))
         );
         assert!(variants[1].payload.is_none());
         let error = variants[2].payload.as_ref().expect("Error payload");
         assert!(
-            matches!(error.as_slice(), [field] if field.field_identifier == "code" && matches!(field.expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::UInt8), .. })))
+            matches!(error.as_slice(), [field] if field.field_identifier == "code" && matches!(field.expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(_), .. })))
         );
     }
 
@@ -1909,10 +1909,10 @@ mod tests {
             panic!("expected function type: {:#?}", ty);
         };
         assert!(
-            matches!(argument_types.as_slice(), [TypeExpression { kind: TypeExpressionKind::Pointer { pointed_type }, .. }, TypeExpression { kind: TypeExpressionKind::Tuple { elements }, .. }] if matches!(pointed_type.kind, TypeExpressionKind::Builtin(BuiltinType::Int32)) && matches!(elements.as_slice(), [TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::Boolean), .. }, TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::String), .. }]))
+            matches!(argument_types.as_slice(), [TypeExpression { kind: TypeExpressionKind::Pointer { pointed_type }, .. }, TypeExpression { kind: TypeExpressionKind::Tuple { elements }, .. }] if matches!(pointed_type.kind, TypeExpressionKind::QualifiedIdentifier(_)) && matches!(elements.as_slice(), [TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(_), .. }, TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(_), .. }]))
         );
         assert!(
-            matches!(&return_type.kind, TypeExpressionKind::Pointer { pointed_type } if matches!(pointed_type.kind, TypeExpressionKind::Builtin(BuiltinType::UInt64)))
+            matches!(&return_type.kind, TypeExpressionKind::Pointer { pointed_type } if matches!(pointed_type.kind, TypeExpressionKind::QualifiedIdentifier(_)))
         );
     }
 
@@ -1941,7 +1941,12 @@ mod tests {
             assert_eq!(func.body.is_some(), has_body, "{source}");
             assert_eq!(func.signature.parameters.len(), parameter_count, "{source}");
             assert!(
-                matches!(&func.signature.return_type.kind, TypeExpressionKind::Builtin(actual) if *actual == return_type),
+                matches!(&func.signature.return_type.kind, TypeExpressionKind::QualifiedIdentifier(actual) if actual.segments == [return_type.name()])
+                    || (source.contains("implicit")
+                        && matches!(
+                            func.signature.return_type.kind,
+                            TypeExpressionKind::Builtin(BuiltinType::Void)
+                        )),
                 "{source}: {:?}",
                 func.signature.return_type
             );
@@ -1949,7 +1954,7 @@ mod tests {
                 assert_eq!(func.signature.identifier, "declared");
                 assert_eq!(func.signature.parameters[0].parameter_identifier, "x");
                 assert!(
-                    matches!(&func.signature.parameters[0].parameter_type.kind, TypeExpressionKind::Pointer { pointed_type } if matches!(pointed_type.kind, TypeExpressionKind::Builtin(BuiltinType::Char)))
+                    matches!(&func.signature.parameters[0].parameter_type.kind, TypeExpressionKind::Pointer { pointed_type } if matches!(pointed_type.kind, TypeExpressionKind::QualifiedIdentifier(_)))
                 );
             }
         }
@@ -2239,38 +2244,35 @@ mod tests {
         assert_eq!(function.signature.parameters[0].parameter_identifier, "T");
         assert!(matches!(
             function.signature.parameters[0].parameter_type.kind,
-            TypeExpressionKind::Builtin(BuiltinType::MetaType)
+            TypeExpressionKind::QualifiedIdentifier(_)
         ));
         assert!(matches!(
             function.signature.return_type.kind,
-            TypeExpressionKind::Builtin(BuiltinType::MetaType)
+            TypeExpressionKind::QualifiedIdentifier(_)
         ));
         let body = function.body.as_ref().expect("function body");
         assert!(
-            matches!(&body.statements[0].kind, StatementKind::Return(Some(values)) if matches!(values.as_slice(), [Expression { kind: ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Builtin(BuiltinType::MetaType), .. }), .. }]))
+            matches!(&body.statements[0].kind, StatementKind::Return(Some(values)) if matches!(values.as_slice(), [Expression { kind: ExpressionKind::QualifiedIdentifier(_), .. }]))
         );
     }
 
     #[test]
-    fn identifier_positions_reject_builtin_types_and_keywords() {
-        for (source, expected) in [
-            ("const int32 := 1;", "expected variable name"),
-            ("fn type() {}", "expected function name"),
-            ("fn f(int32: int32) {}", "expected parameter name"),
-            ("const int32: type = int32;", "expected variable name"),
-            (
-                "Record: type = struct { type: int32 };",
-                "expected field name",
-            ),
-            ("Choice: type = enum { return };", "expected variant name"),
-            ("Point { type: 1 };", "expected field name"),
-            ("switch (x) { when .return {} };", "expected variant name"),
-            ("switch (x) { when .Ok(type) {} };", "expected binding name"),
-            ("pkg::type;", "expected name after '::'"),
-            ("value: pkg::type;", "must be followed by symbol"),
+    fn identifier_positions_accept_type_names_and_reject_keywords() {
+        for source in [
+            "const int32 := 1;",
+            "fn type() {}",
+            "fn f(int32: int32) {}",
+            "Record: type = struct { type: int32 };",
+            "pkg::type;",
+            "value: pkg::type;",
         ] {
-            let error = get_ast_err(source);
-            assert!(error.contains(expected), "{source}: {error}");
+            get_ast(source);
+        }
+        for source in [
+            "Choice: type = enum { return };",
+            "switch (x) { when .return {} };",
+        ] {
+            get_ast_err(source);
         }
     }
 
@@ -2412,11 +2414,11 @@ mod tests {
             panic!("expected return value");
         };
         assert_eq!(values[0].annotation.resolved, None);
-        let ExpressionKind::TypeValue(ty) = &values[0].kind else {
-            panic!("expected metatype expression");
+        let ExpressionKind::QualifiedIdentifier(name) = &values[0].kind else {
+            panic!("expected ordinary metatype name");
         };
-        assert_eq!(ty.kind, TypeExpressionKind::Builtin(BuiltinType::MetaType));
-        assert_eq!(ty.annotation.resolved, None);
+        assert_eq!(name.segments, ["type"]);
+        assert_eq!(name.annotation.resolved, None);
         let StatementKind::VariableDeclaration(top) = &ast.statements[3].kind else {
             panic!("expected file-level constant");
         };

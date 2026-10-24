@@ -87,7 +87,7 @@ fn unified_types_are_binding_initializers() {
         };
         assert!(matches!(
             binding.expression.as_ref().unwrap().kind,
-            ExpressionKind::TypeValue(_)
+            ExpressionKind::TypeValue(_) | ExpressionKind::IndexAccess { .. }
         ));
         assert!(binding.annotation.binding.is_none());
     }
@@ -135,4 +135,38 @@ fn malformed_unified_declarations_are_rejected() {
         .expect("source-aware declaration error");
     assert!(diagnostic.message.contains("expected variable name"));
     assert_eq!((diagnostic.line, diagnostic.column), (1, 11));
+}
+
+#[test]
+fn scoped_visibility_is_parsed_per_binding_and_function() {
+    use crate::frontend::namespace::Visibility;
+    for (scope, expected) in [
+        ("dir", Visibility::Directory),
+        ("root", Visibility::Package),
+    ] {
+        for source in [
+            format!("pub({scope}) x := 1;"),
+            format!("pub({scope}) fn f() {{}}"),
+            format!("pub({scope}) comp fn f(T:type) type {{ return T; }}"),
+        ] {
+            let ast = parse(&source).unwrap();
+            match &ast.statements[0].kind {
+                StatementKind::VariableDeclaration(v) => {
+                    assert_eq!((v.is_pub, v.pub_scope), (true, Some(expected)))
+                }
+                StatementKind::FunctionDeclaration(f) => {
+                    assert_eq!((f.is_pub, f.pub_scope), (true, Some(expected)))
+                }
+                _ => panic!("expected declaration"),
+            }
+        }
+    }
+    for source in [
+        "pub(super) x:=1;",
+        "pub() x:=1;",
+        "pub(dir x:=1;",
+        "pub(else) fn f() {}",
+    ] {
+        assert!(parse(source).is_err(), "{source}");
+    }
 }

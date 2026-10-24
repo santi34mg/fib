@@ -206,21 +206,39 @@ where
         None
     }
 
+    fn starts_function_declaration(&mut self) -> bool {
+        let mut offset = 1;
+        if matches!(
+            self.peek_n(offset).map(|t| t.kind),
+            Some(TokenKind::Keyword(Keyword::Pub))
+        ) {
+            offset += 1;
+            if matches!(
+                self.peek_n(offset).map(|t| t.kind),
+                Some(TokenKind::Punctuation(Punctuation::OpeningParenthesis))
+            ) {
+                offset += 3;
+            }
+        }
+        matches!(
+            self.peek_n(offset).map(|t| t.kind),
+            Some(TokenKind::Keyword(Keyword::Function | Keyword::Extern))
+        ) || (matches!(
+            self.peek_n(offset).map(|t| t.kind),
+            Some(TokenKind::Keyword(Keyword::Comp))
+        ) && matches!(
+            self.peek_n(offset + 1).map(|t| t.kind),
+            Some(TokenKind::Keyword(Keyword::Function))
+        ))
+    }
+
     pub fn parse(&mut self) -> anyhow::Result<Ast> {
         let mut statements: Vec<Statement> = Vec::new();
 
         while let Some(token) = self.peek() {
             let span = crate::diagnostics::Span::new(token.line, token.column);
             match token.kind {
-                kind if matches!(
-                    kind,
-                    TokenKind::Keyword(Keyword::Function | Keyword::Extern)
-                ) || (matches!(kind, TokenKind::Keyword(Keyword::Comp))
-                    && matches!(
-                        self.peek_n(2).map(|t| t.kind),
-                        Some(TokenKind::Keyword(Keyword::Function))
-                    )) =>
-                {
+                _ if self.starts_function_declaration() => {
                     let function = self.parse_function_declaration()?;
                     statements.push(Statement {
                         kind: StatementKind::FunctionDeclaration(function),

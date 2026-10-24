@@ -12,6 +12,7 @@ pub struct VariableDeclaration {
     pub expression: Option<Expression>,
     pub is_const: bool,
     pub is_pub: bool,
+    pub pub_scope: Option<crate::frontend::namespace::Visibility>,
     pub is_comp: bool,
 }
 
@@ -28,6 +29,7 @@ impl VariableDeclaration {
             expression,
             is_const: false,
             is_pub: false,
+            pub_scope: None,
             is_comp: false,
         }
     }

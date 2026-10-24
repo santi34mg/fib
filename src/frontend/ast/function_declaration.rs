@@ -6,6 +6,7 @@ pub struct FunctionDeclaration {
     pub body: Option<FunctionBody>,
     pub is_extern: bool,
     pub is_pub: bool,
+    pub pub_scope: Option<crate::frontend::namespace::Visibility>,
 }
 
 impl FunctionDeclaration {
