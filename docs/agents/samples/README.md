@@ -1,5 +1,9 @@
 # Samples: parser regression coverage
 
+[`example-project/`](../../../example-project/README.md) is the runnable current-
+capabilities project. Driver tests verify its build plan and source IR without
+LLVM; executable acceptance builds it through the CLI and checks exit 0.
+
 [`samples/`](../../../samples) contains `.fib` examples for output, arithmetic,
 arrays/slices, enums, pointers, aggregates, and generic-related syntax. They use
 bare bit-width types, direct indexing/slicing, `.len`, and current postfix pointer

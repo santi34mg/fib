@@ -1,5 +1,9 @@
 # Samples
 
+For one project that builds and runs with current capabilities, start with
+[`example-project/`](../example-project/README.md). It covers scalar types, casts,
+bit operations, calls, recursion and loops through an explicit build file.
+
 All top-level `.fib` files in this directory use current tokenizer/parser syntax.
 `frontend::parser::test::tests::samples_parse_with_current_frontend` discovers
 and parses every top-level `.fib` sample, rejecting parse failures and empty ASTs.
