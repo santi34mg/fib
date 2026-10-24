@@ -185,3 +185,54 @@ fn frontend_const_initialization_and_scope_errors_remain_frontend_errors() {
         assert!(!plan.output.exists());
     }
 }
+
+#[test]
+fn all_scalar_types_lower_to_verified_ir_without_requiring_llvm() {
+    use crate::ir::{CallingConvention, ConstantKind, FunctionBody, IrType, Linkage};
+    let (_directory, plan) = source(include_str!("../../samples/builtin_scalars.fib"));
+    let project = run_frontend(&plan).unwrap();
+    let ir = crate::ir::lowering::lower(&project).unwrap();
+    crate::ir::verify_ir(&ir).unwrap();
+    assert!(
+        ir.constants
+            .iter()
+            .any(|c| matches!(c.kind, ConstantKind::Integer { bits: u128::MAX }))
+    );
+    assert!(
+        ir.constants
+            .iter()
+            .any(|c| matches!(c.kind, ConstantKind::Float { .. }))
+    );
+    assert_eq!(
+        ir.types
+            .iter()
+            .filter(|ty| matches!(ty, IrType::Integer { .. }))
+            .count(),
+        10
+    );
+    assert_eq!(
+        ir.types
+            .iter()
+            .filter(|ty| matches!(ty, IrType::Float(_)))
+            .count(),
+        4
+    );
+    for function in ir.functions.iter().filter(|f| f.identifier != "main") {
+        assert_eq!(
+            function.signature.calling_convention,
+            CallingConvention::Fib
+        );
+        assert_eq!(function.linkage, Linkage::Internal);
+        assert!(matches!(function.body, FunctionBody::Definition { .. }));
+    }
+    // The build-script entry spelling is an ordinary helper name in a program.
+    let (_directory, plan) = source(
+        "fn build(x: float128) float128 { return x; } fn main() int32 { if (build(1.0) == 1.0) { return 42; }; return 7; }",
+    );
+    let project = run_frontend(&plan).unwrap();
+    let ir = crate::ir::lowering::lower(&project).unwrap();
+    assert_eq!(
+        ir.functions[0].signature.calling_convention,
+        CallingConvention::Fib
+    );
+}

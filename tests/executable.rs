@@ -142,3 +142,205 @@ fn conditionals_helpers_and_joins_execute() {
         );
     }
 }
+
+fn scalar_program(text: &str) -> std::process::ExitStatus {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("main.fib");
+    std::fs::write(&source, text).unwrap();
+    let plan = BuildPlan::single_file(&source).unwrap();
+    run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
+    Command::new(&plan.output).status().unwrap()
+}
+
+#[test]
+fn every_integer_width_wraps_and_crosses_calls_and_joins() {
+    for width in [8, 16, 32, 64, 128] {
+        for signed in [false, true] {
+            let ty = format!("{}int{width}", if signed { "" } else { "u" });
+            let max = if signed {
+                (u128::MAX >> (129 - width)).to_string()
+            } else {
+                (u128::MAX >> (128 - width)).to_string()
+            };
+            let wrapped = if signed {
+                format!("-{}", 1u128 << (width - 1))
+            } else {
+                "0".into()
+            };
+            let program = format!(
+                r#"
+                fn step(x: {ty}) {ty} {{ return x + 1; }}
+                fn join(x: {ty}, flag: bool) {ty} {{
+                    result := x;
+                    if (flag) {{ result = step(x); }} else {{ result = x - 1; }};
+                    return result;
+                }}
+                fn main() int32 {{
+                    expected: {ty} = {max} + 1;
+                    if (join({max}, true) == {wrapped}) {{
+                        if (join({max}, true) == expected) {{ return 42; }};
+                    }};
+                    return 7;
+                }}
+            "#
+            );
+            assert_eq!(scalar_program(&program).code(), Some(42), "{ty}");
+        }
+    }
+}
+
+#[test]
+fn integer_operators_and_casts_execute_at_every_width() {
+    for width in [8, 16, 32, 64, 128] {
+        for prefix in ["int", "uint"] {
+            let ty = format!("{prefix}{width}");
+            let program = format!(
+                r#"
+                fn calculate(a: {ty}, b: {ty}, count: uint128) bool {{
+                    value := a;
+                    value += b; value -= b; value *= b; value /= b; value %= b;
+                    return a + b == 8 && a - b == 4 && a * b == 12 && a / b == 3
+                        && a % b == 0 && (a & b) == 2 && (a | b) == 6 && (a ^ b) == 4
+                        && (a << count) == 24 && (a >> count) == 1
+                        && ~~a == a && -(-a) == a && value == 0;
+                }}
+                fn main() int32 {{ if (calculate(6, 2, 2)) {{ return 42; }}; return 7; }}
+            "#
+            );
+            assert_eq!(scalar_program(&program).code(), Some(42), "{ty}");
+        }
+    }
+    let casts = r#"
+        fn casts(negative: int8, positive: uint8, wide: uint128) bool {
+            return (negative as uint16) == 65535 && (negative as int128) == -1
+                && (positive as int16) == 255 && (wide as uint8) == 255
+                && (positive as int8) == -1 && (negative >> 1) == -1;
+        }
+        fn main() int32 { if (casts(-1, 255, 340282366920938463463374607431768211455)) { return 42; }; return 7; }
+    "#;
+    assert_eq!(scalar_program(casts).code(), Some(42));
+}
+
+#[test]
+fn signed_division_overflow_wraps_and_remainder_is_zero() {
+    for width in [8, 16, 32, 64, 128] {
+        let min = format!("-{}", 1u128 << (width - 1));
+        let text = format!(
+            r#"
+            fn divide(x: int{width}, y: int{width}) bool {{ return x / y == x && x % y == 0; }}
+            fn main() int32 {{ if (divide({min}, -1)) {{ return 42; }}; return 7; }}
+        "#
+        );
+        assert_eq!(scalar_program(&text).code(), Some(42));
+    }
+}
+
+#[test]
+fn floats_cross_calls_and_joins_with_ieee_arithmetic() {
+    for width in [16, 32, 64, 128] {
+        let text = format!(
+            r#"
+            fn calculate(a: float{width}, b: float{width}, flag: bool) float{width} {{
+                value := a;
+                if (flag) {{ value = a / b + a * b - b; }} else {{ value = -a; }};
+                return value;
+            }}
+            fn ieee(zero: float{width}) bool {{
+                nan := zero / zero;
+                infinity := 1.0 / zero;
+                negative := -zero;
+                return nan != nan && !(nan == nan) && !(nan < zero) && !(nan >= zero)
+                    && infinity > 1.0 && (1.0 / negative) < zero;
+            }}
+            fn convert(x: int128, y: float{width}) bool {{
+                return (x as float{width}) == y && (y as uint128) == 13
+                    && ((y as float128) as float{width}) == y;
+            }}
+            fn main() int32 {{
+                if (calculate(6.0,2.0,true) == 13.0 && calculate(6.0,2.0,false) == -6.0
+                    && ieee(0.0) && convert(13,13.0)) {{ return 42; }};
+                return 7;
+            }}
+        "#
+        );
+        assert_eq!(scalar_program(&text).code(), Some(42), "float{width}");
+    }
+}
+
+#[test]
+fn short_circuiting_skips_calls_and_preserves_boolean_results() {
+    let text = r#"
+        fn fails(x: int32) bool { return 1 / x == 0; }
+        fn choose(flag: bool, zero: int32) bool {
+            return (flag || fails(zero)) && (!flag || (false && fails(zero)) == false);
+        }
+        fn main() int32 { if (choose(true,0)) { return 42; }; return 7; }
+    "#;
+    assert_eq!(scalar_program(text).code(), Some(42));
+}
+
+#[test]
+fn invalid_runtime_numeric_operations_trap() {
+    let programs = [
+        "fn f(x: int32) int32 { return 1 / x; } fn main() int32 { return f(0); }",
+        "fn f(x: uint128) int32 { return (1 as uint128) % x as int32; } fn main() int32 { return f(0); }",
+        "fn f(x: int128) int32 { return 1 << x; } fn main() int32 { return f(-1); }",
+        "fn f(x: uint128) int32 { return 1 >> x; } fn main() int32 { return f(340282366920938463463374607431768211455); }",
+        "fn f(x: uint8) int32 { return (1 as int128) << x as int32; } fn main() int32 { return f(128); }",
+        "fn f(x: float64) int32 { return x as int32; } fn main() int32 { return f(2147483648.0); }",
+        "fn f(x: float128) int32 { return x as uint128 as int32; } fn main() int32 { return f(-1.0); }",
+        "fn f(x: float16) int32 { return (x / x) as int32; } fn main() int32 { return f(0.0); }",
+        "fn f(x: float32) int32 { return (1.0 / x) as int32; } fn main() int32 { return f(0.0); }",
+    ];
+    for text in programs {
+        let status = scalar_program(text);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert!(
+                status.signal().is_some(),
+                "expected a trap, got {status}: {text}"
+            );
+        }
+        #[cfg(not(unix))]
+        assert!(!status.success(), "{text}");
+    }
+}
+
+#[test]
+fn float_to_integer_checks_after_truncation() {
+    let text = r#"
+        fn f(x: float16, y: float128) bool { return (x as int8) == -128 && (y as uint8) == 0; }
+        fn main() int32 { if (f(-128.5,-0.9)) { return 42; }; return 7; }
+    "#;
+    assert_eq!(scalar_program(text).code(), Some(42));
+}
+
+#[test]
+fn exact_literals_and_runtime_float_rounding_agree() {
+    let text = r#"
+        fn half(x: float128) float16 { return x as float16; }
+        fn single(x: float128) float32 { return x as float32; }
+        fn integer(x: uint128) float128 { return x as float128; }
+        fn main() int32 {
+            a: float16 = 1.00048828125000000000000000000001;
+            b: float32 = 1.000000059604644775390625000001;
+            c: float128 = 9007199254740993.0;
+            if (half(1.00048828125000000000000000000001) == a
+                && a == 1.0009765625
+                && single(1.000000059604644775390625000001) == b
+                && b == 1.00000011920928955078125
+                && integer(9007199254740993) == c) { return 42; };
+            return 7;
+        }
+    "#;
+    assert_eq!(scalar_program(text).code(), Some(42));
+}
+
+#[test]
+fn builtin_scalar_sample_executes() {
+    assert_eq!(
+        scalar_program(include_str!("../samples/builtin_scalars.fib")).code(),
+        Some(42)
+    );
+}

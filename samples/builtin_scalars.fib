@@ -1,0 +1,21 @@
+// Native scalar example: fibc build --single-file samples/builtin_scalars.fib
+fn wrapped(x: uint8) uint16 {
+    return (x + 1) as uint16;
+}
+
+fn widened(x: uint8) uint16 {
+    return (x as uint16) + 1;
+}
+
+fn fraction(x: float128) float16 {
+    return x as float16;
+}
+
+fn main() int32 {
+    largest: uint128 = 340282366920938463463374607431768211455;
+    if (wrapped(255) == 0 && widened(255) == 256
+        && largest + 1 == 0 && fraction(1.5) == 1.5) {
+        return 42;
+    };
+    return 7;
+}
