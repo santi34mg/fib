@@ -95,7 +95,12 @@ pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<Comp
 }
 
 fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
-    crate::frontend::analyzer::Analyzer::new(plan.clone(), parse_files(plan)?)?.analyze()
+    let project =
+        crate::frontend::analyzer::Analyzer::new(plan.clone(), parse_files(plan)?)?.analyze()?;
+    for warning in &project.warnings {
+        eprintln!("{}", warning.render());
+    }
+    Ok(project)
 }
 
 /// Compile the isolated build file with the compiler-provided build API.
@@ -111,6 +116,7 @@ fn require_entry(project: &AnalyzedProject, name: &str) -> anyhow::Result<()> {
     let matches = project
         .units
         .iter()
+        .filter(|unit| unit.source_file_id == project.entry)
         .flat_map(|unit| &unit.ast.statements)
         .filter_map(|statement| {
             let crate::frontend::ast::statement::StatementKind::FunctionDeclaration(function) =

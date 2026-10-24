@@ -1,0 +1,26 @@
+comp Counter: type = struct { value: int32 };
+comp Result: type = enum { Ready { count: int32 }, Empty };
+
+fn identity(T: type, value: T) T {
+    return value;
+}
+
+fn read(counter: const *Counter) int32 {
+    return counter.value; // One checked implicit dereference, with a warning.
+}
+
+fn main() int32 {
+    counter := Counter { value: 40 };
+    values := identity(int32[2], [10, 20]);
+    enabled := read(counter&) as bool;
+    result := Result.Ready(read(counter&) + (values.len as int32));
+    switch (result) {
+        when .Ready(payload) {
+            if (enabled && (true as int32) == 1) {
+                return payload.count;
+            };
+            return 1;
+        }
+        when else { return 2; }
+    };
+}

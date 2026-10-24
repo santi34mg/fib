@@ -1,5 +1,10 @@
 # Driver and build architecture
 
+The [language specification](../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 `driver.rs` implements `parse_files`, frontend/bootstrap orchestration and
 `run_pipeline`. Plans explicitly enumerate files; parsing preserves their IDs and
 source context. Empty/missing-entry plans fail before reading files. Analysis uses
@@ -73,5 +78,14 @@ Ordinary dereference emits a null-check/trap CFG. The automatically registered
 emits memory operations rather than a builtin declaration/call and does not select
 the bootstrap entry. See [struct/storage semantics](../../struct-storage-semantics.md).
 Enum constructors, payload copies and switches lower through the same verified pipeline. See [enum semantics](../../enum-semantics.md).
-Defer, runtime globals, arrays/slices, indirect calls and concrete generic
-bodies remain unsupported.
+Concrete generic instances, fixed-array values, multi-bindings and calls across
+planned files lower. Defer, runtime globals, runtime indexing/slices, indirect
+calls and multiple-result initializers remain unsupported.
+
+`BuildPlan::packages` accepts host-created `PackageSpec` records with `PackageId`,
+source root, dependency map and selected file IDs. Validation rejects duplicate
+IDs, incomplete/multiple file membership, sources outside roots and unknown
+dependency targets. Empty package metadata retains the existing flat-plan adapter.
+Entry selection is confined to `plan.entry`; other files' `main` functions are
+ordinary internal helpers. Compilation renders the analyzed project's warnings
+without changing successful exit status.

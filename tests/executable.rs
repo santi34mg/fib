@@ -610,7 +610,7 @@ fn enums_construct_switch_copy_and_cross_helper_boundaries() {
         "comp E: type = enum { A { x: int32 }, B { y: int32 } }; fn main() int32 { switch(E.A(42)) { when .A(v) { return v.x; } when .B(v) { return v.y; } }; }",
         "comp E: type = enum { Large { a: uint64, b: uint64, c: uint64, d: uint64, e: uint64 }, Aligned { x: int128 } }; fn copy(e: E) E { return e; } fn main() int32 { large := copy(E.Large(1, 2, 3, 4, 42)); aligned := copy(E.Aligned(42)); switch(large) { when .Large(v) { if (v.a != 1 || v.b != 2 || v.c != 3 || v.d != 4 || v.e != 42) { return 7; }; } when else { return 1; } }; switch(aligned) { when .Aligned(v) { return v.x as int32; } when else { return 7; } }; }",
         "comp E: type = enum { A, B }; fn main() int32 { x := 7; switch(E.B) { when .A { x = 0; } when .B { x = 42; } }; return x; }",
-        "comp E: type = enum { A, B }; fn main() int32 { x := 42; switch(E.B) { when .A { x = 7; } }; return x; }",
+        "comp E: type = enum { A, B }; fn main() int32 { x := 42; switch(E.B) { when .A { x = 7; } when else {} }; return x; }",
         "comp E: type = enum { N { x: int32 }, End }; fn main() int32 { e: E; p := e&; p* = E.N(42); switch(p*) { when .N(v) { return v.x; } when else { return 7; } }; }",
         "comp E: type = enum { N { x: int32 }, End }; fn main() int32 { x := 0; e := E.N(0); while (x < 42) { x += 1; e = E.N(x); switch(e) { when .N(v) { if v.x < 42 { continue; }; break; } when else { return 7; } }; }; switch(e) { when .N(v) { return v.x; } when else { return 7; } }; }",
         "comp E: type = enum { N { x: int32 }, End }; comp S: type = struct { e: E }; comp Outer: type = enum { Wrapped { s: S }, Empty }; fn copy(e: Outer) Outer { return e; } fn main() int32 { e := copy(Outer.Wrapped(S { e: E.N(42) })); switch(e) { when .Wrapped(v) { switch(v.s.e) { when .N(n) { return n.x; } when else {} }; } when else {} }; return 7; }",
@@ -661,4 +661,120 @@ fn enum_subjects_and_constructor_arguments_evaluate_once_in_order() {
         }
     "#;
     assert_eq!(bounded_program(text).code(), Some(42));
+}
+
+#[test]
+fn specification_conversions_views_and_generic_instances_execute() {
+    for text in [
+        "fn f(x:float64) bool { return x as bool; } fn g(x:bool) float16 { return x as float16; } fn main() int32 { z := -0.0; nan := z/z; if(f(z)) { return 1; }; if(!f(nan)) { return 2; }; if(g(true) != 1.0) { return 3; }; n := 300; if(n as uint8 != 44) { return 4; }; wide := 4294967296 as uint64; return (wide-4294967254) as int32; }",
+        "comp S:type = struct { x:int32 }; fn read(p:const *S) int32 { return p.x; } fn main() int32 { s := S { x:1 }; p := s&; p.x = 42; return read(p); }",
+        "fn id(T:type, x:T) T { return x; } fn main() int32 { a := id(int32, 20); b := id(int64, 22); return id(int32, a+(b as int32)); }",
+        "comp S:type = struct { x:int32 }; fn id(T:type, x:T) T { return x; } fn main() int32 { s := id(S, S { x:42 }); return s.x; }",
+        "fn sum(T:type, x:T) T { if(x == 0) { return 0; }; return x+sum(T,x-1); } fn main() int32 { return sum(int32, 6)+21; }",
+        "fn make(p:*int32) int32[2] { (p*) = 40; return [1,2]; } fn id(T:type, x:T) T { return x; } fn main() int32 { n := 0; a := id(int32[2], make(n&)); b := a; b = [3,4]; return n+(b.len as int32); }",
+        "comp A:type = int32[0]; fn empty() A { return []; } fn main() int32 { const a := empty(); return (a.len as int32)+42; }",
+        "comp E:type = enum { A { x:int32[2] } }; fn id(e:E) E { return e; } fn main() int32 { e := id(E.A([1,2])); switch(e) { when .A(x) { return (x.x.len as int32)+40; } }; }",
+        "fn set(p:*int32, n:int32) int32 { (p*) = n; return n; } fn main() int32 { outer := 0; const a:int32, b:int32 = set(outer&,20), set(outer&,22); return a+b; }",
+        "comp S:type = struct { x:int32 }; fn lhs(p:*int32,s:*S) *S { (p*) = (p*)*10+2; return s; } fn rhs(p:*int32) int32 { (p*) = (p*)*10+1; return 42; } fn main() int32 { trace := 0; s := S { x:0 }; lhs(trace&,s&).x = rhs(trace&); if(trace != 12) { return 1; }; return s.x; }",
+        "fn accumulate(T:type,n:T) T { x:T = 0; i:T = 0; while(i<n) { x = x+i; i = i+1; }; return x; } fn main() int32 { return (accumulate(int64,7) as int32)+21; }",
+        "comp S:type = struct { x:int32 }; fn field(T:type, value:T) int32 { return value.x; } fn main() int32 { s := S { x:21 }; return field(S,s)+field(*S,s&); }",
+        include_str!("../samples/specification_runtime.fib"),
+        "fn size(p:*int32[2]) int32 { return p.len as int32; } fn main() int32 { a := [1,2]; return size(a&)+40; }",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("main.fib");
+        std::fs::write(&source, text).unwrap();
+        let plan = BuildPlan::single_file(&source).unwrap();
+        run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
+        assert_eq!(
+            Command::new(&plan.output).status().unwrap().code(),
+            Some(42),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn multiple_files_preserve_entry_and_declaration_identities() {
+    use fibc::plan::{FileId, PackageId, PackageSpec, SourceFile};
+    let directory = tempfile::tempdir().unwrap();
+    let main = directory.path().join("main.fib");
+    let helper = directory.path().join("helper.fib");
+    std::fs::write(
+        &main,
+        "fn same() int32 { return 20; } fn main() int32 { return same()+helper::same(); }",
+    )
+    .unwrap();
+    std::fs::write(
+        &helper,
+        "pub(root) fn same() int32 { return 22; } fn main() int32 { return 7; }",
+    )
+    .unwrap();
+    let mut plan = BuildPlan::single_file(&main).unwrap();
+    plan.files.push(SourceFile {
+        id: FileId(1),
+        name: "helper".to_string().into(),
+        path: helper,
+    });
+    plan.packages = vec![PackageSpec {
+        id: PackageId(42),
+        source_root: directory.path().to_owned(),
+        dependencies: Default::default(),
+        files: vec![FileId(0), FileId(1)],
+    }];
+    run_pipeline(&plan, PipelineGoal::Binary).unwrap();
+    assert_eq!(
+        Command::new(&plan.output).status().unwrap().code(),
+        Some(42)
+    );
+}
+
+#[test]
+fn boolean_casts_cover_every_numeric_runtime_representation() {
+    let mut text = String::new();
+    let mut checks = String::new();
+    for ty in [
+        "int8", "int16", "int32", "int64", "int128", "uint8", "uint16", "uint32", "uint64",
+        "uint128", "float16", "float32", "float64", "float128",
+    ] {
+        text.push_str(&format!("fn to_{ty}(x:{ty}) bool {{ return x as bool; }} fn from_{ty}(b:bool) {ty} {{ return b as {ty}; }}"));
+        let (zero, one) = if ty.starts_with("float") {
+            ("0.0", "1.0")
+        } else {
+            ("0", "1")
+        };
+        checks.push_str(&format!("if(to_{ty}({zero}) || !to_{ty}({one}) || from_{ty}(true) != {one} || from_{ty}(false) != {zero}) {{ return 1; }};"));
+    }
+    text.push_str(&format!("fn main() int32 {{ {checks} return 42; }}"));
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("main.fib");
+    std::fs::write(&source, text).unwrap();
+    let plan = BuildPlan::single_file(&source).unwrap();
+    run_pipeline(&plan, PipelineGoal::Binary).unwrap();
+    assert_eq!(
+        Command::new(&plan.output).status().unwrap().code(),
+        Some(42)
+    );
+}
+
+#[test]
+fn implicit_pointer_access_warns_and_traps_on_null() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("main.fib");
+    std::fs::write(&source, "comp S:type = struct { x:int32 }; fn read(p:*S) int32 { return p.x; } fn main() int32 { return read(null); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
+        .args(["build", "--single-file"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let warnings = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(warnings.matches("warning[type]").count(), 1);
+    assert!(warnings.contains("main.fib:1:"));
+    let plan = BuildPlan::single_file(&source).unwrap();
+    assert!(!Command::new(&plan.output).status().unwrap().success());
 }

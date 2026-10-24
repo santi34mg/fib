@@ -18,7 +18,7 @@ cargo test --no-default-features samples_parse_with_current_frontend
 ```
 
 The discovery sweep is parser-only coverage. `builtin_scalars.fib` and
-`scalar_loops.fib` and `struct_storage.fib` and `enum_runtime.fib` additionally have LLVM compile/link/run coverage in `tests/executable.rs`, returning 42. Build
+`scalar_loops.fib`, `struct_storage.fib` and `enum_runtime.fib` additionally have LLVM compile/link/run coverage in `tests/executable.rs`, returning 42. Build
 them with `fibc build --single-file PATH`. Other samples'
 output comments remain intended/unverified. Historical positional-file and `-I`
 commands remain unsupported.
@@ -33,3 +33,7 @@ example operations when migrating syntax; do not remove behavior just to parse.
 For new syntax, retain positive/malformed in-memory parser tests as well as sample
 discovery. When analysis/lowering works, add semantic and executable regression
 coverage with explicit output/failure policies. The scalar and loop samples are covered as executable regressions.
+
+`specification_runtime.fib` has executable acceptance coverage and exits 42. It
+combines ordinary prelude types, generic arrays, bool casts, warned pointer field
+access and exhaustive switches. Its warning is intentional.
