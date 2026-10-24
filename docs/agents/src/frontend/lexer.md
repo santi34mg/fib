@@ -1,5 +1,10 @@
 # Tokenizer — legacy lexer documentation URL
 
+The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 The old `src/frontend/lexer.rs` path is obsolete. Current implementation is
 [`tokenizer.rs`](../../../../src/frontend/tokenizer.rs) and its per-concern
 `tokenizer/` modules; token definitions live in `tokens/`.
@@ -13,13 +18,14 @@ Result. Parser paths surface those as parse failures.
 Implemented tokenization includes Unicode identifiers, line comments, numeric
 bases, decimal floats, string/character escapes, operators and punctuation.
 Bare canonical builtin type names use bit widths (`int8`, `uint64`, `float32`);
-`int`/`uint` alias 32-bit types. `@` is a punctuation token interpreted with the
-following name by the parser for builtin functions. Do not use legacy byte-width
+`int`/`uint` alias 32-bit types. Primitive spellings emit ordinary identifier tokens and resolve through an
+implicit prelude; protected bare type names cannot be shadowed. `@` remains
+punctuation for diagnostics; former builtin-call spellings are rejected. Do not use legacy byte-width
 mapping helpers as the current grammar; some comments and Display output are stale.
 
 Unified declaration modifiers `pub`, `const`, and `comp` tokenize as keywords.
-`type` remains the builtin metatype token for annotations and type values, not a
-legacy `type Name ...` declaration introducer. The parser interprets `:=` as
+`type` is an ordinary identifier denoting the prelude metatype; legacy
+`type Name ...` declarations do not parse. The parser interprets `:=` as
 inferred binding syntax and requires `;` on type-valued bindings too. Modifier
 flags are preserved for analysis. The name pass enforces visibility and static
 alias rules; arbitrary compile-time evaluation remains unfinished.

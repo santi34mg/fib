@@ -1,5 +1,10 @@
 # Frontend
 
+The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 Active modules are [`tokenizer.rs`](../../../../src/frontend/tokenizer.rs),
 `tokens/`, `parser.rs` plus `parser/`, `ast.rs` plus `ast/`, and
 `analyzer.rs` plus `analyzer/`. There is no `lexer`, `analyze`, or `typed_ast`

@@ -1,5 +1,10 @@
 # AST and annotation ownership
 
+The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 [`ast.rs`](../../../../src/frontend/ast.rs) defines `Ast { statements }`.
 `ast/` splits expressions, statements, functions/signatures/parameters, types,
 patterns, fields, enum variants, qualified names and switch syntax. Actual
@@ -21,7 +26,7 @@ parameter string list is reserved and not parsed. Legacy `QualifiedAccess` is no
 the parser-produced annotated qualified-name representation.
 
 Unified bindings use `VariableDeclaration` with independent `is_pub`, `is_const`,
-and `is_comp` flags; `const` and `comp` are mutually exclusive in the grammar.
+and `is_comp` flags plus optional `pub_scope`; `const` and `comp` are mutually exclusive in the grammar.
 An explicit annotation is stored in `ty`, and the optional initializer in
 `expression`. Typed declarations may omit initializers for compatibility.
 `comp Name: type = ...;` is a variable binding with an arbitrary expression
@@ -36,6 +41,12 @@ type bindings without explicit `comp`; the parser retains that syntax.
 Multi-bindings retain individual declaration records and a separate shared
 initializer list introduced by the final `:=` (or typed `=`).
 
-Name/binding completion is validated by the name pass. Full semantic completion
-validation is unimplemented. A public AST or `AnalyzedProject` with
+Name/binding completion is validated by the name pass; type annotations and
+initialization/flow receive independent validation before lowering. A public AST or `AnalyzedProject` with
 filled-looking records is not evidence that semantic checking ran.
+
+Scoped declarations retain `is_pub` plus `pub_scope` for `pub(dir)`/`pub(root)`.
+A field access's `MemberAnnotation::implicit_deref` records one checked receiver
+dereference; validation independently checks it. `AnalyzedProject` retains the
+selected entry file and nonfatal source-located warnings, including warnings
+introduced only by concrete generic specialization.

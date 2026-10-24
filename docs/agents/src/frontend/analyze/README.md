@@ -1,5 +1,10 @@
 # Analyzer — legacy analyze documentation URL
 
+The [language specification](../../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 There is no `src/frontend/analyze/` implementation. Current source is
 [`analyzer.rs`](../../../../../src/frontend/analyzer.rs) and `analyzer/`.
 

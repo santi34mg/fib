@@ -1,5 +1,9 @@
 # Type resolution
 
+This page records current analyzer behavior. The [language specification](language-specification.md)
+rules for direct-literal casts, numeric/bool casts, shallow readonly views, warned
+one-layer pointer field access and exhaustive switches are implemented.
+
 The implemented sequence is `Analyzer::new` → `collect_declarations` →
 `resolve_names` → `resolve_types`. Each stage runs once; a failed pass cannot be
 retried against partial state. `resolve_types` returns the project's `SemanticTypes`
@@ -11,8 +15,11 @@ This pass is separate from complete analysis: `Analyzer::analyze` runs typing,
 then validates definite initialization and structured control flow before returning
 `AnalyzedProject`. `validate_analysis` independently rechecks the public AST and
 semantic tables. `AnalyzedProject::source_paths` retains original plan paths for
-downstream diagnostics. A scalar/struct/control-flow subset now compiles through verified
-SSA and LLVM; broader lowering and runtime representations remain unfinished.
+downstream diagnostics. A scalar/struct/enum/pointer/control-flow subset now compiles
+through verified SSA and LLVM; broader lowering and runtime representations remain unfinished.
+
+Generic design uses ordinary metatype parameters and type-value arguments, with
+explicit `comp fn` for bounded type computation. Concrete rechecked instances lower for supported runtime representations.
 
 ## Semantic identities
 
@@ -114,7 +121,8 @@ casts and IEEE arithmetic as runtime. Known integer zero divisors, invalid shift
 and invalid float-to-integer conversions are diagnosed; floats may produce
 infinity/NaN through arithmetic. Literal values themselves must fit their types.
 Target-width `usize` validation remains deferred. See
-[scalar semantics](scalar-semantics.md) for the complete implemented rules.
+[scalar semantics](scalar-semantics.md) for numeric rules and explicitly marked
+differences between implementation and confirmed design.
 
 Arithmetic accepts numeric operands, remainder/bitwise operations require
 integers, logical operators require booleans, and ordering accepts numbers or
@@ -127,7 +135,8 @@ are independent: `const p: *T` fixes the binding but permits pointee writes;
 applies to `const T[]` and `const T[N]`. Binding `const` alone does not make array
 elements readonly. Type qualifiers apply to one container layer, not a deep
 freeze. Access, slicing and addressing preserve permissions; compatibility is
-exact in both directions and casts cannot erase readonly qualifiers. Fields
+directional for shallow pointer/slice readonly views; nested qualifiers must match
+exactly and casts cannot erase readonly qualifiers. Fields
 inherit the selected storage category. Raw-pointer checks promise no lifetime
 or ownership safety.
 
@@ -165,8 +174,9 @@ and reads require initialized bindings or fields. Struct fields and known array
 elements can be initialized separately. Only continuing branches participate in
 joins; loops that may execute zero times do not establish initialization. Infinite
 loops and `never` expression statements can complete a non-returning path.
-Enum switches account for all variants or a wildcard; duplicate variants and arms
-after a wildcard are rejected. Break/continue require an enclosing loop, including
+Every enum switch must cover all variants explicitly or with `when else`.
+Coverage is checked regardless of reachability and independently revalidated. Duplicate
+variants and arms after a wildcard are rejected. Break/continue require an enclosing loop, including
 in unreachable syntax.
 
 File initializers are checked in compilation-unit/source order. Function bodies

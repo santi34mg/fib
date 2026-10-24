@@ -1,5 +1,10 @@
 # Parser and current syntax
 
+The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 [`Parser`](../../../../src/frontend/parser.rs) consumes a token iterator and
 returns `anyhow::Result<Ast>` from `parse()`. For in-memory tests:
 
@@ -57,7 +62,7 @@ Per-concern modules include declaration/body/type parsing, postfix access/calls,
 pointer, switch, tuple, and literal parsing. Low-to-high binary precedence:
 `||`, `&&`, `|`, `^`, `&`, equality, comparison, `as`, shifts, additive,
 multiplicative, unary, postfix/primary. `binary.rs` shares binary parsing.
-Lookahead filters comments and normalizes `@` builtins; `no_struct_literal`
+Lookahead filters comments; former `@` builtins are rejected. `no_struct_literal`
 resolves condition/body brace ambiguity.
 
 No recovery pass exists. List/EOF handling and optional separators vary by parser;

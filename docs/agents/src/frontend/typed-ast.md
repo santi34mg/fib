@@ -1,5 +1,10 @@
 # Semantic types — obsolete typed-AST path
 
+The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package metadata/scoped
+visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+
 There is no `typed_ast.rs`, `TypedProgram`, `TypedModule` or `Ty`. Syntax retains
 its original spelling, spans, binding identities and in-place annotations.
 
@@ -26,7 +31,7 @@ and deferred computations with arguments/dependencies. Readonly container layers
 and explicit compile-time function eligibility participate in type identity.
 `never` coerces only from a top-level found bottom type; composite compatibility
 remains invariant.
-The supported scalar/control-flow lowering translates frontend identities into
+The supported scalar/struct/enum/pointer/control-flow lowering translates frontend identities into
 owned SSA IDs/types and never falls back to direct AST emission. General source
 lowering remains unfinished.
 

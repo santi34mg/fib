@@ -1,9 +1,15 @@
 # Name resolution
 
+The confirmed [package and visibility design](language-specification.md#names-packages-and-source-discovery)
+uses package-rooted paths, source discovery, prelude type values and scoped
+visibility. Prelude identifiers and scoped visibility are implemented. Package
+metadata is explicit in build plans; package-rooted lookup/discovery integration
+remains deferred. The resolver still uses explicit flat file paths.
+
 The name pass runs on the original parsed AST through `Analyzer::new`,
 `collect_declarations`, and `resolve_names`. It resolves bindings, file paths,
 visibility, and compile-time aliases. Successful name resolution is not successful
-compilation: lowering and execution remain unfinished. Complete analysis now
+compilation: supported representations lower across explicitly planned files. Complete analysis now
 adds initialization and structured flow validation.
 Semantic typing and members are described in [type resolution](type-resolution.md).
 
@@ -32,8 +38,12 @@ file prefix before considering a lexical or current-file alias. A canonical file
 path bypasses a same-spelled runtime local. Only files, including aliases to files,
 can be intermediate namespaces; variables, functions, and types can be final targets.
 
-File declarations are private unless `pub`. Each declaration selected across a
-file boundary must be public before its alias target is followed. Resolution uses
+File declarations default to file-private. `pub(dir)` permits access from the
+containing directory subtree in the same package; `pub(root)` permits package-wide
+access; `pub` permits external access through the current file registry. Scope
+checks use explicit package/file regions before following alias targets. Public
+aliases may re-export accessible private targets while keeping the original path
+restricted. Dependency-environment lookup remains deferred. Resolution uses
 registered names, never include paths or recursive filesystem imports.
 
 ## Compile-time types and aliases
@@ -54,7 +64,8 @@ An inline type owns a declaration identity. An entity-reference initializer alia
 an existing file or declaration, without creating runtime storage. For example,
 an alias to a mutable file variable denotes that variable's original identity.
 `const` creates an independent value binding; it does not create an alias.
-Computed `comp` initializers and missing initializers are rejected. Compile-time
+The name pass leaves computed `comp` initializers to typing; eligible bounded
+`comp fn` type computations run there. Missing initializers are rejected. Compile-time
 multi-bindings require one initializer per binding; runtime tuple arity is left
 to typing.
 

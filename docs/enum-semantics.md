@@ -1,5 +1,9 @@
 # Executable enums
 
+Construction, payload copies, native execution and [exhaustive switches](language-specification.md#enums-and-switches)
+are implemented. Coverage is validated independently of reachability and rechecked
+by annotation validation.
+
 Enum types are nominal. Variants use declaration-order, zero-based discriminants.
 A payloadless variant is a value (`E.Empty`); a variant declared with payload
 fields is a constructor (`E.Number(42)`). An empty payload still requires a call
@@ -21,8 +25,10 @@ following a pointer contained in it still reaches the original pointed-to storag
 The binding is scoped to its arm. Duplicate variants and arms after a wildcard
 are rejected by analysis.
 
-Without a wildcard, an unmatched variant falls through. An exhaustive switch has
-no unmatched continuation. Return, break and continue retain their ordinary
+The language requires exhaustive switches: explicitly cover every
+variant or use `when else` for all remaining variants. Missing coverage is a
+compile-time error; there is no implicit unmatched fallthrough. A selected arm
+may still complete normally and continue after the switch. Return, break and continue retain their ordinary
 meaning; break/continue target the enclosing loop. A switch does not introduce a
 loop. An empty enum has no constructed values, and switching over one is exhaustive.
 

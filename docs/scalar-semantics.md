@@ -1,8 +1,9 @@
 # Fixed-width scalar semantics
 
-These rules are implemented for signed and unsigned integers at 8, 16, 32, 64
-and 128 bits, IEEE binary16/32/64/128 floats, and booleans. They describe the
-current analyzer, constant evaluator, SSA lowering and LLVM backend.
+This reference records the implemented [numeric rules](language-specification.md#numeric-and-boolean-behavior).
+Fixed-width integer and IEEE arithmetic, direct-literal cast context and explicit
+numeric/bool conversions execute through analysis, constant evaluation, verified
+SSA and LLVM.
 
 ## Types and operation widths
 
@@ -22,9 +23,14 @@ fn example(a: uint8) uint16 {
 
 For `a = 255`, this returns zero: addition wraps in uint8 before the cast.
 `(a as uint16) + 1` instead produces 256. Literal-only expressions may use their
-destination context. Cast operands retain their own types; a numeric cast does
-not supply literal context. To construct a full-width value, use a typed binding
-or a parameter/return literal context.
+destination context. In the confirmed design, an `as` destination supplies context
+to a direct numeric literal in the same family, including parentheses and unary
+minus. Integer literals use integer context; float literals use float context.
+`4294967296 as uint64` is valid and `0.1 as float32` rounds directly to float32;
+`300 as uint8` and `(-1) as uint8` are literal-range errors. Typed operands,
+arithmetic expressions and cross-family casts still resolve their source types
+before conversion. Thus `3.9 as int32` truncates to 3 and a typed int32 value 300
+casts to uint8 as 44.
 
 Integer magnitudes are parsed without a u64 limit, and decimal floats retain their
 spelling until rounding directly to the selected format. The existing literal
@@ -65,9 +71,12 @@ Constant evaluation follows the same rules, diagnosing known trapping operations
 ## Booleans and execution boundaries
 
 Booleans support equality, inequality, negation, assignment, calls and returns.
-`&&` and `||` evaluate left-to-right and short-circuit. Numeric/bool conversions
-are rejected. Whole-source validation still checks unsupported source forms and
-known invalid operations in dead branches.
+`&&` and `||` evaluate left-to-right and short-circuit. Conditions and logical
+operators require bool; there is no implicit numeric truthiness. The confirmed
+design permits explicit casts in both directions: numeric zero (including both
+floating signed zeros) becomes false, and all other numeric values, including
+infinities and NaN, become true; bool becomes numeric 0 or 1. These casts execute in constant evaluation and native lowering. Whole-source validation checks unsupported source forms and known
+invalid operations in dead branches.
 
 The native entry remains `main() int32`. Internal helpers use a limited scalar
 Fib ABI mapped to LLVM fastcc; definitions and calls share one classification.
@@ -75,6 +84,7 @@ This is not an external C interoperability contract or the full production Fib
 ABI. Target legalization may use compiler-runtime helpers supplied by host cc.
 
 The build-file interpreter retains its narrow literal byte-string API subset.
-Char, symbolic usize, runtime globals, arrays/slices/enums and generic bodies
-remain unsupported by native lowering. Structs, typed pointers and stack storage
-are supported; see [struct/storage semantics](struct-storage-semantics.md).
+Char, runtime globals and runtime indexing/slices remain unsupported by native
+lowering. Target-width usize, fixed-array values, concrete generic instances,
+structs, enums, typed pointers and stack storage are supported; see [struct/storage semantics](struct-storage-semantics.md) and
+[enum semantics](enum-semantics.md).
