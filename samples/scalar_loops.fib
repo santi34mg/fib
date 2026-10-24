@@ -1,0 +1,24 @@
+// Nested loops carry scalar locals through headers, continues and breaks.
+fn accumulate(limit: int32) int32 {
+    outer := 0;
+    total := 0;
+    while (outer < limit) {
+        outer = outer + 1;
+        inner := 0;
+        while () {
+            inner = inner + 1;
+            if (inner == 2) { continue; };
+            if (inner == 4) { break; };
+            total = total + outer;
+        };
+        if (outer == 2) { continue; };
+        total = total + 10;
+        if (outer == 3) { break; };
+    };
+    return total;
+}
+
+fn main() int32 {
+    // 2 * (1 + 2 + 3) + 10 + 10 = 32.
+    return accumulate(5) + 10;
+}

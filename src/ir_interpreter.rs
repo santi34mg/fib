@@ -4,7 +4,7 @@ use anyhow::bail;
 
 use crate::{
     builtins::BuiltinFunction,
-    ir::{ConstantKind, FunctionBody, InstructionKind, Ir, Operand},
+    ir::{ConstantKind, FunctionBody, InstructionKind, Ir, Operand, Terminator},
     plan::PlanBuilder,
 };
 
@@ -21,12 +21,15 @@ pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
         FunctionBody::Declaration => bail!("expected build function to have a body"),
         FunctionBody::Definition {
             ref entry,
-            blocks: _,
+            ref blocks,
             stack_slots: _,
         } => {
             let entry_block = ir
                 .get_block(*entry)
                 .expect("couldn't get build entry block");
+            if blocks.len() != 1 || !matches!(entry_block.terminator, Terminator::Return { .. }) {
+                bail!("unsupported control flow in build-file interpreter");
+            }
             for instruction in entry_block.instructions.iter() {
                 match instruction.kind {
                     InstructionKind::Call {

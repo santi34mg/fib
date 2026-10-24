@@ -123,7 +123,10 @@ fn scalar_subset_rejections_are_located_backend_diagnostics_even_in_dead_code() 
     for text in [
         "fn main() int32 { x: int32; x = 42; return x; }",
         "fn main() int32 { if false { x := [1, 2]; }; return 42; }",
-        "fn main() int32 { while (false) { }; return 42; }",
+        "fn main() int32 { while (false) { x := [1, 2]; }; return 42; }",
+        "fn main() int32 { while () { break; x := [1, 2]; }; return 42; }",
+        "fn main() int32 { while () { continue; x := [1, 2]; }; }",
+        "fn main() int32 { x := 0; defer x = 1; return 42; }",
         "fn main() int32 { comp T: type = int32; return 42; }",
         "fn main() int32 { x, y := 1, 2; return x; }",
     ] {
@@ -235,4 +238,60 @@ fn all_scalar_types_lower_to_verified_ir_without_requiring_llvm() {
         ir.functions[0].signature.calling_convention,
         CallingConvention::Fib
     );
+}
+
+#[test]
+fn loops_lower_to_verified_ssa_without_storage_or_unreachable_blocks() {
+    for text in [
+        include_str!("../../samples/scalar_loops.fib"),
+        "fn main() int32 { while (false) {}; return 42; }",
+        "fn main() int32 { while () {}; }",
+        "fn main() int32 { x := 0; while (true) { x = x + 1; continue; }; }",
+        "fn main() int32 { while (true) { return 42; }; }",
+        "fn f(flag: bool) int32 { while () { if (flag) { return 42; } else { continue; }; }; } fn main() int32 { return f(true); }",
+        "fn f(flag: bool) int32 { while (flag) { return 42; }; return 7; } fn main() int32 { return f(false); }",
+        "fn main() int32 { x := 0; while (x < 3) { y := x + 1; x = y; }; return x; }",
+        "fn main() int32 { x := 0; while (x < 3 && x < 5) { x = x + 1; continue; }; return x; }",
+    ] {
+        let (_directory, plan) = source(text);
+        let project = run_frontend(&plan).unwrap();
+        let ir = crate::ir::lowering::lower(&project).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
+        crate::ir::verify_ir(&ir).unwrap();
+        assert!(ir.stack_slots.is_empty());
+        // Stable local ordering also keeps repeated lowering deterministic.
+        assert_eq!(
+            ir.to_string(),
+            crate::ir::lowering::lower(&project).unwrap().to_string()
+        );
+    }
+}
+
+#[test]
+fn build_file_interpreter_rejects_loop_cfg_before_applying_operations() {
+    let (_directory, plan) = source(
+        "fn build() int32 { build_api::set_output(\"before-loop\"); while () { break; }; return 0; }",
+    );
+    let ir = compile_build_file_to_ir(&plan).unwrap();
+    let mut builder = crate::plan::PlanBuilder::from(plan.files[0].path.clone());
+    let error = crate::ir_interpreter::interpret_ir(ir, &mut builder).unwrap_err();
+    assert!(error.to_string().contains("unsupported control flow"));
+    assert!(builder.output.is_none());
+}
+
+#[test]
+fn non_exiting_loops_have_no_synthetic_return_or_unreachable_terminator() {
+    for text in [
+        "fn main() int32 { while () {}; }",
+        "fn main() int32 { x := 0; while (true) { x = x + 1; continue; }; }",
+        "fn main() int32 { while (true) { if false { break; }; }; }",
+    ] {
+        let (_directory, plan) = source(text);
+        let project = run_frontend(&plan).unwrap();
+        let ir = crate::ir::lowering::lower(&project).unwrap();
+        assert!(
+            ir.blocks
+                .iter()
+                .all(|block| matches!(block.terminator, crate::ir::Terminator::Jump(_)))
+        );
+    }
 }

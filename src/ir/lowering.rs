@@ -139,7 +139,7 @@ impl Source<'_> {
 ///
 /// Unsupported declarations, expressions, or statements produce a diagnostic
 /// associated with their source span. Functions that can reach their end must
-/// have no return values; value-returning functions must return explicitly.
+/// have no return values; value-returning functions must return or diverge.
 pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     validate_analysis(project)?;
     anyhow::ensure!(
@@ -281,6 +281,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             functions: &functions,
             constants: &constants,
             builder,
+            loops: Vec::new(),
         };
         let remaining = lowerer.statements(
             &function
@@ -493,6 +494,13 @@ impl Checker<'_, '_> {
                         self.expression(arg)?;
                     }
                 }
+                S::While { condition, body } => {
+                    if let Some(condition) = condition {
+                        self.expression(condition)?;
+                    }
+                    self.statements(body)?;
+                }
+                S::Break | S::Continue => {}
                 S::Return(None) => {}
                 S::Return(Some(values)) if values.len() == 1 => self.expression(&values[0])?,
                 S::If {
@@ -522,11 +530,20 @@ struct State {
     block: BlockId,
     locals: BTreeMap<LocalId, Operand>,
 }
+// Every edge uses the same ordered set of bindings visible before the loop.
+// Body-local bindings never escape through a break or continue.
+struct LoopContext {
+    header: BlockId,
+    exit: Option<BlockId>,
+    locals: Vec<LocalId>,
+    types: Vec<TypeId>,
+}
 struct Lowerer<'a, 'p, 'ir> {
     source: &'a Source<'p>,
     functions: &'a HashMap<DeclId, FunctionId>,
     constants: &'a [Constant],
     builder: FunctionBuilder<'ir>,
+    loops: Vec<LoopContext>,
 }
 impl Lowerer<'_, '_, '_> {
     fn value_expression(
@@ -683,6 +700,14 @@ impl Lowerer<'_, '_, '_> {
                 S::ExpressionStatement(expression) => {
                     self.expression_statement(&mut state, expression)?;
                 }
+                S::While { condition, body } => {
+                    current = self.while_loop(state, condition.as_ref(), body, node.span)?;
+                    continue;
+                }
+                S::Break | S::Continue => {
+                    self.loop_jump(state, matches!(node.kind, S::Break), node.span)?;
+                    continue;
+                }
                 S::Return(None) => {
                     self.builder
                         .set_terminator(state.block, Terminator::Return { values: vec![] })?;
@@ -725,6 +750,131 @@ impl Lowerer<'_, '_, '_> {
         }
         Ok(next)
     }
+    fn loop_jump(&mut self, state: State, is_break: bool, span: Span) -> anyhow::Result<()> {
+        let context = self.loops.last_mut().ok_or_else(|| {
+            self.source
+                .error(span, "break/continue requires an enclosing loop")
+        })?;
+        let target = if is_break {
+            match context.exit {
+                Some(exit) => exit,
+                None => {
+                    let exit = self.builder.create_block(&context.types)?;
+                    context.exit = Some(exit);
+                    exit
+                }
+            }
+        } else {
+            context.header
+        };
+        let args = context.locals.iter().map(|id| state.locals[id]).collect();
+        self.builder
+            .set_terminator(state.block, Terminator::Jump(Edge { target, args }))?;
+        Ok(())
+    }
+
+    fn while_loop(
+        &mut self,
+        state: State,
+        condition: Option<&Expression>,
+        body: &[Statement],
+        span: Span,
+    ) -> anyhow::Result<Option<State>> {
+        let known = condition.map(known_boolean).unwrap_or(Some(true));
+        if known == Some(false) {
+            return Ok(Some(state));
+        }
+        let locals = state.locals.keys().copied().collect::<Vec<_>>();
+        let types =
+            locals
+                .iter()
+                .map(|id| {
+                    let ty =
+                        self.source.project.types.locals.get(id).ok_or_else(|| {
+                            self.source.error(span, "missing local semantic type")
+                        })?;
+                    self.source.value_type(*ty, span)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+        let header = self.builder.create_block(&types)?;
+        self.builder.set_terminator(
+            state.block,
+            Terminator::Jump(Edge {
+                target: header,
+                args: locals.iter().map(|id| state.locals[id]).collect(),
+            }),
+        )?;
+        let mut header_state = State {
+            block: header,
+            locals: locals
+                .iter()
+                .copied()
+                .zip(
+                    self.builder
+                        .block_params(header)?
+                        .iter()
+                        .copied()
+                        .map(Operand::Value),
+                )
+                .collect(),
+        };
+        let exit = if known == Some(true) {
+            None
+        } else {
+            // Short-circuit conditions can change header_state.block. The branch
+            // belongs to the final condition block, while continues re-enter header.
+            let value =
+                self.value_expression(&mut header_state, condition.expect("dynamic condition"))?;
+            let body_block = self.builder.create_block(&[])?;
+            let exit = self.builder.create_block(&types)?;
+            self.builder.set_terminator(
+                header_state.block,
+                Terminator::Branch {
+                    condition: value,
+                    then_edge: Edge {
+                        target: body_block,
+                        args: vec![],
+                    },
+                    else_edge: Edge {
+                        target: exit,
+                        args: locals.iter().map(|id| header_state.locals[id]).collect(),
+                    },
+                },
+            )?;
+            header_state.block = body_block;
+            Some(exit)
+        };
+        self.loops.push(LoopContext {
+            header,
+            exit,
+            locals,
+            types,
+        });
+        if let Some(next) = self.scope(body, header_state)? {
+            self.loop_jump(next, false, span)?;
+        }
+        let context = self.loops.pop().expect("active loop");
+        context
+            .exit
+            .map(|exit| {
+                Ok(State {
+                    block: exit,
+                    locals: context
+                        .locals
+                        .into_iter()
+                        .zip(
+                            self.builder
+                                .block_params(exit)?
+                                .iter()
+                                .copied()
+                                .map(Operand::Value),
+                        )
+                        .collect(),
+                })
+            })
+            .transpose()
+    }
+
     fn conditional(
         &mut self,
         mut state: State,

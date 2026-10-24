@@ -72,7 +72,11 @@ fn object_goal_emits_linkable_object_and_source_is_protected() {
 fn unsupported_source_exits_unsuccessfully_without_binary() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("main.fib");
-    std::fs::write(&source, "fn main() int32 { while (false) {}; return 42; }").unwrap();
+    std::fs::write(
+        &source,
+        "fn main() int32 { x := 0; defer x = 1; return 42; }",
+    )
+    .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
         .args(["build", "--single-file"])
         .arg(&source)
@@ -343,4 +347,105 @@ fn builtin_scalar_sample_executes() {
         scalar_program(include_str!("../samples/builtin_scalars.fib")).code(),
         Some(42)
     );
+}
+
+// Loop regressions must fail promptly if a backedge accidentally stops updating
+// its carried values. Kill and reap the child before reporting a timeout.
+fn bounded_program(text: &str) -> std::process::ExitStatus {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("main.fib");
+    std::fs::write(&source, text).unwrap();
+    let plan = BuildPlan::single_file(&source).unwrap();
+    run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
+    let mut child = Command::new(&plan.output).spawn().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("loop program timed out: {text}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn source_loops_breaks_continues_and_returns_execute() {
+    for (text, expected) in [
+        (include_str!("../samples/scalar_loops.fib"), 42),
+        (
+            "fn choose(flag: bool) int32 { x := 0; y := 0; while () { if (flag) { x = 40; y = 2; break; } else { x = 10; y = 11; break; }; }; return x + y; } fn main() int32 { return choose(true) + choose(false) - 21; }",
+            42,
+        ),
+        (
+            "fn main() int32 { x := 0; y := 0; while (x < 3) { inner := 0; while (inner < 3) { inner = inner + 1; if (inner < 3) { continue; }; y = y + 1; }; x = x + 1; continue; }; return y + 39; }",
+            42,
+        ),
+        (
+            "fn main() int32 { x := 42; while (false) { x = 7; }; return x; }",
+            42,
+        ),
+        (
+            "fn f(limit: int32) int32 { x := 0; while (x < limit) { x = x + 1; }; return x; } fn main() int32 { return f(0) + f(1) + f(41); }",
+            42,
+        ),
+        (
+            "fn main() int32 { x := 0; while (true) { x = x + 1; if (x < 42) { continue; }; break; }; return x; }",
+            42,
+        ),
+        (
+            "fn f(flag: bool) int32 { while (flag) { return 42; }; return 7; } fn main() int32 { return f(true); }",
+            42,
+        ),
+        (
+            "fn f(flag: bool) int32 { while (flag) { return 42; }; return 7; } fn main() int32 { return f(false); }",
+            7,
+        ),
+        (
+            "fn main() int32 { x := 0; while (x < 3 && 12 / (3 - x) > 0) { x = x + 1; continue; }; return x + 39; }",
+            42,
+        ),
+        (
+            "fn main() int32 { x := 0; while (x < 3 || 12 / (x - 2) > 0) { x = x + 1; if (x == 4) { break; }; }; return x + 38; }",
+            42,
+        ),
+        (
+            "fn main() int32 { x := 0; y := 0; while (x < 5) { x = x + 1; if (x == 3) { y = 42; break; } else { y = 7; }; }; return y; }",
+            42,
+        ),
+        (
+            "fn main() int32 { x := 0; while (x < 2) { y := 0; while (y < 2) { y = y + 1; }; x = x + y; }; return x + 40; }",
+            42,
+        ),
+    ] {
+        assert_eq!(bounded_program(text).code(), Some(expected), "{text}");
+    }
+}
+
+#[test]
+fn loops_carry_all_numeric_widths_and_bool() {
+    for ty in [
+        "int8", "int16", "int32", "int64", "int128", "uint8", "uint16", "uint32", "uint64",
+        "uint128", "float16", "float32", "float64", "float128",
+    ] {
+        let text = format!(
+            r#"
+            fn advance(x: {ty}) {ty} {{ return x + 1; }}
+            fn run(limit: {ty}) {ty} {{
+                x: {ty} = 0;
+                running := true;
+                while (running) {{
+                    x = advance(x);
+                    if (x == limit) {{ running = false; }};
+                }};
+                return x;
+            }}
+            fn main() int32 {{ if (run(4) == 4) {{ return 42; }}; return 7; }}
+        "#
+        );
+        assert_eq!(bounded_program(&text).code(), Some(42), "{ty}");
+    }
 }
