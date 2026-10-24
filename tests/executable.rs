@@ -357,7 +357,11 @@ fn bounded_program(text: &str) -> std::process::ExitStatus {
     std::fs::write(&source, text).unwrap();
     let plan = BuildPlan::single_file(&source).unwrap();
     run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
-    let mut child = Command::new(&plan.output).spawn().unwrap();
+    bounded_status(&plan.output)
+}
+
+fn bounded_status(binary: &std::path::Path) -> std::process::ExitStatus {
+    let mut child = Command::new(binary).spawn().unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -366,7 +370,7 @@ fn bounded_program(text: &str) -> std::process::ExitStatus {
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("loop program timed out: {text}");
+            panic!("program timed out: {}", binary.display());
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -448,4 +452,29 @@ fn loops_carry_all_numeric_widths_and_bool() {
         );
         assert_eq!(bounded_program(&text).code(), Some(42), "{ty}");
     }
+}
+
+#[test]
+fn current_capabilities_project_builds_from_build_file_and_runs() {
+    let directory = tempfile::tempdir().unwrap();
+    let build_file = directory.path().join("build.fib");
+    std::fs::write(&build_file, include_str!("../example-project/build.fib")).unwrap();
+    std::fs::write(
+        directory.path().join("main.fib"),
+        include_str!("../example-project/main.fib"),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
+        .args(["build", "--build-file"])
+        .arg(&build_file)
+        .current_dir(directory.path().parent().unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let binary = directory.path().join("demo");
+    assert_eq!(bounded_status(&binary).code(), Some(0));
 }

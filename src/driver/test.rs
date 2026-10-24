@@ -295,3 +295,28 @@ fn non_exiting_loops_have_no_synthetic_return_or_unreachable_terminator() {
         );
     }
 }
+
+#[test]
+fn current_capabilities_project_lowers_without_llvm() {
+    let directory = tempfile::tempdir().unwrap();
+    let build_file = directory.path().join("build.fib");
+    std::fs::write(&build_file, include_str!("../../example-project/build.fib")).unwrap();
+    std::fs::write(
+        directory.path().join("main.fib"),
+        include_str!("../../example-project/main.fib"),
+    )
+    .unwrap();
+    let plan = crate::plan::PlanBuilder::from(build_file)
+        .compile_and_interpret_build_file()
+        .unwrap();
+    assert_eq!(plan.files.len(), 1);
+    assert_eq!(
+        plan.output,
+        directory.path().canonicalize().unwrap().join("demo")
+    );
+    let CompilationOutput::Ir(ir) = run_pipeline(&plan, PipelineGoal::Ir).unwrap() else {
+        panic!("expected verified IR")
+    };
+    crate::ir::verify_ir(&ir).unwrap();
+    assert!(!plan.output.exists());
+}

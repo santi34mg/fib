@@ -1,4 +1,136 @@
-
+// Run through build.fib or compile this file directly. Exit 0 means every
+// demonstration passed; exit 1..6 identifies a failed section (see README.md).
 fn main() int32 {
-    return 67;
+    if (!integer_widths(-1, 255)) { return 1; };
+    if (!floating_point(1.5) || !ieee_values(0.0)) { return 2; };
+
+    // Pack an IPv4 address, update permission bits, and count the enabled bits.
+    ip := pack_ipv4(192, 168, 1, 100);
+    flags: uint = 3;
+    flags = flags | 4;
+    flags = flags & ~2;
+    if (ip != 3232235876 || ((ip >> 24) & 255) != 192
+        || (ip & 255) != 100 || flags != 5
+        || (flags ^ 1) != 4 || popcount(flags) != 2) {
+        return 3;
+    };
+
+    if (accumulate(5) != 32 || accumulate(0) != 0) { return 4; };
+    if (fibonacci(8) != 21) { return 5; };
+    if (divides_evenly(42, 0) || !divides_evenly(42, 7)
+        || !zero_or_even_quotient(0) || zero_or_even_quotient(4)) {
+        return 6;
+    };
+
+    // A void helper is an ordinary direct call used as a statement.
+    finish();
+    const success: int = 0;
+    return success;
+}
+
+// Arguments are runtime values. Casts are explicit at every type boundary.
+fn integer_widths(negative: int8, byte: uint8) bool {
+    signed16 := negative as int16;
+    signed32 := signed16 as int32;
+    signed64 := signed32 as int64;
+    signed128 := signed64 as int128;
+    unsigned16 := byte as uint16;
+    unsigned32 := unsigned16 as uint32;
+    unsigned64 := unsigned32 as uint64;
+    unsigned128 := unsigned64 as uint128;
+
+    // Addition wraps at the operand width. Casting first changes that width.
+    wrapped := byte + 1;
+    widened := (byte as uint16) + 1;
+    largest_unsigned: uint128 = 340282366920938463463374607431768211455;
+    largest_signed: int128 = 170141183460469231731687303715884105727;
+    return signed16 == -1 && signed32 == -1 && signed64 == -1
+        && signed128 == -1 && unsigned16 == 255 && unsigned32 == 255
+        && unsigned64 == 255 && unsigned128 == 255
+        && wrapped == 0 && widened == 256 && (byte as int8) == -1
+        && (negative as uint16) == 65535 && (negative >> 1) == -1
+        && largest_unsigned + 1 == 0
+        && largest_signed + 1 == -170141183460469231731687303715884105728;
+}
+
+fn half(value: float128) float16 {
+    return value as float16;
+}
+
+fn floating_point(value: float64) bool {
+    narrow := half(value as float128);
+    single := narrow as float32;
+    double := single as float64;
+    wide := double as float128;
+    fraction := (wide * 4.0 - 1.0) / 2.0;
+    truncated := fraction as int32;
+    return narrow == 1.5 && single == 1.5 && double == 1.5
+        && wide == 1.5 && fraction == 2.5 && truncated == 2
+        && (truncated as float64) == 2.0;
+}
+
+// IEEE division produces infinity/NaN; integer division by zero would trap.
+fn ieee_values(zero: float64) bool {
+    nan := zero / zero;
+    infinity := 1.0 / zero;
+    return nan != nan && !(nan == nan) && !(nan < zero)
+        && infinity > 1.0 && (1.0 / -zero) < zero;
+}
+
+fn pack_ipv4(a: uint32, b: uint32, c: uint32, d: uint32) uint32 {
+    return (a << 24) | (b << 16) | (c << 8) | d;
+}
+
+fn popcount(bits: uint32) uint32 {
+    remaining := bits;
+    count: uint32 = 0;
+    while (remaining != 0) {
+        count += remaining & 1;
+        remaining = remaining >> 1;
+    };
+    return count;
+}
+
+// Both loop levels carry changing locals through SSA. Inner locals stay scoped
+// to the outer body; break/continue always select the innermost loop.
+fn accumulate(limit: int32) int32 {
+    outer := 0;
+    total := 0;
+    while (outer < limit) {
+        outer += 1;
+        inner := 0;
+        while () {
+            inner += 1;
+            if (inner == 2) {
+                continue;
+            } else {
+                if (inner >= 4) { break; };
+            };
+            total += outer;
+        };
+        if (outer == 2) { continue; };
+        total += 10;
+        if (outer == 3) { break; };
+    };
+    // For limit 5: 2 * (1 + 2 + 3) + 10 + 10 = 32.
+    return total;
+}
+
+// Forward references, recursion and early returns work with scalar signatures.
+fn fibonacci(n: int32) int32 {
+    if (n <= 1) { return n; };
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+// Each boolean operator skips an integer operation that would trap for zero.
+fn divides_evenly(value: int32, divisor: int32) bool {
+    return divisor != 0 && value % divisor == 0;
+}
+
+fn zero_or_even_quotient(value: int32) bool {
+    return value == 0 || (12 / value) % 2 == 0;
+}
+
+fn finish() {
+    return;
 }
