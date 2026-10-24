@@ -311,7 +311,6 @@ where
                     StatementKind::While { condition, body }
                 }
                 TokenKind::Literal(_)
-                | TokenKind::Builtin(_)
                 | TokenKind::Operator(Operator::LogicalNot)
                 | TokenKind::Operator(Operator::Minus)
                 | TokenKind::Operator(Operator::Tilde)

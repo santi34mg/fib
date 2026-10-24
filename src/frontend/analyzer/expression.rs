@@ -122,11 +122,6 @@ impl Analyzer {
                 }
             }
             ExpressionKind::TypeValue(ty) => ty.resolve_name(context)?,
-            ExpressionKind::QualifiedAccess { .. } => {
-                return Err(name_error(
-                    "legacy qualified-access node has no name annotation",
-                ));
-            }
             ExpressionKind::Literal(_) | ExpressionKind::VoidExpression => {}
         }
         Ok(())

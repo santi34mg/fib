@@ -223,7 +223,7 @@ fn expression(v: &mut impl Visitor, expr: &mut Expression) -> Result {
             }
         }
         E::TypeValue(ty) => ty_expression(v, ty)?,
-        E::QualifiedAccess { .. } | E::Literal(_) | E::VoidExpression => {}
+        E::Literal(_) | E::VoidExpression => {}
     }
     Ok(())
 }

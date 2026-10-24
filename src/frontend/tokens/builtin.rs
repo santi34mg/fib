@@ -1,27 +1,5 @@
 use core::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Builtin {
-    BuiltinType(BuiltinType),
-    /// A comptime property queried on a value, e.g. `arr.@len`. Only valid
-    /// immediately after a `.`; a bare `@len` is a parse error.
-    BuiltinProperty(BuiltinProperty),
-}
-
-impl Builtin {
-    /// Map legacy `@`-prefixed builtin names after the old lexer consumes `@`.
-    #[deprecated(since = "0.2.0")]
-    pub fn from_name(name: &str) -> Option<Builtin> {
-        if let Some(ty) = BuiltinType::from_legacy_name(name) {
-            return Some(Builtin::BuiltinType(ty));
-        }
-        if let Some(prop) = BuiltinProperty::from_name(name) {
-            return Some(Builtin::BuiltinProperty(prop));
-        }
-        None
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(u32)]
 pub enum BuiltinType {
@@ -52,7 +30,7 @@ pub enum BuiltinType {
 }
 
 impl BuiltinType {
-    /// The canonical bit-width name of this type (without the legacy `@` prefix).
+    /// The canonical source name of this type.
     pub fn name(&self) -> &'static str {
         match self {
             Self::MetaType => "type",
@@ -106,68 +84,10 @@ impl BuiltinType {
             _ => return None,
         })
     }
-
-    /// Resolve byte-width spellings accepted by the production lexer until migration.
-    pub(crate) fn from_legacy_name(name: &str) -> Option<BuiltinType> {
-        Some(match name {
-            "void" => Self::Void,
-            "uint" | "uint4" => Self::UInt32,
-            "uint2" => Self::UInt16,
-            "uint8" => Self::UInt64,
-            "uint16" => Self::UInt128,
-            "int" | "int4" => Self::Int32,
-            "int2" => Self::Int16,
-            "int8" => Self::Int64,
-            "int16" => Self::Int128,
-            "float2" => Self::Float16,
-            "float4" => Self::Float32,
-            "float8" => Self::Float64,
-            "float16" => Self::Float128,
-            "char" => Self::Char,
-            "bool" => Self::Boolean,
-            "string" => Self::String,
-            "never" => Self::Never,
-            "usize" => Self::Usize,
-            _ => return None,
-        })
-    }
 }
 
 impl fmt::Display for BuiltinType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Builtins are spelled with a leading `@` in fib source.
-        write!(f, "@{}", self.name())
-    }
-}
-
-/// Comptime properties queried on values with `.@name`. Unlike builtin types
-/// and functions they must follow a `.`; the lexer still maps the bare name
-/// (`@len`) so the parser can give targeted diagnostics.
-#[derive(Debug, Clone, PartialEq)]
-pub enum BuiltinProperty {
-    /// `arr.@len` — the comptime element count of an array. Returns `@usize`.
-    Len,
-}
-
-impl BuiltinProperty {
-    /// The bare name of this property (without the leading `@`).
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Len => "len",
-        }
-    }
-
-    /// Resolve a bare property name (without `@`) or `None`.
-    pub fn from_name(name: &str) -> Option<BuiltinProperty> {
-        Some(match name {
-            "len" => Self::Len,
-            _ => return None,
-        })
-    }
-}
-
-impl fmt::Display for BuiltinProperty {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "@{}", self.name())
+        f.write_str(self.name())
     }
 }

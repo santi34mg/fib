@@ -1,7 +1,7 @@
 use crate::diagnostics::Span;
 use crate::frontend::{
     ast::type_expression::{TypeExpression, TypeExpressionKind},
-    tokens::{Keyword, Literal, Operator, Punctuation, Token, TokenKind, builtin::Builtin},
+    tokens::{Keyword, Literal, Operator, Punctuation, Token, TokenKind},
 };
 
 use super::Parser;
@@ -46,10 +46,6 @@ where
             )));
         }
         let var_type: TypeExpression = match type_token.kind {
-            TokenKind::Builtin(Builtin::BuiltinType(builtin_type)) => {
-                self.next();
-                TypeExpression::at(TypeExpressionKind::Builtin(builtin_type), span)
-            }
             TokenKind::Keyword(ref keyword) => {
                 self.next();
                 match keyword {

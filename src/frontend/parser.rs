@@ -5,7 +5,6 @@ use std::path::Path;
 use crate::frontend::ast::Ast;
 use crate::frontend::ast::statement::{Statement, StatementKind};
 use crate::frontend::tokens::Keyword;
-use crate::frontend::tokens::builtin::Builtin;
 use crate::frontend::tokens::{Punctuation, Token, TokenKind};
 
 #[derive(Debug, Clone)]
@@ -95,17 +94,6 @@ where
                         Some(next) => {
                             let name = match next.kind {
                                 TokenKind::Identifier(name) => Some(name),
-                                TokenKind::Builtin(Builtin::BuiltinType(_)) => {
-                                    t.kind = TokenKind::Error(
-                                        "types do not use '@'; remove '@' before the type"
-                                            .to_owned(),
-                                    );
-                                    None
-                                }
-                                TokenKind::Builtin(builtin) => {
-                                    t.kind = TokenKind::Builtin(builtin);
-                                    None
-                                }
                                 _ => None,
                             };
                             if let Some(name) = name {

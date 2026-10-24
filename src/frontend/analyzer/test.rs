@@ -2316,16 +2316,6 @@ mod name_resolution {
             let mut context = context(&symbols, &mut ids);
             reject(ast.resolve_name(&mut context), &["generic"]);
             assert_eq!(context.lexical.depth(), 2);
-            let mut expr = Expression::at(
-                ExpressionKind::QualifiedAccess {
-                    segments: vec!["x".into()],
-                },
-                Span::new(1, 1),
-            );
-            reject(
-                Analyzer::resolve_name_expression(&mut expr, &mut context),
-                &["legacy"],
-            );
             let mut statement = parse("fn nested() {}").statements.remove(0);
             reject(
                 Analyzer::resolve_name_statement(&mut statement, &mut context),
@@ -2533,9 +2523,7 @@ mod name_resolution {
                     }
                 }
                 ExpressionKind::TypeValue(ty) => self.ty(ty),
-                ExpressionKind::Literal(_)
-                | ExpressionKind::VoidExpression
-                | ExpressionKind::QualifiedAccess { .. } => {}
+                ExpressionKind::Literal(_) | ExpressionKind::VoidExpression => {}
             }
         }
         fn statements(&mut self, statements: &mut [Statement]) {

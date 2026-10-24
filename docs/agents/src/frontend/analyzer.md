@@ -1,12 +1,12 @@
-# Analyzer — legacy analyze documentation URL
+# Analyzer
 
-The [language specification](../../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package metadata/scoped
 visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
 
-There is no `src/frontend/analyze/` implementation. Current source is
-[`analyzer.rs`](../../../../../src/frontend/analyzer.rs) and `analyzer/`.
+Current source is
+[`analyzer.rs`](../../../../src/frontend/analyzer.rs) and `analyzer/`.
 
 `Analyzer::new` validates plan/unit IDs using `ProjectSymbols::from_plan` and
 retains source paths for diagnostics. `collect_declarations` assigns and annotates
@@ -51,8 +51,8 @@ Type bindings require explicit `comp`, including inline local types and type
 aliases. Local type aliases can target previously declared compile-time types.
 Type/member checking is separate: name traversal does not insert fields/variants
 into lexical scopes or fill semantic type, expression, or member slots. Scopes
-restore on errors. Unsupported nested functions, generic declarations, legacy
-qualified-access nodes, and unsupported compile-time computations return errors.
+restore on errors. Unsupported nested functions, reserved generic declarations,
+and unsupported compile-time computations return errors.
 Explicit metatype arguments specialize signatures and recheck dependent operations
 in concrete bodies without replacing symbolic template annotations. Bounded
 `comp fn` type-returning calls accept known type/bool arguments, declarations,
@@ -69,13 +69,13 @@ and owning file paths, without fabricating source lines.
 ## Tests and remaining boundary
 
 All analyzer tests/helpers remain in
-[`analyzer/test.rs`](../../../../../src/frontend/analyzer/test.rs), with six inline
+[`analyzer/test.rs`](../../../../src/frontend/analyzer/test.rs), with six inline
 name-resolution phases. They pass for registration, locals, references, aliases,
-type names, and traversal; [validation](../../../tests/README.md) records commands.
+type names, and traversal; [validation](../../tests/README.md) records commands.
 Name completion does not imply semantic type validity, legal initialization,
 control-flow legality, or executable code. Separate `type_resolution` tests cover
 semantic typing/member lookup and validator corruption cases. All six former
 pending cases now pass, with added initialization, flow, defer, specialization
 and computed-type regressions.
-See [type-resolution rules](../../../../type-resolution.md). See [name-resolution behavior](../../../../name-resolution.md) and
-[semantic tables and annotations](../typed-ast.md).
+See [type-resolution rules](../../../type-resolution.md). See [name-resolution behavior](../../../name-resolution.md) and
+[semantic tables and annotations](semantic-types.md).

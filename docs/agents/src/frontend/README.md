@@ -23,11 +23,11 @@ structured flow checks run through `Analyzer::analyze`. All analyzer tests/helpe
 [`analyzer/test.rs`](../../../../src/frontend/analyzer/test.rs), including six
 passing inline phases under `name_resolution`; see [validation](../../tests/README.md).
 
-- [Tokenizer (legacy lexer page)](lexer.md)
+- [Tokenizer](tokenizer.md)
 - [Parser and current syntax](parser.md)
 - [AST and annotations](ast.md)
-- [Analyzer (legacy analyze page)](analyze/README.md)
-- [Semantic types (legacy typed-AST page)](typed-ast.md)
+- [Analyzer](analyzer.md)
+- [Semantic types](semantic-types.md)
 
 Parsing a construct is not proof of semantic or runtime support. The parser
 suite automatically discovers and parses all top-level `samples/*.fib` files;

@@ -77,10 +77,6 @@ pub enum ExpressionKind {
     ArrayLiteral {
         elements: Vec<Expression>,
     },
-    //
-    QualifiedAccess {
-        segments: Vec<String>,
-    },
     /// A compile-time type value used in expression position (e.g., as a generic argument).
     TypeValue(TypeExpression),
     /// The void expression simply means do nothing

@@ -1,4 +1,4 @@
-# Semantic types — obsolete typed-AST path
+# Semantic types
 
 The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
@@ -36,4 +36,4 @@ owned SSA IDs/types and never falls back to direct AST emission. General source
 lowering remains unfinished.
 
 See [type-resolution behavior](../../../type-resolution.md),
-[analyzer](analyze/README.md) and [validation](../../tests/README.md).
+[analyzer](analyzer.md) and [validation](../../tests/README.md).

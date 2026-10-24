@@ -530,6 +530,7 @@ mod tests {
                 BuiltinType::from_name(expected.name()),
                 Some(expected.clone())
             );
+            assert_eq!(expected.to_string(), spelling);
             let tokens: Vec<_> = Tokenizer::new(spelling).collect();
             assert_eq!(tokens.len(), 1, "{spelling}");
             assert_eq!(

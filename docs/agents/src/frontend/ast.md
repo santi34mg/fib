@@ -22,8 +22,8 @@ Bindings use declaration or local identities; members use owner/type plus field,
 variant or length identity, not lexical bindings. Function bindings belong on
 signatures; parameter and multi-binding sites have their own slots. Label slots
 are reserved but not embedded because label syntax is undefined. The generic
-parameter string list is reserved and not parsed. Legacy `QualifiedAccess` is not
-the parser-produced annotated qualified-name representation.
+parameter string list is reserved and not parsed. Parsed paths use annotated
+qualified identifiers.
 
 Unified bindings use `VariableDeclaration` with independent `is_pub`, `is_const`,
 and `is_comp` flags plus optional `pub_scope`; `const` and `comp` are mutually exclusive in the grammar.

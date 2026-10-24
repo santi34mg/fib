@@ -813,11 +813,6 @@ impl TypeContext<'_> {
                 super::constant::check_cast(source, target, self.types)?;
                 target
             }
-            E::QualifiedAccess { .. } => {
-                return Err(type_error(
-                    "legacy qualified access has no semantic annotation",
-                ));
-            }
         };
         Ok(self.value(ty))
     }

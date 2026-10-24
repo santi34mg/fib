@@ -1,11 +1,11 @@
-# Tokenizer — legacy lexer documentation URL
+# Tokenizer
 
 The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package metadata/scoped
 visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
 
-The old `src/frontend/lexer.rs` path is obsolete. Current implementation is
+Current implementation is
 [`tokenizer.rs`](../../../../src/frontend/tokenizer.rs) and its per-concern
 `tokenizer/` modules; token definitions live in `tokens/`.
 
@@ -20,8 +20,7 @@ bases, decimal floats, string/character escapes, operators and punctuation.
 Bare canonical builtin type names use bit widths (`int8`, `uint64`, `float32`);
 `int`/`uint` alias 32-bit types. Primitive spellings emit ordinary identifier tokens and resolve through an
 implicit prelude; protected bare type names cannot be shadowed. `@` remains
-punctuation for diagnostics; former builtin-call spellings are rejected. Do not use legacy byte-width
-mapping helpers as the current grammar; some comments and Display output are stale.
+punctuation for diagnostics; former builtin-call spellings are rejected.
 
 Unified declaration modifiers `pub`, `const`, and `comp` tokenize as keywords.
 `type` is an ordinary identifier denoting the prelude metatype; legacy

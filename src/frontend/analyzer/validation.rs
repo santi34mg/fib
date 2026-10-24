@@ -1147,11 +1147,6 @@ impl Validator<'_> {
                         }
                     }
                 }
-                E::QualifiedAccess { .. } => {
-                    return Err(type_error(
-                        "legacy qualified access cannot be type-complete",
-                    ));
-                }
                 E::Literal(literal) => {
                     let ty = self.types.get(info.ty)?;
                     let valid = match literal {

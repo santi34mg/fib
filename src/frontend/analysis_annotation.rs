@@ -15,8 +15,7 @@
 //! `LabelAnnotation` is not embedded yet: label syntax is undefined. The reserved
 //! `FunctionSignature::generic_parameters` string list is not parsed yet either;
 //! once its syntax is defined, each parameter needs its own binding-bearing node.
-//! The legacy, unproduced `ExpressionKind::QualifiedAccess` variant has no name
-//! slot: parsed paths use the annotated `QualifiedIdentifier` instead.
+//! Parsed paths use the annotated `QualifiedIdentifier`.
 
 use crate::frontend::{
     identifier::{DeclId, LabelId, LocalId, ResolvedName},

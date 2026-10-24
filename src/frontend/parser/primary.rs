@@ -4,7 +4,7 @@ use crate::diagnostics::Span;
 use crate::frontend::ast::qualified_name::QualifiedIdentifier;
 use crate::frontend::{
     ast::expression::{Expression, ExpressionKind},
-    tokens::{Keyword, Operator, Punctuation, Token, TokenKind, builtin::Builtin},
+    tokens::{Keyword, Operator, Punctuation, Token, TokenKind},
 };
 
 use super::Parser;
@@ -95,15 +95,13 @@ where
         if let Some(token) = self.peek()
             && (matches!(
                 token.kind,
-                TokenKind::Builtin(Builtin::BuiltinType(_))
-                    | TokenKind::Keyword(
-                        Keyword::Struct
-                            | Keyword::Enum
-                            | Keyword::Function
-                            | Keyword::Const
-                            | Keyword::Comp
-                    )
-                    | TokenKind::Operator(Operator::Star)
+                TokenKind::Keyword(
+                    Keyword::Struct
+                        | Keyword::Enum
+                        | Keyword::Function
+                        | Keyword::Const
+                        | Keyword::Comp
+                ) | TokenKind::Operator(Operator::Star)
             ) || self.starts_tuple_type_value())
         {
             let ty = self
