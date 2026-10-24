@@ -1,60 +1,76 @@
 # fib-lsp
 
-A small, dependency-free language server for the [Fib language](../README.md). It
-provides semantic syntax highlighting for:
+The native Rust language server uses Fib's compiler tokenizer, parser and analyzer
+for semantic highlighting and diagnostics. Rebuild it after compiler updates;
+there is no separate editor grammar or JavaScript language implementation.
 
-- keywords, comments, strings, numbers, and operators
-- builtin types, functions, and properties
-- functions, types, namespaces, variables, fields, and enum members
+Diagnostics cover declaration collection, aliases/name resolution, types and
+members, generic specialization, initialization, control flow, and compiler
+warnings. Independent failures are collected across files and statements.
+Checks that depend on failed declarations are deferred to avoid cascades.
+Parsing currently reports the first syntax error in each file, while other
+available files continue through analysis. Hover, completion and navigation
+are not implemented.
 
-Highlighting follows the current tokenizer/parser syntax: bare builtin types
-(`int32`, `uint64`, `string`), `[pub] [const | comp]` binding modifiers,
-`name := value` bindings, and `.len`. Modifiers are highlighted independently
-for each binding in multi-variable declarations.
-String helpers are ordinary library functions; `concat`, `str_len`, and `str_eq` are ordinary identifiers. Their former `@` spellings are rejected by the compiler.
-Legacy `var`/`import` keywords and `@int4`-style types are not supported.
-Identifier classification is syntax-based, not compiler-backed name resolution;
-the server does not provide parsing or type-checking diagnostics.
+## Install and run
 
-## Requirements
-
-Node.js 20 or newer.
-
-## Run
-
-Run the server over standard input/output:
+From the compiler checkout, using the repository's Rust toolchain:
 
 ```sh
-node /path/to/fib/lsp/src/server.js
+cargo install --path . --no-default-features --bin fib-lsp
+fib-lsp
 ```
 
-To install the `fib-lsp` command globally from a checkout:
+The server speaks LSP over stdin/stdout. No LLVM or Node runtime is needed.
+For development:
 
 ```sh
-npm install --global /path/to/fib/lsp
+cargo build --no-default-features --bin fib-lsp
+./target/debug/fib-lsp
 ```
 
-## Editor setup
+The former npm package and `lsp/src/server.js` launcher have been removed.
+Replace editor commands pointing at Node or that script with `fib-lsp` or the
+absolute path to the native executable.
+
+## Projects and editing
+
+The server finds the nearest ancestor `build.fib`, stopping at the containing
+workspace root when supplied by the editor. It uses the compiler's existing
+build interpreter to select the exact source files. Its supported build-language
+subset and file/path validation are the same as command-line compilation.
+Build-file analysis includes the compiler-provided `build_api` namespace.
+
+Open documents, including `build.fib`, override disk contents without writing
+source files. Unopened dependencies are read from disk. Standalone files and
+files outside a valid project plan are checked independently and need no `main`.
+An invalid build file receives diagnostics; other open files retain highlighting
+until a valid plan can be produced. Planning does not emit objects or executables.
+
+Full-document edits trigger background analysis. Results from obsolete snapshots
+are discarded. Closing documents removes their overlays; watched `.fib` changes
+reload disk dependencies and project membership. Clients that support dynamic
+watch registration are registered automatically; VS Code also supplies a watcher.
+Clients without file watching refresh dependencies on the next document edit.
+Diagnostics use UTF-16 positions and include document versions for open files.
+
+## Editors
 
 ### Neovim 0.11+
 
-Add this to your configuration, replacing the command path if the package is
-not installed globally:
-
 ```lua
 vim.filetype.add({ extension = { fib = "fib" } })
-
 vim.lsp.config("fib_lsp", {
   cmd = { "fib-lsp" },
   filetypes = { "fib" },
-  root_markers = { ".git" },
+  root_markers = { "build.fib", ".git" },
 })
 vim.lsp.enable("fib_lsp")
 ```
 
 ### Helix
 
-Add this to `~/.config/helix/languages.toml`:
+Add to `~/.config/helix/languages.toml`:
 
 ```toml
 [language-server.fib-lsp]
@@ -64,213 +80,84 @@ command = "fib-lsp"
 name = "fib"
 scope = "source.fib"
 file-types = ["fib"]
-roots = [".git"]
+roots = ["build.fib", ".git"]
 language-servers = ["fib-lsp"]
 ```
 
-An editor must have a grammar or basic language entry for `.fib` files before
-it can attach any language server. Semantic-token-capable clients then use the
-server's highlighting without a TextMate or tree-sitter grammar.
-
 ### Zed
 
-A local Rust/Wasm extension lives at [`editors/zed`](editors/zed). It registers
-`Fib` for `.fib` files and launches the existing JS server over stdio. It does
-not bundle or download a server, Node runtime, or Tree-sitter grammar.
+The independent Rust/Wasm extension in `editors/zed` registers `.fib` files
+and launches `fib-lsp` from the worktree PATH. It does not bundle the server.
 
-1. Install a current Zed release and Node.js 20+.
-2. Make the server available with `npm install --global /path/to/fib/lsp`, with
-   both `fib-lsp` and `node` on Zed's worktree PATH. Alternatively, skip the
-   global installation and use the binary override below.
-3. Install Rust through [rustup](https://rustup.rs/), then prepare the extension
-   toolchain:
+1. Install `fib-lsp` as above and ensure Zed inherits its PATH.
+2. Prepare the extension toolchain:
 
    ```sh
    rustup toolchain install stable
    rustup target add --toolchain stable wasm32-wasip2
    ```
 
-   This extension is an independent Cargo package and does not build Fib or
-   LLVM. Its local `rust-toolchain.toml` selects stable Rust with
-   `wasm32-wasip2`, rather than inheriting the compiler repository's pinned
-   toolchain. The Wasm target must be installed for the same toolchain used to
-   build the extension. Fully quit and reopen Zed after installing rustup or
-   changing PATH so it inherits the updated environment.
-4. Run `zed: install dev extension` from Zed's command palette (or use
-   **Extensions → Install Dev Extension**) and select
-   `/path/to/fib/lsp/editors/zed`, **not** the repository root or `lsp/`.
-   The initial build needs access to crates.io for Rust dependencies.
-5. Enable LSP highlighting in Zed's settings:
+3. Run **zed: install dev extension** and select `lsp/editors/zed`.
+4. Enable highlighting:
 
    ```json
-   {
-     "languages": {
-       "Fib": {
-         "semantic_tokens": "full"
-       }
-     }
-   }
+   { "languages": { "Fib": { "semantic_tokens": "full" } } }
    ```
 
-To run directly from the checkout without a global npm installation, merge this
-into the same settings file, replacing both paths with absolute paths on the
-machine running the language server:
+For a checkout executable, set:
 
 ```json
 {
   "lsp": {
     "fib-lsp": {
       "binary": {
-        "path": "/absolute/path/to/node",
-        "arguments": ["/absolute/path/to/fib/lsp/src/server.js"]
+        "path": "/absolute/path/to/fib/target/debug/fib-lsp",
+        "arguments": []
       }
     }
   }
 }
 ```
 
-`binary.path` is the executable, not a JS file or a shell command string;
-`binary.arguments` is passed verbatim as separate arguments (paths with spaces
-need no shell quoting). You can also point it at an installed `fib-lsp`
-executable without arguments. Optional `binary.env` entries override the
-worktree shell environment. Without a path override, the extension looks up
-`fib-lsp` using Zed's worktree PATH and preserves that environment so the
-`#!/usr/bin/env node` launcher can find Node. It deliberately does not infer the
-checkout location from the extension's Wasm working directory.
-
-Open or reopen a `.fib` file and confirm the language picker says **Fib**.
-If your settings restrict `language_servers`, include `"fib-lsp"` under
-`languages.Fib.language_servers`. The server should appear in Zed's language
-server status; try `fn main() int32 { return 1; }` to check highlighting, then
-edit the file to check updates. After changing the launch settings, run
-`editor: restart language server`. Use `zed: open log` for build/startup errors;
-check Node's version and the absolute binary paths if startup fails.
-
-#### Troubleshooting Zed installation
-
-**System Rust already installed (for example, Void Linux's `/usr/bin/cargo`).**
-Rustup can coexist with the system installation; uninstalling distro packages is
-not required. If the official installer refuses because Rust is already
-installed, download and run it with the path check explicitly skipped:
-
-```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
-RUSTUP_INIT_SKIP_PATH_CHECK=yes sh /tmp/rustup-init.sh
-```
-
-After completing the installer, load its environment and check command lookup:
-
-```sh
-. "$HOME/.cargo/env"
-command -v cargo
-command -v rustup
-```
-
-Cargo should resolve to `$HOME/.cargo/bin/cargo`, not `/usr/bin/cargo`. If it
-still resolves to the system executable, put rustup first in PATH:
-
-```sh
-export PATH="$HOME/.cargo/bin:$PATH"
-```
-
-For zsh, run `rehash` and add that export at the end of `~/.zshrc`, after other
-PATH changes. Other shells should use their corresponding startup file. Fully
-quit Zed and launch it from the corrected terminal with `zed /path/to/fib`.
-
-**`Failed to install dev extension: compiling Rust extension`.** This is a
-summary, not the underlying error. Run `zed: open log` and inspect the following
-`Caused by` message. Common causes:
-
-- **Target not installed / rustup unavailable:** ensure Zed can find rustup and
-  run the stable toolchain/target installation commands above.
-- **`can't find crate for core`:** the selected toolchain lacks the Wasm target.
-  Do not remove the extension's local `rust-toolchain.toml`: without it, the
-  parent repository's compiler pin can select a different toolchain from stable.
-- **Dependency downloads fail:** the initial build needs network access to
-  crates.io, even though the JS language server itself has no npm dependencies.
-
-To isolate compilation from Zed, run from the repository root:
-
-```sh
-cargo +stable build --manifest-path lsp/editors/zed/Cargo.toml --target wasm32-wasip2
-```
-
-Once this succeeds, retry `zed: install dev extension` with `lsp/editors/zed`.
-
-**`org.freedesktop.portal.Desktop was not provided by any .service files`.**
-In the observed session, this warning came from Zed trying to prevent idle sleep,
-not from extension compilation. It does not block Fib highlighting. To resolve
-it, install `xdg-desktop-portal` and the appropriate backend for your desktop
-(e.g. GTK, KDE, or wlroots), ensure the desktop session has a working session
-D-Bus, then log out and back in. Manually launched window-manager sessions may
-need `dbus-run-session`; follow your desktop/distribution's setup instructions.
-
-#### Support and validation
-
-This extension intentionally omits `grammar`. Although the
-[language-extension docs](https://zed.dev/docs/extensions/languages) call it
-required, Zed source reviewed at revision
-[`322cd509`](https://github.com/zed-industries/zed/tree/322cd509dcccaee1f6bc44725d270598ae8171ad)
-accepts it as optional in
-[`LanguageConfig`](https://github.com/zed-industries/zed/blob/322cd509dcccaee1f6bc44725d270598ae8171ad/crates/language_core/src/language_config.rs)
-and explicitly loads languages without a grammar in
-[`LanguageRegistry`](https://github.com/zed-industries/zed/blob/322cd509dcccaee1f6bc44725d270598ae8171ad/crates/language/src/language_registry.rs).
-The [extension host](https://github.com/zed-industries/zed/blob/322cd509dcccaee1f6bc44725d270598ae8171ad/crates/extension_host/src/extension_host.rs)
-also passes the optional grammar through when registering extension languages.
-Highlighting therefore requires `semantic_tokens: "full"` (off by default in
-Zed); without the server there is no syntax coloring. There are no Tree-sitter
-queries, syntax-aware indentation, outline, or structural navigation. The LSP
-still only provides syntax-based semantic tokens, not diagnostics, completion,
-or compiler-backed analysis. The Wasm build succeeded with stable Rust, and a
-user confirmed successful local installation and highlighting on Void Linux on
-2026-10-17 after the toolchain fix. Older Zed versions may not support these
-settings; no minimum Zed release has been established.
-See also [Zed's dev-extension instructions](https://zed.dev/docs/extensions/developing-extensions).
+The extension preserves binary arguments and environment overrides. Its local
+`rust-toolchain.toml` uses stable with `wasm32-wasip2`, independently of the
+compiler toolchain. Fully restart Zed after PATH/toolchain changes. Use
+**zed: open log** for underlying extension build or server startup errors.
+No Tree-sitter grammar is bundled, so syntax coloring relies on semantic tokens;
+structural indentation and outline are not provided by this extension.
 
 ### Visual Studio Code
 
-Unlike Neovim and Helix, VS Code has no built-in way to attach an LSP server
-by configuration alone, so a minimal extension lives at
-[`editors/vscode`](editors/vscode). It registers the `fib` language for
-`.fib` files and spawns `../../src/server.js` over stdio via
-`vscode-languageclient`.
+The extension in `editors/vscode` registers Fib and starts the native server.
+Install `fib-lsp`, run `npm install` in the extension directory, then launch the
+extension through VS Code's extension development workflow or package it using
+`npx @vscode/vsce package`. Set `fib.lsp.path` to an absolute executable path
+when `fib-lsp` is not on PATH. The extension does not bundle a server binary.
 
-To use it from a checkout:
+## Development and validation
 
-```sh
-cd /path/to/fib/lsp/editors/vscode
-npm install
-```
-
-Then either:
-
-- Open `editors/vscode` in VS Code and press `F5` to launch an Extension
-  Development Host with it loaded, or
-- Package and install it permanently:
-
-  ```sh
-  npx @vscode/vsce package
-  code --install-extension fib-lsp-vscode-0.1.0.vsix
-  ```
-
-If `fib-lsp` isn't at `../../src/server.js` relative to the extension (e.g.
-you installed it globally), set `fib.lsp.path` in your VS Code settings to
-the absolute path of `server.js` or the `fib-lsp` binary.
-
-## Development
+From the repository root:
 
 ```sh
-npm test
+cargo fmt --check
+cargo check --no-default-features --all-targets
+cargo test --no-default-features
+cargo clippy --no-default-features --all-targets -- -D warnings
 ```
 
-Check the independent Zed extension (no LLVM required):
+`tests/lsp.rs` exercises the actual framed stdio server; frontend and analyzer
+unit tests cover diagnostics, recovery and semantic tokens. The independent
+Zed extension can be checked with:
 
 ```sh
-cargo fmt --manifest-path editors/zed/Cargo.toml -- --check
-cargo test --manifest-path editors/zed/Cargo.toml --no-default-features
-cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2 --release
+cargo fmt --manifest-path lsp/editors/zed/Cargo.toml -- --check
+cargo test --manifest-path lsp/editors/zed/Cargo.toml
 ```
 
-The Rust tests cover command/PATH selection, argument forwarding, environment
-merging, and the missing-server error. They do not replace the interactive Zed
-smoke check above; native Cargo tests do not exercise Zed's host API.
+The VS Code launcher tests run without an editor host:
+
+```sh
+node --test lsp/editors/vscode/test/extension.test.js
+```
+
+Automated protocol/launcher tests do not replace an interactive editor smoke test.

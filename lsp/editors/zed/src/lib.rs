@@ -35,7 +35,7 @@ fn server_command(
     let command = match binary.path {
         Some(path) => path,
         None => which("fib-lsp").ok_or_else(|| {
-            "fib-lsp not found on the worktree PATH. Install Node.js 20+ and run `npm install --global /path/to/fib/lsp`, or configure lsp.fib-lsp.binary with a Node executable and the absolute path to lsp/src/server.js."
+            "fib-lsp not found on the worktree PATH. Run `cargo install --path /path/to/fib --no-default-features --bin fib-lsp`, or configure lsp.fib-lsp.binary.path with the native executable path."
                 .to_string()
         })?,
     };
@@ -62,41 +62,41 @@ mod tests {
             None,
             |name| {
                 assert_eq!(name, "fib-lsp");
-                Some("/npm/bin/fib-lsp".into())
+                Some("/cargo/bin/fib-lsp".into())
             },
-            vec![("PATH".into(), "/npm/bin:/usr/bin".into())],
+            vec![("PATH".into(), "/cargo/bin:/usr/bin".into())],
         )
         .unwrap();
-        assert_eq!(command.command, "/npm/bin/fib-lsp");
+        assert_eq!(command.command, "/cargo/bin/fib-lsp");
         assert!(command.args.is_empty());
-        assert_eq!(command.env[0].1, "/npm/bin:/usr/bin");
+        assert_eq!(command.env[0].1, "/cargo/bin:/usr/bin");
     }
 
     #[test]
-    fn supports_explicit_node_script_and_environment() {
+    fn supports_explicit_binary_arguments_and_environment() {
         let command = server_command(
             Some(CommandSettings {
-                path: Some("/usr/bin/node".into()),
-                arguments: Some(vec!["/checkout with spaces/fib/lsp/src/server.js".into()]),
-                env: Some([("NODE_OPTIONS".into(), "--no-warnings".into())].into()),
+                path: Some("/checkout with spaces/fib/target/debug/fib-lsp".into()),
+                arguments: Some(vec!["--example-argument".into()]),
+                env: Some([("FIB_TEST_ENV".into(), "test-value".into())].into()),
             }),
             |_| panic!("explicit binary must not require fib-lsp on PATH"),
             vec![
                 ("PATH".into(), "/usr/bin".into()),
-                ("NODE_OPTIONS".into(), "old".into()),
+                ("FIB_TEST_ENV".into(), "old".into()),
             ],
         )
         .unwrap();
-        assert_eq!(command.command, "/usr/bin/node");
         assert_eq!(
-            command.args,
-            ["/checkout with spaces/fib/lsp/src/server.js"]
+            command.command,
+            "/checkout with spaces/fib/target/debug/fib-lsp"
         );
+        assert_eq!(command.args, ["--example-argument"]);
         assert_eq!(command.env.len(), 2);
         assert!(
             command
                 .env
-                .contains(&("NODE_OPTIONS".into(), "--no-warnings".into()))
+                .contains(&("FIB_TEST_ENV".into(), "test-value".into()))
         );
         assert!(command.env.contains(&("PATH".into(), "/usr/bin".into())));
     }
@@ -105,7 +105,7 @@ mod tests {
     fn missing_server_reports_installation_and_override_options() {
         let error = server_command(None, |_| None, vec![]).unwrap_err();
         assert!(error.contains("fib-lsp not found"));
-        assert!(error.contains("npm install --global"));
+        assert!(error.contains("cargo install"));
         assert!(error.contains("lsp.fib-lsp.binary"));
     }
 

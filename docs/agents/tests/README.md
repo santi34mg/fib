@@ -124,6 +124,32 @@ IR array corruption, and package membership/scoped visibility/re-exports.
 Package-rooted discovery and runtime indexing/slices remain deferred; these runs
 do not establish support for them.
 
+## Native language server validation (2026-10-24)
+
+The Rust `fib-lsp` shares compiler tokens, source overlays, parsing, collecting
+analysis and build planning. The existing negative type/flow fixture helpers
+also assert that collecting analysis retains their expected diagnostic messages.
+Additional analyzer cases cover independent failures, blocked dependencies,
+scopes, aliases/cycles, warnings and bounded generic specialization.
+`frontend::tooling` tests cover semantic tokens, UTF-16/CRLF/multiline ranges,
+syntax failures and explicitly unavailable sources.
+
+Verified in this checkout:
+
+- No-default suite: 728 library tests, four native-server unit tests and five
+  framed-stdio LSP integration tests passed.
+- LLVM 21 suite: 739 library tests, four server unit tests, 28 executable
+  acceptance tests and five LSP integration tests passed.
+- Formatting, no-default all-target checks and strict Clippy passed.
+- Zed's four native launcher tests and the VS Code launcher test file passed.
+
+Protocol tests cover initialization/shutdown, multiple diagnostics, unsaved
+sources/build files, cross-file planning, current document versions, token
+requests, diagnostic clearing, Unicode, disk dependency watches and source
+membership changes. No interactive editor smoke test was performed. Parsing
+remains first-error-per-file; failed generic instances are checked strictly and
+collected at their callers, and dependent regions remain blocked until fixed.
+
 ## Validation records
 
 The following results are historical milestone runs, not current test totals.

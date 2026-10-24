@@ -1,26 +1,32 @@
 {
   "name": "fib-lsp-vscode",
   "displayName": "Fib Language Support",
-  "description": "Semantic syntax highlighting for Fib, backed by fib-lsp",
+  "description": "Compiler-backed highlighting and diagnostics for Fib",
   "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Programming Languages"],
+  "categories": [
+    "Programming Languages"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/santi34mg/fib.git",
     "directory": "lsp/editors/vscode"
   },
-  "activationEvents": ["onLanguage:fib"],
+  "activationEvents": [
+    "onLanguage:fib"
+  ],
   "main": "./src/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "fib",
-        "extensions": [".fib"],
+        "extensions": [
+          ".fib"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -30,18 +36,18 @@
         "fib.lsp.path": {
           "type": "string",
           "default": "",
-          "description": "Path to the fib-lsp entry point (server.js) or the fib-lsp binary. Leave empty to use the copy bundled with this extension."
+          "description": "Path to the native fib-lsp executable. Leave empty to use fib-lsp from PATH. Install it with cargo install --path /path/to/fib --no-default-features --bin fib-lsp."
         }
       }
     }
-  },
-  "scripts": {
-    "vscode:prepublish": "node scripts/copy-server.js"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0"
+  },
+  "scripts": {
+    "test": "node --test"
   }
 }

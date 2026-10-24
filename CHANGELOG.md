@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Language server
+
+- Replace the standalone JavaScript highlighter with a native `fib-lsp` Rust binary using the compiler frontend, with semantic tokens, collecting analyzer diagnostics/warnings, unsaved source overlays and `build.fib` project planning. Update editor launchers to use the native executable; install with `cargo install --path . --no-default-features --bin fib-lsp`.
+
+
 ### Removed
 
 - Removed unused backend phase-planning APIs, legacy builtin tokens and byte-width lookup, the unproduced qualified-access AST variant, and the experimental standard-library tree. Active primitive types and LLVM emission remain supported. Renamed frontend implementation guides to match current modules and updated references.

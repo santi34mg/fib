@@ -32,3 +32,18 @@ passing inline phases under `name_resolution`; see [validation](../../tests/READ
 Parsing a construct is not proof of semantic or runtime support. The parser
 suite automatically discovers and parses all top-level `samples/*.fib` files;
 these examples are syntax coverage, not semantic or executable regressions.
+
+## Editor analysis
+
+The native `fib-lsp` uses `frontend::tooling` for compiler-backed tokens and
+collecting diagnostics. `source::SourceProvider` shares disk/overlay loading
+between parsing and build planning. Open documents override source reads;
+compilation continues to use disk sources by default.
+
+`Analyzer::analyze_collecting` and `analyze_available` return `AnalysisReport`,
+which deliberately cannot enter lowering. Recovery tracks failed statements and
+bindings, skips dependent work, and keeps successful annotations for highlighting.
+Unavailable source files retain explicit blocked identities. Parser failures
+remain first-error-per-file; available files continue analysis. Generic instance
+rechecking stays strict within each instance, with failures collected by callers.
+`Analyzer::analyze` and annotation validators retain their strict contracts.

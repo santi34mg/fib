@@ -27,6 +27,12 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   multi-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
   Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Concrete generic functions, fixed-array values and multi-binding locals execute. Defer, runtime globals, runtime indexing/slices and indirect calls still fail.
+- `src/bin/fib-lsp.rs` implements a native stdio LSP sharing compiler tokenization,
+  parsing, collecting analysis and build planning. `frontend::source` supplies
+  unsaved overlays; `frontend::tooling` produces highlights and diagnostics.
+  Collecting reports retain partial annotations and explicitly unavailable files;
+  only strict validated `AnalyzedProject` values enter lowering. Build/install
+  with `--no-default-features --bin fib-lsp`; see [LSP setup](lsp/README.md).
 - Primitive types and `type` lex as ordinary identifiers and resolve through a
   protected implicit prelude. Direct same-family literal cast context and explicit
   numeric/bool conversions share constant/runtime rules. Shallow readonly views,

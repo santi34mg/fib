@@ -58,6 +58,17 @@ loader, `compile_project` or `check_project`. `tests/executable.rs` checks real
 compile/link/run behavior. Public architecture records alone do not certify
 successful analysis, verification or support by the emitter.
 
+## Language server
+
+`src/bin/fib-lsp.rs` is a native stdio server sharing compiler tokens, parsing,
+analysis and build planning through `frontend::tooling` and `frontend::source`.
+`Analyzer::analyze_collecting` returns an `AnalysisReport` with partial semantic
+information and independent diagnostics; it is never a lowering input.
+`Analyzer::analyze_available` explicitly tracks files unavailable after parse/IO
+errors and suppresses dependent checks. Strict `Analyzer::analyze` retains its
+validated-project contract. Identifier annotation locations support highlighting
+without a separate language grammar. See [LSP setup](../../lsp/README.md).
+
 ## Specification implementation gaps
 
 Primitive names resolve through protected synthetic prelude declarations. Direct
