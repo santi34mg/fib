@@ -32,7 +32,7 @@ Absent/known-true conditions have no condition-false exit; exit blocks are creat
 only when reachable. Known-false bodies are prevalidated without emitting blocks.
 Known bool conditions use the same evaluator as frontend flow checking. Helpers have deterministic identity-based
 linker names, internal linkage and the limited direct Fib fastcc convention
-(scalars, structs and pointers); physical ABI
+(scalars, structs, enums and pointers); physical ABI
 argument placement belongs exclusively to the backend.
 
 `PipelineGoal::{Check, Ir, Objects, Binary}` stops after analysis, verified IR,
@@ -72,5 +72,6 @@ Ordinary dereference emits a null-check/trap CFG. The automatically registered
 `memory::unchecked_deref` intrinsic yields a typed place without that guard. It
 emits memory operations rather than a builtin declaration/call and does not select
 the bootstrap entry. See [struct/storage semantics](../../struct-storage-semantics.md).
-Defer, runtime globals, arrays/slices/enums, indirect calls and concrete generic
+Enum constructors, payload copies and switches lower through the same verified pipeline. See [enum semantics](../../enum-semantics.md).
+Defer, runtime globals, arrays/slices, indirect calls and concrete generic
 bodies remain unsupported.

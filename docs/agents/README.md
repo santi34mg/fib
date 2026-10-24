@@ -26,7 +26,7 @@ conversions. Native helpers use a limited direct Fib fastcc ABI; main keeps the
 C int32 entry contract. Struct values, partial initialization, stack storage,
 field/pointer mutation and internal struct/pointer calls work. Ordinary dereference
 traps on null; `memory::unchecked_deref(pointer)` returns an unchecked place.
-Defer, runtime globals and broader runtime representations remain unfinished. See
+Enum constructors, payload copies, switches, storage and internal calls also execute; see [enum semantics](../enum-semantics.md). Defer, runtime globals and broader runtime representations remain unfinished. See
 [scalar semantics](../scalar-semantics.md) for numeric rules and
 [struct/storage semantics](../struct-storage-semantics.md) for memory rules.
 `build.fib` has an

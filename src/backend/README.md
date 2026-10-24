@@ -9,13 +9,13 @@ only after LLVM module verification. There is no frontend-to-LLVM fallback.
 
 The C entry ABI supports 32-bit integer parameters/results and void returns.
 Internal Fib helpers support direct Bool, fixed-width integers, IEEE floats,
-structs and typed pointers as parameters/results, or void, using LLVM fastcc.
+structs, enums and typed pointers as parameters/results, or void, using LLVM fastcc.
 This limited direct convention is
 not the full production Fib ABI or a general external C interoperability contract.
 Definitions support multiple blocks, entry arguments, block parameters/PHIs,
 Constant/direct Call/arithmetic/comparison/unary/numeric Cast instructions,
 aggregate construction/extract/insert, stack/field addresses, loads/stores, and
-Jump/Branch/Return/Trap/Unreachable. Comparisons use operand signedness and IEEE
+Jump/Branch/Switch/Return/Trap/Unreachable. Comparisons use operand signedness and IEEE
 ordered predicates, except NaN inequality is unordered. Bool supports equality.
 Integer arithmetic wraps; runtime guards protect division, shifts and float-to-int
 casts before LLVM can produce poison. Guards update PHI predecessor mappings.
@@ -47,6 +47,8 @@ mixed-convention test uses a test-only reversed-argument policy for internal Fib
 functions; the test permutation is separate from production scalar fastcc classification.
 Source helpers select Fib convention in lowering and retain internal linkage;
 main/build entries select C. Neither convention silently falls back to another.
+
+Enums use target-derived tag-plus-union layout, verified active-payload extraction and direct internal fastcc boundaries; see [enum semantics](../../docs/enum-semantics.md). Switch successor occurrences have separate LLVM predecessors for PHIs.
 
 Broader C ABI widths, varargs, multiple results, globals and unsupported instruction/
 type families still return errors. General Fib ABI policy and source ABI syntax

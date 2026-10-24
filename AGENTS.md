@@ -21,7 +21,7 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   the driver validates the selected entry contract and chooses the IR consumer. Program lowering supports
   single-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
-  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `memory::unchecked_deref(pointer)` yields an unchecked place. Defer, runtime globals, arrays/slices/enums and generic bodies still fail.
+  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Defer, runtime globals, arrays/slices and generic bodies still fail.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
   Build files have an initial `build_api` semantic namespace and a narrow verified-IR
   path for literal source/entry/output operations. It finalizes deterministic plans
@@ -29,10 +29,10 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   broader builder orchestration remain unfinished.
 - `src/ir/` is owned SSA. The transactional builder allocates blocks/values/slots;
   verification checks scalar constants/calls/arithmetic/unary/casts/comparisons and jump/branch/return/trap/unreachable,
-  ownership, signatures, reachability and dominance. Structs, typed pointers,
+  ownership, signatures, reachability and dominance. Enum operations, constants and switches validate payload signatures, tags and active-variant extraction proofs. Structs, enums, typed pointers,
   stack-slot ownership and aggregate/memory operations are verified; globals and
   other unsupported families still fail.
-- LLVM 21 emits multi-block SSA with PHIs/backedges, the C 32-bit integer/void entry ABI and internal direct scalar/struct/pointer Fib fastcc ABI.
+- LLVM 21 emits multi-block SSA with PHIs/backedges, the C 32-bit integer/void entry ABI and internal direct scalar/struct/enum/pointer Fib fastcc ABI.
   ABI classification is per signature; one shared description controls a function
   and calls to it. `emit_llvm(ir, target)` remains the sole public entry point.
   Full production Fib ABI, external C interoperability and broader representations

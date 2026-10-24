@@ -14,11 +14,11 @@ terminators, and requires an explicit entry and every block to be terminated.
 builder or failing any finish check leaves the original IR unchanged. Cloning
 is an initial correctness choice, not an optimized construction strategy.
 
-`verify_ir` supports Bool, fixed-width integers (1..=128), IEEE floats, nominal structs, typed pointers and
-interpreter-owned Bytes, typed scalar/null constants, declarations and definitions,
+`verify_ir` supports Bool, fixed-width integers (1..=128), IEEE floats, nominal structs/enums, typed pointers and
+interpreter-owned Bytes, typed scalar/null/struct/enum constants, declarations and definitions,
 block parameters, Constant/direct Call/arithmetic/comparison/unary/numeric Cast
 instructions, Aggregate/ExtractField/InsertField, StackAddress/FieldAddress,
-Load/Store, and Jump/Branch/Return/Trap/Unreachable terminators. It checks:
+Load/Store, Enum/EnumTag/EnumField, and Jump/Branch/Switch/Return/Trap/Unreachable terminators. It checks:
 
 - References, unique symbol names, arena membership and function ownership.
 - Unique SSA definitions and reciprocal definition positions.
@@ -31,7 +31,7 @@ Load/Store, and Jump/Branch/Return/Trap/Unreachable terminators. It checks:
 Empty IR is valid and actually checked. Stack slots have checked types and unique
 function ownership/body membership; projections and load/store signatures are
 verified. Struct layouts reject by-value cycles and permit pointer recursion.
-Globals, unsupported types/constants, switches and other instruction families
+Globals, unsupported types/constants and other instruction families
 fail explicitly. Bytes have no memory or struct-field representation. Unreachable blocks are rejected rather than assigned arbitrary
 values/dominance. `IrError::Invalid` identifies malformed supported IR;
 `NotImplemented` identifies unsupported verification families.
@@ -52,16 +52,15 @@ fallthrough. Values are immutable; mutable storage requires explicit addresses,
 loads and stores. `Display` remains a diagnostic dump marked unverified.
 
 The broader records describe future support, not executable guarantees:
-arrays/slices, tuples, enums, globals, nonnumeric casts and switch validation
-remain unfinished. Bytes are interpreter-only.
+arrays/slices, tuples, globals and nonnumeric casts remain unfinished. Bytes are interpreter-only.
 Unit/never/character/string runtime representation, indirect calls, generic body
 specialization and general source lowering still need implementation.
 
-`ir::lowering::lower` lowers fixed-width integer/float/bool and struct/pointer
+`ir::lowering::lower` lowers fixed-width integer/float/bool and struct/enum/pointer
 helpers and direct calls,
 initialized locals, assignment, arithmetic, bitwise/shifts, explicit numeric casts,
 short-circuit booleans, comparisons, conditionals, while loops, break/continue and returns.
-SSA branch joins use block parameters. Structs, uninitialized locals and
+Enums support constructors, payload copies and switches; see [enum semantics](../../docs/enum-semantics.md). SSA branch joins use block parameters. Structs, uninitialized locals and
 address-taken bindings use stack storage. Ordinary source dereference emits an
 explicit null-check/trap CFG; `memory::unchecked_deref` omits that check. The IR
 verifier proves structural memory typing, not allocation validity or initialization.
@@ -155,7 +154,7 @@ successful lookup, or a formatted dump as evidence that verification ran.
 
 - Broader nonnumeric casts, target restrictions and representations beyond the
   implemented scalar and struct/storage semantics.
-- Aggregate/slice/enum layout, ABI legalization of multiple results, varargs,
+- Array/slice/tuple layout, ABI legalization of multiple results, varargs,
   indirect calls, builtins/intrinsics and runtime helpers. Current direct calls
   identify functions by ID; no claim of complete language coverage is made.
 - Pointer provenance, alignment, mutability, volatile/atomic access and memory

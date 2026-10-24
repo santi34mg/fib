@@ -3,7 +3,7 @@
 Unit tests live beside implementation under `src/`. `tests/executable.rs` is an
 LLVM-feature-gated acceptance suite requiring LLVM 21 and host `cc`. Its fixtures
 include `tests/programs/return_42.fib`, `conditionals.fib`, and
-`samples/scalar_loops.fib` and `struct_storage.fib`; other samples have parser coverage, with
+`samples/scalar_loops.fib` and `struct_storage.fib` and `enum_runtime.fib`; other samples have parser coverage, with
 `builtin_scalars.fib` additionally covered by scalar acceptance tests.
 The runnable `example-project/` is copied into a temporary directory for both
 no-default frontend/IR validation and an LLVM-enabled CLI build-file/exit-0 test.

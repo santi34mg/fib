@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Executable enums: payloadless and payload constructors, scoped payload copies, switches, storage/pointers and internal helper calls now lower through verified SSA and LLVM. Target-derived tag-plus-union layouts, enum constants, active-variant extraction checks, switch PHIs/backedges and a runnable `enum_runtime.fib` sample have structural and executable coverage. See `docs/enum-semantics.md`.
 - Native structs and typed raw-pointer storage: construction/copies, nested fields, partial initialization, address-taking, alias mutation and direct internal struct/pointer calls. Ordinary dereference traps on null; the compiler-provided `memory::unchecked_deref(pointer)` returns a typed place without that guard. Memory IR verification, LLVM aggregates/stack operations, and semantic/structural/executable regressions accompany a runnable struct sample.
 - A runnable `example-project` demonstrates current scalar types, casts, bit operations, recursion, conditionals and loops with an interpreted build file, self-checking exit statuses and frontend/IR plus CLI executable coverage.
 - Scalar `while` loops, `break` and `continue` now lower through verified SSA and LLVM, carrying initialized locals across backedges and merging loop exits without storage. Nested loops, early returns and short-circuit conditions have IR and bounded executable coverage. Build-file interpretation explicitly rejects unsupported CFG before applying operations.

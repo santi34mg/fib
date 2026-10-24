@@ -15,8 +15,8 @@ Run the focused check from the repository root:
 cargo test --no-default-features samples_parse_with_current_frontend
 ```
 
-`builtin_scalars.fib`, `scalar_loops.fib` and `struct_storage.fib` also have
-executable acceptance coverage and return 42. Compile either with `fibc build --single-file PATH`.
+`builtin_scalars.fib`, `scalar_loops.fib`, `struct_storage.fib` and `enum_runtime.fib` also have
+executable acceptance coverage and return 42. Compile them with `fibc build --single-file PATH`.
 Other samples retain intended/unverified output comments and broader unsupported
 features. The `run` command and historical positional-file / `-I=std` commands
 remain unsupported.
@@ -34,7 +34,7 @@ and are not a working dependency today.
 - `sorting.fib` retains parsed `T: type` parameters and type-valued arguments;
   generic analysis/specialization and pointer casts are not validated.
 - `tagged_union.fib` retains payload values using parsed member calls such as
-  `Token.Integer(7)`. This is not a claim of implemented enum constructors.
+  `Token.Integer(7)`. Constructors now execute in the supported subset; this older sample still uses unported type bindings and external output.
 - `linked_list.fib` and `memory_pool.fib` retain allocation, casts, indexed pointer
   stores, and defer calls. Pointer indexing, layout, allocation safety, and cleanup
   behavior need semantic/runtime tests. The linked-list allocation assumes a
@@ -50,6 +50,7 @@ analysis work is tracked in [GitHub issues](../docs/agents/issues/README.md).
 
 - `builtin_scalars.fib`: executable wrapping, explicit widening and float casts.
 - `scalar_loops.fib`: executable nested loops, scalar accumulation, breaks and continues.
+- `enum_runtime.fib`: executable enum constructors, payload copies, switches and helper calls.
 - `struct_storage.fib`: executable struct copies, partial initialization, pointer mutation and unchecked places.
 
 - `hello_world.fib`, `minimal.fib`: entry functions and output.
