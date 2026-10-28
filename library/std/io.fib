@@ -1,7 +1,6 @@
 //
 
 pub fn printf(format: const char[], values: (*void)[]) void {
-    buffer: uint8[] = format[..];
-
+    buffer: uint8[] = root::memory::alloc(uint8, format.len);
     root::os::write(root::os::stdout, buffer);
 }
