@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Show readable types and readonly qualifiers in type mismatch diagnostics instead of internal type IDs.
 - Explain readonly removal and element-type conversion failures in slice-cast diagnostics, with guidance to copy into a new buffer.
 - Build-file interpretation tolerates unused runtime-library globals while rejecting global accesses before applying builder operations. Correct the unfinished `printf` stub to accept readonly bytes without an invalid mutable/character-slice conversion; formatting remains unimplemented.
 

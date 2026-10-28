@@ -12,6 +12,8 @@ Current source is
 
 Rejected slice casts distinguish readonly removal from incompatible element
 types and explain that converting elements requires copying into a new buffer.
+Type compatibility diagnostics render builtin and container types with source
+names and layer-local qualifiers instead of internal type-table indices.
 
 `Analyzer::new` validates plan/unit IDs using `ProjectSymbols::from_plan` and
 retains source paths for diagnostics. `collect_declarations` assigns and annotates

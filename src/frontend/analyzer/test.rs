@@ -5201,6 +5201,42 @@ mod generic_flow_regressions {
     }
 
     #[test]
+    fn incompatible_types_use_source_names_and_preserve_readonly_context() {
+        for (source, message) in [
+            (
+                "fn f(p:char[]) { q:uint8[] = p; }",
+                "expected uint8[], found char[]",
+            ),
+            (
+                "fn f(p:const char[]) { q:const uint8[] = p; }",
+                "expected const uint8[], found const char[]",
+            ),
+            (
+                "fn f(p:char[]) { q:const uint8[] = p; }",
+                "expected const uint8[], found char[]",
+            ),
+            (
+                "fn f(p:const uint8[]) { q:uint8[] = p; }",
+                "expected uint8[], found const uint8[]",
+            ),
+            (
+                "fn f(p:*int32) { q:*uint8 = p; }",
+                "expected *uint8, found *int32",
+            ),
+            (
+                "fn f() { a:int32[2] = [1,2]; b:int32[3] = a; }",
+                "expected int32[3], found int32[2]",
+            ),
+            (
+                "fn f(p:int32) { q:usize = p; }",
+                "expected usize, found int32",
+            ),
+        ] {
+            reject(source, message);
+        }
+    }
+
+    #[test]
     fn slice_cast_diagnostics_explain_readonly_and_element_conversion() {
         let source = "fn f(p:const char[]) { q := p as uint8[]; }";
         reject(source, "cannot cast a readonly slice to a writable slice");
