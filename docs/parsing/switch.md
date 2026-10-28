@@ -28,8 +28,8 @@ body parses. `switch` is not an expression that returns a value.
 
 ```fib
 switch (token) {
-    when .Integer(payload) { value := payload.value; }
-    when .Boolean(payload) { flag := payload.flag; }
+    when .Integer(payload) { value := payload; }
+    when .Boolean(payload) { flag := payload; }
     when .EOF { }
 };
 ```

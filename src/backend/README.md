@@ -4,7 +4,8 @@ The [language specification](../../docs/language-specification.md) is implemente
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute.
 
 `emit_llvm(&Ir, &TargetSpec)` consumes only owned SSA IR. It runs `verify_ir`,
 creates a target machine with LLVM 21/Inkwell, applies its triple and data layout,
@@ -56,7 +57,7 @@ main/build entries select C. Neither convention silently falls back to another.
 
 Enums use target-derived tag-plus-union layout, verified active-payload extraction and direct internal fastcc boundaries; see [enum semantics](../../docs/enum-semantics.md). Switch successor occurrences have separate LLVM predecessors for PHIs.
 
-Broader C ABI widths, varargs, multiple results, globals and unsupported instruction/
+Broader C ABI widths, varargs, multiple results and unsupported instruction/
 type families still return errors. General Fib ABI policy and source ABI syntax
 remain future work.
 
@@ -80,12 +81,18 @@ but LLVM emission, object output and host-target selection report explicit error
 Working emission uses private state in `llvm_lower`.
 
 Future implementation needs target-aware representations for all runtime types,
-broader ABI classification, global initialization and the remaining
-instructions. Parallel edges carrying
+broader ABI classification and the remaining instructions. Parallel edges carrying
 different arguments require distinct LLVM predecessors; backedges need deferred
 SSA resolution. LLVM verification must remain mandatory. Never repair malformed
 IR, infer missing declarations, fabricate layout sizes, invent runtime checks or
 add overflow/alias/fast-math flags without defined and validated IR semantics.
+
+`llvm_data` emits global constant initial data and typed address/slice relocations
+before function bodies. Alternative physical enum payload layouts preserve
+relocations and must match runtime sizes, alignments and offsets. Only constants
+actually used as function operands are materialized into canonical SSA types;
+global initializers alone do not allocate function stack storage. Array/slice
+bounds checks arrive as explicit IR CFG, and no startup initializer is emitted.
 
 `tests/executable.rs` compiles through the CLI, links and checks real exit codes.
 Fixtures include `return_42.fib` and `conditionals.fib`; cases cover helper calls,

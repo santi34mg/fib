@@ -23,8 +23,8 @@ Structs are nominal: same-shaped definitions are distinct types, while aliases
 retain the original identity. Fields may contain fixed-width numeric/bool values,
 nested structs, or typed raw pointers to these types (including other pointers).
 Empty structs and pointer-mediated recursive struct definitions work. By-value
-recursive layouts are rejected. Arrays, slices, strings, opaque pointers,
-function pointers and symbolic `usize` are outside this native storage subset.
+recursive layouts are rejected. Fixed arrays, slices and pointer-sized `usize`
+also have native storage. Opaque pointees remain unsized.
 Enum storage and struct/enum nesting also execute; see [enum semantics](enum-semantics.md).
 
 Construction requires every field exactly once. Initializer expressions execute
@@ -82,12 +82,15 @@ arr = [1, 2, 3];   // rejected: immutable binding
 
 `arr: const int[3]` instead allows whole-array replacement in the same storage
 but forbids individual element writes. Slices use the same independent binding
-and element permissions. Fixed-array values lower; runtime indexing and slices remain deferred.
+and element permissions. Array/slice reads, indexed writes, element addresses and
+slicing lower with explicit bounds guards. Slices retain the original backing
+storage, and array temporaries requiring addresses use function-owned slots.
 
 Writable pointers and slices implicitly convert to readonly views of the
 same underlying type; reverse conversion is forbidden. Nested pointee/element
 types must match exactly, and casts cannot erase readonly permissions. Slice
-compatibility is checked by analysis; slice execution remains deferred. It does not imply array-to-slice conversion or general borrowing safety.
+compatibility is checked by analysis and preserved during execution. It does not
+imply array-to-slice conversion or general borrowing safety.
 
 ## Checked pointer dereference
 

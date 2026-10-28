@@ -81,13 +81,12 @@ records ordinary parameters and a builtin type value argument; the signature's
 ## Function types and call expressions
 
 ```fib
-Callback: type = fn(int32) -> int32;
-callback: fn(int32) -> int32;
+Callback: type = fn(int32) int32;
+callback: fn(int32) int32;
 callback(42);
 ```
 
-Function type expressions use `->`, unlike declarations. A call through a named
-binding parses. Function-value design is discussed in
+A call through a named binding parses. Function-value design is discussed in
 [Name resolution](../name-resolution.md) and the [roadmap](../roadmap/).
 
 Related follow-up is collected in this [GitHub issue #12](https://github.com/santi34mg/fib/issues/12).

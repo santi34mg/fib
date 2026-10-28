@@ -54,6 +54,21 @@ modifiers: `x := 1;`, `const x: int32 = 1;`, `comp T: type = int32;`.
 Type bindings require `comp`. Ordinary `T: type` parameters and type-value arguments provide specialization; eligible `comp fn`
 functions perform bounded type computation.
 
+File-level runtime bindings have program lifetime and require explicit initializers
+whose data is computed during compilation. This includes mutable bindings:
+`counter := 0;` allocates mutable program storage initialized to zero. There is
+no additional `static` modifier and no runtime initializer execution before `main`.
+`const` retains its independent binding-mutability meaning.
+
+Initializers may construct constant scalar/aggregate data, refer to compile-time
+values, take global addresses, and form slices into global storage. They cannot
+read runtime bindings, even `const` ones. Function calls require `comp` eligibility;
+ordinary runtime calls are rejected even in a short-circuit branch. Enum
+constructors construct data rather than invoking a runtime function. Forward
+address references and typed relocation-only cycles are permitted. Computing a
+value through a `comp fn` is a separate capability from storing that value globally;
+current implementation limits are documented in the implementation guide.
+
 Array/slice type syntax is suffix-based: `T[N]` and `T[]`.
 In expression positions, semantic resolution of the subject must distinguish array-type construction from value indexing; primitive names
 receive no special lexical treatment.
@@ -139,6 +154,28 @@ Writable pointers and slices implicitly convert to readonly views of the same
 underlying type; reverse conversion and readonly-erasing casts are forbidden.
 Nested pointee/element types must match exactly; no unsafe deep qualifier change
 is implied. This rule does not introduce an array-to-slice conversion.
+
+Indexing arrays and slices requires an integer index in `[0, length)`. Slices
+`a[start..end]` use an exclusive end and require
+`0 <= start <= end <= length`. The inclusive `.=` form requires its explicit end
+to be less than length before conversion to an exclusive endpoint. Omitted
+starts mean zero; omitted ends mean length. `a[]` and `a[..]` form full views.
+Empty exclusive slices, including `[length..length]`, are valid.
+
+Receivers, indices and explicit bounds evaluate once in written order. Assignment
+evaluates its RHS before evaluating the indexed destination. Both explicit slice
+bounds evaluate before bounds validation. Known invalid bounds are compilation
+errors; dynamic failures trap in every build mode, before truncating indices or
+forming element addresses. Slice element access also checks for null data after
+the bounds check; constructing a slice does not dereference its data.
+
+Slices refer to the original backing storage. They do not copy elements or extend
+storage lifetime. An array temporary requiring an address gets function-owned
+storage; repeated evaluation may replace that temporary's contents. Returning a
+slice into local or temporary storage does not keep it alive. No ownership or
+escape checker is implied. Dynamic array reads and array slicing conservatively
+require fully initialized backing arrays; constant-index initialization remains
+tracked per element, and dynamic writes establish no particular element's state.
 
 Pointer types use `*T`, address-taking uses postfix `value&`, and explicit
 dereference uses postfix `pointer*`. `pointer.field` may insert exactly one

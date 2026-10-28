@@ -4,7 +4,8 @@ The [language specification](../../../language-specification.md) is implemented 
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute; value-returning `comp fn` execution remains scaffolding.
 
 There is no `typed_ast.rs`, `TypedProgram`, `TypedModule` or `Ty`. Syntax retains
 its original spelling, spans, binding identities and in-place annotations.

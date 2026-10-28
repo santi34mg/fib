@@ -9,24 +9,27 @@ analysis enforces coverage, including unreachable switches.
 ## Declaring enum types
 
 ```fib
-Color: type = enum {
+comp Color: type = enum {
     Red,
     Green,
     Blue,
 };
 
-Token: type = enum {
-    Integer { value: uint32 },
-    Boolean { flag: bool },
+comp Token: type = enum {
+    Integer: uint32,
+    Boolean: bool,
     EOF,
 };
 ```
 
-A variant is a name with an optional brace-delimited list of named, typed fields.
-Commas and trailing commas are accepted. An empty payload field list also parses.
+A variant is a name with an optional `: Type` payload. Payloads retain ordinary
+type-valued expressions, including aliases, computed types and explicit structs
+(`Pair: struct { left: int32, right: int32 }`). Commas and trailing commas are
+accepted. The former `Variant { field: Type }` syntax reports a migration error.
 The declaration is a unified binding with a `TypeValue` initializer and a
-required trailing semicolon: `Name: type = enum { ... };`. Explicit numeric tags,
-underlying-tag annotations, and tuple-style payload declarations are not parsed.
+required trailing semicolon: `comp Name: type = enum { ... };`. Explicit numeric
+tags, underlying-tag annotations and `Variant(Type)` declarations are not parsed.
+Missing closing enum braces are rejected.
 
 ## Member expressions are not resolved constructors
 
@@ -50,18 +53,21 @@ The AST currently has no dedicated enum-construction expression. Casting
 ```fib
 fn inspect(token: Token) void {
     switch (token) {
-        when .Integer(payload) { value := payload.value; }
-        when .Boolean(payload) { flag := payload.flag; }
+        when .Integer(payload) { value := payload; }
+        when .Boolean(payload) { flag := payload; }
         when .EOF { }
     };
 }
 ```
 
-Patterns record variant names and optional payload binding names. See
+Patterns record variant names and optional payload binding names. Semantic analysis
+gives normalized unit variants optional void bindings and requires bare-value
+construction; the parser preserves ordinary member/call shapes. See
 [Switch](switch.md) for wildcard syntax and accepted pattern forms.
 Constructor and member design is discussed in [Name resolution](../name-resolution.md)
 and the [roadmap](../roadmap/).
 
 Parser coverage: `type_declarations_preserve_struct_and_enum_payload_shapes`,
+`direct_enum_payload_syntax_and_legacy_errors`,
 `switch_payload_binding_preserves_variant_and_body`, and
 `parsed_pattern_payload_and_variant_annotations_are_pending`.

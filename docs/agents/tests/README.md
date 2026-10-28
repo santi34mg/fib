@@ -4,13 +4,33 @@ The [language specification](../../language-specification.md) is implemented for
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals have structural and isolated executable coverage.
+
+## Indexing and global storage validation (2026-10-28)
+
+- No-default library tests: 755 passed with three std-source-dependent tests
+  filtered out. LLVM 21 library tests: 767 passed with the same exclusions.
+  The excluded tests are `checked_and_unchecked_places_have_distinct_null_guard_ir`,
+  `direct_enum_payloads_and_unit_values_lower_without_llvm`, and
+  `struct_storage_sample_lowers_to_verified_memory_ir` in `driver::test`.
+- Five isolated executable tests cover checked reads/writes/slices and traps,
+  initializer relocations and enum layouts, evaluation order, the new sample,
+  and shared global storage across files. Intrinsic cases use a minimal installed
+  source package; ordinary storage cases disable std.
+- The unfiltered no-default library run has those three failures. The unfiltered
+  executable run passes the five isolated tests and fails 38 std-dependent tests:
+  the existing allocator draft in `library/std/memory.fib` refers to unresolved
+  `sizeof`. These runs do not establish a green full-checkout suite.
+- Formatting and strict Clippy pass with and without LLVM. Value-returning
+  `comp fn` calls deliberately report "not implemented"; definition checking and
+  existing bounded type-returning evaluation have coverage.
 
 Unit tests live beside implementation under `src/`. `tests/executable.rs` is an
 LLVM-feature-gated acceptance suite requiring LLVM 21 and host `cc`. Its fixtures
 include `tests/programs/return_42.fib`, `conditionals.fib`, and the samples
 `builtin_scalars.fib`, `scalar_loops.fib`, `struct_storage.fib` and
-`enum_runtime.fib` and `defer.fib`. Other samples have parser coverage without an execution claim.
+`enum_runtime.fib`, `enum_payloads.fib` and `defer.fib`. Other samples have parser coverage without an execution claim.
 The runnable `example-project/` is copied into a temporary directory for both
 no-default frontend/IR validation and an LLVM-enabled CLI build-file/exit-0 test.
 Both tests copy the build file and its two sources. Plan assertions check file
@@ -218,6 +238,29 @@ constructors, payload copies, helper calls, nested struct/enum storage, pointers
 numeric payload widths/alignment and once-only source evaluation order. Backend
 coverage includes enum constants and switch PHIs/backedges. This inventory is
 source evidence, not a new validation run or test count.
+
+### Direct payload and unit normalization validation (2026-10-28)
+
+All 519 analyzer tests passed, including direct payload typing, generic unit
+specialization, constructor rejection and independent switch-binding annotation
+validation. Formatting, checks with and without LLVM, and strict no-default
+Clippy (`--all-targets -- -D warnings`) passed.
+
+A temporary Rust validation harness checked 29 fixtures through verified IR,
+then compiled, linked and executed all 29 with LLVM 21. Its temporary sysroot used
+baseline compiler-owned std modules, the migrated Result implementation and
+direct-payload OS Status. Coverage included `enum_payloads.fib`, generic void
+switch bindings, direct nested enums, pointers and function payloads, zero-length
+array payloads, source evaluation order, and integer/float payload alignment for
+all supported widths. Scalar, struct, loop, defer and syscall samples also passed.
+
+Full-checkout runs reached 752/755 passing no-default library tests and 763/766
+passing LLVM library tests. Three std-dependent driver tests failed on unresolved
+`sizeof` in the concurrent allocator work in `library/std/memory.fib`; Cargo
+stopped before integration suites. Strict LLVM Clippy reported two warnings in
+the concurrent function-pointer field-address implementation (`clone_on_copy`
+and `needless_borrows_for_generic_args`). Those edits were retained. These results
+do not claim that the full current checkout is green.
 
 ## Defer validation (2026-10-27)
 

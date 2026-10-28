@@ -4,7 +4,8 @@ The [language specification](../../../language-specification.md) is implemented 
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute; value-returning `comp fn` execution remains scaffolding.
 
 [`Parser`](../../../../src/frontend/parser.rs) consumes a token iterator and
 returns `anyhow::Result<Ast>` from `parse()`. For in-memory tests:
@@ -40,6 +41,10 @@ This is parsing only. It does not type-check or compile the function.
   references and calls remain ordinary expressions, with type/value discrimination
   left to semantic analysis. Legacy `type Name ...` declaration parsing is removed.
 - Qualified names use `file::name`; members use `value.field`; length is `.len`.
+- Enum variants use `Name` or `Name: Type`, including explicit struct payload
+  types and eligible type-valued calls. Legacy `Name { field: Type }` is rejected
+  with migration guidance. Analysis normalizes unit variants; their construction
+  is a bare member value, with no parentheses.
 - Index/slice syntax is `a[i]`, `a[start..end]`, with inclusive `.=` also parsed.
   Legacy `a.[i]`/`.@len` are not current syntax.
 - Pointer types use `*T`; `const *T`, `const T[]` and `const T[N]` record

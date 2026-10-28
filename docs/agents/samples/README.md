@@ -20,10 +20,15 @@ cargo test --no-default-features samples_parse_with_current_frontend
 ```
 
 The discovery sweep is parser-only coverage. `builtin_scalars.fib` and
-`scalar_loops.fib`, `struct_storage.fib`, `defer.fib` and `enum_runtime.fib` additionally have LLVM compile/link/run coverage in `tests/executable.rs`, returning 42. Build
+`scalar_loops.fib`, `struct_storage.fib`, `defer.fib`, `enum_runtime.fib` and
+`enum_payloads.fib` additionally have LLVM compile/link/run coverage in
+`tests/executable.rs`, returning 42. Build
 them with `fibc build --single-file PATH`. Other samples'
 output comments remain intended/unverified. Historical positional-file and `-I`
 commands remain unsupported.
+
+`indexed_globals.fib` has separate no-std executable coverage for embedded global
+data, slice mutation and checked indexing, returning 42.
 
 See the [sample guide](../../../samples/README.md) for dependency and semantic
 limitations. In particular, a future build plan must supply a `libc` file, the

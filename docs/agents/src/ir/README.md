@@ -4,7 +4,8 @@ The [language specification](../../../language-specification.md) is implemented 
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute.
 
 See the [IR implementation contract](../../../../src/ir/README.md).
 
@@ -19,7 +20,7 @@ instructions, Jump/Branch/Switch/Return/Trap/Unreachable, ownership, definitions
 entry and edge signatures, calls/returns, constants and orphan arena records.
 Unreachable blocks are rejected. Structs, typed pointers, null constants,
 stack-slot ownership, aggregate operations and typed memory operations are
-verified. Enum construction, tags, constants and payload extraction are checked, including active-variant proofs. Globals and other unsupported families fail explicitly; their records remain representation contracts. Byte values are
+verified. Enum construction, tags, constants and payload extraction are checked, including active-variant proofs. Globals and constant address/slice projections are verified, including known array extents and constant-graph cycles. Byte values are
 currently valid only for interpreted build-API calls and have no LLVM ABI lowering.
 
 `ir::lowering::lower` produces verified SSA for fixed-width integer/float/bool
@@ -42,13 +43,29 @@ function identities are registered before bodies; internal symbols distinguish
 same-spelled declarations. Fixed-array aggregates validate lengths, element
 signatures and by-value cycles. Numeric casts include explicit bool conversions.
 
+Non-unit enum constructors carry one operand of the actual payload type; switch
+bindings extract that operand under the existing active-variant proof. Normalized
+unit variants have no stored payload. Their bindings synthesize an empty tuple
+value, also used for ordinary runtime void values. Void-returning calls retain
+effects before yielding unit in value positions, and unit equality evaluates both
+operands. Function void returns have no result; opaque pointers retain opaque
+pointees rather than the unit-value representation.
+
 ## Standard-library operations
 
 Memory intrinsics resolve under `std::memory`. Source lowering supports
-`slice_from_parts`, `slice_data` and slice `.len`, preserving the existing
-limitations on general runtime indexing/slicing. `Syscall` takes a uint64 number
+`slice_from_parts`, `slice_data`, indexing, indexed assignment, slicing and `.len`.
+Bounds guards use `IndexOutOfBounds`/`InvalidSlice` traps before narrowing offsets;
+element access also preserves null checks. Array temporaries use function-owned
+slots, while slices of places retain original storage. `Syscall` takes a uint64 number
 and up to six uint64/pointer arguments and returns int64. Verification checks
 types, signatures, ownership and dominance. LLVM emits Linux x86-64 inline
 assembly with side effects and register/flags/memory clobbers; other targets fail.
 The package-private mmap helper lowers to a verified uint64-to-pointer cast.
 Build-file interpretation never executes syscalls.
+
+File-level storage has constant initial data, including relocations and slice
+views. Lowering registers all global identities before initializers or bodies.
+No startup function is generated; the build-file interpreter rejects globals
+before applying operations. Value-returning `comp fn` evaluation is scaffolding
+with an explicit diagnostic, never a runtime fallback.

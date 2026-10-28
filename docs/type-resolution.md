@@ -65,6 +65,8 @@ runtime expression types. Reserved label syntax has no applicable slots.
 ## Values and special types
 
 - `void` means no returned value in function signatures; elsewhere it is unit.
+  Runtime unit values use an empty aggregate; calls returning void retain their
+  effects when used as unit expressions. Opaque `*void` remains a separate case.
 - `*void` is an opaque raw pointer. Opacity is queried centrally so future opaque
   types can extend the same boundary. Dereference/member/index operations on it
   are rejected.
@@ -88,7 +90,9 @@ runtime expression types. Reserved label syntax has no applicable slots.
 - Explicit `comp fn` declarations and `comp fn(...) -> type` function types
   distinguish eligibility for bounded type computation from runtime functions.
   Knowing a runtime function's identity does not authorize its evaluation.
-  Comp functions currently require a non-extern body and a `type` return.
+  Comp functions require a non-extern body. Type-returning functions execute the
+  bounded evaluator; value-returning definitions receive normal type/flow checks,
+  but calls requesting their execution report "not implemented".
   They evaluate type values, local declarations, nested eligible calls and branches
   on known bool values, with type/bool arguments and a recursion limit of 64.
   Repeated calls preserve nominal aggregate identity; distinct argument lists own
@@ -156,8 +160,12 @@ skipping the runtime null guard. Intrinsics cannot be stored as runtime values;
 see [struct/storage semantics](struct-storage-semantics.md).
 
 Struct construction requires every field once, with no defaults. Payloadless enum
-variants are values; payload variants are positional constructors in declaration
-order, including zero-argument constructors for explicitly empty payloads.
+variants are values; non-unit payload variants take exactly one value of their
+declared type. `Name: Type` accepts type-valued expressions; named-field payload
+lists are removed. Omitted payloads, void, empty structs and recursively unit-only
+structs normalize to value variants after specialization. Calls on these variants
+are rejected, and optional switch bindings have type void. Other bindings receive
+the declared payload type directly.
 Arrays are homogeneous and context checks lengths; empty arrays require context.
 Indices and slice bounds must be integers. Known array bounds, reversed ranges and
 invalid inclusive bounds are diagnosed; dynamic bounds checks are not emitted.
@@ -179,11 +187,14 @@ Coverage is checked regardless of reachability and independently revalidated. Du
 variants and arms after a wildcard are rejected. Break/continue require an enclosing loop, including
 in unreachable syntax.
 
-File initializers are checked in compilation-unit/source order. Function bodies
-are checked with globals having initializers available; direct function calls
-from file initializers additionally check their bodies against the current
-initialization state, including recursive call chains. Call effects are not
-propagated back to callers. Raw-pointer/slice aliasing and indirect-call effects
+File-level runtime bindings require explicit constant data. The shared constant
+evaluator rejects runtime calls and runtime binding reads, including reads from
+`const` globals. Global addresses and slice views preserve declaration identities
+without loading storage; forward references and typed relocation cycles are allowed.
+There is no runtime initialization ordering or startup code. Function bodies are
+checked with initialized globals available. Dynamic array reads and slicing require
+initialized backing arrays, and known bounds through `comp` values are checked.
+Raw-pointer/slice aliasing and indirect-call effects
 are not an ownership or interprocedural initialization proof; code relying on
 initialization through aliases or call effects is outside this pass's guarantees.
 

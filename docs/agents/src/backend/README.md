@@ -4,7 +4,8 @@ The [language specification](../../../language-specification.md) is implemented 
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute.
 
 See the [backend implementation contract](../../../../src/backend/README.md).
 
@@ -28,12 +29,26 @@ LLVM verification precedes artifacts and PIC objects; driver linking uses `cc`.
 LLVM identified unpacked structs, target-derived field GEPs, aggregate operations,
 entry stack allocations and typed loads/stores are emitted. Pointer equality and
 explicit null-check CFGs work; arbitrary accesses use conservative alignment.
-Enums use target-derived tag-plus-union layout, typed payload operations and entry-materialized constants; see [enum semantics](../../../enum-semantics.md). Only generic CPU/default features are accepted. Broader ABI/layout, globals and
+Enums use target-derived tag-plus-union layout, typed payload operations and entry-materialized values; see [enum semantics](../../../enum-semantics.md). Only generic CPU/default features are accepted. Broader ABI/layout and
 remaining instruction families are unfinished. Classification works without LLVM;
 emission then reports an explicit feature error.
+
+Direct enum payloads use the existing typed union storage without an implicit
+struct wrapper. Normalized unit variants store only their tag. Runtime void values
+use empty aggregates through the internal Fib ABI, while void returns remain
+resultless and opaque `*void` remains unsized. Function-pointer null checks use the
+same pointer comparison emission as data pointers.
 
 Fixed arrays use a private named wrapper containing an LLVM array; completion
 waits for the element layout and uses target-derived storage/alignment. Aggregate
 construction, copies and the shared internal Fib ABI preserve inline values.
-`usize` IR uses pointer-width integers resolved through target data. Runtime
-indexing/slices remain deferred; array values do not imply those operations work.
+`usize` IR uses pointer-width integers resolved through target data. Array/slice
+indexing and slicing emit explicit bounds guards and ordinary element GEPs without
+`inbounds` promises.
+
+`llvm_data` declares globals before evaluating their constant initializers. Physical
+constant layouts preserve typed enum payloads and pointer relocations, validating
+size, alignment and field/array offsets against runtime layouts. Runtime uses
+materialize these constants into canonical SSA types when needed. Global initial
+data is embedded in the object; no startup constructor is emitted. Binding `const`
+does not alone imply physically readonly storage because elements may be writable.

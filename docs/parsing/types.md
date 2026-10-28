@@ -37,7 +37,7 @@ from old byte-width names (`uint8` now means eight bits).
 
 ```fib
 Node: type = struct { value: int32, next: *Node };
-Result: type = enum { Ok { value: int32 }, Empty };
+comp Result: type = enum { Ok: int32, Empty };
 Pair: type = (int32, bool);
 Callback: type = fn(int32, int32) -> int32;
 Buffer: type = uint8[16];

@@ -4,11 +4,14 @@ The [language specification](../language-specification.md) is implemented for pr
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute; value-returning `comp fn` execution remains explicit scaffolding.
 
-Status reviewed against source and tests on 2026-10-27. Source and tests take
+Status reviewed against source and tests on 2026-10-28. Source and tests take
 precedence over historical comments, samples and language proposals. Dated
-validation results are recorded in the [test guide](tests/README.md); the specification implementation passed the no-default and LLVM-enabled suites.
+validation results are recorded in the [test guide](tests/README.md). The indexing/global
+tests pass in isolation; unfiltered suites currently encounter the unfinished std
+allocator's unresolved `sizeof`. Earlier complete-suite records remain dated below.
 
 ## Actual status
 
@@ -31,7 +34,7 @@ conversions. Native helpers use a limited direct Fib fastcc ABI; main keeps the
 C int32 entry contract. Struct values, partial initialization, stack storage,
 field/pointer mutation and internal struct/pointer calls work. Ordinary dereference
 traps on null; `std::memory::unchecked_deref(pointer)` returns an unchecked place.
-Enum constructors, payload copies, switches, storage and internal calls also execute; see [enum semantics](../enum-semantics.md). Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Runtime globals and broader runtime representations remain unfinished. See
+Enum constructors, payload copies, switches, storage and internal calls also execute; see [enum semantics](../enum-semantics.md). Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Checked array/slice projections and constant-initialized globals also execute. Broader runtime representations remain unfinished. See
 [scalar semantics](../scalar-semantics.md) for numeric rules and
 [struct/storage semantics](../struct-storage-semantics.md) for memory rules.
 `build.fib` has an
@@ -58,6 +61,14 @@ There is no separate typed AST, direct AST-to-LLVM fallback, recursive import
 loader, `compile_project` or `check_project`. `tests/executable.rs` checks real
 compile/link/run behavior. Public architecture records alone do not certify
 successful analysis, verification or support by the emitter.
+
+Enum variants use `Name: Type` for one direct payload value. Explicit struct
+payloads take one struct argument. Omitted, void and recursively unit-only struct
+payloads normalize to bare variant values; calls on them are rejected. Optional
+unit switch bindings have type void. Declared payload metadata is retained for
+generic substitution and annotation proofs, while shared normalization determines
+constructor, binding and storage behavior. Runtime unit values use empty aggregates
+without changing resultless void returns or opaque `*void`.
 
 ## Language server
 
@@ -95,10 +106,18 @@ package-relative file paths, with ASCII case/hyphen normalization and collision
 checks. Flat-plan callers retain their compatibility path. Installed std is added
 before parsing; see [standard library](../standard-library.md).
 Still deferred: Unicode namespace normalization, public package/discovery build-API
-signatures and discovery/deduplication integration, general runtime indexing/slicing
-and lifetime policy, and broader compiler namespace spelling.
-General build interpretation, globals, indirect calls and broader ABI remain
+signatures and discovery/deduplication integration, ownership/lifetime enforcement,
+and broader compiler namespace spelling.
+General build interpretation, value-returning compile-time function execution and broader ABI remain
 unfinished. These are implementation boundaries, not amendments to the specification.
+
+Globals require explicit constant initial data, including aggregate/enum values,
+addresses and slices into global storage. No runtime startup initializer or `static`
+keyword is needed. Ordinary initializer calls and runtime binding reads are rejected.
+Value-returning `comp fn` definitions are type/flow checked; evaluation requests
+report "not implemented". Existing bounded type-returning computation is preserved.
+Slices borrow original storage without extending its lifetime. Dynamic array reads
+and slicing require initialized backing arrays; bounds guards precede offset casts.
 ## Map
 
 - [Repository and commands](repository.md)

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Checked runtime indexing, indexed assignment, element addresses and slicing for fixed arrays and slices, including signed/wide bounds checks and initialization validation.
+- File-level runtime storage with explicit constant initial data, aggregate/enum relocations, global addresses and slice views. Ordinary initializer calls and runtime binding reads are rejected; no `static` modifier or startup initializer is needed.
+- Value-returning `comp fn` definitions now have typed scaffolding; calls requiring their execution report an explicit not-implemented diagnostic. Existing bounded type-returning computation is preserved.
+
 ### Changed
 
 - Enum variants carry one direct payload type with `Name: Type`; struct payloads require an explicit struct type and one struct argument. Omitted, void, empty-struct and recursively unit-only struct payloads share bare-value construction and optional void switch bindings. Removed legacy field-list variants and calls on unit variants. Standard Result and OS status bindings now expose their payload values directly.

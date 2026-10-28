@@ -4,7 +4,8 @@ The [language specification](../../language-specification.md) is implemented for
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute.
 
 `driver.rs` implements `parse_files`, frontend/bootstrap orchestration and
 `run_pipeline`. Plans explicitly enumerate files; parsing preserves their IDs and
@@ -82,7 +83,8 @@ emits memory operations rather than a builtin declaration/call and does not sele
 the bootstrap entry. See [struct/storage semantics](../../struct-storage-semantics.md).
 Enum constructors, payload copies and switches lower through the same verified pipeline. See [enum semantics](../../enum-semantics.md).
 Concrete generic instances, fixed-array values, multi-bindings and calls across
-planned files and lexical defer statements/blocks lower. Runtime globals, runtime indexing/slices, indirect
+planned files and lexical defer statements/blocks lower. Constant-initialized globals
+and checked runtime array/slice operations also lower. Broader indirect
 calls and multiple-result initializers remain unsupported.
 
 `BuildPlan::packages` accepts host-created `PackageSpec` records with `PackageId`,

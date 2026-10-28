@@ -87,5 +87,5 @@ implementation contract, not a stable external ABI.
 
 The executable samples are [`enum_runtime.fib`](../samples/enum_runtime.fib) and
 [`enum_payloads.fib`](../samples/enum_payloads.fib).
-Runtime indexing/slices, runtime globals and enum-to-integer
-casts are outside this lowering extension.
+Enum-to-integer casts are outside this lowering extension. Constant-initialized
+globals may contain enums, including payloads with global-address relocations.

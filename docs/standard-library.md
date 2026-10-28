@@ -74,20 +74,24 @@ validity nor view lifetime is guaranteed by these operations.
 ## Results
 
 `std::result::Result(T, E)` computes a nominal enum with variants
-`Ok { value: T }` and `Err { error: E }`. Repeated applications to identical
+`Ok: T` and `Err: E`. Repeated applications to identical
 canonical type arguments produce the same type. The error type is independent
 of the operating system.
 
 ```fib
 comp R := std::result::Result(int32, bool);
 fn answer() R { return R.Ok(42); }
+
+comp Status := std::result::Result(void, uint8);
+fn success() Status { return Status.Ok; }
 ```
 
 Computed types are instantiated in `comp` bindings; current type annotations
 name those aliases. OS wrappers expose `CountResult = Result(usize, int32)`,
 `IntResult = Result(int32, int32)`, and `MappingResult = Result(*uint8, int32)`.
 Close and munmap return `std::os::Status`, whose variants are payloadless `Ok`
-and `Err { error: int32 }`.
+and `Err: int32`. Switch bindings are the result/error values directly, with no
+`.value` or `.error` wrapper field. Unit successes optionally bind a void value.
 
 ## Operating-system boundary
 

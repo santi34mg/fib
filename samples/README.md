@@ -17,6 +17,8 @@ cargo test --no-default-features samples_parse_with_current_frontend
 
 `builtin_scalars.fib`, `scalar_loops.fib`, `struct_storage.fib` and `enum_runtime.fib` also have
 executable acceptance coverage and return 42. Compile them with `fibc build --single-file PATH`.
+`indexed_globals.fib` also returns 42 and exercises embedded global data, borrowed
+slice mutation and runtime array indexing. Its executable test uses no std sources.
 Other samples retain intended/unverified output comments and broader unsupported
 features. The `run` command and historical positional-file / `-I=std` commands
 remain unsupported.
@@ -51,6 +53,7 @@ analysis work is tracked in [GitHub issues](../docs/agents/issues/README.md).
 - `builtin_scalars.fib`: executable wrapping, explicit widening and float casts.
 - `scalar_loops.fib`: executable nested loops, scalar accumulation, breaks and continues.
 - `enum_runtime.fib`: executable enum constructors, payload copies, switches and helper calls.
+- `enum_payloads.fib`: direct payload types, unit normalization, Result(void, E), generic unit values and preserved call effects; exits 42.
 - `struct_storage.fib`: executable struct copies, partial initialization, pointer mutation and unchecked places.
 
 - `hello_world.fib`, `minimal.fib`: entry functions and output.

@@ -10,7 +10,8 @@ The [language specification](docs/language-specification.md) is implemented for 
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+global storage execute; value-returning `comp fn` execution has explicit scaffolding only.
 
 Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 [current implementation guide](docs/agents/README.md), not historical compiler claims.
@@ -33,7 +34,7 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   the driver validates the selected entry contract and chooses the IR consumer. Program lowering supports
   multi-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
-  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `std::memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Concrete generic functions, fixed-array values and multi-binding locals execute. Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Runtime globals, runtime indexing/slices and indirect calls still fail.
+  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `std::memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Concrete generic functions, fixed-array values and multi-binding locals execute. Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Array/slice indexing, indexed assignment and slicing execute with bounds checks. Globals require explicit constant initializers and have program lifetime; ordinary initializer calls are rejected. No `static` modifier or startup initializer is introduced.
 - `src/bin/fib-lsp.rs` implements a native stdio LSP sharing compiler tokenization,
   parsing, collecting analysis and build planning. `frontend::source` supplies
   unsaved overlays; `frontend::tooling` produces highlights and diagnostics.
@@ -47,7 +48,7 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   `BuildPlan::packages` records explicit package IDs/source roots/dependency maps;
   scoped visibility uses package/directory regions. Package-rooted lookup resolves
   `root` and dependency environments with ASCII case/hyphen normalization. Recursive
-  discovery and general runtime indexing/slices remain deferred.
+  recursive discovery and ownership/lifetime checking remain deferred.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
   Build files have an initial `build_api` semantic namespace and a narrow verified-IR
   path for literal source/entry/output operations. It finalizes deterministic plans
@@ -56,8 +57,8 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 - `src/ir/` is owned SSA. The transactional builder allocates blocks/values/slots;
   verification checks scalar constants/calls/arithmetic/unary/casts/comparisons and jump/branch/return/trap/unreachable,
   ownership, signatures, reachability and dominance. Enum operations, constants and switches validate payload signatures, tags and active-variant extraction proofs. Structs, enums, typed pointers,
-  stack-slot ownership and aggregate/memory operations are verified; globals and
-  other unsupported families still fail.
+  stack-slot ownership and aggregate/memory operations are verified. Global storage,
+  address relocations and constant slice projections are also verified.
 - LLVM 21 emits multi-block SSA with PHIs/backedges, the C 32-bit integer/void entry ABI and internal direct scalar/struct/enum/pointer Fib fastcc ABI.
   ABI classification is per signature; one shared description controls a function
   and calls to it. `emit_llvm(ir, target)` remains the sole public entry point.
@@ -68,6 +69,15 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   Old positional-file, include-root, check/emit/link/release flags do not exist.
 
 See [scalar semantics](docs/scalar-semantics.md) for wrapping, casts, traps and IEEE rules. Typed numeric values require explicit conversions; no implicit widening is performed.
+
+Enums use `Variant: Type` for one direct payload value. Named-field payload
+shorthand is removed; use an explicit struct type and pass one struct value.
+Omitted, void, empty-struct and recursively unit-only struct payloads normalize
+to bare variant values, without constructor parentheses. Optional switch bindings
+on these variants have type void; other bindings expose the payload directly.
+Semantic records retain declared types for substitution/validation and share
+`SemanticTypes::enum_payload` for normalized behavior. Runtime unit values use an
+empty aggregate; void function returns remain resultless and `*void` stays opaque.
 
 ## Standard library
 
@@ -124,8 +134,10 @@ for type bindings; parsing alone still accepts the unmodified form. Multi-bindin
 modifiers/types and a shared initializer list. Legacy `type Name ...` is removed.
 Functions are ordinary identifiers; builtin functions and their `@` forms are removed.
 Ordinary metatype parameters and type-value arguments provide generic specialization. `comp fn f(T: type) type { return T; }` explicitly enables bounded type computation;
-its function type is `comp fn(type) -> type`. Variadics are removed. Type-level
-`const *T`, `const T[]` and `const T[N]` qualify elements independently of binding
+its function type is `comp fn(type) -> type`. Variadics are removed.
+Value-returning `comp fn` declarations have normal type/flow checks, but calls
+requiring value computation report an explicit not-implemented error.
+Type-level `const *T`, `const T[]` and `const T[N]` qualify elements independently of binding
 `const`; qualifiers are layer-local and compatibility does not discard them.
 Legacy `@` types, `var`, `for`, dot-index and imports
 are not the current working grammar. Parsing is not semantic/runtime support.

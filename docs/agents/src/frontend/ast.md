@@ -4,7 +4,8 @@ The [language specification](../../../language-specification.md) is implemented 
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute; value-returning `comp fn` execution remains scaffolding.
 
 [`ast.rs`](../../../../src/frontend/ast.rs) defines `Ast { statements }`.
 `ast/` splits expressions, statements, functions/signatures/parameters, types,
@@ -25,6 +26,12 @@ signatures; parameter and multi-binding sites have their own slots. Label slots
 are reserved but not embedded because label syntax is undefined. The generic
 parameter string list is reserved and not parsed. Parsed paths use annotated
 qualified identifiers.
+
+Enum variants retain a name and an optional boxed type-valued payload expression.
+They no longer own an implicit list of struct fields. Explicit struct syntax
+retains its own field annotations. Semantic variant records preserve the declared
+type for substitution and annotation proofs; `SemanticTypes::enum_payload`
+provides the normalized construction, binding and storage shape.
 
 Unified bindings use `VariableDeclaration` with independent `is_pub`, `is_const`,
 and `is_comp` flags plus optional `pub_scope`; `const` and `comp` are mutually exclusive in the grammar.

@@ -4,7 +4,8 @@ The [language specification](../../../language-specification.md) is implemented 
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute; value-returning `comp fn` execution remains scaffolding.
 
 Current source is
 [`analyzer.rs`](../../../../src/frontend/analyzer.rs) and `analyzer/`.
@@ -27,6 +28,15 @@ retried. `Analyzer::analyze` runs typing, then validates initialization and
 structured flow before returning `AnalyzedProject`, owning original units,
 symbols, semantic types, cached concrete generic bodies/environments and original plan paths in
 `source_paths` for diagnostics after analysis.
+
+Enum payload expressions denote one type rather than an implicit payload struct.
+`SemanticTypes::enum_payload` classifies omitted, void, empty-struct and recursively
+unit-only struct payloads consistently for construction, switch bindings and
+lowering. Declared types remain available for substitution and independent syntax
+validation. Generic substitution and materialization refresh single-argument
+constructor signatures; normalized unit variants have no constructor signature.
+Optional unit bindings have type void, and validation independently checks every
+switch binding's normalized type and mutable-place category.
 
 ## Identity and lookup
 
@@ -63,6 +73,14 @@ nested eligible calls and branches. Runtime function identity does not confer
 compile-time eligibility. Deferred computations retain arguments/dependencies;
 failed recursive instance groups roll back new cache entries. Type qualifiers
 separate binding and element mutability; `never` coercion is directional.
+
+The shared `constant_data` evaluator validates explicit file-level initializers
+without executing runtime code or reading runtime bindings. Values retain semantic
+types and addresses retain declaration/projection identities for lowering. Ordinary
+calls are rejected even under short-circuit syntax. Value-returning `comp fn`
+definitions are type/flow checked; their execution reports "not implemented".
+Flow validation also checks constant bounds through `comp` values and requires
+initialized arrays for dynamic element reads and slicing.
 
 `SymbolTable`/`Scope` remain mechanical lexical utilities, including separate label
 storage. Scope policy is enforced by the resolver. `ResolveContext` and `TypeContext`

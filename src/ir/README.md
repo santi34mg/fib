@@ -4,7 +4,8 @@ The [language specification](../../docs/language-specification.md) is implemente
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute.
 
 The executable boundary is `AnalyzedProject -> Ir -> backend`. Arena records
 remain public and unverified until `verify_ir` succeeds. IDs are stable indices
@@ -37,8 +38,9 @@ Load/Store, Enum/EnumTag/EnumField, and Jump/Branch/Switch/Return/Trap/Unreachab
 Empty IR is valid and actually checked. Stack slots have checked types and unique
 function ownership/body membership; projections and load/store signatures are
 verified. Struct layouts reject by-value cycles and permit pointer recursion.
-Globals, unsupported types/constants and other instruction families
-fail explicitly. Bytes have no memory or struct-field representation. Unreachable blocks are rejected rather than assigned arbitrary
+Globals, constant global addresses/projections and slice data are verified.
+Unsupported types/constants and other instruction families fail explicitly.
+Bytes have no memory or struct-field representation. Unreachable blocks are rejected rather than assigned arbitrary
 values/dominance. `IrError::Invalid` identifies malformed supported IR;
 `NotImplemented` identifies unsupported verification families.
 
@@ -58,7 +60,7 @@ fallthrough. Values are immutable; mutable storage requires explicit addresses,
 loads and stores. `Display` remains a diagnostic dump marked unverified.
 
 The broader records describe future support, not executable guarantees:
-runtime indexing/slices, tuples, globals and general nonnumeric casts remain unfinished.
+general tuples and nonnumeric casts remain unfinished.
 Fixed-array values and numeric/bool casts are verified and lowered. Bytes are interpreter-only.
 Unit/never/character/string runtime representation, indirect calls and broader
 source lowering remain unfinished. Concrete generic instances lower from their
@@ -77,6 +79,14 @@ explicit null-check/trap CFG; `std::memory::unchecked_deref` omits that check. T
 verifier proves structural memory typing, not allocation validity or initialization.
 See [struct/storage semantics](../../docs/struct-storage-semantics.md).
 See `../backend/README.md` for ABI restrictions and executable tests.
+
+Checked array/slice projections use explicit guard CFG before integer narrowing
+and element addresses. Array temporaries have function-owned storage; slices of
+places preserve storage identity. Global initializers contain constant data only,
+with typed address/slice projections and no startup execution. Verification checks
+initializer types, relocations, known array extents, symbol uniqueness and constant
+cycles; direct stores into known immutable global storage are rejected. Raw
+pointer allocation validity and ownership remain outside verification.
 
 ## Backend-facing surface
 
