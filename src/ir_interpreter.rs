@@ -10,6 +10,10 @@ use crate::{
 
 pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
     crate::ir::verify_ir(&ir)?;
+    anyhow::ensure!(
+        ir.globals.is_empty(),
+        "globals are not implemented in the build-file interpreter"
+    );
     // TODO: add general CFG/value interpretation; this initial build-file subset is
     // deliberately limited to direct builtin calls with constant byte strings.
     let build_function = ir

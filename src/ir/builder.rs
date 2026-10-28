@@ -13,6 +13,27 @@ pub struct FunctionBuilder<'ir> {
 }
 
 impl<'ir> FunctionBuilder<'ir> {
+    pub(super) fn ir(&self) -> &Ir {
+        &self.working
+    }
+    pub(super) fn ir_mut(&mut self) -> &mut Ir {
+        &mut self.working
+    }
+
+    pub(super) fn constant(&mut self, ty: TypeId, kind: ConstantKind) -> Operand {
+        let id = self
+            .working
+            .constants
+            .iter()
+            .position(|c| c.ty == ty && c.kind == kind)
+            .unwrap_or_else(|| {
+                let id = self.working.constants.len();
+                self.working.constants.push(Constant { ty, kind });
+                id
+            });
+        Operand::Constant(ConstantId(id))
+    }
+
     pub fn new(ir: &'ir mut Ir, function: FunctionId) -> IrResult<Self> {
         if !matches!(
             ir.get_function(function).map(|f| &f.body),

@@ -52,10 +52,14 @@ pub enum ConstantKind {
     Bool(bool),
     /// The low-order bits of an integer value; signed values use two's-complement
     /// representation. The constant's type determines the integer width.
-    Integer { bits: u128 },
+    Integer {
+        bits: u128,
+    },
     /// The IEEE-754 bit pattern of a floating-point value. The constant's type
     /// determines the floating-point width.
-    Float { bits: u128 },
+    Float {
+        bits: u128,
+    },
     /// A null value of the constant's declared type.
     Null,
     /// An array, tuple, or struct value, with elements ordered as specified by
@@ -75,6 +79,21 @@ pub enum ConstantKind {
     CString(Vec<u8>),
     /// The address of a global, represented as a constant pointer value.
     GlobalAddress(GlobalId),
+    PointerCast(ConstantId),
+    /// Constant projections preserve relocations instead of serializing addresses.
+    FieldAddress {
+        base: ConstantId,
+        field: usize,
+    },
+    ArrayData(ConstantId),
+    ElementAddress {
+        base: ConstantId,
+        index: u64,
+    },
+    Slice {
+        data: ConstantId,
+        length: u64,
+    },
     /// The address of a function, represented as a constant pointer value.
     FunctionAddress(FunctionId),
 }

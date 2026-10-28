@@ -18,7 +18,7 @@ pub(super) fn register_runtime_types(
             ));
         }
         let result = match project.types.get(ty)? {
-            SemanticType::Builtin(b) => SCALARS[..16].contains(b),
+            SemanticType::Builtin(b) => *b == BuiltinType::Void || SCALARS[..16].contains(b),
             SemanticType::Readonly(t) => supported(project, *t, seen)?,
             SemanticType::Pointer(t) => {
                 matches!(
@@ -49,7 +49,7 @@ pub(super) fn register_runtime_types(
             SemanticType::Enum(variants) => {
                 let mut result = true;
                 for v in variants {
-                    if let Some(payload) = v.payload {
+                    if let Some(payload) = project.types.enum_payload(v.payload)? {
                         result &= supported(project, payload, seen)?;
                     }
                 }
@@ -76,18 +76,35 @@ pub(super) fn register_runtime_types(
         }
         let ty = match project.types.get(canonical)? {
             SemanticType::Builtin(BuiltinType::Void) => {
-                if let Some(index) = ir.types.iter().position(|t| matches!(t, IrType::Opaque)) {
+                if let Some(index) = ir
+                    .types
+                    .iter()
+                    .position(|t| matches!(t, IrType::Tuple(fields) if fields.is_empty()))
+                {
                     TypeId(index)
                 } else {
                     let id = TypeId(ir.types.len());
-                    ir.types.push(IrType::Opaque);
+                    ir.types.push(IrType::Tuple(vec![]));
                     id
                 }
             }
             SemanticType::Builtin(b) => scalar_id(b),
             SemanticType::Readonly(inner) => register(project, ir, map, *inner)?,
             SemanticType::Pointer(inner) => {
-                let pointee = register(project, ir, map, *inner)?;
+                let pointee = if matches!(
+                    project.types.get(project.types.canonical(*inner)?)?,
+                    SemanticType::Builtin(BuiltinType::Void)
+                ) {
+                    if let Some(index) = ir.types.iter().position(|t| matches!(t, IrType::Opaque)) {
+                        TypeId(index)
+                    } else {
+                        let id = TypeId(ir.types.len());
+                        ir.types.push(IrType::Opaque);
+                        id
+                    }
+                } else {
+                    register(project, ir, map, *inner)?
+                };
                 if let Some(index) = ir
                     .types
                     .iter()
@@ -168,8 +185,9 @@ pub(super) fn register_runtime_types(
                         Ok(EnumVariant {
                             name: Some(v.spelling.clone()),
                             discriminant: index as u128,
-                            fields: v
-                                .payload
+                            fields: project
+                                .types
+                                .enum_payload(v.payload)?
                                 .map(|p| register(project, ir, map, p))
                                 .transpose()?
                                 .into_iter()
@@ -224,8 +242,9 @@ pub(super) fn register_runtime_types(
                         Ok(EnumVariant {
                             name: Some(v.spelling.clone()),
                             discriminant: index as u128,
-                            fields: v
-                                .payload
+                            fields: project
+                                .types
+                                .enum_payload(v.payload)?
                                 .map(|p| register(project, ir, &mut map, p))
                                 .transpose()?
                                 .into_iter()

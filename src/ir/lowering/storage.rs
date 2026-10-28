@@ -9,6 +9,7 @@ pub(super) fn storage_bindings(
     fn root(expr: &Expression) -> Option<LocalId> {
         local(expr).or_else(|| match &expr.kind {
             E::ExprAcess { expr, .. } => root(expr),
+            E::IndexAccess { object, .. } => root(object),
             _ => None,
         })
     }
@@ -32,6 +33,18 @@ pub(super) fn storage_bindings(
                 }
             }
             E::ExprAcess { expr, .. } | E::Cast { expr, .. } => expression(expr, stored),
+            E::IndexAccess { object, index } => {
+                expression(object, stored);
+                expression(index, stored);
+            }
+            E::SliceLiteral {
+                object, start, end, ..
+            } => {
+                expression(object, stored);
+                for bound in start.iter().chain(end) {
+                    expression(bound, stored);
+                }
+            }
             E::ArrayLiteral { elements } => {
                 for element in elements {
                     expression(element, stored);
@@ -80,6 +93,20 @@ pub(super) fn storage_bindings(
                 S::Assignment { left, right } => {
                     expression(left, stored);
                     expression(right, stored);
+                }
+                S::IndexAssign {
+                    object,
+                    index,
+                    expr,
+                } => {
+                    expression(object, stored);
+                    expression(index, stored);
+                    expression(expr, stored);
+                }
+                S::MultiAssignment { targets, values } => {
+                    for expr in targets.iter().chain(values) {
+                        expression(expr, stored);
+                    }
                 }
                 S::ExpressionStatement(e) => expression(e, stored),
                 S::Return(Some(values)) => {

@@ -22,6 +22,8 @@ use crate::{
 };
 use std::collections::{BTreeMap, HashMap};
 
+mod globals;
+mod indexing;
 mod runtime_types;
 mod storage;
 use runtime_types::register_runtime_types;
@@ -84,8 +86,34 @@ struct Source<'a> {
     file: FileId,
     runtime_types: &'a HashMap<SemanticId, TypeId>,
     pointers: &'a HashMap<TypeId, TypeId>,
+    globals: &'a HashMap<DeclId, GlobalId>,
 }
 impl Source<'_> {
+    fn comp_value(
+        &self,
+        expr: &Expression,
+    ) -> anyhow::Result<Option<crate::frontend::analyzer::constant_data::DataValue>> {
+        if !matches!(expr.kind, E::QualifiedIdentifier(_)) {
+            return Ok(None);
+        }
+        if expr.annotation.resolved.is_none_or(|info| {
+            info.category != ValueCategory::Value
+                || info.type_value.is_some()
+                || matches!(self.types.get(info.ty), Ok(SemanticType::Function(_)))
+        }) {
+            return Ok(None);
+        }
+        let mut evaluator = crate::frontend::analyzer::constant_data::DataEvaluator::new(
+            &self.project.units,
+            self.types,
+        );
+        evaluator.set_file(self.file);
+        if evaluator.is_value_binding(expr) {
+            evaluator.evaluate(expr).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
     fn error(&self, span: Span, message: impl Into<String>) -> anyhow::Error {
         let mut error = CompilerError::new(ErrorKind::Backend, message.into()).with_span(span);
         error.filename = self.project.source_paths.get(&self.file).cloned();
@@ -126,8 +154,10 @@ impl Source<'_> {
         self.builtin(callee).is_some_and(|b| b.is_intrinsic())
     }
     fn value_type(&self, ty: SemanticId, span: Span) -> anyhow::Result<TypeId> {
-        self.ir_type(ty, span)?
-            .ok_or_else(|| self.error(span, "void is not an IR value type"))
+        self.runtime_types
+            .get(&self.types.canonical(ty)?)
+            .copied()
+            .ok_or_else(|| self.error(span, "unsupported runtime value type in IR lowering"))
     }
     fn expression_type(&self, expr: &Expression) -> anyhow::Result<TypeId> {
         let info = expr
@@ -245,6 +275,43 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     }
     let mut functions = HashMap::new();
     let mut declarations = Vec::new();
+    let mut globals = HashMap::new();
+    for unit in &project.units {
+        for node in &unit.ast.statements {
+            let bindings: Vec<_> = match &node.kind {
+                S::VariableDeclaration(v) => vec![v],
+                S::MultiVariableDeclaration { bindings, .. } => bindings.iter().collect(),
+                _ => vec![],
+            };
+            for binding in bindings.into_iter().filter(|v| !v.is_comp) {
+                let Some(BindingId::Declaration(id)) = binding.annotation.binding else {
+                    anyhow::bail!("missing global identity");
+                };
+                let source = Source {
+                    project,
+                    types: &project.types,
+                    file: unit.source_file_id,
+                    runtime_types: &runtime_types,
+                    pointers: &pointers,
+                    globals: &globals,
+                };
+                let ty = source.value_type(project.types.declarations[&id], node.span)?;
+                globals.insert(id, GlobalId(ir.globals.len()));
+                ir.globals.push(Global {
+                    name: format!(
+                        "fib.global.{}.{}.{}",
+                        id.file_id.0, id.index, binding.identifier
+                    ),
+                    ty,
+                    // Binding const does not freeze array/slice elements. Keep
+                    // storage writable; source analysis enforces permissions.
+                    mutable: true,
+                    linkage: Linkage::Internal,
+                    initializer: GlobalInitializer::Declaration,
+                });
+            }
+        }
+    }
 
     // Sort builtins to assign stable function IDs regardless of map iteration order.
     let mut builtins = project.builtins.iter().collect::<Vec<_>>();
@@ -259,6 +326,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             file: declaration.file_id,
             runtime_types: &runtime_types,
             pointers: &pointers,
+            globals: &globals,
         };
         let function_id = FunctionId(ir.functions.len());
         functions.insert(FunctionKey::Declaration(declaration), function_id);
@@ -286,11 +354,18 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             file: unit.source_file_id,
             runtime_types: &runtime_types,
             pointers: &pointers,
+            globals: &globals,
         };
         for node in &unit.ast.statements {
             if matches!(&node.kind, S::VariableDeclaration(v) if v.is_comp)
                 || matches!(&node.kind, S::MultiVariableDeclaration { bindings, .. } if bindings.iter().all(|v| v.is_comp))
             {
+                continue;
+            }
+            if matches!(
+                node.kind,
+                S::VariableDeclaration(_) | S::MultiVariableDeclaration { .. }
+            ) {
                 continue;
             }
             let S::FunctionDeclaration(function) = &node.kind else {
@@ -392,6 +467,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             file: instance.key.template.file_id,
             runtime_types: &runtime_types,
             pointers: &pointers,
+            globals: &globals,
         };
         let id = FunctionId(ir.functions.len());
         functions.insert(FunctionKey::Instance(instance.key.clone()), id);
@@ -425,6 +501,14 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
     }
     // Validate the entire subset, including dead branches, and collect constants
     // before the builder borrows IR. Forward function identities already exist.
+    globals::initialize(
+        project,
+        &mut ir,
+        &runtime_types,
+        &pointers,
+        &globals,
+        &functions,
+    )?;
     for (_, function, _, file, environment) in &declarations {
         let source = Source {
             project,
@@ -432,6 +516,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             file: *file,
             runtime_types: &runtime_types,
             pointers: &pointers,
+            globals: &globals,
         };
         Checker {
             source: &source,
@@ -454,6 +539,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             file,
             runtime_types: &runtime_types,
             pointers: &pointers,
+            globals: &globals,
         };
         let parameter_types = ir.functions[id.0].signature.params.clone();
         let result_count = ir.functions[id.0].signature.results.len();
@@ -632,6 +718,31 @@ fn binary_op(operator: Operator) -> Option<BinaryOp> {
         _ => return None,
     })
 }
+fn unit_comparison(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Constant>> {
+    if let E::BinaryExpresison(binary) = &expr.kind
+        && matches!(
+            binary.operator,
+            Operator::DoubleEquals | Operator::Different
+        )
+        && source
+            .ir_type(
+                binary
+                    .left
+                    .annotation
+                    .resolved
+                    .expect("validated operand")
+                    .ty,
+                binary.left.span,
+            )?
+            .is_none()
+    {
+        return Ok(Some(Constant {
+            ty: source.expression_type(expr)?,
+            kind: ConstantKind::Bool(binary.operator == Operator::DoubleEquals),
+        }));
+    }
+    Ok(None)
+}
 fn array_length(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Constant>> {
     if let E::ExprAcess { member, .. } = &expr.kind
         && let Some(info) = member.resolved
@@ -723,6 +834,24 @@ impl Checker<'_, '_> {
             return Ok(());
         }
         self.source.expression_type(expr)?;
+        if self.source.comp_value(expr)?.is_some() {
+            return Ok(());
+        }
+        if let Some(constant) = unit_comparison(self.source, expr)? {
+            let E::BinaryExpresison(binary) = &expr.kind else {
+                unreachable!()
+            };
+            self.expression(&binary.left)?;
+            self.expression(&binary.right)?;
+            if !self
+                .constants
+                .iter()
+                .any(|c| c.ty == constant.ty && c.kind == constant.kind)
+            {
+                self.constants.push(constant);
+            }
+            return Ok(());
+        }
         if let Some(constant) = array_length(self.source, expr)? {
             if let E::ExprAcess { expr: receiver, .. } = &expr.kind {
                 self.expression(receiver)?;
@@ -747,8 +876,11 @@ impl Checker<'_, '_> {
             return Ok(());
         }
         match &expr.kind {
+            E::VoidExpression => Ok(()),
             E::QualifiedIdentifier(_)
-                if local(expr).is_some() || callee(expr, &[], self.functions).is_some() =>
+                if local(expr).is_some()
+                    || callee(expr, &[], self.functions).is_some()
+                    || globals::global(expr, self.source.globals).is_some() =>
             {
                 Ok(())
             }
@@ -789,6 +921,19 @@ impl Checker<'_, '_> {
             E::ArrayLiteral { elements } => {
                 for element in elements {
                     self.expression(element)?;
+                }
+                Ok(())
+            }
+            E::IndexAccess { object, index } => {
+                self.expression(object)?;
+                self.expression(index)
+            }
+            E::SliceLiteral {
+                object, start, end, ..
+            } => {
+                self.expression(object)?;
+                for bound in start.iter().chain(end) {
+                    self.expression(bound)?;
                 }
                 Ok(())
             }
@@ -856,6 +1001,20 @@ impl Checker<'_, '_> {
                 S::Assignment { left, right } => {
                     self.expression(left)?;
                     self.expression(right)?;
+                }
+                S::IndexAssign {
+                    object,
+                    index,
+                    expr,
+                } => {
+                    self.expression(object)?;
+                    self.expression(index)?;
+                    self.expression(expr)?;
+                }
+                S::MultiAssignment { targets, values } => {
+                    for expr in targets.iter().chain(values) {
+                        self.expression(expr)?;
+                    }
                 }
                 S::ExpressionStatement(expression) => {
                     let E::Call {
@@ -956,6 +1115,45 @@ impl Lowerer<'_, '_, '_> {
         state: &mut State,
         expr: &Expression,
     ) -> anyhow::Result<Operand> {
+        if let Some(value) = self.source.comp_value(expr)? {
+            return globals::lower_data(self.source, self.builder.ir_mut(), value, self.functions)
+                .map(Operand::Constant);
+        }
+        if matches!(expr.kind, E::VoidExpression)
+            || (matches!(expr.kind, E::Call { .. })
+                && self
+                    .source
+                    .ir_type(
+                        expr.annotation.resolved.expect("validated expression").ty,
+                        expr.span,
+                    )?
+                    .is_none())
+        {
+            if matches!(expr.kind, E::Call { .. }) {
+                self.expression_statement(state, expr)?;
+            }
+            return self.instruction(
+                state,
+                InstructionKind::Aggregate { elements: vec![] },
+                self.source.expression_type(expr)?,
+            );
+        }
+        if let Some(constant) = unit_comparison(self.source, expr)? {
+            let E::BinaryExpresison(binary) = &expr.kind else {
+                unreachable!()
+            };
+            self.value_expression(state, &binary.left)?;
+            self.value_expression(state, &binary.right)?;
+            let index = self
+                .constants
+                .iter()
+                .position(|c| c.ty == constant.ty && c.kind == constant.kind)
+                .ok_or_else(|| {
+                    self.source
+                        .error(expr.span, "missing unit comparison constant")
+                })?;
+            return Ok(Operand::Constant(ConstantId(index)));
+        }
         if let Some(constant) = literal(self.source, expr)? {
             let index = self
                 .constants
@@ -1016,20 +1214,12 @@ impl Lowerer<'_, '_, '_> {
             else {
                 unreachable!()
             };
-            let payload = variants[variant].payload;
+            let payload = self.source.types.enum_payload(variants[variant].payload)?;
             let mut elements = Vec::new();
             for arg in args {
                 elements.push(self.value_expression(state, arg)?);
             }
-            let fields = if let Some(payload) = payload {
-                vec![self.instruction(
-                    state,
-                    InstructionKind::Aggregate { elements },
-                    self.source.value_type(payload, expr.span)?,
-                )?]
-            } else {
-                vec![]
-            };
+            let fields = if payload.is_some() { elements } else { vec![] };
             return self.instruction(
                 state,
                 InstructionKind::Enum { variant, fields },
@@ -1070,6 +1260,32 @@ impl Lowerer<'_, '_, '_> {
                 self.source.expression_type(expr)?,
             );
         }
+        if let E::SliceLiteral {
+            object,
+            start,
+            end,
+            inclusive,
+        } = &expr.kind
+        {
+            return self.slice(
+                state,
+                expr,
+                object,
+                start.as_deref(),
+                end.as_deref(),
+                *inclusive,
+            );
+        }
+        if let E::IndexAccess { object, index } = &expr.kind {
+            let address = self.index_address(state, object, index)?;
+            return self.instruction(
+                state,
+                InstructionKind::Load {
+                    address: Address(address),
+                },
+                self.source.expression_type(expr)?,
+            );
+        }
         if let Some(function) = callee(expr, &[], self.functions) {
             return self.instruction(
                 state,
@@ -1097,7 +1313,30 @@ impl Lowerer<'_, '_, '_> {
         if let E::UnaryExpression(unary) = &expr.kind
             && unary.operator == Operator::AddressOf
         {
-            return self.place(state, &unary.expression);
+            let address = self.place(state, &unary.expression)?;
+            if self
+                .source
+                .ir_type(
+                    unary
+                        .expression
+                        .annotation
+                        .resolved
+                        .expect("validated place")
+                        .ty,
+                    unary.expression.span,
+                )?
+                .is_none()
+            {
+                return self.instruction(
+                    state,
+                    InstructionKind::Cast {
+                        kind: CastKind::Bitcast,
+                        operand: address,
+                    },
+                    self.source.expression_type(expr)?,
+                );
+            }
+            return Ok(address);
         }
         if let E::ExprAcess {
             expr: receiver,
@@ -1317,6 +1556,14 @@ impl Lowerer<'_, '_, '_> {
         Ok(pointer)
     }
     fn place(&mut self, state: &mut State, expr: &Expression) -> anyhow::Result<Operand> {
+        if let Some(id) = globals::global(expr, self.source.globals) {
+            return self.instruction(
+                state,
+                InstructionKind::GlobalAddress(id),
+                self.source
+                    .pointer_type(self.source.expression_type(expr)?)?,
+            );
+        }
         if let Some(id) = local(expr) {
             return self
                 .slots
@@ -1325,6 +1572,7 @@ impl Lowerer<'_, '_, '_> {
                 .ok_or_else(|| self.source.error(expr.span, "binding has no storage"));
         }
         match &expr.kind {
+            E::IndexAccess { object, index } => self.index_address(state, object, index),
             E::ExprAcess {
                 expr: base, member, ..
             } => {
@@ -1514,6 +1762,52 @@ impl Lowerer<'_, '_, '_> {
                         )?;
                     }
                 }
+                S::IndexAssign {
+                    object,
+                    index,
+                    expr,
+                } => {
+                    let value = self.value_expression(&mut state, expr)?;
+                    let address = self.index_address(&mut state, object, index)?;
+                    self.builder.append_instruction(
+                        state.block,
+                        InstructionKind::Store {
+                            address: Address(address),
+                            value,
+                        },
+                        &[],
+                    )?;
+                }
+                S::MultiAssignment { targets, values } => {
+                    let values = values
+                        .iter()
+                        .map(|e| self.value_expression(&mut state, e))
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    let addresses = targets
+                        .iter()
+                        .map(|e| {
+                            if local(e).is_some_and(|id| !self.slots.contains_key(&id)) {
+                                Ok(None)
+                            } else {
+                                self.place(&mut state, e).map(Some)
+                            }
+                        })
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    for ((target, address), value) in targets.iter().zip(addresses).zip(values) {
+                        if let Some(address) = address {
+                            self.builder.append_instruction(
+                                state.block,
+                                InstructionKind::Store {
+                                    address: Address(address),
+                                    value,
+                                },
+                                &[],
+                            )?;
+                        } else {
+                            state.locals.insert(local(target).unwrap(), value);
+                        }
+                    }
+                }
                 S::ExpressionStatement(expression) => {
                     self.expression_statement(&mut state, expression)?;
                 }
@@ -1552,11 +1846,18 @@ impl Lowerer<'_, '_, '_> {
                 }
                 S::Return(Some(values)) => {
                     let value = self.value_expression(&mut state, &values[0])?;
+                    let returns_value = self
+                        .source
+                        .ir_type(
+                            values[0].annotation.resolved.expect("validated return").ty,
+                            values[0].span,
+                        )?
+                        .is_some();
                     state = self.run_defers(state, 0)?;
                     self.builder.set_terminator(
                         state.block,
                         Terminator::Return {
-                            values: vec![value],
+                            values: if returns_value { vec![value] } else { vec![] },
                         },
                     )?;
                     continue;
@@ -1690,18 +1991,28 @@ impl Lowerer<'_, '_, '_> {
                         .source
                         .error(subject.span, "missing pattern binding identity"));
                 };
-                let payload = self.instruction(
-                    &branch,
-                    InstructionKind::EnumField {
-                        value,
-                        variant: index as usize,
-                        field: 0,
-                    },
-                    self.source.value_type(
-                        variants[index as usize].payload.expect("validated payload"),
-                        subject.span,
-                    )?,
-                )?;
+                let payload_type = self
+                    .source
+                    .types
+                    .enum_payload(variants[index as usize].payload)?;
+                let payload = if let Some(payload_type) = payload_type {
+                    self.instruction(
+                        &branch,
+                        InstructionKind::EnumField {
+                            value,
+                            variant: index as usize,
+                            field: 0,
+                        },
+                        self.source.value_type(payload_type, subject.span)?,
+                    )?
+                } else {
+                    self.instruction(
+                        &branch,
+                        InstructionKind::Aggregate { elements: vec![] },
+                        self.source
+                            .value_type(self.source.types.locals[&id], subject.span)?,
+                    )?
+                };
                 let address = self.slots[&id];
                 self.builder.append_instruction(
                     block,

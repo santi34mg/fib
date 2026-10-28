@@ -14,8 +14,23 @@ fn unsupported(operation: &'static str) -> IrError {
 }
 
 pub fn verify_ir(ir: &Ir) -> IrResult<()> {
-    if !ir.globals.is_empty() {
-        return Err(unsupported("verification of globals"));
+    let mut names = HashSet::new();
+    for global in &ir.globals {
+        require(
+            !global.name.is_empty() && !global.name.contains('\0') && names.insert(&global.name),
+            "invalid or duplicate global symbol",
+        )?;
+        valid_memory_type(ir, global.ty)?;
+        match global.initializer {
+            GlobalInitializer::Declaration => require(
+                global.linkage == Linkage::External,
+                "global declaration requires external linkage",
+            )?,
+            GlobalInitializer::Constant(id) => require(
+                ir.get_constant(id).is_some_and(|c| c.ty == global.ty),
+                "global initializer type mismatch",
+            )?,
+        }
     }
     let mut sized = HashSet::new();
     for (index, ty) in ir.types.iter().enumerate() {
@@ -96,6 +111,70 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
         match (&c.kind, ir.get_type(c.ty)) {
             (ConstantKind::Bool(_), Some(IrType::Bool)) => (),
             (ConstantKind::Null, Some(IrType::Pointer { .. } | IrType::FunctionPointer(_))) => (),
+            (ConstantKind::GlobalAddress(id), Some(IrType::Pointer { pointee })) => {
+                require(
+                    ir.get_global(*id).is_some_and(|g| g.ty == *pointee),
+                    "global address type mismatch",
+                )?;
+            }
+            (ConstantKind::PointerCast(base), Some(IrType::Pointer { .. })) => require(
+                ir.get_constant(*base)
+                    .is_some_and(|c| matches!(ir.get_type(c.ty), Some(IrType::Pointer { .. }))),
+                "constant pointer cast requires pointer",
+            )?,
+            (ConstantKind::FunctionAddress(id), Some(IrType::FunctionPointer(signature))) => {
+                require(
+                    ir.get_function(*id)
+                        .is_some_and(|f| &f.signature == signature),
+                    "function address constant signature mismatch",
+                )?
+            }
+            (
+                ConstantKind::FieldAddress { base, field },
+                Some(IrType::Pointer { pointee: result }),
+            ) => {
+                let base = ir.get_constant(*base).ok_or(IrError::Invalid {
+                    message: "unknown constant address",
+                })?;
+                let base = pointee(ir, base.ty)?;
+                let Some(IrType::Struct { fields, .. }) = ir.get_type(base) else {
+                    return Err(IrError::Invalid {
+                        message: "constant field address requires struct",
+                    });
+                };
+                require(
+                    fields.get(*field) == Some(result),
+                    "constant field address type mismatch",
+                )?;
+            }
+            (ConstantKind::ArrayData(base), Some(IrType::Pointer { pointee: result })) => {
+                let base = ir.get_constant(*base).ok_or(IrError::Invalid {
+                    message: "unknown constant address",
+                })?;
+                require(
+                    matches!(ir.get_type(pointee(ir, base.ty)?), Some(IrType::Array { element, .. }) if element == result),
+                    "constant array data type mismatch",
+                )?;
+            }
+            (ConstantKind::ElementAddress { base, index }, Some(IrType::Pointer { pointee })) => {
+                valid_memory_type(ir, *pointee)?;
+                require(
+                    ir.get_constant(*base).is_some_and(|base| base.ty == c.ty),
+                    "constant element address type mismatch",
+                )?;
+                if let Some(remaining) = constant_array_remaining(ir, *base)? {
+                    require(
+                        *index <= remaining,
+                        "constant element address out of bounds",
+                    )?;
+                }
+            }
+            (ConstantKind::Slice { data, length }, Some(IrType::Slice { element })) => {
+                require(ir.get_constant(*data).is_some_and(|c| matches!(ir.get_type(c.ty), Some(IrType::Pointer { pointee }) if pointee == element)), "constant slice data type mismatch")?;
+                if let Some(remaining) = constant_array_remaining(ir, *data)? {
+                    require(*length <= remaining, "constant slice length out of bounds")?;
+                }
+            }
             (ConstantKind::Bytes(_), Some(IrType::Bytes)) => (),
             (ConstantKind::Bytes(bytes), Some(IrType::Array { element, len })) => require(
                 bytes.len() as u64 == *len && byte_type(ir, *element),
@@ -182,7 +261,6 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
             "builtin function must be a declaration",
         )?;
     }
-    let mut names = HashSet::new();
     let mut owned_blocks = HashSet::new();
     let mut owned_slots = HashSet::new();
     let mut definitions = HashSet::new();
@@ -375,7 +453,11 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                                 Some(IrType::Integer { .. } | IrType::Float(_))
                             ) || (matches!(
                                 ir.get_type(lhs),
-                                Some(IrType::Bool | IrType::Pointer { .. })
+                                Some(
+                                    IrType::Bool
+                                        | IrType::Pointer { .. }
+                                        | IrType::FunctionPointer(_)
+                                )
                             ) && matches!(op, BinaryOp::Eq | BinaryOp::Ne)),
                             "invalid comparison operand type",
                         )?;
@@ -537,12 +619,29 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                         )?;
                         results.clone()
                     }
+                    InstructionKind::GlobalAddress(id) => {
+                        let global = ir.get_global(*id).ok_or(IrError::Invalid {
+                            message: "unknown global",
+                        })?;
+                        require(
+                            results.len() == 1
+                                && matches!(ir.get_type(results[0]), Some(IrType::Pointer { pointee }) if *pointee == global.ty),
+                            "global address result type mismatch",
+                        )?;
+                        results.clone()
+                    }
                     InstructionKind::Load { address } => {
                         let ty = pointee(ir, operand(address.0, position)?)?;
                         valid_memory_type(ir, ty)?;
                         vec![ty]
                     }
                     InstructionKind::Store { address, value } => {
+                        if let Some(global) = address_global(ir, address.0) {
+                            require(
+                                ir.get_global(global).is_some_and(|g| g.mutable),
+                                "store to immutable or unknown global",
+                            )?;
+                        }
                         valid_memory_type(ir, pointee(ir, operand(address.0, position)?)?)?;
                         require(
                             pointee(ir, operand(address.0, position)?)?
@@ -952,11 +1051,49 @@ fn check_constant_cycles(ir: &Ir) -> IrResult<()> {
                 ConstantKind::Aggregate(fields) | ConstantKind::Enum { fields, .. } => {
                     pending.extend(fields.iter().map(|id| (*id, false)))
                 }
+                ConstantKind::FieldAddress { base, .. }
+                | ConstantKind::ArrayData(base)
+                | ConstantKind::PointerCast(base)
+                | ConstantKind::ElementAddress { base, .. }
+                | ConstantKind::Slice { data: base, .. } => pending.push((*base, false)),
                 _ => (),
             }
         }
     }
     Ok(())
+}
+/// Recover a known inline-array extent without assuming allocation validity for
+/// arbitrary raw pointers. The iteration limit also handles unverified cycles.
+fn constant_array_remaining(ir: &Ir, mut id: ConstantId) -> IrResult<Option<u64>> {
+    let mut offset = 0u128;
+    for _ in 0..ir.constants.len() {
+        match ir.get_constant(id).map(|c| &c.kind) {
+            Some(ConstantKind::ElementAddress { base, index }) => {
+                offset = offset
+                    .checked_add(u128::from(*index))
+                    .ok_or(IrError::Invalid {
+                        message: "constant address offset overflows",
+                    })?;
+                id = *base;
+            }
+            Some(ConstantKind::ArrayData(base)) => {
+                let Some(IrType::Array { len, .. }) = ir
+                    .get_constant(*base)
+                    .and_then(|c| pointee(ir, c.ty).ok())
+                    .and_then(|ty| ir.get_type(ty))
+                else {
+                    return Ok(None);
+                };
+                require(
+                    offset <= u128::from(*len),
+                    "constant array address out of bounds",
+                )?;
+                return Ok(Some(*len - offset as u64));
+            }
+            _ => return Ok(None),
+        }
+    }
+    Ok(None)
 }
 fn defining_instruction(ir: &Ir, value: Operand) -> Option<&InstructionKind> {
     let Operand::Value(id) = value else {
@@ -969,6 +1106,32 @@ fn defining_instruction(ir: &Ir, value: Operand) -> Option<&InstructionKind> {
         return None;
     };
     Some(&ir.get_block(block)?.instructions.get(instruction)?.kind)
+}
+fn address_global(ir: &Ir, mut value: Operand) -> Option<GlobalId> {
+    for _ in 0..=ir.constants.len() + ir.values.len() {
+        value = match value {
+            Operand::Constant(id) => match &ir.get_constant(id)?.kind {
+                ConstantKind::GlobalAddress(id) => return Some(*id),
+                ConstantKind::FieldAddress { base, .. }
+                | ConstantKind::ArrayData(base)
+                | ConstantKind::ElementAddress { base, .. }
+                | ConstantKind::PointerCast(base) => Operand::Constant(*base),
+                _ => return None,
+            },
+            Operand::Value(_) => match defining_instruction(ir, value)? {
+                InstructionKind::GlobalAddress(id) => return Some(*id),
+                InstructionKind::FieldAddress { base, .. }
+                | InstructionKind::ElementAddress { base, .. }
+                | InstructionKind::ArrayData(base) => base.0,
+                InstructionKind::Cast {
+                    kind: CastKind::Bitcast,
+                    operand,
+                } => *operand,
+                _ => return None,
+            },
+        };
+    }
+    None
 }
 fn active_variant(
     ir: &Ir,

@@ -2,6 +2,135 @@
 
 use super::*;
 
+#[test]
+fn global_data_verification_checks_relocations_extents_and_cycles() {
+    let ir = Ir {
+        types: vec![
+            IrType::Integer {
+                width: IntegerWidth::Bits(32),
+                signed: true,
+            },
+            IrType::Array {
+                element: TypeId(0),
+                len: 2,
+            },
+            IrType::Pointer { pointee: TypeId(1) },
+            IrType::Pointer { pointee: TypeId(0) },
+            IrType::Slice { element: TypeId(0) },
+        ],
+        constants: vec![
+            Constant {
+                ty: TypeId(0),
+                kind: ConstantKind::Integer { bits: 42 },
+            },
+            Constant {
+                ty: TypeId(1),
+                kind: ConstantKind::Aggregate(vec![ConstantId(0), ConstantId(0)]),
+            },
+            Constant {
+                ty: TypeId(2),
+                kind: ConstantKind::GlobalAddress(GlobalId(0)),
+            },
+            Constant {
+                ty: TypeId(3),
+                kind: ConstantKind::ArrayData(ConstantId(2)),
+            },
+            Constant {
+                ty: TypeId(3),
+                kind: ConstantKind::ElementAddress {
+                    base: ConstantId(3),
+                    index: 1,
+                },
+            },
+            Constant {
+                ty: TypeId(4),
+                kind: ConstantKind::Slice {
+                    data: ConstantId(4),
+                    length: 1,
+                },
+            },
+        ],
+        globals: vec![
+            Global {
+                name: "array".into(),
+                ty: TypeId(1),
+                mutable: false,
+                linkage: Linkage::Internal,
+                initializer: GlobalInitializer::Constant(ConstantId(1)),
+            },
+            Global {
+                name: "view".into(),
+                ty: TypeId(4),
+                mutable: true,
+                linkage: Linkage::Internal,
+                initializer: GlobalInitializer::Constant(ConstantId(5)),
+            },
+        ],
+        ..Ir::new()
+    };
+    verify_ir(&ir).unwrap();
+    let mut bad = ir.clone();
+    bad.globals[0].ty = TypeId(0);
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir.clone();
+    bad.constants[2].kind = ConstantKind::GlobalAddress(GlobalId(99));
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir.clone();
+    bad.constants[3].ty = TypeId(2);
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir.clone();
+    bad.constants[4].kind = ConstantKind::ElementAddress {
+        base: ConstantId(3),
+        index: 3,
+    };
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir.clone();
+    bad.constants[5].kind = ConstantKind::Slice {
+        data: ConstantId(4),
+        length: 2,
+    };
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir.clone();
+    bad.constants[4].kind = ConstantKind::ElementAddress {
+        base: ConstantId(4),
+        index: 0,
+    };
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir.clone();
+    bad.globals[1].name = "array".into();
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir.clone();
+    bad.globals[0].initializer = GlobalInitializer::Declaration;
+    assert!(verify_ir(&bad).is_err());
+    let mut bad = ir;
+    bad.functions.push(Function {
+        identifier: "write".into(),
+        signature: Signature {
+            params: vec![],
+            results: vec![],
+            calling_convention: CallingConvention::Fib,
+        },
+        linkage: Linkage::Internal,
+        body: FunctionBody::Declaration,
+    });
+    let mut builder = FunctionBuilder::new(&mut bad, FunctionId(0)).unwrap();
+    let entry = builder.create_block(&[]).unwrap();
+    builder
+        .append_instruction(
+            entry,
+            InstructionKind::Store {
+                address: Address(Operand::Constant(ConstantId(4))),
+                value: Operand::Constant(ConstantId(0)),
+            },
+            &[],
+        )
+        .unwrap();
+    builder
+        .set_terminator(entry, Terminator::Return { values: vec![] })
+        .unwrap();
+    assert!(builder.finish(entry).is_err());
+}
+
 fn signature() -> Signature {
     Signature {
         params: vec![TypeId(0)],
