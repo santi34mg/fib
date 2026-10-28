@@ -175,7 +175,10 @@ impl Source<'_> {
         Ok(Signature {
             params,
             results,
-            calling_convention: source_convention(),
+            calling_convention: match function.calling_convention {
+                crate::frontend::semantic_type::CallConvention::C => CallingConvention::C,
+                _ => source_convention(),
+            },
         })
     }
 }
@@ -197,17 +200,6 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         .iter()
         .map(scalar_type)
         .collect();
-    // NOTE: This conditional Bytes-type registration probably needs to be approached differently in the future.
-    if project.builtins.values().any(|b| !b.is_intrinsic())
-        || project.types.bindings.values().any(|info| {
-            matches!(
-                project.types.get(info.ty),
-                Ok(SemanticType::Builtin(BuiltinType::String))
-            )
-        })
-    {
-        ir.types.push(IrType::Bytes);
-    }
     let runtime_types = register_runtime_types(project, &mut ir)?;
     let mut pointers = HashMap::new();
     for (index, ty) in ir.types.iter().enumerate() {
@@ -225,7 +217,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         }
     }
     for (index, ty) in ir.types.iter().enumerate() {
-        if matches!(ty, IrType::Pointer { .. }) {
+        if matches!(ty, IrType::Pointer { .. } | IrType::FunctionPointer(_)) {
             ir.constants.push(Constant {
                 ty: TypeId(index),
                 kind: ConstantKind::Null,
@@ -323,10 +315,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             {
                 continue;
             }
-            if function.is_extern
-                || function.body.is_none()
-                || !signature.generic_parameters.is_empty()
-            {
+            if !signature.generic_parameters.is_empty() {
                 return Err(
                     source.error(node.span, "extern and generic functions are not supported")
                 );
@@ -343,11 +332,11 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             }
             let entry = unit.source_file_id == project.entry && signature.identifier == entry_name;
             let mut lowered_signature = source.signature(declaration, node.span)?;
-            if !entry {
-                lowered_signature.calling_convention = CallingConvention::Fib;
+            if entry {
+                lowered_signature.calling_convention = CallingConvention::C;
             }
             ir.functions.push(Function {
-                identifier: if entry || project.units.len() == 1 {
+                identifier: if entry || function.is_extern || project.units.len() == 1 {
                     signature.identifier.clone()
                 } else {
                     format!(
@@ -356,14 +345,16 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
                     )
                 },
                 signature: lowered_signature,
-                linkage: if entry {
+                linkage: if entry || function.is_extern {
                     Linkage::External
                 } else {
                     Linkage::Internal
                 },
                 body: FunctionBody::Declaration,
             });
-            declarations.push((function_id, function, node.span, unit.source_file_id, None));
+            if function.body.is_some() {
+                declarations.push((function_id, function, node.span, unit.source_file_id, None));
+            }
         }
     }
     let mut instances = project
@@ -573,7 +564,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
 // Temporary supported source convention; changing policy must not introduce
 // physical ABI details into semantic signatures or CFG construction.
 fn source_convention() -> CallingConvention {
-    CallingConvention::C
+    CallingConvention::Fib
 }
 
 fn local(expr: &Expression) -> Option<LocalId> {
@@ -686,6 +677,24 @@ fn literal(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Cons
             ty: source.expression_type(expr)?,
             kind: ConstantKind::Bool(*value),
         }),
+        E::Literal(Literal::CString(value)) => Some(Constant {
+            ty: source.expression_type(expr)?,
+            kind: ConstantKind::CString(value.as_bytes().to_vec()),
+        }),
+        E::SliceLiteral {
+            object,
+            start: None,
+            end: None,
+            ..
+        } if matches!(object.kind, E::Literal(Literal::String(_))) => {
+            let E::Literal(Literal::String(value)) = &object.kind else {
+                unreachable!()
+            };
+            Some(Constant {
+                ty: source.expression_type(expr)?,
+                kind: ConstantKind::Bytes(value.as_bytes().to_vec()),
+            })
+        }
         E::Literal(Literal::String(value)) => Some(Constant {
             ty: source.expression_type(expr)?,
             kind: ConstantKind::Bytes(value.as_bytes().to_vec()),
@@ -738,13 +747,20 @@ impl Checker<'_, '_> {
             return Ok(());
         }
         match &expr.kind {
-            E::QualifiedIdentifier(_) if local(expr).is_some() => Ok(()),
+            E::QualifiedIdentifier(_)
+                if local(expr).is_some() || callee(expr, &[], self.functions).is_some() =>
+            {
+                Ok(())
+            }
             E::Call {
                 callee: function,
                 args,
-            } if callee(function, args, self.functions).is_some()
-                || self.source.intrinsic(function) =>
-            {
+            } => {
+                if callee(function, args, self.functions).is_none()
+                    && !self.source.intrinsic(function)
+                {
+                    self.expression(function)?;
+                }
                 for arg in args.iter().filter(runtime_argument) {
                     self.expression(arg)?;
                 }
@@ -763,7 +779,10 @@ impl Checker<'_, '_> {
                 self.expression(&unary.expression)
             }
             E::ExprAcess { expr, member, .. }
-                if matches!(member.resolved.map(|m| m.kind), Some(MemberKind::Field(_))) =>
+                if matches!(
+                    member.resolved.map(|m| m.kind),
+                    Some(MemberKind::Field(_) | MemberKind::Length)
+                ) =>
             {
                 self.expression(expr)
             }
@@ -849,28 +868,23 @@ impl Checker<'_, '_> {
                             "only calls may be used as expression statements",
                         ));
                     };
-                    callee(function, args, self.functions).ok_or_else(|| {
-                        self.source
-                            .error(expression.span, "unsupported call target")
-                    })?;
-                    if self.source.types.get(
-                        self.source.types.canonical(
-                            expression
-                                .annotation
-                                .resolved
-                                .ok_or_else(|| {
-                                    self.source
-                                        .error(expression.span, "missing expression annotation")
-                                })?
-                                .ty,
-                        )?,
-                    )? != &SemanticType::Builtin(BuiltinType::Void)
+                    if callee(function, args, self.functions).is_none()
+                        && !self.source.intrinsic(function)
                     {
-                        return Err(self
-                            .source
-                            .error(expression.span, "discarding call results is not supported"));
+                        self.expression(function)?;
                     }
-                    for arg in args {
+                    self.source.ir_type(
+                        expression
+                            .annotation
+                            .resolved
+                            .ok_or_else(|| {
+                                self.source
+                                    .error(expression.span, "missing expression annotation")
+                            })?
+                            .ty,
+                        expression.span,
+                    )?;
+                    for arg in args.iter().filter(runtime_argument) {
                         self.expression(arg)?;
                     }
                 }
@@ -1013,6 +1027,13 @@ impl Lowerer<'_, '_, '_> {
                 self.source.expression_type(expr)?,
             );
         }
+        if let Some(function) = callee(expr, &[], self.functions) {
+            return self.instruction(
+                state,
+                InstructionKind::FunctionAddress(function),
+                self.source.expression_type(expr)?,
+            );
+        }
         if self.is_place(expr) {
             let address = self.place(state, expr)?;
             let ty = self.source.expression_type(expr)?;
@@ -1042,6 +1063,16 @@ impl Lowerer<'_, '_, '_> {
         } = &expr.kind
         {
             let value = self.value_expression(state, receiver)?;
+            if member
+                .resolved
+                .is_some_and(|m| m.kind == MemberKind::Length)
+            {
+                return self.instruction(
+                    state,
+                    InstructionKind::SliceLength(value),
+                    self.source.expression_type(expr)?,
+                );
+            }
             let Some(MemberKind::Field(field)) = member.resolved.map(|m| m.kind) else {
                 return Err(self.source.error(expr.span, "unsupported member"));
             };
@@ -1133,14 +1164,24 @@ impl Lowerer<'_, '_, '_> {
                 callee: function,
                 args,
             } => {
-                let callee = callee(function, args, self.functions)
-                    .ok_or_else(|| self.source.error(expr.span, "unsupported call target"))?;
+                let direct = callee(function, args, self.functions);
+                let indirect = if direct.is_none() {
+                    Some(self.checked_pointer(state, function)?)
+                } else {
+                    None
+                };
                 let args = args
                     .iter()
                     .filter(runtime_argument)
                     .map(|arg| self.value_expression(state, arg))
                     .collect::<anyhow::Result<Vec<_>>>()?;
-                InstructionKind::Call { callee, args }
+                match direct {
+                    Some(callee) => InstructionKind::Call { callee, args },
+                    None => InstructionKind::CallIndirect {
+                        callee: indirect.unwrap(),
+                        args,
+                    },
+                }
             }
             E::UnaryExpression(unary) => InstructionKind::Unary {
                 op: if unary.operator == Operator::Minus {
@@ -1151,7 +1192,17 @@ impl Lowerer<'_, '_, '_> {
                 operand: self.value_expression(state, &unary.expression)?,
             },
             E::Cast { expr, .. } => InstructionKind::Cast {
-                kind: CastKind::Numeric,
+                kind: if matches!(
+                    self.source
+                        .types
+                        .container(expr.annotation.resolved.unwrap().ty)?
+                        .0,
+                    SemanticType::Pointer(_)
+                ) {
+                    CastKind::Bitcast
+                } else {
+                    CastKind::Numeric
+                },
                 operand: self.value_expression(state, expr)?,
             },
             E::BinaryExpresison(binary) => InstructionKind::Binary {
@@ -1276,8 +1327,16 @@ impl Lowerer<'_, '_, '_> {
                 .source
                 .error(expr.span, "only calls may be used as expression statements"));
         };
-        let callee = callee(function, args, self.functions)
-            .ok_or_else(|| self.source.error(expr.span, "unsupported call target"))?;
+        if self.source.intrinsic(function) {
+            self.value_expression(state, expr)?;
+            return Ok(());
+        }
+        let direct = callee(function, args, self.functions);
+        let indirect = if direct.is_none() {
+            Some(self.checked_pointer(state, function)?)
+        } else {
+            None
+        };
         let args = args
             .iter()
             .filter(runtime_argument)
@@ -1285,8 +1344,24 @@ impl Lowerer<'_, '_, '_> {
             .collect::<anyhow::Result<Vec<_>>>()?;
         self.builder.append_instruction(
             state.block,
-            InstructionKind::Call { callee, args },
-            &[],
+            match direct {
+                Some(callee) => InstructionKind::Call { callee, args },
+                None => InstructionKind::CallIndirect {
+                    callee: indirect.unwrap(),
+                    args,
+                },
+            },
+            &self
+                .source
+                .ir_type(
+                    expr.annotation
+                        .resolved
+                        .ok_or_else(|| self.source.error(expr.span, "missing call annotation"))?
+                        .ty,
+                    expr.span,
+                )?
+                .into_iter()
+                .collect::<Vec<_>>(),
         )?;
         Ok(())
     }

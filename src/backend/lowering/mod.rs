@@ -12,6 +12,8 @@ mod llvm_enum;
 pub mod llvm_lower;
 #[cfg(feature = "llvm")]
 mod llvm_scalar;
+#[cfg(feature = "llvm")]
+mod llvm_syscall;
 pub mod types;
 
 #[cfg(test)]
@@ -23,3 +25,5 @@ pub use types::TargetSpec;
 
 #[cfg(all(test, feature = "llvm"))]
 mod cfg_test;
+
+mod c_abi;

@@ -32,6 +32,7 @@ pub enum TypeExpressionKind {
     Readonly(Box<TypeExpression>),
     Builtin(BuiltinType),
     Function {
+        calling_convention: crate::frontend::semantic_type::CallConvention,
         is_comp: bool,
         argument_types: Vec<TypeExpression>,
         return_type: Box<TypeExpression>,
@@ -64,13 +65,19 @@ impl fmt::Display for TypeExpressionKind {
             TypeExpressionKind::Readonly(ty) => write!(f, "const {ty}"),
             TypeExpressionKind::Builtin(builtin_type) => f.write_str(builtin_type.name()),
             TypeExpressionKind::Function {
+                calling_convention,
                 is_comp,
                 argument_types,
                 return_type,
             } => {
                 write!(
                     f,
-                    "{}fn({:?}) {}",
+                    "{}{}fn({:?}) {}",
+                    if *calling_convention == crate::frontend::semantic_type::CallConvention::C {
+                        "callconv \"C\" "
+                    } else {
+                        ""
+                    },
                     if *is_comp { "comp " } else { "" },
                     argument_types,
                     return_type

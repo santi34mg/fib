@@ -16,24 +16,52 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = Token>,
 {
+    pub(super) fn parse_calling_convention(
+        &mut self,
+    ) -> anyhow::Result<crate::frontend::semantic_type::CallConvention> {
+        use crate::frontend::semantic_type::CallConvention;
+        if let Some(token) =
+            self.consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Extern)))
+        {
+            return Err(self.error(
+                "extern has been replaced by callconv \"C\"",
+                token.line,
+                token.column,
+            ));
+        }
+        if let Some(token) =
+            self.consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Callconv)))
+        {
+            let value = self.expect_next("expected calling convention string after callconv")?;
+            if !matches!(&value.kind, TokenKind::Literal(crate::frontend::tokens::Literal::String(name)) if name == "C")
+            {
+                return Err(self.error(
+                    "unsupported calling convention; expected \"C\"",
+                    token.line,
+                    token.column,
+                ));
+            }
+            Ok(CallConvention::C)
+        } else {
+            Ok(CallConvention::Fib)
+        }
+    }
+
     pub fn parse_function_declaration(&mut self) -> anyhow::Result<FunctionDeclaration> {
         let (is_pub, pub_scope) = self.parse_visibility()?;
         let is_comp = self
             .consume_if(|t| matches!(t.kind, TokenKind::Keyword(Keyword::Comp)))
             .is_some();
-        // Check for optional 'extern' prefix
-        let is_extern = if matches!(
-            self.peek(),
-            Some(Token {
-                kind: TokenKind::Keyword(Keyword::Extern),
-                ..
-            })
-        ) {
-            self.next(); // consume 'extern'
-            true
-        } else {
-            false
-        };
+        let calling_convention = self.parse_calling_convention()?;
+        let is_extern = calling_convention == crate::frontend::semantic_type::CallConvention::C;
+        if is_comp && is_extern {
+            let (line, column) = self.last_pos;
+            return Err(self.error(
+                "comp functions cannot use the C calling convention",
+                line,
+                column,
+            ));
+        }
 
         let fn_kw_token = self.expect_token(
             TokenKind::Keyword(Keyword::Function),
@@ -123,9 +151,6 @@ where
             if matches!(token.kind, TokenKind::Punctuation(Punctuation::Semicolon)) {
                 self.next(); // consume ';'
                 None
-            } else if is_extern {
-                // extern fn without ';' — just no body
-                None
             } else {
                 Some(FunctionBody {
                     statements: self.parse_body()?,
@@ -139,6 +164,7 @@ where
             signature: FunctionSignature {
                 identifier,
                 is_comp,
+                calling_convention,
                 annotation: crate::frontend::analysis_annotation::BindingAnnotation {
                     source_span: name_span.map(Into::into),
                     ..Default::default()

@@ -19,6 +19,7 @@ pub enum PhysicalConvention {
 /// parameters. Wider legalization needs explicit additional representations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionAbi {
+    pub c_abi: Option<super::c_abi::CSignature>,
     pub parameters: Vec<TypeId>,
     pub parameter_positions: Vec<usize>,
     pub result: Option<TypeId>,
@@ -28,6 +29,13 @@ pub struct FunctionAbi {
 impl FunctionAbi {
     pub fn validate(&self, signature: &Signature, types: &[IrType]) -> Result<(), BackendError> {
         let invalid = || failure("invalid direct ABI mapping");
+        match (signature.calling_convention, self.convention, &self.c_abi) {
+            (CallingConvention::C, PhysicalConvention::C, Some(c))
+                if c.arguments.len() == signature.params.len()
+                    && c.result.is_none() == signature.results.is_empty() => {}
+            (CallingConvention::Fib, PhysicalConvention::FibDirect, None) => {}
+            _ => return Err(failure("ABI convention or boundary plan mismatch")),
+        }
         if signature.results.len() > 1
             || self.parameters.len() != signature.params.len()
             || self.parameter_positions.len() != signature.params.len()
@@ -42,17 +50,6 @@ impl FunctionAbi {
             }
         }
         for &ty in self.parameters.iter().chain(self.result.iter()) {
-            if self.convention == PhysicalConvention::C
-                && !matches!(
-                    types.get(ty.0),
-                    Some(IrType::Integer {
-                        width: IntegerWidth::Bits(32),
-                        ..
-                    })
-                )
-            {
-                return Err(failure("only the C 32-bit integer/void ABI is supported"));
-            }
             if !direct_type(ty, types, &mut std::collections::HashSet::new()) {
                 return Err(failure("invalid direct Fib ABI type"));
             }
@@ -86,18 +83,8 @@ impl AbiClassifier for CScalar {
         if target.triple.is_empty() || target.data_layout.is_empty() {
             return Err(failure("ABI classification requires a resolved target"));
         }
-        if signature.params.iter().chain(&signature.results).any(|ty| {
-            !matches!(
-                types.get(ty.0),
-                Some(IrType::Integer {
-                    width: IntegerWidth::Bits(32),
-                    ..
-                })
-            )
-        }) {
-            return Err(failure("only the C 32-bit integer/void ABI is supported"));
-        }
         let abi = FunctionAbi {
+            c_abi: Some(super::c_abi::classify(signature, types, target)?),
             parameters: signature.params.clone(),
             parameter_positions: (0..signature.params.len()).collect(),
             result: signature.results.first().copied(),
@@ -120,6 +107,7 @@ pub fn classify_signature(
                 return Err(failure("ABI classification requires a resolved target"));
             }
             let abi = FunctionAbi {
+                c_abi: None,
                 parameters: signature.params.clone(),
                 parameter_positions: (0..signature.params.len()).collect(),
                 result: signature.results.first().copied(),
@@ -189,7 +177,17 @@ fn direct_type(
                 ..
             },
         ) => true,
+        Some(IrType::FunctionPointer(_)) => true,
         Some(IrType::Pointer { pointee }) => types.get(pointee.0).is_some(),
+        Some(IrType::Slice { element }) => direct_type(*element, types, active),
+        Some(IrType::Tuple(fields)) => {
+            if !active.insert(ty) {
+                return false;
+            }
+            let valid = fields.iter().all(|t| direct_type(*t, types, active));
+            active.remove(&ty);
+            valid
+        }
         Some(IrType::Array { element, .. }) => {
             if !active.insert(ty) {
                 return false;

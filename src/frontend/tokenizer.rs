@@ -71,6 +71,22 @@ impl<'input> Tokenizer<'input> {
             '/' => self.lex_slash(),
             '.' => self.lex_dot(),
             '(' | ')' | '{' | '}' | '[' | ']' | ',' | ';' | ':' | '@' => self.lex_punctuation(c),
+            'c' if self.peek_second() == Some('"') => {
+                self.bump();
+                match self.lex_string_literal()? {
+                    crate::frontend::tokens::TokenKind::Literal(
+                        crate::frontend::tokens::Literal::String(value),
+                    ) if value.contains('\0') => Some(TokenKind::Error(
+                        "C string literal cannot contain an embedded NUL".into(),
+                    )),
+                    crate::frontend::tokens::TokenKind::Literal(
+                        crate::frontend::tokens::Literal::String(value),
+                    ) => Some(TokenKind::Literal(
+                        crate::frontend::tokens::Literal::CString(value),
+                    )),
+                    token => Some(token),
+                }
+            }
             '"' => self.lex_string_literal(),
             '\'' => self.lex_char_literal(),
             c if c.is_ascii_digit() => self.lex_numeric(c),

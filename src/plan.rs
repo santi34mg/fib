@@ -45,8 +45,16 @@ pub struct FileRegion {
 }
 
 /// The complete set of files visible to name resolution.
+#[derive(Debug, Clone, Default)]
+pub struct NativeInputs {
+    pub sources: Vec<PathBuf>,
+    pub libraries: Vec<String>,
+    pub library_paths: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone)]
 pub struct BuildPlan {
+    pub native: NativeInputs,
     pub packages: Vec<PackageSpec>,
     pub files: Vec<SourceFile>,
     /// ID of the entry point file
@@ -153,6 +161,7 @@ impl BuildPlan {
             "source must have an extension to choose a distinct output path"
         );
         Ok(Self {
+            native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: vec![SourceFile {
                 id: FileId(0),
@@ -175,6 +184,7 @@ pub struct PlanBuilder {
     build_file: PathBuf,
     /// Modules defined in the build file
     pub modules: Vec<PathBuf>,
+    pub native: NativeInputs,
     /// Logical entry source selected by the interpreted build file.
     pub(crate) entry_name: Option<String>,
     /// Output path selected by the interpreted build file.
@@ -190,6 +200,7 @@ impl From<PathBuf> for PlanBuilder {
             build_stage: BuildStage::Configuration,
             build_file: value,
             modules: Vec::new(),
+            native: NativeInputs::default(),
             entry_name: None,
             output: None,
             _opt_level: None,
@@ -296,8 +307,41 @@ impl PlanBuilder {
             "output would overwrite a source or build file: {}",
             output.display()
         );
+        let mut native = self.native.clone();
+        native.sources = native
+            .sources
+            .iter()
+            .map(|p| resolve_source(&project_root, p))
+            .collect::<anyhow::Result<_>>()?;
+        native.library_paths = native
+            .library_paths
+            .iter()
+            .map(|p| {
+                let path = relative_path(&project_root, p, "library search")?.canonicalize()?;
+                anyhow::ensure!(
+                    path.starts_with(&project_root) && path.is_dir(),
+                    "invalid library search directory"
+                );
+                Ok(path)
+            })
+            .collect::<anyhow::Result<_>>()?;
+        anyhow::ensure!(
+            native
+                .sources
+                .iter()
+                .all(|p| *p != output && *p != build_file),
+            "output would overwrite native source"
+        );
+        anyhow::ensure!(
+            native
+                .libraries
+                .iter()
+                .all(|s| !s.is_empty() && !s.starts_with('-') && !s.contains(['/', '\\', '\0'])),
+            "invalid native library name"
+        );
         self.build_stage = BuildStage::IndividualIrCompilation;
         Ok(BuildPlan {
+            native,
             packages: Vec::new(),
             files,
             entry,
@@ -378,10 +422,10 @@ mod tests {
         std::fs::write(
             &build_file,
             r#"fn build() int32 {
-                build_api::add_source("main.fib");
-                build_api::add_source("util.fib");
-                build_api::set_entry("main");
-                build_api::set_output("build/app");
+                build_api::add_source("main.fib"[..]);
+                build_api::add_source("util.fib"[..]);
+                build_api::set_entry("main"[..]);
+                build_api::set_output("build/app"[..]);
                 return 0;
             }"#,
         )
@@ -453,6 +497,7 @@ mod package_metadata_tests {
 
     fn plan() -> BuildPlan {
         BuildPlan {
+            native: crate::plan::NativeInputs::default(),
             files: vec![SourceFile {
                 id: FileId(0),
                 name: "main".to_owned().into(),

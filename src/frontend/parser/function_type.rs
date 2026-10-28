@@ -60,6 +60,7 @@ where
         };
         Ok(TypeExpression::at(
             TypeExpressionKind::Function {
+                calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
                 is_comp: matches!(type_token.kind, TokenKind::Keyword(Keyword::Comp)),
                 argument_types,
                 return_type: Box::new(return_type),

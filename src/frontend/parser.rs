@@ -225,7 +225,9 @@ where
         }
         matches!(
             self.peek_n(offset).map(|t| t.kind),
-            Some(TokenKind::Keyword(Keyword::Function | Keyword::Extern))
+            Some(TokenKind::Keyword(
+                Keyword::Function | Keyword::Extern | Keyword::Callconv
+            ))
         ) || (matches!(
             self.peek_n(offset).map(|t| t.kind),
             Some(TokenKind::Keyword(Keyword::Comp))

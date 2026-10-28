@@ -71,6 +71,8 @@ pub enum ConstantKind {
     /// The exact contents of an unsigned 8-bit array. No terminator or storage
     /// allocation is implied.
     Bytes(Vec<u8>),
+    /// Immutable static NUL-terminated native storage; payload excludes NUL.
+    CString(Vec<u8>),
     /// The address of a global, represented as a constant pointer value.
     GlobalAddress(GlobalId),
     /// The address of a function, represented as a constant pointer value.

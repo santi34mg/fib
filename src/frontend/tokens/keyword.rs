@@ -18,6 +18,7 @@ pub enum Keyword {
     Union,
     As,
     Extern,
+    Callconv,
     Defer,
     Import,
 }

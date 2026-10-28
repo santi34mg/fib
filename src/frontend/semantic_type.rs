@@ -28,7 +28,7 @@ pub enum SemanticType {
     Slice(TypeId),
     Tuple(Vec<TypeId>),
     Function(FunctionType),
-    /// Compiler-known place-returning callable; never a runtime value.
+    /// Compiler-owned callable with per-invocation typing; never a runtime value.
     IntrinsicFunction,
     Struct(Vec<FieldType>),
     Enum(Vec<VariantType>),
@@ -60,8 +60,16 @@ pub enum ComputationArgument {
     Expression(Box<crate::frontend::ast::expression::Expression>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum CallConvention {
+    #[default]
+    Fib,
+    C,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionType {
+    pub calling_convention: CallConvention,
     /// Eligibility for bounded compile-time type computation, not known identity.
     pub is_comp: bool,
     pub parameters: Vec<TypeId>,

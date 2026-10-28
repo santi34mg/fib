@@ -199,6 +199,7 @@ fn synthetic_builtins_resolve_type_and_survive_analysis_only_when_configured() {
             .unwrap();
         (
             BuildPlan {
+                native: crate::plan::NativeInputs::default(),
                 packages: Vec::new(),
                 files: vec![SourceFile {
                     id: FileId(0),
@@ -215,7 +216,7 @@ fn synthetic_builtins_resolve_type_and_survive_analysis_only_when_configured() {
         )
     }
 
-    let source = "fn configure() { build_api::add_source(\"x\"); }";
+    let source = "fn configure() { build_api::add_source(\"x\"[..]); }";
     let (plan, units) = input(source);
     let normal_error = Analyzer::new(plan, units).unwrap().analyze().unwrap_err();
     assert!(format!("{normal_error:#}").contains("add_source"));
@@ -237,9 +238,14 @@ fn synthetic_builtins_resolve_type_and_survive_analysis_only_when_configured() {
         panic!("builtin must have a function type")
     };
     assert_eq!(signature.parameters.len(), 1);
+    let (container, readonly) = project.types.container(signature.parameters[0]).unwrap();
+    assert!(readonly);
+    let SemanticType::Slice(element) = container else {
+        panic!("build API parameter must be a readonly byte slice");
+    };
     assert!(matches!(
-        project.types.get(signature.parameters[0]).unwrap(),
-        SemanticType::Builtin(BuiltinType::String)
+        project.types.get(*element).unwrap(),
+        SemanticType::Builtin(BuiltinType::UInt8)
     ));
     assert!(matches!(
         project.types.get(signature.return_type).unwrap(),
@@ -265,11 +271,12 @@ fn synthetic_builtin_namespace_does_not_collide_with_source_names() {
     };
     use std::path::Path;
 
-    let source = "fn add_source() {} fn configure() { build_api::add_source(\"x\"); }";
+    let source = "fn add_source() {} fn configure() { build_api::add_source(\"x\"[..]); }";
     let ast = Parser::with_source(Tokenizer::new(source), Path::new("build.fib"), source)
         .parse()
         .unwrap();
     let plan = BuildPlan {
+        native: crate::plan::NativeInputs::default(),
         packages: Vec::new(),
         files: vec![SourceFile {
             id: FileId(0),
@@ -591,7 +598,7 @@ mod name_resolution {
         #[test]
         fn public_function_flag_is_collected_from_ast() {
             // `pub fn` is not accepted by the parser; the AST already represents it.
-            let (plan, mut units) = inputs(&[("main", "fn exported();")]);
+            let (plan, mut units) = inputs(&[("main", "callconv \"C\" fn exported();")]);
             let StatementKind::FunctionDeclaration(fun) = &mut units[0].ast.statements[0].kind
             else {
                 unreachable!()
@@ -922,8 +929,10 @@ mod name_resolution {
         }
         #[test]
         fn shared_call_initializer_is_resolved_before_multi_bindings() {
-            let analyzer =
-                resolved(&[("main", "fn produce(); fn f() { a, b := produce(); a; b; }")]);
+            let analyzer = resolved(&[(
+                "main",
+                "callconv \"C\" fn produce(); fn f() { a, b := produce(); a; b; }",
+            )]);
             names(
                 &analyzer,
                 0,
@@ -988,7 +997,10 @@ mod name_resolution {
         }
         #[test]
         fn bodyless_function_types_and_parameters_are_annotated() {
-            let analyzer = resolved(&[("main", "comp T: type = int32; fn declared(value: T) T;")]);
+            let analyzer = resolved(&[(
+                "main",
+                "comp T: type = int32; callconv \"C\" fn declared(value: T) T;",
+            )]);
             local(&analyzer, 0, "value", 0);
             names(&analyzer, 0, &[("T", target(0, 0)), ("T", target(0, 0))]);
             assert_eq!(
@@ -1078,7 +1090,7 @@ mod name_resolution {
             // Public function syntax is not parsed yet; exercise its existing AST flag.
             let (plan, mut units) = inputs(&[
                 ("main", "result := util::callable::member;"),
-                ("util", "fn callable();"),
+                ("util", "callconv \"C\" fn callable();"),
             ]);
             let StatementKind::FunctionDeclaration(function) = &mut units[1].ast.statements[0].kind
             else {
@@ -1192,7 +1204,7 @@ mod name_resolution {
         fn function_alias_calls_use_original_function_identity() {
             let analyzer = resolved(&[(
                 "main",
-                "fn original(); comp alias := original; result := alias();",
+                "callconv \"C\" fn original(); comp alias := original; result := alias();",
             )]);
             names(
                 &analyzer,
@@ -2334,6 +2346,7 @@ mod name_resolution {
 
     fn inputs(files: &[(&str, &str)]) -> (BuildPlan, Vec<CompilationUnit>) {
         let plan = BuildPlan {
+            native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: files
                 .iter()
@@ -2707,6 +2720,7 @@ mod name_resolution {
     }
     fn empty_symbols() -> ProjectSymbols {
         ProjectSymbols::from_plan(&BuildPlan {
+            native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: Vec::new(),
             entry: FileId(0),
@@ -2742,6 +2756,7 @@ mod type_resolution {
             .unwrap_or_else(|e| panic!("fixture did not parse: {source}\n{e:#}"));
         Analyzer::new(
             BuildPlan {
+                native: crate::plan::NativeInputs::default(),
                 packages: Vec::new(),
                 files: vec![SourceFile {
                     id: FileId(0),
@@ -2916,11 +2931,11 @@ mod type_resolution {
     ok!(recursive_calls, "fn f(x: int32) int32 { return f(x); }");
     ok!(
         tuple_results,
-        "fn pair() (int32, string) { return 1, \"x\"; } a, b := pair();"
+        "fn pair() (int32, const uint8[1]) { return 1, \"x\"; } a, b := pair();"
     );
     ok!(
         independent_multi_binding,
-        "const a: int8, b: string = 1, \"x\";"
+        "const a: int8, b: const uint8[1] = 1, \"x\";"
     );
     ok!(
         numeric_casts,
@@ -3672,6 +3687,7 @@ mod type_resolution {
         use crate::driver::CompilationUnit;
         use crate::plan::{BuildPlan, SourceFile};
         let plan = BuildPlan {
+            native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: files
                 .iter()
@@ -3779,11 +3795,13 @@ mod type_resolution {
                 (T::Tuple(vec![int]), T::Tuple(vec![never])),
                 (
                     T::Function(FunctionType {
+                        calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
                         is_comp: false,
                         parameters: vec![],
                         return_type: int,
                     }),
                     T::Function(FunctionType {
+                        calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
                         is_comp: false,
                         parameters: vec![],
                         return_type: never,
@@ -3791,11 +3809,13 @@ mod type_resolution {
                 ),
                 (
                     T::Function(FunctionType {
+                        calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
                         is_comp: false,
                         parameters: vec![int],
                         return_type: int,
                     }),
                     T::Function(FunctionType {
+                        calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
                         is_comp: false,
                         parameters: vec![never],
                         return_type: int,
@@ -3858,7 +3878,9 @@ mod type_resolution {
                     "true && stop()",
                     "stop() == 1",
                 ] {
-                    let source = format!("fn stop() never; fn f() {result} {{ return {value}; }}");
+                    let source = format!(
+                        "callconv \"C\" fn stop() never; fn f() {result} {{ return {value}; }}"
+                    );
                     analyzer(&source)
                         .analyze()
                         .unwrap_or_else(|e| panic!("{source}\n{e:#}"));
@@ -3875,15 +3897,20 @@ mod type_resolution {
             analyzer("fn stop() never { while (true) {}; } fn f() never { return stop(); }")
                 .analyze()
                 .unwrap();
-            bad("fn stop() never; x := stop();", "never cannot be stored");
+            bad(
+                "callconv \"C\" fn stop() never; x := stop();",
+                "never cannot be stored",
+            );
         }
 
         #[test]
         fn short_circuit_divergence_is_conditional() {
             for body in ["true && stop();", "false || stop();"] {
-                analyzer(&format!("fn stop() never; fn f() int32 {{ {body} }}"))
-                    .analyze()
-                    .unwrap();
+                analyzer(&format!(
+                    "callconv \"C\" fn stop() never; fn f() int32 {{ {body} }}"
+                ))
+                .analyze()
+                .unwrap();
             }
             for body in [
                 "false && stop();",
@@ -3892,20 +3919,20 @@ mod type_resolution {
                 "b || stop();",
             ] {
                 analysis_bad(
-                    &format!("fn stop() never; fn f(b: bool) int32 {{ {body} }}"),
+                    &format!("callconv \"C\" fn stop() never; fn f(b: bool) int32 {{ {body} }}"),
                     "all paths",
                 );
             }
             analysis_bad(
-                "fn stop() never; fn f(b: bool) int32 { x: int32; take(b && stop(), x); } fn take(b: bool, x: int32);",
+                "callconv \"C\" fn stop() never; fn f(b: bool) int32 { x: int32; take(b && stop(), x); } callconv \"C\" fn take(b: bool, x: int32);",
                 "uninitialized",
             );
             analysis_bad(
-                "fn stop() never; fn f() int32 { x: int32; return x + stop(); }",
+                "callconv \"C\" fn stop() never; fn f() int32 { x: int32; return x + stop(); }",
                 "uninitialized",
             );
             bad(
-                "fn stop() never; fn f() { take(stop(), true); } fn take(x: int32, y: int32);",
+                "callconv \"C\" fn stop() never; fn f() { take(stop(), true); } callconv \"C\" fn take(x: int32, y: int32);",
                 "incompatible types",
             );
         }
@@ -3913,7 +3940,7 @@ mod type_resolution {
         #[test]
         fn divergent_annotations_are_validated() {
             let (mut a, mut types) =
-                run("fn stop() never; fn take(x: int32) int32; fn f() { take(stop()); }").unwrap();
+                run("callconv \"C\" fn stop() never; callconv \"C\" fn take(x: int32) int32; fn f() { take(stop()); }").unwrap();
             let StatementKind::FunctionDeclaration(f) = &mut a.units[0].ast.statements[2].kind
             else {
                 panic!()
@@ -4011,11 +4038,11 @@ mod type_resolution {
         );
         pass!(
             defer_reads_at_exit,
-            "fn use(x: int32); fn f() { x: int32; defer use(x); x = 1; }"
+            "callconv \"C\" fn use(x: int32); fn f() { x: int32; defer use(x); x = 1; }"
         );
         pass!(
             defer_reverse_order,
-            "fn use(x: int32); fn f() { x: int32; defer use(x); defer x = 1; }"
+            "callconv \"C\" fn use(x: int32); fn f() { x: int32; defer use(x); defer x = 1; }"
         );
         pass!(
             inner_defer_initializes_outer,
@@ -4023,7 +4050,7 @@ mod type_resolution {
         );
         pass!(
             loop_exit_defer,
-            "fn use(x: int32); fn f() { x: int32; while (true) { defer use(x); x = 1; break; }; }"
+            "callconv \"C\" fn use(x: int32); fn f() { x: int32; while (true) { defer use(x); x = 1; break; }; }"
         );
         pass!(
             exhaustive_enum_return,
@@ -4050,12 +4077,12 @@ mod type_resolution {
         );
         fail!(
             defer_before_assignment_exit,
-            "fn use(x: int32); fn f(b: bool) { x: int32; defer use(x); if b { return; }; x = 1; }",
+            "callconv \"C\" fn use(x: int32); fn f(b: bool) { x: int32; defer use(x); if b { return; }; x = 1; }",
             "uninitialized"
         );
         fail!(
             defer_wrong_order,
-            "fn use(x: int32); fn f() { x: int32; defer x = 1; defer use(x); }",
+            "callconv \"C\" fn use(x: int32); fn f() { x: int32; defer x = 1; defer use(x); }",
             "uninitialized"
         );
         fail!(
@@ -4198,6 +4225,7 @@ mod type_resolution {
             let main = analyzer("comp ident := lib::identity; a := ident(int8, 1); comp maker := lib::box; comp Box := maker(int32); b: Box = Box { x: 1 };").units.remove(0);
             let mut a = Analyzer::new(
                 BuildPlan {
+                    native: crate::plan::NativeInputs::default(),
                     packages: Vec::new(),
                     files: vec![
                         SourceFile {
@@ -4318,7 +4346,7 @@ mod type_resolution {
         );
         err!(
             computed_side_effect_is_rejected,
-            "fn side() bool; comp fn choose() type { b := side(); return int32; } comp T := choose();",
+            "callconv \"C\" fn side() bool; comp fn choose() type { b := side(); return int32; } comp T := choose();",
             "known type or bool"
         );
         err!(
@@ -4850,6 +4878,7 @@ mod generic_flow_regressions {
         .unwrap_or_else(|error| panic!("fixture did not parse: {source}\n{error:#}"));
         Analyzer::new(
             BuildPlan {
+                native: crate::plan::NativeInputs::default(),
                 packages: Vec::new(),
                 files: vec![SourceFile {
                     id: FileId(0),
@@ -5051,11 +5080,11 @@ mod generic_flow_regressions {
         reject("fn f(T: type) { continue; }", "loop");
         reject("fn f(T: type) { defer return; }", "defer");
         reject(
-            "fn take(value: int32); fn f(T: type) { value: int32; defer take(value); }",
+            "callconv \"C\" fn take(value: int32); fn f(T: type) { value: int32; defer take(value); }",
             "uninitialized",
         );
         analyze(
-            "fn take(value: int32); fn f(T: type) { value: int32; defer take(value); value = 1; }",
+            "callconv \"C\" fn take(value: int32); fn f(T: type) { value: int32; defer take(value); value = 1; }",
         );
     }
 
@@ -5180,6 +5209,7 @@ mod validation_regressions {
             .unwrap_or_else(|error| panic!("fixture did not parse: {source}\n{error:#}"));
         Analyzer::new(
             BuildPlan {
+                native: crate::plan::NativeInputs::default(),
                 packages: Vec::new(),
                 files: vec![SourceFile {
                     id: FileId(0),
@@ -5377,7 +5407,7 @@ mod validation_regressions {
         for source in [
             "fn f() bool { return true; }",
             "fn f() char { return 'a'; }",
-            "fn f() string { return \"x\"; }",
+            "fn f() const uint8[1] { return \"x\"; }",
             "fn f() *int32 { return null; }",
         ] {
             let mut project = analyze(source);
@@ -5417,8 +5447,8 @@ mod validation_regressions {
             "fn f() int8[1] { return [-128]; }",
             "fn f() *int32 { return null; }",
             "fn pair() (int32, bool) { return 1, true; } fn f() (int32, bool) { return pair(); }",
-            "fn stop() never; fn f() int32 { return stop(); }",
-            "fn stop() never; fn f() (int32, bool) { return stop(), true; }",
+            "callconv \"C\" fn stop() never; fn f() int32 { return stop(); }",
+            "callconv \"C\" fn stop() never; fn f() (int32, bool) { return stop(), true; }",
             "fn f(T: type) T { return 1; }",
             "fn f(T: type) T { return; } fn g() { f(void); }",
             "comp fn choose(T: type) type { return T; } comp T := choose(int32);",
@@ -5492,7 +5522,7 @@ mod validation_regressions {
             "fn f(p: *int32) { q := p as *void; r := q as *int32; }",
             "fn f(x: int32) { y := x as float64; z := y as int64; }",
             "fn f() { p := null as *int32; }",
-            "fn stop() never; fn f() int32 { return stop() as int32; }",
+            "callconv \"C\" fn stop() never; fn f() int32 { return stop() as int32; }",
             "fn f(T: type, x: T) int32 { return x as int32; }",
         ] {
             let project = analyze(source);
@@ -5513,6 +5543,7 @@ mod memory_intrinsics {
     fn analyze(text: &str) -> anyhow::Result<AnalyzedProject> {
         let ast = Parser::with_source(Tokenizer::new(text), Path::new("main.fib"), text).parse()?;
         let plan = BuildPlan {
+            native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: vec![SourceFile {
                 id: FileId(0),
@@ -5624,6 +5655,7 @@ mod memory_intrinsics {
         let mut units = project.units;
         units[0].source_file_id = FileId(0);
         let plan = BuildPlan {
+            native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: vec![SourceFile {
                 id: FileId(0),
@@ -5680,6 +5712,7 @@ mod package_visibility {
         }
         Analyzer::new(
             BuildPlan {
+                native: crate::plan::NativeInputs::default(),
                 files,
                 entry: FileId(0),
                 output: "unused".into(),

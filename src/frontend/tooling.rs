@@ -164,6 +164,7 @@ pub fn compiler_error(error: anyhow::Error, path: &Path) -> CompilerError {
 /// A standalone editor document need not exist on disk or define an entry function.
 pub fn standalone_plan(path: &Path) -> BuildPlan {
     BuildPlan {
+        native: crate::plan::NativeInputs::default(),
         packages: vec![],
         files: vec![SourceFile {
             id: FileId(0),
@@ -424,7 +425,9 @@ pub fn encode_tokens(
                 }),
             TokenKind::Keyword(_) => "keyword",
             TokenKind::Comment => "comment",
-            TokenKind::Literal(Literal::String(_) | Literal::Character(_)) => "string",
+            TokenKind::Literal(
+                Literal::String(_) | Literal::CString(_) | Literal::Character(_),
+            ) => "string",
             TokenKind::Literal(Literal::Integer(_) | Literal::Float(_)) => "number",
             TokenKind::Literal(_) => "keyword",
             TokenKind::Operator(_) => "operator",

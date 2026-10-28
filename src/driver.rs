@@ -64,11 +64,16 @@ pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<Comp
             .ok_or_else(|| anyhow::anyhow!("output needs a file name"))?,
     );
     let resolved_output = output.canonicalize().unwrap_or_else(|_| output.clone());
-    for source in &plan.files {
+    for source in plan
+        .files
+        .iter()
+        .map(|f| &f.path)
+        .chain(&plan.native.sources)
+    {
         anyhow::ensure!(
-            source.path.canonicalize()? != resolved_output,
+            source.canonicalize()? != resolved_output,
             "output would overwrite source {}",
-            source.path.display()
+            source.display()
         );
     }
     let temporary = tempfile::tempdir_in(&parent)?;
@@ -79,8 +84,35 @@ pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<Comp
         return Ok(CompilationOutput::Objects(vec![output]));
     }
     let binary = temporary.path().join("program");
-    let linker = std::process::Command::new("cc")
-        .arg(&object)
+    let mut objects = Vec::new();
+    for (index, source) in plan.native.sources.iter().enumerate() {
+        let output = temporary.path().join(format!("native-{index}.o"));
+        let compiler = std::process::Command::new("cc")
+            .arg("-std=c11")
+            .arg("-fPIC")
+            .arg("-c")
+            .arg(source)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .context("invoking host C compiler cc")?;
+        anyhow::ensure!(
+            compiler.status.success(),
+            "C compilation failed for {}: {}",
+            source.display(),
+            String::from_utf8_lossy(&compiler.stderr)
+        );
+        objects.push(output);
+    }
+    let mut command = std::process::Command::new("cc");
+    command.arg(&object).args(&objects);
+    for path in &plan.native.library_paths {
+        command.arg("-L").arg(path);
+    }
+    for library in &plan.native.libraries {
+        command.arg(format!("-l{library}"));
+    }
+    let linker = command
         .arg("-o")
         .arg(&binary)
         .output()

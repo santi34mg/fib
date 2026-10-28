@@ -54,4 +54,6 @@ pub enum TrapReason {
     InvalidShift,
     InvalidFloatToInteger,
     NullPointerDereference,
+    IndexOutOfBounds,
+    InvalidSlice,
 }

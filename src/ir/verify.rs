@@ -20,7 +20,16 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
     let mut sized = HashSet::new();
     for (index, ty) in ir.types.iter().enumerate() {
         match ty {
-            IrType::Bool | IrType::Bytes | IrType::Float(_) => (),
+            IrType::Opaque | IrType::Bool | IrType::Bytes | IrType::Float(_) => (),
+            IrType::Slice { element } => {
+                valid_memory_type(ir, *element)?;
+            }
+            IrType::Tuple(fields) => {
+                for field in fields {
+                    valid_memory_type(ir, *field)?;
+                }
+                check_sized(ir, TypeId(index), &mut sized)?;
+            }
             IrType::Integer {
                 width: IntegerWidth::Bits(bits),
                 ..
@@ -32,10 +41,18 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
             IrType::Array { element, .. } => {
                 require(
                     ir.get_type(*element).is_some()
-                        && !matches!(ir.get_type(*element), Some(IrType::Bytes)),
+                        && !matches!(ir.get_type(*element), Some(IrType::Bytes | IrType::Opaque)),
                     "invalid array element type",
                 )?;
                 check_sized(ir, TypeId(index), &mut sized)?;
+            }
+            IrType::FunctionPointer(signature) => {
+                for ty in signature.params.iter().chain(&signature.results) {
+                    require(
+                        ir.get_type(*ty).is_some(),
+                        "unknown function pointer signature type",
+                    )?;
+                }
             }
             IrType::Pointer { pointee } => {
                 require(ir.get_type(*pointee).is_some(), "unknown pointee type")?;
@@ -48,7 +65,7 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                 for field in fields {
                     require(ir.get_type(*field).is_some(), "unknown field type")?;
                     require(
-                        !matches!(ir.get_type(*field), Some(IrType::Bytes)),
+                        !matches!(ir.get_type(*field), Some(IrType::Bytes | IrType::Opaque)),
                         "Bytes has no struct field representation",
                     )?;
                 }
@@ -64,14 +81,13 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                     for field in &variant.fields {
                         require(ir.get_type(*field).is_some(), "unknown enum field type")?;
                         require(
-                            !matches!(ir.get_type(*field), Some(IrType::Bytes)),
+                            !matches!(ir.get_type(*field), Some(IrType::Bytes | IrType::Opaque)),
                             "Bytes has no enum field representation",
                         )?;
                     }
                 }
                 check_sized(ir, TypeId(index), &mut sized)?;
             }
-            _ => return Err(unsupported("verification of type family")),
         }
     }
     let valid_type = |ty: TypeId| require(ir.get_type(ty).is_some(), "unknown type");
@@ -79,8 +95,19 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
         valid_type(c.ty)?;
         match (&c.kind, ir.get_type(c.ty)) {
             (ConstantKind::Bool(_), Some(IrType::Bool)) => (),
-            (ConstantKind::Null, Some(IrType::Pointer { .. })) => (),
+            (ConstantKind::Null, Some(IrType::Pointer { .. } | IrType::FunctionPointer(_))) => (),
             (ConstantKind::Bytes(_), Some(IrType::Bytes)) => (),
+            (ConstantKind::Bytes(bytes), Some(IrType::Array { element, len })) => require(
+                bytes.len() as u64 == *len && byte_type(ir, *element),
+                "byte array constant type mismatch",
+            )?,
+            (ConstantKind::Bytes(_), Some(IrType::Slice { element })) => {
+                require(byte_type(ir, *element), "byte view constant type mismatch")?
+            }
+            (ConstantKind::CString(bytes), Some(IrType::Pointer { pointee })) => require(
+                byte_type(ir, *pointee) && !bytes.contains(&0),
+                "invalid C string constant",
+            )?,
             (
                 ConstantKind::Integer { bits },
                 Some(IrType::Integer {
@@ -122,7 +149,10 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                     "float constant exceeds width",
                 )?;
             }
-            (ConstantKind::Aggregate(elements), Some(IrType::Struct { fields, .. })) => {
+            (
+                ConstantKind::Aggregate(elements),
+                Some(IrType::Struct { fields, .. } | IrType::Tuple(fields)),
+            ) => {
                 constant_fields(ir, elements, fields)?;
             }
             (ConstantKind::Enum { variant, fields }, Some(IrType::Enum { variants, .. })) => {
@@ -142,7 +172,7 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
     for (function, builtin) in &ir.builtin_functions {
         require(
             !builtin.is_intrinsic(),
-            "memory intrinsic must be lowered to IR operations",
+            "compiler intrinsic must be lowered to IR operations",
         )?;
         let declaration = ir.get_function(*function).ok_or(IrError::Invalid {
             message: "unknown builtin function",
@@ -164,6 +194,10 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
         )?;
         for &ty in f.signature.params.iter().chain(&f.signature.results) {
             valid_type(ty)?;
+            require(
+                !matches!(ir.get_type(ty), Some(IrType::Opaque)),
+                "opaque function value",
+            )?;
         }
         let FunctionBody::Definition {
             entry,
@@ -183,7 +217,7 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
             )?;
             valid_type(record.ty)?;
             require(
-                !matches!(ir.get_type(record.ty), Some(IrType::Bytes)),
+                !matches!(ir.get_type(record.ty), Some(IrType::Bytes | IrType::Opaque)),
                 "unsupported stack slot type",
             )?;
         }
@@ -204,6 +238,10 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                     message: "unknown value definition",
                 })?;
                 valid_type(v.ty)?;
+                require(
+                    !matches!(ir.get_type(v.ty), Some(IrType::Opaque)),
+                    "opaque SSA value",
+                )?;
                 require(
                     definitions.insert(id) && v.owner == owner && v.definition == location,
                     "duplicate or inconsistent value definition",
@@ -413,6 +451,79 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                         )?;
                         results.clone()
                     }
+                    InstructionKind::Cast {
+                        kind: CastKind::Bitcast,
+                        operand: value,
+                    } => {
+                        let from = operand(*value, position)?;
+                        require(
+                            results.len() == 1
+                                && matches!(ir.get_type(from), Some(IrType::Pointer { .. }))
+                                && matches!(ir.get_type(results[0]), Some(IrType::Pointer { .. })),
+                            "bitcast requires pointer types",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::Cast {
+                        kind: CastKind::IntegerToPointer,
+                        operand: value,
+                    } => {
+                        let source = operand(*value, position)?;
+                        require(
+                            matches!(
+                                ir.get_type(source),
+                                Some(IrType::Integer {
+                                    width: IntegerWidth::Bits(64),
+                                    signed: false
+                                })
+                            ) && results.len() == 1
+                                && matches!(ir.get_type(results[0]), Some(IrType::Pointer { .. })),
+                            "integer-to-pointer cast requires uint64 and a pointer result",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::Syscall { number, args } => {
+                        let number = operand(*number, position)?;
+                        require(
+                            matches!(
+                                ir.get_type(number),
+                                Some(IrType::Integer {
+                                    width: IntegerWidth::Bits(64),
+                                    signed: false
+                                })
+                            ),
+                            "syscall number must be uint64",
+                        )?;
+                        require(args.len() <= 6, "syscall supports at most six arguments")?;
+                        for arg in args {
+                            let ty = operand(*arg, position)?;
+                            require(
+                                matches!(
+                                    ir.get_type(ty),
+                                    Some(
+                                        IrType::Pointer { .. }
+                                            | IrType::Integer {
+                                                width: IntegerWidth::Bits(64),
+                                                signed: false
+                                            }
+                                    )
+                                ),
+                                "syscall argument must be uint64 or a pointer",
+                            )?;
+                        }
+                        require(
+                            results.len() == 1
+                                && matches!(
+                                    ir.get_type(results[0]),
+                                    Some(IrType::Integer {
+                                        width: IntegerWidth::Bits(64),
+                                        signed: true
+                                    })
+                                ),
+                            "syscall result must be int64",
+                        )?;
+                        results.clone()
+                    }
                     InstructionKind::StackAddress(slot) => {
                         require(stack_slots.contains(slot), "foreign stack slot")?;
                         let slot = ir.get_stack_slot(*slot).ok_or(IrError::Invalid {
@@ -427,9 +538,12 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                         results.clone()
                     }
                     InstructionKind::Load { address } => {
-                        vec![pointee(ir, operand(address.0, position)?)?]
+                        let ty = pointee(ir, operand(address.0, position)?)?;
+                        valid_memory_type(ir, ty)?;
+                        vec![ty]
                     }
                     InstructionKind::Store { address, value } => {
+                        valid_memory_type(ir, pointee(ir, operand(address.0, position)?)?)?;
                         require(
                             pointee(ir, operand(address.0, position)?)?
                                 == operand(*value, position)?,
@@ -478,6 +592,88 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                             results.len() == 1
                                 && matches!(ir.get_type(results[0]), Some(IrType::Pointer { pointee }) if *pointee == field),
                             "field address result type mismatch",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::ArrayData(base) => {
+                        let array = pointee(ir, operand(base.0, position)?)?;
+                        let Some(IrType::Array { element, .. }) = ir.get_type(array) else {
+                            return Err(IrError::Invalid {
+                                message: "array data requires pointer to array",
+                            });
+                        };
+                        require(
+                            results.len() == 1
+                                && matches!(ir.get_type(results[0]), Some(IrType::Pointer { pointee }) if pointee == element),
+                            "array data result mismatch",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::ElementAddress { base, index } => {
+                        let ty = operand(base.0, position)?;
+                        valid_memory_type(ir, pointee(ir, ty)?)?;
+                        require(
+                            matches!(
+                                ir.get_type(operand(*index, position)?),
+                                Some(IrType::Integer { .. })
+                            ),
+                            "element offset must be integer",
+                        )?;
+                        vec![ty]
+                    }
+                    InstructionKind::Slice { data, length } => {
+                        let pointer = operand(*data, position)?;
+                        let length = operand(*length, position)?;
+                        require(
+                            results.len() == 1
+                                && matches!((ir.get_type(results[0]), ir.get_type(pointer)), (Some(IrType::Slice { element }), Some(IrType::Pointer { pointee })) if element == pointee),
+                            "slice data signature mismatch",
+                        )?;
+                        require(
+                            matches!(
+                                ir.get_type(length),
+                                Some(IrType::Integer {
+                                    width: IntegerWidth::Pointer,
+                                    signed: false
+                                })
+                            ),
+                            "slice length requires usize",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::SliceData(value) => {
+                        let Some(IrType::Slice { element }) =
+                            ir.get_type(operand(*value, position)?)
+                        else {
+                            return Err(IrError::Invalid {
+                                message: "slice data requires slice",
+                            });
+                        };
+                        require(
+                            results.len() == 1
+                                && matches!(ir.get_type(results[0]),Some(IrType::Pointer {pointee}) if pointee == element),
+                            "slice data result mismatch",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::SliceLength(value) => {
+                        require(
+                            matches!(
+                                ir.get_type(operand(*value, position)?),
+                                Some(IrType::Slice { .. })
+                            ),
+                            "slice length requires slice",
+                        )?;
+                        require(
+                            results.len() == 1
+                                && matches!(
+                                    ir.get_type(results[0]),
+                                    Some(IrType::Integer {
+                                        width: IntegerWidth::Pointer,
+                                        signed: false
+                                    })
+                                ),
+                            "slice length result mismatch",
                         )?;
                         results.clone()
                     }
@@ -532,6 +728,34 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                             "enum extraction requires an established active variant",
                         )?;
                         vec![field_ty]
+                    }
+                    InstructionKind::FunctionAddress(function) => {
+                        let function = ir.get_function(*function).ok_or(IrError::Invalid {
+                            message: "unknown function address",
+                        })?;
+                        require(
+                            results.len() == 1
+                                && matches!(ir.get_type(results[0]), Some(IrType::FunctionPointer(signature)) if *signature == function.signature),
+                            "function address signature mismatch",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::CallIndirect { callee, args } => {
+                        let ty = operand(*callee, position)?;
+                        let Some(IrType::FunctionPointer(signature)) = ir.get_type(ty) else {
+                            return Err(IrError::Invalid {
+                                message: "indirect call requires function pointer",
+                            });
+                        };
+                        let arguments = args
+                            .iter()
+                            .map(|a| operand(*a, position))
+                            .collect::<IrResult<Vec<_>>>()?;
+                        require(
+                            arguments == signature.params,
+                            "indirect call argument signature mismatch",
+                        )?;
+                        signature.results.clone()
                     }
                     InstructionKind::Call { callee, args } => {
                         let callee = ir.get_function(*callee).ok_or(IrError::Invalid {
@@ -648,12 +872,17 @@ fn check_sized(ir: &Ir, ty: TypeId, done: &mut HashSet<TypeId>) -> IrResult<()> 
         require(active.insert(ty), "recursive by-value struct or enum")?;
         pending.push((ty, true));
         match ir.get_type(ty) {
-            Some(IrType::Struct { fields, .. }) => {
+            Some(IrType::Struct { fields, .. } | IrType::Tuple(fields)) => {
                 pending.extend(fields.iter().map(|f| (*f, false)))
             }
             Some(IrType::Array { element, .. }) => pending.push((*element, false)),
             Some(IrType::Enum { variants, .. }) => {
                 pending.extend(variants.iter().flat_map(|v| &v.fields).map(|f| (*f, false)))
+            }
+            Some(IrType::Opaque | IrType::Bytes) => {
+                return Err(IrError::Invalid {
+                    message: "unsized memory type",
+                });
             }
             _ => (),
         }
@@ -670,7 +899,7 @@ fn pointee(ir: &Ir, ty: TypeId) -> IrResult<TypeId> {
 }
 fn fields(ir: &Ir, ty: TypeId) -> IrResult<&Vec<TypeId>> {
     match ir.get_type(ty) {
-        Some(IrType::Struct { fields, .. }) => Ok(fields),
+        Some(IrType::Struct { fields, .. } | IrType::Tuple(fields)) => Ok(fields),
         _ => Err(IrError::Invalid {
             message: "field operation requires a struct",
         }),
@@ -777,4 +1006,21 @@ fn active_variant(
         if !matches!(defining_instruction(ir, *subject), Some(InstructionKind::EnumTag { value: v }) if *v == value) { return false; }
         cases.iter().any(|c| c.edge.target == *target && matches!(ir.get_constant(c.value).map(|c| &c.kind), Some(ConstantKind::Integer { bits }) if *bits == selected.discriminant))
     })
+}
+
+fn byte_type(ir: &Ir, ty: TypeId) -> bool {
+    matches!(
+        ir.get_type(ty),
+        Some(IrType::Integer {
+            width: IntegerWidth::Bits(8),
+            signed: false
+        })
+    )
+}
+fn valid_memory_type(ir: &Ir, ty: TypeId) -> IrResult<()> {
+    require(
+        ir.get_type(ty).is_some()
+            && !matches!(ir.get_type(ty), Some(IrType::Bytes | IrType::Opaque)),
+        "unsized memory type",
+    )
 }

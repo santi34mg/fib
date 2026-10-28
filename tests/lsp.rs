@@ -154,7 +154,7 @@ fn project_analysis_uses_unsaved_dependency_and_build_file() {
     let build = root.path().join("build.fib");
     std::fs::write(&main, "fn main() int32 { return helper::answer(); }").unwrap();
     std::fs::write(&helper, "pub fn answer() int32 { return 42; }").unwrap();
-    let valid_build = "fn build() int32 { build_api::add_source(\"main.fib\"); build_api::add_source(\"helper.fib\"); build_api::set_entry(\"main\"); build_api::set_output(\"app\"); return 0; }";
+    let valid_build = "fn build() int32 { build_api::add_source(\"main.fib\"[..]); build_api::add_source(\"helper.fib\"[..]); build_api::set_entry(\"main\"[..]); build_api::set_output(\"app\"[..]); return 0; }";
     std::fs::write(&build, valid_build).unwrap();
     let mut client = Client::new(root.path());
     client.open(&main, "fn main() int32 { return helper::answer(); }");
@@ -219,7 +219,7 @@ fn watched_disk_dependencies_and_removed_members_clear_diagnostics() {
     let main_source = "fn main() int32 { return helper::answer(); }";
     std::fs::write(&main, main_source).unwrap();
     std::fs::write(&helper, "pub fn answer() int32 { return false; }").unwrap();
-    std::fs::write(&build, "fn build() int32 { build_api::add_source(\"main.fib\"); build_api::add_source(\"helper.fib\"); build_api::set_entry(\"main\"); build_api::set_output(\"app\"); return 0; }").unwrap();
+    std::fs::write(&build, "fn build() int32 { build_api::add_source(\"main.fib\"[..]); build_api::add_source(\"helper.fib\"[..]); build_api::set_entry(\"main\"[..]); build_api::set_output(\"app\"[..]); return 0; }").unwrap();
     let mut client = Client::new(root.path());
     client.open(&main, main_source);
     let helper_uri = uri(&helper);
@@ -236,7 +236,7 @@ fn watched_disk_dependencies_and_removed_members_clear_diagnostics() {
         client.wait(|m| m["params"]["uri"] == helper_uri)["params"]["diagnostics"],
         json!([])
     );
-    client.open(&build, "fn build() int32 { build_api::add_source(\"main.fib\"); build_api::set_entry(\"main\"); build_api::set_output(\"app\"); return 0; }");
+    client.open(&build, "fn build() int32 { build_api::add_source(\"main.fib\"[..]); build_api::set_entry(\"main\"[..]); build_api::set_output(\"app\"[..]); return 0; }");
     assert_eq!(
         client.wait(|m| m["params"]["uri"] == helper_uri)["params"]["diagnostics"],
         json!([])

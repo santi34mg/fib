@@ -51,6 +51,37 @@ where
                 match keyword {
                     Keyword::Struct => self.parse_struct_literal(&type_token)?,
                     Keyword::Enum => self.parse_enum_literal(&type_token)?,
+                    Keyword::Callconv => {
+                        // The shared prefix parser consumes the keyword itself.
+                        let value = self.expect_next("expected calling convention string")?;
+                        if !matches!(&value.kind, TokenKind::Literal(crate::frontend::tokens::Literal::String(name)) if name == "C")
+                        {
+                            return Err(self.error(
+                                "unsupported calling convention; expected \"C\"",
+                                value.line,
+                                value.column,
+                            ));
+                        }
+                        self.expect_token(
+                            TokenKind::Keyword(Keyword::Function),
+                            "expected fn after calling convention",
+                        )?;
+                        let mut ty = self.parse_function_type(&type_token)?;
+                        if let TypeExpressionKind::Function {
+                            calling_convention, ..
+                        } = &mut ty.kind
+                        {
+                            *calling_convention = crate::frontend::semantic_type::CallConvention::C;
+                        }
+                        ty
+                    }
+                    Keyword::Extern => {
+                        return Err(self.error(
+                            "extern has been replaced by callconv \"C\"",
+                            type_token.line,
+                            type_token.column,
+                        ));
+                    }
                     Keyword::Function => self.parse_function_type(&type_token)?,
                     Keyword::Comp => {
                         self.expect_token(

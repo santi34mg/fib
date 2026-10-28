@@ -19,7 +19,25 @@ pub(super) fn register_runtime_types(
         }
         let result = match project.types.get(ty)? {
             SemanticType::Builtin(b) => SCALARS[..16].contains(b),
-            SemanticType::Readonly(t) | SemanticType::Pointer(t) => supported(project, *t, seen)?,
+            SemanticType::Readonly(t) => supported(project, *t, seen)?,
+            SemanticType::Pointer(t) => {
+                matches!(
+                    project.types.get(*t)?,
+                    SemanticType::Builtin(BuiltinType::Void)
+                ) || supported(project, *t, seen)?
+            }
+            SemanticType::Slice(element) => supported(project, *element, seen)?,
+            SemanticType::Function(f) => {
+                let mut result = true;
+                for ty in &f.parameters {
+                    result &= supported(project, *ty, seen)?;
+                }
+                result
+                    && (matches!(
+                        project.types.get(f.return_type)?,
+                        SemanticType::Builtin(BuiltinType::Void)
+                    ) || supported(project, f.return_type, seen)?)
+            }
             SemanticType::Array { element, .. } => supported(project, *element, seen)?,
             SemanticType::Struct(fields) => {
                 let mut result = true;
@@ -57,6 +75,15 @@ pub(super) fn register_runtime_types(
             return Ok(ty);
         }
         let ty = match project.types.get(canonical)? {
+            SemanticType::Builtin(BuiltinType::Void) => {
+                if let Some(index) = ir.types.iter().position(|t| matches!(t, IrType::Opaque)) {
+                    TypeId(index)
+                } else {
+                    let id = TypeId(ir.types.len());
+                    ir.types.push(IrType::Opaque);
+                    id
+                }
+            }
             SemanticType::Builtin(b) => scalar_id(b),
             SemanticType::Readonly(inner) => register(project, ir, map, *inner)?,
             SemanticType::Pointer(inner) => {
@@ -72,6 +99,37 @@ pub(super) fn register_runtime_types(
                     ir.types.push(IrType::Pointer { pointee });
                     id
                 }
+            }
+            SemanticType::Function(f) => {
+                let params = f
+                    .parameters
+                    .iter()
+                    .map(|t| register(project, ir, map, *t))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let results = if matches!(
+                    project.types.get(f.return_type)?,
+                    SemanticType::Builtin(BuiltinType::Void)
+                ) {
+                    vec![]
+                } else {
+                    vec![register(project, ir, map, f.return_type)?]
+                };
+                let id = TypeId(ir.types.len());
+                ir.types.push(IrType::FunctionPointer(Signature {
+                    params,
+                    results,
+                    calling_convention: match f.calling_convention {
+                        crate::frontend::semantic_type::CallConvention::C => CallingConvention::C,
+                        _ => CallingConvention::Fib,
+                    },
+                }));
+                id
+            }
+            SemanticType::Slice(element) => {
+                let element = register(project, ir, map, *element)?;
+                let id = TypeId(ir.types.len());
+                ir.types.push(IrType::Slice { element });
+                id
             }
             SemanticType::Array { element, length } => {
                 let element = register(project, ir, map, *element)?;

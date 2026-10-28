@@ -215,9 +215,7 @@ fn each_functions_abi_controls_its_calls_and_returns() {
     assert_eq!(run(emit_llvm(&ir, &target).unwrap()), 42);
     let artifact = emit_classified(&ir, &target, |ir, target| {
         classify_with(ir, target, |signature, types, target| {
-            let mut c_signature = signature.clone();
-            c_signature.calling_convention = CallingConvention::C;
-            let mut abi = classify_signature(&c_signature, types, target)?;
+            let mut abi = classify_signature(signature, types, target)?;
             // Test-only permutation exercises logical-to-physical argument placement.
             if signature.calling_convention == CallingConvention::Fib {
                 abi.parameter_positions.reverse();

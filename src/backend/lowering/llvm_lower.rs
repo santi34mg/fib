@@ -124,6 +124,17 @@ pub(super) fn emit_classified(
 ) -> Result<LlvmArtifact, BackendError> {
     super::ir_lower::verify_input(ir)?;
     use crate::ir::*;
+    if ir
+        .blocks
+        .iter()
+        .flat_map(|b| &b.instructions)
+        .any(|i| matches!(i.kind, InstructionKind::Syscall { .. }))
+        && (!target.triple.starts_with("x86_64-") || !target.triple.contains("linux"))
+    {
+        return Err(error(
+            "syscall emission requires Linux x86-64 with 64-bit pointers",
+        ));
+    }
     use inkwell::{context::Context, types::BasicTypeEnum, values::BasicValue};
     let context = Context::create();
     let module = context.create_module("fib");
@@ -135,6 +146,7 @@ pub(super) fn emit_classified(
         .iter()
         .enumerate()
         .map(|(index, ty)| match ty {
+            IrType::Opaque => Ok(context.i8_type().into()),
             IrType::Bool => Ok(BasicTypeEnum::from(context.bool_type())),
             IrType::Integer {
                 width: IntegerWidth::Bits(width),
@@ -156,8 +168,10 @@ pub(super) fn emit_classified(
             IrType::Array { .. } => Ok(context
                 .opaque_struct_type(&format!("fib.array.{index}"))
                 .into()),
-            IrType::Pointer { .. } => Ok(context.ptr_type(Default::default()).into()),
-            IrType::Struct { .. } => Ok(context
+            IrType::Pointer { .. } | IrType::FunctionPointer(_) => {
+                Ok(context.ptr_type(Default::default()).into())
+            }
+            IrType::Struct { .. } | IrType::Slice { .. } | IrType::Tuple(_) => Ok(context
                 .opaque_struct_type(&format!("fib.struct.{index}"))
                 .into()),
             IrType::Enum { .. } => Ok(context
@@ -181,6 +195,8 @@ pub(super) fn emit_classified(
         context: &context,
         plan: &plan,
         types: &types,
+        ir,
+        target: &abi_target,
     };
     let functions = ir
         .functions
@@ -215,6 +231,7 @@ pub(super) fn emit_classified(
             ir,
             types: &types,
             layouts: &enum_layouts,
+            module: &module,
         };
         let constants = enum_emitter.constants()?;
         let mut slots = std::collections::HashMap::new();
@@ -225,11 +242,11 @@ pub(super) fn emit_classified(
             slots.insert(slot, allocation);
         }
         let mut values = std::collections::HashMap::new();
-        for (&id, arg) in ir.blocks[entry.0]
-            .params
-            .iter()
-            .zip(abi.arguments(function_id, functions[fi])?)
-        {
+        for (&id, arg) in ir.blocks[entry.0].params.iter().zip(abi.arguments(
+            &builder,
+            function_id,
+            functions[fi],
+        )?) {
             values.insert(id, arg);
         }
         let mut phis = std::collections::HashMap::new();
@@ -302,6 +319,47 @@ pub(super) fn emit_classified(
                         )?;
                         values.insert(inst.results[0], value);
                     }
+                    InstructionKind::Cast {
+                        kind: CastKind::Bitcast,
+                        operand: value,
+                    } => {
+                        values.insert(inst.results[0], operand(*value, &constants, &values)?);
+                    }
+                    InstructionKind::Cast {
+                        kind: CastKind::IntegerToPointer,
+                        operand: value,
+                    } => {
+                        let dest = ir.values[inst.results[0].0].ty;
+                        let value = builder
+                            .build_int_to_ptr(
+                                operand(*value, &constants, &values)?.into_int_value(),
+                                types[dest.0].into_pointer_type(),
+                                "syscall.pointer",
+                            )
+                            .map_err(error)?;
+                        values.insert(inst.results[0], value.into());
+                    }
+                    InstructionKind::Syscall { number, args } => {
+                        if !target.triple.starts_with("x86_64-")
+                            || !target.triple.contains("linux")
+                            || machine.get_target_data().get_pointer_byte_size(None) != 8
+                        {
+                            return Err(error(
+                                "syscall emission requires Linux x86-64 with 64-bit pointers",
+                            ));
+                        }
+                        let args = args
+                            .iter()
+                            .map(|a| operand(*a, &constants, &values))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let value = super::llvm_syscall::emit(
+                            &context,
+                            &builder,
+                            operand(*number, &constants, &values)?,
+                            &args,
+                        )?;
+                        values.insert(inst.results[0], value.into());
+                    }
                     InstructionKind::Cast { operand: value, .. } => {
                         let source_ty = ir
                             .operand_type(*value)
@@ -347,6 +405,74 @@ pub(super) fn emit_classified(
                             .map_err(error)?
                             .set_alignment(1)
                             .map_err(error)?;
+                    }
+                    InstructionKind::Slice { data, length } => {
+                        let ty = types[ir.values[inst.results[0].0].ty.0].into_struct_type();
+                        let v = builder
+                            .build_insert_value(
+                                ty.const_zero(),
+                                operand(*data, &constants, &values)?,
+                                0,
+                                "slice.data",
+                            )
+                            .map_err(error)?
+                            .into_struct_value();
+                        let v = builder
+                            .build_insert_value(
+                                v,
+                                operand(*length, &constants, &values)?,
+                                1,
+                                "slice.length",
+                            )
+                            .map_err(error)?
+                            .into_struct_value();
+                        values.insert(inst.results[0], v.into());
+                    }
+                    InstructionKind::SliceData(value) | InstructionKind::SliceLength(value) => {
+                        let field = u32::from(matches!(inst.kind, InstructionKind::SliceLength(_)));
+                        let v = builder
+                            .build_extract_value(
+                                operand(*value, &constants, &values)?.into_struct_value(),
+                                field,
+                                "slice.field",
+                            )
+                            .map_err(error)?;
+                        values.insert(inst.results[0], v);
+                    }
+                    InstructionKind::ArrayData(base) => {
+                        let Some(IrType::Pointer { pointee }) =
+                            ir.operand_type(base.0).and_then(|t| ir.get_type(t))
+                        else {
+                            return Err(error("array data requires pointer"));
+                        };
+                        let zero = context.i32_type().const_zero();
+                        let v = unsafe {
+                            builder.build_gep(
+                                types[pointee.0],
+                                operand(base.0, &constants, &values)?.into_pointer_value(),
+                                &[zero, zero, zero],
+                                "array.data",
+                            )
+                        }
+                        .map_err(error)?;
+                        values.insert(inst.results[0], v.into());
+                    }
+                    InstructionKind::ElementAddress { base, index } => {
+                        let Some(IrType::Pointer { pointee }) =
+                            ir.operand_type(base.0).and_then(|t| ir.get_type(t))
+                        else {
+                            return Err(error("element address requires pointer"));
+                        };
+                        let v = unsafe {
+                            builder.build_gep(
+                                types[pointee.0],
+                                operand(base.0, &constants, &values)?.into_pointer_value(),
+                                &[operand(*index, &constants, &values)?.into_int_value()],
+                                "element.address",
+                            )
+                        }
+                        .map_err(error)?;
+                        values.insert(inst.results[0], v.into());
                     }
                     InstructionKind::FieldAddress { base, field } => {
                         let pointer = operand(base.0, &constants, &values)?.into_pointer_value();
@@ -448,6 +574,34 @@ pub(super) fn emit_classified(
                                 *field,
                             )?,
                         );
+                    }
+                    InstructionKind::FunctionAddress(function) => {
+                        values.insert(
+                            inst.results[0],
+                            functions[function.0]
+                                .as_global_value()
+                                .as_pointer_value()
+                                .into(),
+                        );
+                    }
+                    InstructionKind::CallIndirect { callee, args } => {
+                        let Some(IrType::FunctionPointer(signature)) =
+                            ir.operand_type(*callee).and_then(|t| ir.get_type(t))
+                        else {
+                            return Err(error("invalid indirect callee"));
+                        };
+                        let args = args
+                            .iter()
+                            .map(|a| operand(*a, &constants, &values))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        if let Some(value) = abi.call_indirect(
+                            &builder,
+                            signature,
+                            operand(*callee, &constants, &values)?.into_pointer_value(),
+                            &args,
+                        )? {
+                            values.insert(inst.results[0], value);
+                        }
                     }
                     InstructionKind::Call { callee, args } => {
                         let args = args

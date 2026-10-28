@@ -30,17 +30,30 @@ pub enum BuiltinFunction {
     AddSource,
     SetEntry,
     SetOutput,
+    AddCSource,
+    AddLinkLib,
+    AddLibraryPath,
     UncheckedDeref,
 }
 
 impl BuiltinFunction {
-    pub const ALL: [Self; 3] = [Self::AddSource, Self::SetEntry, Self::SetOutput];
+    pub const ALL: [Self; 6] = [
+        Self::AddSource,
+        Self::SetEntry,
+        Self::SetOutput,
+        Self::AddCSource,
+        Self::AddLinkLib,
+        Self::AddLibraryPath,
+    ];
 
     pub const fn name(self) -> &'static str {
         match self {
             Self::AddSource => "add_source",
             Self::SetEntry => "set_entry",
             Self::SetOutput => "set_output",
+            Self::AddCSource => "add_c_source",
+            Self::AddLinkLib => "add_link_lib",
+            Self::AddLibraryPath => "add_library_path",
             Self::UncheckedDeref => "unchecked_deref",
         }
     }
@@ -53,9 +66,12 @@ impl BuiltinFunction {
         if self.is_intrinsic() {
             return SemanticType::IntrinsicFunction;
         }
-        let string = types.builtin(BuiltinType::String);
+        let element = types.builtin(BuiltinType::UInt8);
+        let slice = types.intern(SemanticType::Slice(element));
+        let string = types.intern(SemanticType::Readonly(slice));
         let void = types.builtin(BuiltinType::Void);
         SemanticType::Function(FunctionType {
+            calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
             is_comp: false,
             parameters: vec![string],
             return_type: void,

@@ -96,7 +96,8 @@ where
             && (matches!(
                 token.kind,
                 TokenKind::Keyword(
-                    Keyword::Struct
+                    Keyword::Callconv
+                        | Keyword::Struct
                         | Keyword::Enum
                         | Keyword::Function
                         | Keyword::Const

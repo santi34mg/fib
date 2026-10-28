@@ -11,15 +11,18 @@ fn source(text: &str) -> (tempfile::TempDir, BuildPlan) {
 #[test]
 fn build_file_builtins_lower_to_verified_bytes_calls_and_interpret() {
     let (_directory, plan) = source(
-        "fn build() int32 { build_api::add_source(\"src/main.fib\"); build_api::set_entry(\"main\"); build_api::set_output(\"build/app\"); return 0; }",
+        "fn build() int32 { build_api::add_source(\"src/main.fib\"[..]); build_api::set_entry(\"main\"[..]); build_api::set_output(\"build/app\"[..]); return 0; }",
     );
     let ir = compile_build_file_to_ir(&plan).unwrap();
     crate::ir::verify_ir(&ir).unwrap();
-    assert_eq!(ir.builtin_functions.len(), 3);
+    assert_eq!(
+        ir.builtin_functions.len(),
+        crate::builtins::BuiltinFunction::ALL.len()
+    );
     assert!(
         ir.types
             .iter()
-            .any(|ty| matches!(ty, crate::ir::IrType::Bytes))
+            .any(|ty| matches!(ty, crate::ir::IrType::Slice { .. }))
     );
     assert_eq!(
         ir.constants
@@ -271,7 +274,7 @@ fn loops_lower_to_verified_ssa_without_storage_or_unreachable_blocks() {
 #[test]
 fn build_file_interpreter_rejects_loop_cfg_before_applying_operations() {
     let (_directory, plan) = source(
-        "fn build() int32 { build_api::set_output(\"before-loop\"); while () { break; }; return 0; }",
+        "fn build() int32 { build_api::set_output(\"before-loop\"[..]); while () { break; }; return 0; }",
     );
     let ir = compile_build_file_to_ir(&plan).unwrap();
     let mut builder = crate::plan::PlanBuilder::from(plan.files[0].path.clone());
@@ -302,15 +305,19 @@ fn non_exiting_loops_have_no_synthetic_return_or_unreachable_terminator() {
 fn current_capabilities_project_lowers_without_llvm() {
     let directory = tempfile::tempdir().unwrap();
     let build_file = directory.path().join("build.fib");
-    std::fs::write(&build_file, include_str!("../../example-project/build.fib")).unwrap();
+    std::fs::write(
+        &build_file,
+        include_str!("../../tests/programs/capabilities/build.fib"),
+    )
+    .unwrap();
     std::fs::write(
         directory.path().join("main.fib"),
-        include_str!("../../example-project/main.fib"),
+        include_str!("../../tests/programs/capabilities/main.fib"),
     )
     .unwrap();
     std::fs::write(
         directory.path().join("features.fib"),
-        include_str!("../../example-project/features.fib"),
+        include_str!("../../tests/programs/capabilities/features.fib"),
     )
     .unwrap();
     let plan = crate::plan::PlanBuilder::from(build_file)
@@ -391,23 +398,28 @@ fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
 }
 
 #[test]
-fn unsupported_struct_fields_and_dead_memory_syntax_fail_before_artifacts() {
+fn unsupported_struct_initializers_and_dead_memory_syntax_fail_before_artifacts() {
     for text in [
-        "fn main() int32 { value: string; value = \"ready\"; return 0; }",
+        "fn main() int32 { values := [1, 2]; index := 0; value := values[index]; return value; }",
         "comp S: type = struct { a: int32[] }; fn main() int32 { s := S { a: [1, 2][..] }; return 0; }",
-        "comp S: type = struct { text: string }; fn main() int32 { s := S { text: \"a\" }; return 0; }",
+        "comp S: type = struct { value: int32 }; fn main() int32 { values := [1, 2]; index := 0; s := S { value: values[index] }; return s.value; }",
         "fn main() int32 { while (false) { data := [1, 2][..]; }; return 0; }",
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
         let error = crate::ir::lowering::lower(&project).unwrap_err();
+        let diagnostic = error
+            .downcast_ref::<crate::diagnostics::CompilerError>()
+            .unwrap_or_else(|| panic!("{error:#}"));
+        assert_eq!(diagnostic.kind, crate::diagnostics::ErrorKind::Backend);
         assert!(
-            error
-                .downcast_ref::<crate::diagnostics::CompilerError>()
-                .is_some(),
+            diagnostic.message.contains("unsupported expression"),
             "{error:#}"
         );
+        assert!(diagnostic.span.is_some());
+        assert_eq!(diagnostic.filename.as_ref(), Some(&plan.files[0].path));
         assert!(!plan.output.exists());
+        assert!(!plan.output.with_extension("o").exists());
     }
 }
 
@@ -447,12 +459,14 @@ fn enum_lowering_checks_unmatched_and_dead_arms() {
         "comp E: type = enum { A, B }; fn main() int32 { e := E.A; switch(e) { when .A {} when .B {} }; return 42; }",
         "comp E: type = enum {}; fn impossible(e: E) int32 { switch(e) {}; } fn main() int32 { return 42; }",
         "comp E: type = enum { Next { next: *E }, End }; fn main() int32 { e := E.End; return 42; }",
+        "comp E: type = enum { A, Items { values: int32[] } }; fn main() int32 { e := E.A; return 42; }",
     ] {
         let (_directory, plan) = source(text);
-        crate::ir::lowering::lower(&run_frontend(&plan).unwrap()).unwrap();
+        let ir = crate::ir::lowering::lower(&run_frontend(&plan).unwrap()).unwrap();
+        crate::ir::verify_ir(&ir).unwrap();
     }
     for text in [
-        "comp E: type = enum { A, Bad { values: int32[] } }; fn main() int32 { e := E.A; return 42; }",
+        "comp E: type = enum { A, Items { values: int32[] } }; fn main() int32 { e := E.Items([1, 2][..]); return 42; }",
         "comp E: type = enum { A, B }; fn main() int32 { switch(E.A) { when .A {} when .B { data := [1, 2][..]; } }; return 42; }",
         "comp E: type = enum { A }; fn main() int32 { x := 0; if false { switch(E.A) { when .A { defer x = 1; } }; }; return 42; }",
     ] {

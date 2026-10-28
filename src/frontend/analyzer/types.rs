@@ -67,7 +67,9 @@ pub fn check_assignable(
                 pending.extend(a.iter().copied().zip(b.iter().copied()))
             }
             (T::Function(a), T::Function(b))
-                if a.is_comp == b.is_comp && a.parameters.len() == b.parameters.len() =>
+                if a.is_comp == b.is_comp
+                    && a.calling_convention == b.calling_convention
+                    && a.parameters.len() == b.parameters.len() =>
             {
                 pending.push((a.return_type, b.return_type));
                 pending.extend(

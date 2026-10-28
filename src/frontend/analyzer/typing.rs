@@ -386,6 +386,7 @@ impl TypeContext<'_> {
         let return_type = self.type_expression(&mut signature.return_type, true, true)?;
         let ty = self.types.intern(T::Function(FunctionType {
             is_comp: signature.is_comp,
+            calling_convention: signature.calling_convention,
             parameters,
             return_type,
         }));
@@ -485,6 +486,7 @@ impl TypeContext<'_> {
                 self.types.intern(T::Tuple(ts))
             }
             K::Function {
+                calling_convention,
                 is_comp,
                 argument_types,
                 return_type,
@@ -496,6 +498,7 @@ impl TypeContext<'_> {
                 let return_type = self.type_expression(return_type, true, true)?;
                 self.types.intern(T::Function(FunctionType {
                     is_comp: *is_comp,
+                    calling_convention: *calling_convention,
                     parameters,
                     return_type,
                 }))
@@ -522,6 +525,7 @@ impl TypeContext<'_> {
                         let payload = existing.unwrap_or_else(|| self.types.intern(T::Pending));
                         let fs = self.field_definitions(fields, payload)?;
                         let constructor = self.types.intern(T::Function(FunctionType {
+                            calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
                             is_comp: false,
                             parameters: fs.iter().map(|f| f.ty).collect(),
                             return_type: owner,

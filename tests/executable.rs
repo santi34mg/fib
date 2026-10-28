@@ -458,15 +458,15 @@ fn loops_carry_all_numeric_widths_and_bool() {
 fn current_capabilities_project_builds_from_build_file_and_runs() {
     let directory = tempfile::tempdir().unwrap();
     let build_file = directory.path().join("build.fib");
-    std::fs::write(&build_file, include_str!("../example-project/build.fib")).unwrap();
+    std::fs::write(&build_file, include_str!("programs/capabilities/build.fib")).unwrap();
     std::fs::write(
         directory.path().join("main.fib"),
-        include_str!("../example-project/main.fib"),
+        include_str!("programs/capabilities/main.fib"),
     )
     .unwrap();
     std::fs::write(
         directory.path().join("features.fib"),
-        include_str!("../example-project/features.fib"),
+        include_str!("programs/capabilities/features.fib"),
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))

@@ -26,6 +26,7 @@ impl<'input> Tokenizer<'input> {
             "continue" => TokenKind::Keyword(Keyword::Continue),
             "return" => TokenKind::Keyword(Keyword::Return),
             "as" => TokenKind::Keyword(Keyword::As),
+            "callconv" => TokenKind::Keyword(Keyword::Callconv),
             "extern" => TokenKind::Keyword(Keyword::Extern),
             "defer" => TokenKind::Keyword(Keyword::Defer),
 

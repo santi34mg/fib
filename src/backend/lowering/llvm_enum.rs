@@ -47,7 +47,11 @@ pub(super) fn complete_types<'ctx>(
         .filter(|(_, t)| {
             !matches!(
                 t,
-                IrType::Struct { .. } | IrType::Enum { .. } | IrType::Array { .. }
+                IrType::Struct { .. }
+                    | IrType::Enum { .. }
+                    | IrType::Array { .. }
+                    | IrType::Slice { .. }
+                    | IrType::Tuple(_)
             )
         })
         .map(|(i, _)| TypeId(i))
@@ -61,7 +65,8 @@ pub(super) fn complete_types<'ctx>(
             }
             let dependencies: Vec<_> = match ty {
                 IrType::Array { element, .. } => vec![element],
-                IrType::Struct { fields, .. } => fields.iter().collect(),
+                IrType::Struct { fields, .. } | IrType::Tuple(fields) => fields.iter().collect(),
+                IrType::Slice { .. } => vec![],
                 IrType::Enum { variants, .. } => variants.iter().flat_map(|v| &v.fields).collect(),
                 _ => unreachable!(),
             };
@@ -77,7 +82,15 @@ pub(super) fn complete_types<'ctx>(
                         )
                         .into(),
                 ],
-                IrType::Struct { fields, .. } => fields.iter().map(|t| types[t.0]).collect(),
+                IrType::Struct { fields, .. } | IrType::Tuple(fields) => {
+                    fields.iter().map(|t| types[t.0]).collect()
+                }
+                IrType::Slice { .. } => vec![
+                    context.ptr_type(Default::default()).into(),
+                    context
+                        .custom_width_int_type(data.get_pointer_byte_size(None) * 8)
+                        .into(),
+                ],
                 IrType::Enum { variants, .. } => {
                     let largest = variants.iter().map(|v| v.discriminant).max().unwrap_or(0);
                     let bits = [8, 16, 32, 64, 128]
@@ -146,6 +159,7 @@ pub(super) fn complete_types<'ctx>(
 
 pub(super) struct EnumEmitter<'a, 'ctx> {
     pub context: &'ctx Context,
+    pub module: &'a inkwell::module::Module<'ctx>,
     pub builder: &'a Builder<'ctx>,
     pub entry: BasicBlock<'ctx>,
     pub ir: &'a Ir,
@@ -267,6 +281,25 @@ impl<'ctx> EnumEmitter<'_, 'ctx> {
             .build_load(field_ty, address, "enum.field")
             .map_err(error)
     }
+    fn byte_global(
+        &self,
+        index: usize,
+        bytes: &[u8],
+        terminated: bool,
+    ) -> Result<PointerValue<'ctx>, BackendError> {
+        let name = format!("fib.literal.{index}");
+        let global = if let Some(g) = self.module.get_global(&name) {
+            g
+        } else {
+            let value = self.context.const_string(bytes, terminated);
+            let global = self.module.add_global(value.get_type(), None, &name);
+            global.set_initializer(&value);
+            global.set_constant(true);
+            global.set_linkage(inkwell::module::Linkage::Private);
+            global
+        };
+        Ok(global.as_pointer_value())
+    }
     pub fn constants(&self) -> Result<Vec<BasicValueEnum<'ctx>>, BackendError> {
         let mut values = vec![None; self.ir.constants.len()];
         // Verification has already established an acyclic graph, including forward references.
@@ -290,6 +323,34 @@ impl<'ctx> EnumEmitter<'_, 'ctx> {
                 };
                 let ty = self.types[c.ty.0];
                 values[index] = Some(match &c.kind {
+                    ConstantKind::Bytes(bytes) => match &self.ir.types[c.ty.0] {
+                        IrType::Array { .. } => {
+                            let elements = bytes
+                                .iter()
+                                .map(|b| {
+                                    self.context.i8_type().const_int((*b).into(), false).into()
+                                })
+                                .collect::<Vec<_>>();
+                            self.aggregate(c.ty, &elements)?
+                        }
+                        IrType::Slice { .. } => {
+                            let pointer = self.byte_global(index, bytes, false)?;
+                            self.aggregate(
+                                c.ty,
+                                &[
+                                    pointer.into(),
+                                    ty.into_struct_type()
+                                        .get_field_type_at_index(1)
+                                        .unwrap()
+                                        .into_int_type()
+                                        .const_int(bytes.len() as u64, false)
+                                        .into(),
+                                ],
+                            )?
+                        }
+                        _ => return Err(error("interpreter bytes cannot be emitted natively")),
+                    },
+                    ConstantKind::CString(bytes) => self.byte_global(index, bytes, true)?.into(),
                     ConstantKind::Null => ty.into_pointer_type().const_null().into(),
                     ConstantKind::Bool(b) => {
                         ty.into_int_type().const_int(u64::from(*b), false).into()

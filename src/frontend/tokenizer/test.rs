@@ -484,25 +484,23 @@ mod tests {
     fn test_builtins() {
         use crate::frontend::tokens::builtin::BuiltinType;
 
-        // Bare builtin type names are recognized without an `@` prefix.
-        let toks: Vec<_> = Tokenizer::new("int8 string bool").collect();
+        // Prelude type names and user-defined names all lex as identifiers.
+        let toks: Vec<_> = Tokenizer::new("int8 string bool type").collect();
         assert!(
             toks.iter()
                 .all(|t| matches!(t.kind, TokenKind::Identifier(_))),
-            "builtin type names should lex as builtins: {:?}",
+            "type names should lex as identifiers: {:?}",
             toks
         );
 
-        // resolves to a builtin type.
+        // `string` is no longer a prelude type, but remains a valid identifier.
+        assert_eq!(BuiltinType::from_name("string"), None);
         let toks: Vec<_> = Tokenizer::new("int8 string").collect();
         assert_eq!(
             toks[0].kind,
             TokenKind::Identifier(BuiltinType::Int8.name().into())
         );
-        assert_eq!(
-            toks[1].kind,
-            TokenKind::Identifier(BuiltinType::String.name().into())
-        );
+        assert_eq!(toks[1].kind, TokenKind::Identifier("string".into()));
 
         for (spelling, expected) in [
             ("uint8", BuiltinType::UInt8),
@@ -522,7 +520,7 @@ mod tests {
             ("void", BuiltinType::Void),
             ("char", BuiltinType::Char),
             ("bool", BuiltinType::Boolean),
-            ("string", BuiltinType::String),
+            ("type", BuiltinType::MetaType),
             ("never", BuiltinType::Never),
             ("usize", BuiltinType::Usize),
         ] {

@@ -353,9 +353,26 @@ impl TypeContext<'_> {
                 }
                 Literal::Boolean(_) => self.types.builtin(B::Boolean),
                 Literal::Character(_) => self.types.builtin(B::Char),
-                Literal::String(_) => self.types.builtin(B::String),
+                Literal::String(value) => {
+                    let element = self.types.builtin(B::UInt8);
+                    let array = self.types.intern(T::Array {
+                        element,
+                        length: value.len() as u64,
+                    });
+                    self.types.intern(T::Readonly(array))
+                }
+                Literal::CString(_) => {
+                    let element = self.types.builtin(B::UInt8);
+                    let pointer = self.types.intern(T::Pointer(element));
+                    self.types.intern(T::Readonly(pointer))
+                }
                 Literal::Null => expected
-                    .filter(|t| matches!(self.types.container(*t), Ok((T::Pointer(_), _))))
+                    .filter(|t| {
+                        matches!(
+                            self.types.container(*t),
+                            Ok((T::Pointer(_) | T::Function(_), _))
+                        )
+                    })
                     .ok_or_else(|| type_error("null requires a pointer context"))?,
             },
             E::QualifiedIdentifier(name) => {

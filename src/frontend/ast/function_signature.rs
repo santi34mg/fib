@@ -7,6 +7,7 @@ use crate::frontend::ast::{
 pub struct FunctionSignature {
     pub identifier: String,
     pub is_comp: bool,
+    pub calling_convention: crate::frontend::semantic_type::CallConvention,
     /// The function's sole binding slot; FunctionDeclaration does not duplicate it.
     pub annotation: BindingAnnotation,
     pub parameters: Vec<FunctionParameter>,

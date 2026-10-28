@@ -377,6 +377,7 @@ fn substitute(
                 .collect::<anyhow::Result<_>>()?,
         ),
         T::Function(f) => T::Function(FunctionType {
+            calling_convention: f.calling_convention,
             is_comp: f.is_comp,
             parameters: f
                 .parameters
@@ -411,6 +412,7 @@ fn substitute(
                         return Err(type_error("invalid variant payload"));
                     };
                     let f = FunctionType {
+                        calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
                         is_comp: false,
                         parameters: fs.iter().map(|f| f.ty).collect(),
                         return_type: owner,

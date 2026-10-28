@@ -41,6 +41,26 @@ pub enum InstructionKind {
         callee: FunctionId,
         args: Vec<Operand>,
     },
+    /// Linux x86-64 syscall. Arguments are uint64 register words or typed
+    /// pointers; result is raw int64. Always has observable memory effects.
+    Syscall {
+        number: Operand,
+        args: Vec<Operand>,
+    },
+    /// Function values retain their full logical signature and convention.
+    FunctionAddress(FunctionId),
+    CallIndirect {
+        callee: Operand,
+        args: Vec<Operand>,
+    },
+    Slice {
+        data: Operand,
+        length: Operand,
+    },
+    SliceData(Operand),
+    SliceLength(Operand),
+    /// Convert the address of inline array storage to its first element.
+    ArrayData(Address),
     StackAddress(StackSlotId),
     GlobalAddress(GlobalId),
     Load {

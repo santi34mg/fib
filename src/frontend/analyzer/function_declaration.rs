@@ -45,6 +45,17 @@ impl FunctionDeclaration {
             }
             super::evaluation::validate_comp_body(&self.body.as_ref().unwrap().statements)?;
         }
+        if self.body.is_none() && !self.is_extern {
+            return Err(type_error("bodyless functions require callconv \"C\""));
+        }
+        if self.is_extern
+            != (self.signature.calling_convention
+                == crate::frontend::semantic_type::CallConvention::C)
+        {
+            return Err(type_error(
+                "function calling convention annotation mismatch",
+            ));
+        }
         let previous_comp =
             std::mem::replace(&mut context.state.comp_function, self.signature.is_comp);
         let previous = context.state.return_type.replace(function.return_type);

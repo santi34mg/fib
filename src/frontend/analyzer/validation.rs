@@ -206,7 +206,8 @@ pub(super) fn validate(
             let T::Function(signature) = types.get(instance.signature)? else {
                 return Err(type_error("invalid instance signature"));
             };
-            if signature.is_comp != fun.signature.is_comp
+            if signature.calling_convention != fun.signature.calling_convention
+                || signature.is_comp != fun.signature.is_comp
                 || signature.parameters.len() != fun.signature.parameters.len()
                 || signature.return_type != validator.ty(&fun.signature.return_type)?
             {
@@ -602,6 +603,7 @@ impl Validator<'_> {
                 }
                 (
                     K::Function {
+                        calling_convention,
                         is_comp,
                         argument_types,
                         return_type,
@@ -609,6 +611,7 @@ impl Validator<'_> {
                     T::Function(f),
                 ) => {
                     *is_comp == f.is_comp
+                        && *calling_convention == f.calling_convention
                         && argument_types.len() == f.parameters.len()
                         && self.ty(return_type)? == f.return_type
                         && argument_types
@@ -1161,9 +1164,17 @@ impl Validator<'_> {
                         ),
                         Literal::Boolean(_) => matches!(ty, T::Builtin(B::Boolean)),
                         Literal::Character(_) => matches!(ty, T::Builtin(B::Char)),
-                        Literal::String(_) => matches!(ty, T::Builtin(B::String)),
+                        Literal::String(value) => {
+                            matches!(self.types.container(info.ty)?, (T::Array { element, length }, true) if *length == value.len() as u64 && matches!(self.types.get(*element)?, T::Builtin(B::UInt8)))
+                        }
+                        Literal::CString(_) => {
+                            matches!(self.types.container(info.ty)?, (T::Pointer(element), true) if matches!(self.types.get(*element)?, T::Builtin(B::UInt8)))
+                        }
                         Literal::Null => {
-                            matches!(self.types.container(info.ty)?.0, T::Pointer(_))
+                            matches!(
+                                self.types.container(info.ty)?.0,
+                                T::Pointer(_) | T::Function(_)
+                            )
                         }
                     };
                     if !valid || info.category != C::Value || info.type_value.is_some() {
@@ -1312,7 +1323,8 @@ impl Validator<'_> {
                     }
                     super::evaluation::validate_comp_body(&body.statements)?;
                 }
-                if signature.is_comp != fun.signature.is_comp
+                if signature.calling_convention != fun.signature.calling_convention
+                    || signature.is_comp != fun.signature.is_comp
                     || signature.parameters.len() != fun.signature.parameters.len()
                     || signature.return_type != self.ty(&fun.signature.return_type)?
                 {

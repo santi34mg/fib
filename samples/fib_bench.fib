@@ -3,8 +3,6 @@
 // Naive recursion is expensive; no expected output is pinned.
 // Use int64 results so fib(50) fits without depending on overflow behavior.
 
-fn fib(n: int32) int64;
-
 fn fib(n: int32) int64 {
     if n <= 1 {
         return n as int64;
@@ -13,12 +11,12 @@ fn fib(n: int32) int64 {
 }
 
 fn main() int32 {
-    libc::printf("Fibonacci benchmark (recursive, no memoization)\n");
-    libc::printf("-----------------------------------------------\n");
+    std::libc::printf("Fibonacci benchmark (recursive, no memoization)\n");
+    std::libc::printf("-----------------------------------------------\n");
     i: int32 = 0;
     while (i <= 50) {
         result: int64 = fib(i);
-        libc::printf("fib(%d) = %lld\n", i, result);
+        std::libc::printf("fib(%d) = %lld\n", i, result);
         i += 1;
     };
     return 0;

@@ -196,6 +196,7 @@ mod tests {
     fn get_ast(test_string: &str) -> Ast {
         let trimmed = test_string.trim_start();
         let src = if trimmed.starts_with("fn ")
+            || trimmed.starts_with("callconv ")
             || trimmed.starts_with("extern ")
             || trimmed
                 .lines()
@@ -921,11 +922,15 @@ mod tests {
 
     #[test]
     fn test_extern_function_declaration() {
-        let test_string = "extern fn printf(fmt: string) int32;";
+        let test_string = "callconv \"C\" fn puts(text: const *uint8) int32;";
         let ast = get_ast(test_string);
         let func = find_func(&ast);
         let func = func.expect("expected function");
         assert!(func.is_extern);
+        assert_eq!(
+            func.signature.calling_convention,
+            crate::frontend::semantic_type::CallConvention::C
+        );
         assert!(func.body.is_none());
     }
 
@@ -1391,6 +1396,7 @@ mod tests {
     fn get_ast_err(test_string: &str) -> String {
         let trimmed = test_string.trim_start();
         let src = if trimmed.starts_with("fn ")
+            || trimmed.starts_with("callconv ")
             || trimmed.starts_with("extern ")
             || trimmed
                 .lines()
@@ -1788,7 +1794,7 @@ mod tests {
             ("void", BuiltinType::Void),
             ("char", BuiltinType::Char),
             ("bool", BuiltinType::Boolean),
-            ("string", BuiltinType::String),
+            ("type", BuiltinType::MetaType),
             ("never", BuiltinType::Never),
             ("usize", BuiltinType::Usize),
         ] {
@@ -1818,6 +1824,49 @@ mod tests {
                 matches!(decl.ty.as_ref(), Some(TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(actual), .. }) if actual.segments == [alias])
             );
             assert_eq!(decl.ty.as_ref().expect("type").to_string(), alias);
+        }
+    }
+
+    #[test]
+    fn string_is_an_ordinary_type_name_and_byte_views_preserve_readonly() {
+        assert_eq!(BuiltinType::from_name("string"), None);
+        let ast = get_ast("legacy: string; bytes: const uint8[];");
+        let statements = module_statements(&ast);
+        let StatementKind::VariableDeclaration(legacy) = statements[0] else {
+            panic!("expected variable declaration");
+        };
+        assert!(matches!(
+            &legacy.ty.as_ref().unwrap().kind,
+            TypeExpressionKind::QualifiedIdentifier(name) if name.segments == ["string"]
+        ));
+        let StatementKind::VariableDeclaration(bytes) = statements[1] else {
+            panic!("expected variable declaration");
+        };
+        assert!(!bytes.is_const);
+        let TypeExpressionKind::Readonly(inner) = &bytes.ty.as_ref().unwrap().kind else {
+            panic!("expected readonly byte view");
+        };
+        let TypeExpressionKind::Slice { element_type } = &inner.kind else {
+            panic!("expected slice");
+        };
+        assert!(matches!(
+            &element_type.kind,
+            TypeExpressionKind::QualifiedIdentifier(name) if name.segments == ["uint8"]
+        ));
+    }
+
+    #[test]
+    fn invalid_calling_conventions_report_prefix_diagnostics() {
+        for (source, expected) in [
+            ("extern fn f();", "extern has been replaced by callconv"),
+            (
+                "callconv \"Rust\" fn f();",
+                "unsupported calling convention",
+            ),
+            ("callconv fn f();", "unsupported calling convention"),
+        ] {
+            let error = get_ast_err(source);
+            assert!(error.contains(expected), "{source}: {error}");
         }
     }
 
@@ -1920,7 +1969,7 @@ mod tests {
     fn function_signatures_preserve_return_and_bodyless_forms() {
         for (source, external, has_body, return_type, parameter_count) in [
             (
-                "extern fn log(fmt: string) int32;",
+                "callconv \"C\" fn log(fmt: const *uint8) int32;",
                 true,
                 false,
                 BuiltinType::Int32,
@@ -1963,8 +2012,8 @@ mod tests {
     #[test]
     fn variadic_function_syntax_reports_parameter_diagnostic() {
         for source in [
-            "extern fn log(fmt: string, ...) int32;",
-            "extern fn log(...) int32;",
+            "callconv \"C\" fn log(fmt: string, ...) int32;",
+            "callconv \"C\" fn log(...) int32;",
             "fn log(fmt: string, ...) {}",
             "fn log(...) {}",
         ] {
@@ -2376,7 +2425,7 @@ mod tests {
     #[test]
     fn parsed_declaration_and_parameter_annotations_are_pending() {
         let ast = get_ast(
-            "Alias: type = pkg::Value;\nfn identity(T: type) type { return type; }\nextern fn foreign(value: Alias);\nconst top := 1;",
+            "Alias: type = pkg::Value;\nfn identity(T: type) type { return type; }\ncallconv \"C\" fn foreign(value: Alias);\nconst top := 1;",
         );
         let StatementKind::VariableDeclaration(alias) = &ast.statements[0].kind else {
             panic!("expected type binding");

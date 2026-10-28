@@ -78,7 +78,6 @@ impl BuiltinType {
             "float128" => Self::Float128,
             "char" => Self::Char,
             "bool" => Self::Boolean,
-            "string" => Self::String,
             "never" => Self::Never,
             "usize" => Self::Usize,
             _ => return None,

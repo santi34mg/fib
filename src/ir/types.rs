@@ -5,6 +5,8 @@ use super::TypeId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrType {
+    /// Unsized opaque pointee; never a value or memory access type.
+    Opaque,
     Bool,
     /// Interpreter-owned immutable byte string. It has no native ABI layout yet.
     Bytes,

@@ -57,11 +57,23 @@ pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
                             BuiltinFunction::AddSource => {
                                 bo.modules.push(PathBuf::from_str(string)?);
                             }
+                            BuiltinFunction::AddCSource => {
+                                bo.native.sources.push(PathBuf::from_str(string)?)
+                            }
+                            BuiltinFunction::AddLinkLib => {
+                                bo.native.libraries.push(string.to_owned())
+                            }
+                            BuiltinFunction::AddLibraryPath => {
+                                bo.native.library_paths.push(PathBuf::from_str(string)?)
+                            }
                             BuiltinFunction::SetEntry => bo.entry_name = Some(string.to_owned()),
                             BuiltinFunction::SetOutput => {
                                 bo.output = Some(PathBuf::from_str(string)?);
                             }
                         }
+                    }
+                    InstructionKind::Syscall { .. } => {
+                        bail!("syscalls cannot be interpreted in build files")
                     }
                     _ => bail!("unsupported instruction in build-file interpreter"),
                 }
