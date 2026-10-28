@@ -1,13 +1,18 @@
 comp Result := std::result::Result;
-comp KVResult := Result(byte[], uint8);
-comp MainResult := enum { Ok, Err { e: uint8} };
+comp KVError := enum {
+    NotImplemented,
+};
+comp KVResult := Result(byte[], KVError);
 
 comp byte := uint8;
 
-comp KV: type = struct {
+comp KV : type = struct {
+    storage: byte[][],
     get: fn(byte[]) KVResult,
+    set: fn(byte[], byte[]) void,
+    del: fn(byte[]) void,
 };
 
-fn main() MainResult {
-    return MainResult.Ok;
+fn main() int32 {
+    return 0;
 }

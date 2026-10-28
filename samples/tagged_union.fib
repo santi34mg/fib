@@ -8,15 +8,15 @@
 //   eof
 
 Token: type = enum {
-    Integer { value: uint32 },
-    Boolean { flag: bool },
+    Integer: uint32,
+    Boolean: bool,
     EOF,
 };
 
 fn describe(t: Token) void {
     switch (t) {
-        when .Integer(i) { libc::printf("int=%d\n", i.value); }
-        when .Boolean(b) { libc::printf("bool=%d\n", b.flag as uint32); }
+        when .Integer(i) { libc::printf("int=%d\n", i); }
+        when .Boolean(b) { libc::printf("bool=%d\n", b as uint32); }
         when .EOF { libc::printf("eof\n"); }
     };
 }

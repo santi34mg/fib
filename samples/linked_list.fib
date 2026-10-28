@@ -3,13 +3,13 @@
 //   List:   10 -> 20 -> 30 -> null
 //   Length: 3
 
-Node: type = struct {
+comp Node: type = struct {
     data: int32,
     next: *Node,
 };
 
 fn push(head: *Node, val: int32) *Node {
-    node: *Node = libc::malloc(16 as uint64) as *Node;
+    node: *Node = std::memory::alloc(Node, 1);
     node[0] = Node { data: val, next: head };
     return node;
 }
@@ -33,10 +33,10 @@ fn print_list(head: *Node) void {
         if cur == null {
             break;
         };
-        libc::printf("%d -> ", (cur*).data);
+        std::io::printf("%d -> "[..], (cur*).data);
         cur = (cur*).next;
     };
-    libc::printf("null\n");
+    std::io::printf("null\n"[..]);
 }
 
 fn free_list(head: *Node) void {
@@ -46,7 +46,7 @@ fn free_list(head: *Node) void {
             break;
         };
         next: *Node = (cur*).next;
-        libc::free(cur as *void);
+        std::memory::free(Node, cur);
         cur = next;
     };
 }
@@ -59,9 +59,9 @@ fn main() int32 {
     head = push(head, 10);
     defer free_list(head);
 
-    libc::printf("List:   ");
+    std::io::printf("List:   "[..]);
     print_list(head);
-    libc::printf("Length: %d\n", list_length(head));
+    std::io::printf("Length: %d\n"[..], list_length(head));
 
     return 0;
 }

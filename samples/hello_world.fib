@@ -3,6 +3,6 @@
 //   Hello, World!
 
 fn main() int32 {
-    std::io::printf("Hello, World!\n");
+    std::io::printf("Hello, World!\n"[..]);
     return 0;
 }

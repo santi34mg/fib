@@ -1,5 +1,5 @@
 comp Counter: type = struct { value: int32 };
-comp Result: type = enum { Ready { count: int32 }, Empty };
+comp Result: type = enum { Ready: int32, Empty };
 
 fn identity(T: type, value: T) T {
     return value;
@@ -17,7 +17,7 @@ fn main() int32 {
     switch (result) {
         when .Ready(payload) {
             if (enabled && (true as int32) == 1) {
-                return payload.count;
+                return payload;
             };
             return 1;
         }
