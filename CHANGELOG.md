@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Bound simultaneously active generic specializations to 16 so runaway expansion reports a diagnostic on the default debug-test stack instead of overflowing it. Cached instances and recursion at the same concrete signature remain supported.
+
 ### Language server
 
 - Replace the standalone JavaScript highlighter with a native `fib-lsp` Rust binary using the compiler frontend, with semantic tokens, collecting analyzer diagnostics/warnings, unsaved source overlays and `build.fib` project planning. Update editor launchers to use the native executable; install with `cargo install --path . --no-default-features --bin fib-lsp`.

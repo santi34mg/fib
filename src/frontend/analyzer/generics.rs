@@ -3,6 +3,12 @@
 //! recipe and binding facts; in-progress signatures are never published as checked bodies.
 use std::collections::{HashMap, HashSet};
 
+// Each active specialization retains a full recursive body-checking call chain.
+// Keep this conservative for the default 2 MiB thread stack, including debug
+// builds; 64 instances exhausted it before the diagnostic could be returned.
+// Cached instances and recursion at the same concrete signature do not count.
+const MAX_ACTIVE_INSTANCES: usize = 16;
+
 use super::TypeContext;
 use crate::frontend::{
     analysis_annotation::BindingId,
@@ -89,7 +95,7 @@ fn resolve_generic_instance_inner(
             bindings: HashMap::new(),
         });
     }
-    if context.state.active_instances.len() >= 64 {
+    if context.state.active_instances.len() >= MAX_ACTIVE_INSTANCES {
         return Err(type_error(
             "generic specialization recursion limit exceeded",
         ));
@@ -689,4 +695,90 @@ pub(super) fn validate_instance(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MAX_ACTIVE_INSTANCES;
+    use crate::{
+        driver::CompilationUnit,
+        frontend::{
+            analyzer::{AnalysisReport, Analyzer},
+            parser::Parser,
+            tokenizer::Tokenizer,
+        },
+        plan::FileId,
+    };
+
+    fn collect_on_default_stack(source: String) -> AnalysisReport {
+        // Explicit size keeps this regression meaningful even when the test
+        // runner inherits a larger RUST_MIN_STACK from its environment.
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                let path = std::path::Path::new("/editor/generics.fib");
+                let ast = Parser::with_source(Tokenizer::new(&source), path, &source)
+                    .parse()
+                    .unwrap();
+                Analyzer::new(
+                    crate::frontend::tooling::standalone_plan(path),
+                    vec![CompilationUnit {
+                        source_file_id: FileId(0),
+                        ast,
+                    }],
+                )
+                .unwrap()
+                .analyze_collecting()
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn expanding_specialization_reports_on_two_mib_stack() {
+        let report = collect_on_default_stack(
+            "fn f(T: type, x: T) T { return f(*T, x&)*; } a := f(int32, 1);".into(),
+        );
+        let error = report
+            .errors
+            .iter()
+            .find(|error| {
+                error
+                    .message
+                    .contains("generic specialization recursion limit exceeded")
+            })
+            .expect("expansion must return the bounded recursion diagnostic");
+        assert!(error.span.is_some() && error.filename.is_some());
+        assert!(
+            report
+                .types
+                .generic_instances
+                .values()
+                .all(|instance| instance.body.is_none())
+        );
+    }
+
+    #[test]
+    fn same_instance_recursion_at_limit_succeeds_on_two_mib_stack() {
+        let mut source = String::new();
+        for index in 0..MAX_ACTIVE_INSTANCES {
+            let next = (index + 1).min(MAX_ACTIVE_INSTANCES - 1);
+            source.push_str(&format!(
+                "fn f{index}(T: type, x: T) T {{ return f{next}(T, x); }} "
+            ));
+        }
+        source.push_str("a := f0(int32, 1);");
+        let report = collect_on_default_stack(source);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(
+            report
+                .types
+                .generic_instances
+                .values()
+                .filter(|instance| instance.body.is_some())
+                .count(),
+            MAX_ACTIVE_INSTANCES
+        );
+    }
 }
