@@ -15,6 +15,10 @@ and coalescing. Earlier suite records remain dated below.
 
 ## Actual status
 
+The source std memory module implements byte-slice `memset` and `memcpy` with
+checked loops. Copy accepts readonly sources and checks destination capacity
+before writing; callers must provide nonoverlapping regions.
+
 Working components are the tokenizer, parser, AST construction, lexical scope
 utilities, diagnostic rendering, and raw IR data/access/formatting utilities.
 The name pass validates named units, annotates declarations, and resolves lexical

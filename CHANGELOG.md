@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add source-level `std::memory::memset` and `memcpy` for byte slices, including readonly copy sources and destination capacity checks before writes.
 
 - Add `core::sizeof(T)`, returning target allocation size in bytes as `usize`, including aggregate padding. Supports concrete generic type arguments; rejects values and unsized types. Available without std, exclusively in the compiler-owned `core` namespace.
 - Implement Linux x86-64 `std::os::sbrk(int64)` and the source-level `std::memory::alloc(T, n)`/`free(T, ptr)` allocator, with aligned storage, overflow checks, first-fit reuse, splitting and adjacent-block coalescing. Allocation failure returns an empty slice. Compiler declaration revision is now 3 for private typed pointer/word conversions.

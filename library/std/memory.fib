@@ -1,6 +1,26 @@
 // Compiler-owned unchecked_deref, slice_from_parts and slice_data declarations
 // are registered in this module. Calls and aliases retain compiler identities.
 
+// Fill every byte in destination. Empty slices do not access storage.
+pub fn memset(destination: uint8[], value: uint8) {
+    i: usize = 0;
+    while (i < destination.len) {
+        destination[i] = value;
+        i = i + 1;
+    };
+}
+
+// Copy source bytes into destination's prefix; the remaining bytes are unchanged.
+// A short destination traps before any write. The regions must not overlap.
+pub fn memcpy(destination: uint8[], source: const uint8[]) {
+    target := destination[..source.len];
+    i: usize = 0;
+    while (i < source.len) {
+        target[i] = source[i];
+        i = i + 1;
+    };
+}
+
 comp Block := struct {
     size: usize,
     next: *Block,

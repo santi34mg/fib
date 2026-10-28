@@ -133,6 +133,15 @@ the unchanged break on failure, rather than a negative errno. See
 
 ## Allocation
 
+`std::memory::memset(destination: uint8[], value: uint8)` fills every destination
+byte. `std::memory::memcpy(destination: uint8[], source: const uint8[])` copies
+all source bytes into the destination prefix, leaving the tail unchanged. Both
+return void. Pass subslices to select a byte count. Copying requires nonoverlapping
+regions and traps before writing if the destination is shorter than the source.
+Empty operations do not access storage, including for null-backed empty slices.
+These ordinary Fib functions use checked byte loops; they do not convert element
+types. See [memory sample](../samples/memory.fib).
+
 `std::memory::alloc(T, n: uint32)` returns a writable `T[]` of length `n`.
 Zero count, overflow or allocation failure returns an empty slice. Storage is
 uninitialized: write elements before reading them. Zero-sized types receive a

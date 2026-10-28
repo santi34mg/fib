@@ -29,6 +29,58 @@ fn analyze(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
     Analyzer::new(prepared.clone(), parse_files(&prepared)?)?.analyze()
 }
 
+// Exercise the installed memory sources independently of the unfinished I/O module.
+fn memory_input(source: &str) -> (tempfile::TempDir, BuildPlan) {
+    let (directory, plan) = input(source);
+    let mut plan = plan.prepare().unwrap();
+    let io = plan
+        .files
+        .iter()
+        .find(|f| f.path == sysroot().join("std/io.fib"))
+        .unwrap()
+        .id;
+    plan.files.retain(|file| file.id != io);
+    for package in &mut plan.packages {
+        package.files.retain(|id| *id != io);
+    }
+    (directory, plan)
+}
+
+#[test]
+fn memory_byte_operations_accept_writable_destinations_and_readonly_sources() {
+    let (_directory, plan) = memory_input(include_str!("../samples/memory.fib"));
+    fibc::ir::verify_ir(&fibc::ir::lowering::lower(&analyze(&plan).unwrap()).unwrap()).unwrap();
+    for source in [
+        "fn main() { std::memory::memset(\"hi\"[..], 0); }",
+        "fn main() { std::memory::memcpy(\"hi\"[..], \"ok\"[..]); }",
+        "fn main() { a: uint16[1] = [0]; std::memory::memset(a[..], 0); }",
+    ] {
+        let (_directory, plan) = memory_input(source);
+        let error = analyze(&plan).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("incompatible types"),
+            "{error:#}"
+        );
+    }
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn memory_byte_operations_execute_and_trap_for_short_destinations() {
+    for (source, expected) in [
+        (include_str!("../samples/memory.fib"), Some(42)),
+        (
+            "fn main() int32 { a: uint8[1] = [0]; std::memory::memcpy(a[..], \"hi\"[..]); return 1; }",
+            None,
+        ),
+    ] {
+        let (_directory, plan) = memory_input(source);
+        fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+        let output = std::process::Command::new(&plan.output).output().unwrap();
+        assert_eq!(output.status.code(), expected, "{source}\n{output:?}");
+    }
+}
+
 #[test]
 fn installed_sources_prepare_idempotently_and_lower_with_canonical_aliases() {
     let (_directory, plan) = input(
