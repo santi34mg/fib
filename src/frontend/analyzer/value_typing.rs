@@ -826,6 +826,29 @@ impl TypeContext<'_> {
                     return Ok(info);
                 }
                 if !allowed {
+                    let (source_container, source_readonly) = self.types.container(info.ty)?;
+                    let (target_container, target_readonly) = self.types.container(target)?;
+                    if let (T::Slice(source_element), T::Slice(target_element)) =
+                        (source_container, target_container)
+                    {
+                        let different_elements =
+                            check_assignable(*target_element, *source_element, self.types).is_err();
+                        if source_readonly && !target_readonly {
+                            let element_note = if different_elements {
+                                " Slice casts also cannot convert element types."
+                            } else {
+                                ""
+                            };
+                            return Err(type_error(format!(
+                                "cannot cast a readonly slice to a writable slice: this would remove `const` protection from the original storage.{element_note} Copy the elements into a writable buffer, converting each element as needed"
+                            )));
+                        }
+                        if different_elements {
+                            return Err(type_error(
+                                "cannot cast between slices with different element types: slice casts do not convert elements; copy the elements into a new buffer, converting each element as needed",
+                            ));
+                        }
+                    }
                     return Err(type_error("unsupported cast"));
                 }
                 super::constant::check_cast(source, target, self.types)?;

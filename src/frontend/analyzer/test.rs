@@ -5201,6 +5201,27 @@ mod generic_flow_regressions {
     }
 
     #[test]
+    fn slice_cast_diagnostics_explain_readonly_and_element_conversion() {
+        let source = "fn f(p:const char[]) { q := p as uint8[]; }";
+        reject(source, "cannot cast a readonly slice to a writable slice");
+        reject(source, "cannot convert element types");
+        reject(source, "Copy the elements into a writable buffer");
+        reject(
+            "fn f(p:const uint8[]) { q := p as uint8[]; }",
+            "remove `const` protection from the original storage",
+        );
+        for source in [
+            "fn f(p:const char[]) { q := p as const uint8[]; }",
+            "fn f(p:char[]) { q := p as uint8[]; }",
+        ] {
+            reject(source, "slices with different element types");
+        }
+        analyze("fn f(p:uint8[]) { q := p as const uint8[]; }");
+        analyze("fn f(p:const char[]) { q := p as const char[]; }");
+        reject("fn f(p:bool[]) { q := p as int32; }", "unsupported cast");
+    }
+
+    #[test]
     fn readonly_casts_cannot_change_nested_pointer_permissions() {
         reject("fn f(p:*const *int32) { q := p as **int32; }", "cast");
         reject("fn f(p:**int32) { q := p as *const *int32; }", "cast");

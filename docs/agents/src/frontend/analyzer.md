@@ -10,6 +10,9 @@ globals execute; value-returning `comp fn` execution remains scaffolding.
 Current source is
 [`analyzer.rs`](../../../../src/frontend/analyzer.rs) and `analyzer/`.
 
+Rejected slice casts distinguish readonly removal from incompatible element
+types and explain that converting elements requires copying into a new buffer.
+
 `Analyzer::new` validates plan/unit IDs using `ProjectSymbols::from_plan` and
 retains source paths for diagnostics. `collect_declarations` assigns and annotates
 file binding identities, visibility, and private local compile-time type slots.
