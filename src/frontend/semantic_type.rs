@@ -85,6 +85,8 @@ pub struct FieldType {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VariantType {
     pub spelling: String,
+    /// Declared type, retained for substitution and annotation proofs. Use
+    /// `enum_payload` for the normalized construction/storage/binding shape.
     pub payload: Option<TypeId>,
 }
 
@@ -117,6 +119,61 @@ pub(crate) fn type_error(message: impl Into<String>) -> anyhow::Error {
 }
 
 impl SemanticTypes {
+    /// Unit normalization is semantic, not a target-dependent size test.
+    pub fn enum_payload(&self, payload: Option<TypeId>) -> anyhow::Result<Option<TypeId>> {
+        fn unit(
+            types: &SemanticTypes,
+            id: TypeId,
+            active: &mut HashSet<TypeId>,
+        ) -> anyhow::Result<bool> {
+            if matches!(types.types.get(id.0 as usize), Some(SemanticType::Pending)) {
+                return Ok(false);
+            }
+            let id = types.canonical(id)?;
+            if !active.insert(id) {
+                // Preserve illegal by-value cycles for layout validation.
+                return Ok(false);
+            }
+            let result = match types.get(id)? {
+                SemanticType::Builtin(BuiltinType::Void) => true,
+                SemanticType::Struct(fields) => {
+                    let mut result = true;
+                    for field in fields {
+                        result &= unit(types, field.ty, active)?;
+                    }
+                    result
+                }
+                _ => false,
+            };
+            active.remove(&id);
+            Ok(result)
+        }
+        match payload {
+            Some(id) if unit(self, id, &mut HashSet::new())? => Ok(None),
+            other => Ok(other),
+        }
+    }
+
+    pub(crate) fn refresh_variant_constructors(&mut self, owner: TypeId) -> anyhow::Result<()> {
+        let SemanticType::Enum(variants) = self.get(owner)?.clone() else {
+            return Err(type_error("variant constructors require an enum owner"));
+        };
+        self.variant_constructors.retain(|(ty, _), _| *ty != owner);
+        for (index, variant) in variants.iter().enumerate() {
+            if let Some(payload) = self.enum_payload(variant.payload)? {
+                let constructor = self.intern(SemanticType::Function(FunctionType {
+                    calling_convention: CallConvention::Fib,
+                    is_comp: false,
+                    parameters: vec![payload],
+                    return_type: owner,
+                }));
+                self.variant_constructors
+                    .insert((owner, index as u32), constructor);
+            }
+        }
+        Ok(())
+    }
+
     pub fn intern(&mut self, ty: SemanticType) -> TypeId {
         // Aggregates are nominal even when their shapes happen to coincide.
         if !matches!(

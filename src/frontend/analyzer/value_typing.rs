@@ -221,7 +221,7 @@ pub(super) fn member(
                 .enumerate()
                 .find(|(_, v)| v.spelling == spelling)
                 .ok_or_else(|| type_error(format!("unknown member '{spelling}'")))?;
-            let ty = if v.payload.is_some() {
+            let ty = if types.enum_payload(v.payload)?.is_some() {
                 *types
                     .variant_constructors
                     .get(&(owner, i as u32))

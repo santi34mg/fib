@@ -248,26 +248,20 @@ pub(super) fn validate(
         let T::Enum(variants) = types.get(owner)? else {
             return Err(type_error("variant constructor has a non-enum owner"));
         };
-        let payload = variants
-            .get(index as usize)
-            .and_then(|v| v.payload)
+        let payload = types
+            .enum_payload(variants.get(index as usize).and_then(|v| v.payload))?
             .ok_or_else(|| type_error("variant constructor has no payload owner"))?;
-        let T::Struct(fields) = types.get(payload)? else {
-            return Err(type_error("variant payload has a non-struct type"));
-        };
         let T::Function(signature) = types.get(constructor)? else {
             return Err(type_error("variant constructor is not callable"));
         };
-        if signature.return_type != owner
-            || signature.parameters != fields.iter().map(|f| f.ty).collect::<Vec<_>>()
-        {
+        if signature.return_type != owner || signature.parameters != vec![payload] {
             return Err(type_error("variant constructor signature mismatch"));
         }
     }
     for (index, ty) in types.types.iter().enumerate() {
         if let T::Enum(variants) = ty {
             for (variant, v) in variants.iter().enumerate() {
-                if v.payload.is_some()
+                if types.enum_payload(v.payload)?.is_some()
                     && !types
                         .variant_constructors
                         .contains_key(&(TypeId(index as u32), variant as u32))
@@ -346,22 +340,10 @@ fn instance_source(mut node: Statement) -> anyhow::Result<(Statement, HashSet<Bi
         }
         fn ty(&mut self, node: &mut TypeExpression) -> anyhow::Result<()> {
             node.annotation.resolved = None;
-            match &mut node.kind {
-                K::Struct { fields } => {
-                    for f in fields {
-                        f.annotation = MemberAnnotation::default();
-                    }
+            if let K::Struct { fields } = &mut node.kind {
+                for f in fields {
+                    f.annotation = MemberAnnotation::default();
                 }
-                K::Enum { variants } => {
-                    for v in variants {
-                        if let Some(fields) = &mut v.payload {
-                            for f in fields {
-                                f.annotation = MemberAnnotation::default();
-                            }
-                        }
-                    }
-                }
-                _ => {}
             }
             Ok(())
         }
@@ -643,7 +625,11 @@ impl Validator<'_> {
                             return Err(type_error("enum annotation has wrong variant identity"));
                         }
                         match (&node.payload, variant.payload) {
-                            (Some(fields), Some(payload)) => self.fields(fields, payload, true)?,
+                            (Some(expression), Some(payload)) => {
+                                if self.expression(expression)?.type_value != Some(payload) {
+                                    return Err(type_error("enum payload annotation mismatch"));
+                                }
+                            }
                             (None, None) => {}
                             _ => return Err(type_error("enum payload annotation mismatch")),
                         }
@@ -1311,17 +1297,15 @@ impl Validator<'_> {
                         .body
                         .as_ref()
                         .ok_or_else(|| type_error("comp function requires a body"))?;
-                    if fun.is_extern
-                        || !matches!(
-                            self.types.get(signature.return_type)?,
-                            T::Builtin(B::MetaType)
-                        )
-                    {
-                        return Err(type_error(
-                            "bounded comp function must be non-extern and return type",
-                        ));
+                    if fun.is_extern {
+                        return Err(type_error("comp function must be non-extern"));
                     }
-                    super::evaluation::validate_comp_body(&body.statements)?;
+                    if matches!(
+                        self.types.get(signature.return_type)?,
+                        T::Builtin(B::MetaType)
+                    ) {
+                        super::evaluation::validate_comp_body(&body.statements)?;
+                    }
                 }
                 if signature.calling_convention != fun.signature.calling_convention
                     || signature.is_comp != fun.signature.is_comp
@@ -1436,7 +1420,29 @@ impl Validator<'_> {
                     {
                         self.selected(*member, owner, variant)?;
                         if let Some(binding) = binding {
-                            self.binding(binding.annotation)?;
+                            let info = self.binding(binding.annotation)?.ok_or_else(|| {
+                                type_error("switch payload binding requires a value")
+                            })?;
+                            let T::Enum(variants) = self.types.get(owner)? else {
+                                unreachable!()
+                            };
+                            let MemberKind::EnumVariant(index) =
+                                member.resolved.expect("validated variant").kind
+                            else {
+                                unreachable!()
+                            };
+                            let expected =
+                                self.types.enum_payload(variants[index as usize].payload)?;
+                            let correct_type = match expected {
+                                Some(payload) => info.ty == payload,
+                                None => matches!(self.types.get(info.ty)?, T::Builtin(B::Void)),
+                            };
+                            if !correct_type
+                                || info.category != C::MutablePlace
+                                || info.type_value.is_some()
+                            {
+                                return Err(type_error("switch payload binding type mismatch"));
+                            }
                         }
                     }
                     self.statements(&arm.body)?;

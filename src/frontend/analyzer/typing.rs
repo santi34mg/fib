@@ -513,27 +513,23 @@ impl TypeContext<'_> {
                 let owner = self.aggregate_site(node.span);
                 let mut seen = HashSet::new();
                 let mut vs = Vec::new();
-                for (index, v) in variants.iter_mut().enumerate() {
+                for v in variants.iter_mut() {
                     if !seen.insert(v.identifier.clone()) {
                         return Err(type_error(format!("duplicate variant '{}'", v.identifier)));
                     }
-                    let payload = if let Some(fields) = &mut v.payload {
-                        let existing = match self.types.types.get(owner.0 as usize) {
-                            Some(T::Enum(vs)) => vs.get(index).and_then(|v| v.payload),
-                            _ => None,
-                        };
-                        let payload = existing.unwrap_or_else(|| self.types.intern(T::Pending));
-                        let fs = self.field_definitions(fields, payload)?;
-                        let constructor = self.types.intern(T::Function(FunctionType {
-                            calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
-                            is_comp: false,
-                            parameters: fs.iter().map(|f| f.ty).collect(),
-                            return_type: owner,
-                        }));
-                        self.types
-                            .variant_constructors
-                            .insert((owner, index as u32), constructor);
-                        self.types.types[payload.0 as usize] = T::Struct(fs);
+                    let payload = if let Some(expression) = &mut v.payload {
+                        let payload = self
+                            .expression(expression, None)?
+                            .type_value
+                            .ok_or_else(|| type_error("enum payload requires a type value"))?;
+                        if matches!(
+                            self.types.types.get(payload.0 as usize),
+                            Some(T::Builtin(B::Never | B::MetaType))
+                        ) {
+                            return Err(type_error(
+                                "never/type cannot be stored in an enum payload",
+                            ));
+                        }
                         Some(payload)
                     } else {
                         None
@@ -544,6 +540,7 @@ impl TypeContext<'_> {
                     });
                 }
                 self.types.types[owner.0 as usize] = T::Enum(vs);
+                self.types.refresh_variant_constructors(owner)?;
                 owner
             }
         };

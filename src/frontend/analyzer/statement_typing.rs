@@ -392,9 +392,13 @@ impl TypeContext<'_> {
                 let T::Enum(variants) = self.types.get(subject)? else {
                     unreachable!()
                 };
-                let payload = variants[index as usize]
-                    .payload
-                    .ok_or_else(|| type_error("variant has no payload to bind"))?;
+                let payload = self
+                    .types
+                    .enum_payload(variants[index as usize].payload)?
+                    .unwrap_or_else(|| {
+                        self.types
+                            .builtin(crate::frontend::tokens::builtin::BuiltinType::Void)
+                    });
                 let id = binding
                     .annotation
                     .binding

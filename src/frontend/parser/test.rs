@@ -1901,7 +1901,7 @@ mod tests {
     #[test]
     fn type_declarations_preserve_struct_and_enum_payload_shapes() {
         let ast = get_ast(
-            "Record: type = struct { id: int32, next: *Record };\nResult: type = enum { Ok { value: (int32, string) }, Empty, Error { code: uint8 } };",
+            "Record: type = struct { id: int32, next: *Record };\nResult: type = enum { Ok: Record, Empty, Error: uint8 };",
         );
         assert_eq!(ast.statements.len(), 2);
         let StatementKind::VariableDeclaration(record) = &ast.statements[0].kind else {
@@ -1954,16 +1954,34 @@ mod tests {
             ["Ok", "Empty", "Error"]
         );
         let ok = variants[0].payload.as_ref().expect("Ok payload");
-        assert_eq!(ok.len(), 1);
-        assert_eq!(ok[0].field_identifier, "value");
         assert!(
-            matches!(&ok[0].expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::Tuple { elements }, .. }) if matches!(elements.as_slice(), [TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(_), .. }, TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(_), .. }]))
+            matches!(&ok.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["Record"])
         );
         assert!(variants[1].payload.is_none());
         let error = variants[2].payload.as_ref().expect("Error payload");
         assert!(
-            matches!(error.as_slice(), [field] if field.field_identifier == "code" && matches!(field.expression.kind, ExpressionKind::TypeValue(TypeExpression { kind: TypeExpressionKind::QualifiedIdentifier(_), .. })))
+            matches!(&error.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments == ["uint8"])
         );
+    }
+
+    #[test]
+    fn direct_enum_payload_syntax_and_legacy_errors() {
+        get_ast(
+            "comp E := enum { Empty, Unit: void, Record: struct { x: int32 }, Array: uint8[2], View: uint8[], Pointer: *int32, Callback: fn(int32) int32, Tuple: (int32, bool), Computed: factory(int32) };",
+        );
+        for source in [
+            "comp E := enum { Unit {} };",
+            "comp E := enum { Value { x: int32 } };",
+        ] {
+            assert!(get_ast_err(source).contains("explicit type"));
+        }
+        for source in [
+            "comp E := enum { Value: };",
+            "comp E := enum { Value: int32",
+            "comp E := enum { Value: struct { x: int32 };",
+        ] {
+            assert!(!get_ast_err(source).is_empty(), "{source}");
+        }
     }
 
     #[test]
@@ -2227,7 +2245,7 @@ mod tests {
             ),
             (
                 "Broken: type = enum { Ok { value: } };",
-                "expected a type identifier",
+                "enum payload fields require an explicit type",
             ),
             ("Broken: type = fn(int32) ->", "expected a return type"),
             ("Broken: type = *", "expected type"),

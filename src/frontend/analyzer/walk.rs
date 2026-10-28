@@ -259,10 +259,8 @@ fn ty_expression(v: &mut impl Visitor, ty: &mut TypeExpression) -> Result {
         }
         T::Enum { variants } => {
             for variant in variants {
-                if let Some(fields) = &mut variant.payload {
-                    for field in fields {
-                        expression(v, &mut field.expression)?;
-                    }
+                if let Some(payload) = &mut variant.payload {
+                    expression(v, payload)?;
                 }
             }
         }

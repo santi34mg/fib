@@ -39,10 +39,8 @@ impl TypeExpression {
                 }
                 T::Enum { variants } => {
                     for variant in variants {
-                        if let Some(fields) = &mut variant.payload {
-                            for field in fields {
-                                Analyzer::resolve_name_expression(&mut field.expression, context)?;
-                            }
+                        if let Some(payload) = &mut variant.payload {
+                            Analyzer::resolve_name_expression(payload, context)?;
                         }
                     }
                 }

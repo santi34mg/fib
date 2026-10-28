@@ -405,24 +405,8 @@ fn substitute(
     };
     let result = if let Some(owner) = reservation {
         types.types[owner.0 as usize] = new;
-        if let T::Enum(vs) = types.get(owner)?.clone() {
-            for (index, v) in vs.iter().enumerate() {
-                if let Some(payload) = v.payload {
-                    let T::Struct(fs) = types.get(payload)? else {
-                        return Err(type_error("invalid variant payload"));
-                    };
-                    let f = FunctionType {
-                        calling_convention: crate::frontend::semantic_type::CallConvention::Fib,
-                        is_comp: false,
-                        parameters: fs.iter().map(|f| f.ty).collect(),
-                        return_type: owner,
-                    };
-                    let constructor = types.intern(T::Function(f));
-                    types
-                        .variant_constructors
-                        .insert((owner, index as u32), constructor);
-                }
-            }
+        if matches!(types.get(owner)?, T::Enum(_)) {
+            types.refresh_variant_constructors(owner)?;
         }
         owner
     } else {
@@ -528,6 +512,9 @@ fn materialize(
     };
     let result = if let Some(owner) = reservation {
         context.types.types[owner.0 as usize] = new;
+        if matches!(context.types.get(owner)?, T::Enum(_)) {
+            context.types.refresh_variant_constructors(owner)?;
+        }
         owner
     } else {
         context.types.intern(new)
@@ -770,7 +757,7 @@ mod tests {
                 "fn f{index}(T: type, x: T) T {{ return f{next}(T, x); }} "
             ));
         }
-        source.push_str("a := f0(int32, 1);");
+        source.push_str("fn test() { a := f0(int32, 1); }");
         let report = collect_on_default_stack(source);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         assert_eq!(

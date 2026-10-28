@@ -14,13 +14,19 @@ where
 {
     pub fn parse_enum_literal(&mut self, type_token: &Token) -> anyhow::Result<TypeExpression> {
         // 'enum' already consumed.
-        let first = self.expect_token(
+        self.expect_token(
             TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
             "expected '{' after 'enum'",
         )?;
-        let _ = first;
         let mut variants: Vec<EnumVariant> = Vec::new();
-        while let Some(t) = self.peek() {
+        loop {
+            let t = self.peek().ok_or_else(|| {
+                self.error(
+                    "expected '}' after enum variants",
+                    type_token.line,
+                    type_token.column,
+                )
+            })?;
             if matches!(
                 t.kind,
                 TokenKind::Punctuation(Punctuation::ClosingCurlyBrace)
@@ -30,17 +36,22 @@ where
             }
             let name = self.expect_identifier("expected variant name")?;
             self.mark_name("enumMember");
-            // Optional payload: `Variant { field-list }`
-            let payload = if matches!(
+            if matches!(
                 self.peek(),
                 Some(Token {
                     kind: TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
                     ..
                 })
             ) {
-                self.next(); // consume '{'
-                let fields = self.parse_type_fields()?;
-                Some(fields)
+                return Err(self.error("enum payload fields require an explicit type; use 'Variant: struct { field: Type }'", t.line, t.column));
+            }
+            let payload = if self
+                .consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Colon)))
+                .is_some()
+            {
+                Some(Box::new(
+                    self.allow_struct_literals(|p| p.parse_expression())?,
+                ))
             } else {
                 None
             };
@@ -51,7 +62,6 @@ where
             // optional comma
             self.consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Comma)));
         }
-        let _ = type_token;
         Ok(TypeExpression::at(
             TypeExpressionKind::Enum { variants },
             Span::new(type_token.line, type_token.column),
