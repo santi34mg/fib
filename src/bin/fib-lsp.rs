@@ -1,4 +1,5 @@
 //! Native stdio LSP. Compiler services own all language rules.
+use clap::Parser;
 use fibc::{
     frontend::{
         source::OverlaySources,
@@ -24,6 +25,7 @@ struct Document {
 }
 #[derive(Clone)]
 struct Snapshot {
+    standard_library: fibc::standard_library::StandardLibrary,
     generation: u64,
     documents: BTreeMap<String, Document>,
     roots: Vec<PathBuf>,
@@ -159,6 +161,9 @@ fn build_file(path: &Path, roots: &[PathBuf], sources: &OverlaySources) -> Optio
     None
 }
 fn analyze(snapshot: Snapshot) -> ProjectAnalysis {
+    let standalone_plan = |path: &Path| {
+        tooling::standalone_plan(path).with_standard_library(snapshot.standard_library.clone())
+    };
     let sources = OverlaySources(
         snapshot
             .documents
@@ -173,8 +178,7 @@ fn analyze(snapshot: Snapshot) -> ProjectAnalysis {
         if let Some(build) = build_file(&document.path, &snapshot.roots, &sources)
             && builds.insert(build.clone())
         {
-            let build_analysis =
-                tooling::analyze_plan(&tooling::standalone_plan(&build), &sources, true);
+            let build_analysis = tooling::analyze_plan(&standalone_plan(&build), &sources, true);
             let valid = build_analysis
                 .documents
                 .values()
@@ -183,6 +187,7 @@ fn analyze(snapshot: Snapshot) -> ProjectAnalysis {
             planned.insert(build.clone());
             if valid {
                 match PlanBuilder::from(build.clone())
+                    .with_standard_library(snapshot.standard_library.clone())
                     .compile_and_interpret_build_file_with_sources(&sources)
                 {
                     Ok(plan) => {
@@ -220,7 +225,7 @@ fn analyze(snapshot: Snapshot) -> ProjectAnalysis {
                 continue;
             }
             output.merge(tooling::analyze_plan(
-                &tooling::standalone_plan(&document.path),
+                &standalone_plan(&document.path),
                 &sources,
                 false,
             ));
@@ -465,7 +470,25 @@ impl Server {
     }
 }
 
+#[derive(Parser)]
+#[command(name = "fib-lsp")]
+struct Options {
+    #[arg(long, value_name = "PATH", conflicts_with = "no_std")]
+    sysroot: Option<PathBuf>,
+    #[arg(long)]
+    no_std: bool,
+}
+
 fn run() -> io::Result<i32> {
+    let options = Options::parse();
+    let standard_library = if options.no_std {
+        fibc::standard_library::StandardLibrary::disabled()
+    } else {
+        options.sysroot.map_or_else(
+            Default::default,
+            fibc::standard_library::StandardLibrary::at,
+        )
+    };
     let (events, receiver) = mpsc::channel();
     let input_events = events.clone();
     thread::spawn(move || {
@@ -509,6 +532,7 @@ fn run() -> io::Result<i32> {
     });
     let mut server = Server {
         snapshot: Snapshot {
+            standard_library,
             generation: 0,
             documents: BTreeMap::new(),
             roots: vec![],
@@ -598,6 +622,7 @@ mod tests {
         let (jobs, _) = mpsc::channel();
         let mut server = Server {
             snapshot: Snapshot {
+                standard_library: fibc::standard_library::StandardLibrary::disabled(),
                 generation: 3,
                 documents: BTreeMap::new(),
                 roots: vec![],

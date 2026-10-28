@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::diagnostics::{CompilerError, ErrorKind, Span};
-use crate::plan::{BuildPlan, FileId, FileName};
+use crate::plan::{BuildPlan, FileId, FileName, PackageId};
 
 pub use crate::frontend::identifier::{DeclId, Entity, LocalId, ResolvedName};
 
@@ -38,8 +38,13 @@ pub struct Namespace {
     pub names: HashMap<String, DeclId>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProjectSymbols {
+    pub compiler_declarations: HashMap<DeclId, crate::builtins::BuiltinFunction>,
+    pub(crate) package_files: HashMap<(PackageId, String), FileId>,
+    pub(crate) dependencies: HashMap<PackageId, HashMap<String, PackageId>>,
+    pub(crate) library_prelude: Option<FileId>,
+
     pub regions: HashMap<FileId, crate::plan::FileRegion>,
     pub files_by_name: HashMap<FileName, FileId>,
     pub namespaces: HashMap<FileId, Namespace>,
@@ -49,10 +54,70 @@ pub(crate) fn name_error(message: impl Into<String>) -> anyhow::Error {
     CompilerError::new(ErrorKind::Name, message.into()).into()
 }
 
+pub(crate) fn normalize_segment(name: &str) -> anyhow::Result<String> {
+    let normalized = name.replace('-', "_").to_ascii_lowercase();
+    if normalized.is_empty()
+        || !normalized.chars().enumerate().all(|(index, c)| {
+            c == '_'
+                || if index == 0 {
+                    c.is_alphabetic()
+                } else {
+                    c.is_alphanumeric()
+                }
+        })
+        || matches!(
+            normalized.as_str(),
+            "const"
+                | "pub"
+                | "comp"
+                | "if"
+                | "else"
+                | "while"
+                | "break"
+                | "continue"
+                | "return"
+                | "fn"
+                | "switch"
+                | "when"
+                | "struct"
+                | "enum"
+                | "union"
+                | "as"
+                | "extern"
+                | "callconv"
+                | "defer"
+        )
+    {
+        return Err(name_error(format!("invalid namespace segment '{name}'")));
+    }
+    Ok(normalized)
+}
+
+pub(crate) fn normalize_path(path: &str) -> anyhow::Result<String> {
+    path.split("::")
+        .map(normalize_segment)
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map(|p| p.join("::"))
+}
+
 impl ProjectSymbols {
     pub fn from_plan(plan: &BuildPlan) -> anyhow::Result<Self> {
         let mut ids = HashSet::new();
         let mut files_by_name = HashMap::new();
+        let regions = plan.file_regions()?;
+        let mut package_files = HashMap::new();
+        let mut namespace_spellings = HashMap::new();
+        let mut dependencies = HashMap::new();
+        for package in &plan.packages {
+            let mut names = HashMap::new();
+            for (name, target) in &package.dependencies {
+                let name = normalize_segment(name)?;
+                if name == "root" || names.insert(name, *target).is_some() {
+                    return Err(name_error("duplicate or reserved dependency name"));
+                }
+            }
+            dependencies.insert(package.id, names);
+        }
         for file in &plan.files {
             if !ids.insert(file.id) {
                 return Err(name_error("duplicate file IDs in build plan"));
@@ -60,15 +125,77 @@ impl ProjectSymbols {
             if file.name.0.is_empty() || file.name.0.split("::").any(str::is_empty) {
                 return Err(name_error(format!("invalid file name '{}'", file.name.0)));
             }
-            if files_by_name.insert(file.name.clone(), file.id).is_some() {
-                return Err(name_error(format!("duplicate file name '{}'", file.name.0)));
+            if plan.packages.is_empty() {
+                let name = normalize_path(&file.name.0)?;
+                if files_by_name.insert(FileName(name), file.id).is_some() {
+                    return Err(name_error(format!("duplicate file name '{}'", file.name.0)));
+                }
+            } else {
+                let package = regions[&file.id].package;
+                let root = &plan
+                    .packages
+                    .iter()
+                    .find(|p| p.id == package)
+                    .unwrap()
+                    .source_root;
+                let relative = std::path::absolute(&file.path)?
+                    .strip_prefix(root)?
+                    .with_extension("");
+                let path = relative
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                let segments: Vec<_> = path.split("::").collect();
+                for count in 1..=segments.len() {
+                    let spelling = segments[..count].join("::");
+                    let key = (package, normalize_path(&spelling)?);
+                    if let Some(previous) = namespace_spellings.insert(key, spelling.clone())
+                        && previous != spelling
+                    {
+                        return Err(name_error("normalized namespace spelling collision"));
+                    }
+                }
+                let path = normalize_path(&path)?;
+                if package_files.insert((package, path), file.id).is_some() {
+                    return Err(name_error("duplicate normalized file path"));
+                }
+                if plan
+                    .standard_library
+                    .loaded
+                    .as_ref()
+                    .is_some_and(|std| std.compatibility_package == Some(package))
+                    && files_by_name
+                        .insert(FileName(normalize_path(&file.name.0)?), file.id)
+                        .is_some()
+                {
+                    return Err(name_error("duplicate compatibility file name"));
+                }
             }
         }
         let mut symbols = Self {
             files_by_name,
             namespaces: HashMap::new(),
-            regions: plan.file_regions()?,
+            regions,
+            package_files,
+            dependencies,
+            library_prelude: plan.standard_library.loaded.as_ref().map(|s| s.prelude),
+            ..Self::default()
         };
+        let registered: Vec<_> = if plan.packages.is_empty() {
+            Vec::new() // flat-plan compatibility retains longest-prefix selection
+        } else {
+            symbols.package_files.keys().cloned().collect()
+        };
+        let registered: HashSet<_> = registered.into_iter().collect();
+        for (package, path) in &registered {
+            let segments: Vec<_> = path.split("::").collect();
+            for length in 1..segments.len() {
+                if registered.contains(&(*package, segments[..length].join("::"))) {
+                    return Err(name_error("file/directory namespace collision"));
+                }
+            }
+        }
         if ids.contains(&PRELUDE_FILE) {
             return Err(name_error("reserved prelude file identity"));
         }
@@ -125,10 +252,27 @@ impl ProjectSymbols {
             .ok_or_else(|| name_error(format!("invalid declaration {id:?}")))
     }
 
-    pub(crate) fn reserved_file_root(&self, name: &str) -> bool {
-        self.files_by_name
-            .keys()
-            .any(|file| file.0.split("::").next() == Some(name))
+    pub(crate) fn reserved_package_root(&self, from: FileId, name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        self.regions.get(&from).is_some_and(|r| {
+            self.dependencies
+                .get(&r.package)
+                .is_some_and(|d| name == "root" || d.contains_key(&name))
+        })
+    }
+
+    pub(crate) fn reserved_file_root(&self, from: FileId, name: &str) -> bool {
+        if self.reserved_package_root(from, name) {
+            return true;
+        }
+        self.files_by_name.iter().any(|(file, id)| {
+            file.0.split("::").next() == Some(name.to_ascii_lowercase().as_str())
+                && self.regions.get(id).is_none_or(|region| {
+                    self.regions
+                        .get(&from)
+                        .is_some_and(|request| request.package == region.package)
+                })
+        })
     }
 
     pub fn resolve_path(&self, from: FileId, segments: &[String]) -> anyhow::Result<Entity> {
@@ -164,7 +308,7 @@ impl ProjectSymbols {
         {
             return normalize(Entity::Declaration(id));
         }
-        if let Some((file, count)) = self.file_prefix(segments) {
+        if let Some((file, count)) = self.file_prefix(from, segments) {
             return self.follow_path(from, Entity::File(file), &segments[count..], normalize);
         }
         if let Some(id) = local {
@@ -180,11 +324,40 @@ impl ProjectSymbols {
         )))
     }
 
-    /// Longest canonical file prefix, shared with lexical qualified lookup.
-    pub(crate) fn file_prefix(&self, segments: &[String]) -> Option<(FileId, usize)> {
+    /// Package qualifiers are selected in the requesting file's environment.
+    pub(crate) fn file_prefix(&self, from: FileId, segments: &[String]) -> Option<(FileId, usize)> {
+        if let Some(region) = self.regions.get(&from)
+            && let Some(dependencies) = self.dependencies.get(&region.package)
+        {
+            let first = segments.first()?.to_ascii_lowercase();
+            let (package, offset) = if first == "root" {
+                (region.package, 1)
+            } else if let Some(package) = dependencies.get(&first) {
+                (*package, 1)
+            } else {
+                (region.package, 0)
+            };
+            for count in (offset + 1..=segments.len()).rev() {
+                let path = normalize_path(&segments[offset..count].join("::")).ok()?;
+                if let Some(file) = self.package_files.get(&(package, path)) {
+                    return Some((*file, count));
+                }
+            }
+            if offset != 0 {
+                return None;
+            }
+        }
         (1..=segments.len()).rev().find_map(|count| {
+            let path = normalize_path(&segments[..count].join("::")).ok()?;
             self.files_by_name
-                .get(&FileName(segments[..count].join("::")))
+                .get(&FileName(path))
+                .filter(|file| {
+                    self.regions.get(file).is_none_or(|region| {
+                        self.regions
+                            .get(&from)
+                            .is_some_and(|request| request.package == region.package)
+                    })
+                })
                 .map(|file| (*file, count))
         })
     }

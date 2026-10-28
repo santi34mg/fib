@@ -51,8 +51,18 @@ pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
                         };
                         let string = std::str::from_utf8(bytes)?;
                         match builtin {
-                            BuiltinFunction::UncheckedDeref => {
-                                bail!("memory intrinsic cannot be interpreted")
+                            BuiltinFunction::UncheckedDeref
+                            | BuiltinFunction::SliceFromParts
+                            | BuiltinFunction::SliceData
+                            | BuiltinFunction::Syscall0
+                            | BuiltinFunction::Syscall1
+                            | BuiltinFunction::Syscall2
+                            | BuiltinFunction::Syscall3
+                            | BuiltinFunction::Syscall4
+                            | BuiltinFunction::Syscall5
+                            | BuiltinFunction::Syscall6
+                            | BuiltinFunction::PointerFromWord => {
+                                bail!("runtime intrinsic cannot be interpreted")
                             }
                             BuiltinFunction::AddSource => {
                                 bo.modules.push(PathBuf::from_str(string)?);

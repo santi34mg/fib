@@ -152,7 +152,7 @@ pub(super) fn resolve(
             while let Some(&id) = stack.last() {
                 let definition = &definitions[&id];
                 let result = if symbols
-                    .file_prefix(&definition.path)
+                    .file_prefix(id.file_id, &definition.path)
                     .is_some_and(|(file, _)| recovery.is_some_and(|r| r.unavailable(file)))
                 {
                     Err(super::recovery::Blocked.into())

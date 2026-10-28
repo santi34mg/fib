@@ -18,6 +18,10 @@ fn single_file_cli_compiles_links_and_runs() {
         };
         std::fs::write(&source, text).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
+            .env(
+                "FIB_SYSROOT",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+            )
             .args(["build", "--single-file"])
             .arg(&source)
             .output()
@@ -37,7 +41,11 @@ fn object_goal_emits_linkable_object_and_source_is_protected() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("main.fib");
     std::fs::write(&source, include_str!("programs/return_42.fib")).unwrap();
-    let mut plan = BuildPlan::single_file(&source).unwrap();
+    let mut plan = BuildPlan::single_file(&source)
+        .unwrap()
+        .with_standard_library(fibc::standard_library::StandardLibrary::at(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        ));
     let CompilationOutput::Objects(objects) = run_pipeline(&plan, PipelineGoal::Objects).unwrap()
     else {
         panic!("expected objects")
@@ -78,6 +86,10 @@ fn unsupported_source_exits_unsuccessfully_without_binary() {
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
+        .env(
+            "FIB_SYSROOT",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        )
         .args(["build", "--single-file"])
         .arg(&source)
         .output()
@@ -92,9 +104,17 @@ fn linker_failure_preserves_existing_output() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("main.fib");
     std::fs::write(&source, include_str!("programs/return_42.fib")).unwrap();
-    let plan = BuildPlan::single_file(&source).unwrap();
+    let plan = BuildPlan::single_file(&source)
+        .unwrap()
+        .with_standard_library(fibc::standard_library::StandardLibrary::at(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        ));
     std::fs::write(&plan.output, b"existing output").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
+        .env(
+            "FIB_SYSROOT",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        )
         .args(["build", "--single-file"])
         .arg(source)
         .env("PATH", "")
@@ -127,6 +147,10 @@ fn conditionals_helpers_and_joins_execute() {
         let source = directory.path().join("main.fib");
         std::fs::write(&source, &source_text).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
+            .env(
+                "FIB_SYSROOT",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+            )
             .args(["build", "--single-file"])
             .arg(&source)
             .output()
@@ -151,7 +175,11 @@ fn scalar_program(text: &str) -> std::process::ExitStatus {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("main.fib");
     std::fs::write(&source, text).unwrap();
-    let plan = BuildPlan::single_file(&source).unwrap();
+    let plan = BuildPlan::single_file(&source)
+        .unwrap()
+        .with_standard_library(fibc::standard_library::StandardLibrary::at(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        ));
     run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
     Command::new(&plan.output).status().unwrap()
 }
@@ -355,7 +383,11 @@ fn bounded_program(text: &str) -> std::process::ExitStatus {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("main.fib");
     std::fs::write(&source, text).unwrap();
-    let plan = BuildPlan::single_file(&source).unwrap();
+    let plan = BuildPlan::single_file(&source)
+        .unwrap()
+        .with_standard_library(fibc::standard_library::StandardLibrary::at(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        ));
     run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
     bounded_status(&plan.output)
 }
@@ -470,6 +502,10 @@ fn current_capabilities_project_builds_from_build_file_and_runs() {
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
+        .env(
+            "FIB_SYSROOT",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        )
         .args(["build", "--build-file"])
         .arg(&build_file)
         .current_dir(directory.path().parent().unwrap())
@@ -525,11 +561,11 @@ fn structs_storage_and_pointer_aliases_execute() {
             42,
         ),
         (
-            "fn main() int32 { comp S: type = struct { x: int32 }; s := S { x: 42 }; comp deref := memory::unchecked_deref; p := s&; return deref(p).x; }",
+            "fn main() int32 { comp S: type = struct { x: int32 }; s := S { x: 42 }; comp deref := std::memory::unchecked_deref; p := s&; return deref(p).x; }",
             42,
         ),
         (
-            "fn main() int32 { x := 42; p := x&; q := memory::unchecked_deref(p)&; if q == p { return q*; }; return 1; }",
+            "fn main() int32 { x := 42; p := x&; q := std::memory::unchecked_deref(p)&; if q == p { return q*; }; return 1; }",
             42,
         ),
     ] {
@@ -553,7 +589,7 @@ fn struct_construction_and_assignment_preserve_evaluation_order() {
             trace := 0;
             s := S { y: mark(trace&, 1), x: mark(trace&, 2) };
             if trace != 12 || s.y != 1 || s.x != 2 { return 1; };
-            memory::unchecked_deref(target(trace&, s&)).x = mark(trace&, 4);
+            std::memory::unchecked_deref(target(trace&, s&)).x = mark(trace&, 4);
             if trace != 1243 || s.x != 4 { return 2; };
             return 42;
         }
@@ -689,7 +725,11 @@ fn specification_conversions_views_and_generic_instances_execute() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("main.fib");
         std::fs::write(&source, text).unwrap();
-        let plan = BuildPlan::single_file(&source).unwrap();
+        let plan = BuildPlan::single_file(&source)
+            .unwrap()
+            .with_standard_library(fibc::standard_library::StandardLibrary::at(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+            ));
         run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
         assert_eq!(
             Command::new(&plan.output).status().unwrap().code(),
@@ -715,7 +755,11 @@ fn multiple_files_preserve_entry_and_declaration_identities() {
         "pub(root) fn same() int32 { return 22; } fn main() int32 { return 7; }",
     )
     .unwrap();
-    let mut plan = BuildPlan::single_file(&main).unwrap();
+    let mut plan = BuildPlan::single_file(&main)
+        .unwrap()
+        .with_standard_library(fibc::standard_library::StandardLibrary::at(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        ));
     plan.files.push(SourceFile {
         id: FileId(1),
         name: "helper".to_string().into(),
@@ -754,7 +798,11 @@ fn boolean_casts_cover_every_numeric_runtime_representation() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("main.fib");
     std::fs::write(&source, text).unwrap();
-    let plan = BuildPlan::single_file(&source).unwrap();
+    let plan = BuildPlan::single_file(&source)
+        .unwrap()
+        .with_standard_library(fibc::standard_library::StandardLibrary::at(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        ));
     run_pipeline(&plan, PipelineGoal::Binary).unwrap();
     assert_eq!(
         Command::new(&plan.output).status().unwrap().code(),
@@ -768,6 +816,10 @@ fn implicit_pointer_access_warns_and_traps_on_null() {
     let source = directory.path().join("main.fib");
     std::fs::write(&source, "comp S:type = struct { x:int32 }; fn read(p:*S) int32 { return p.x; } fn main() int32 { return read(null); }").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
+        .env(
+            "FIB_SYSROOT",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        )
         .args(["build", "--single-file"])
         .arg(&source)
         .output()
@@ -780,7 +832,11 @@ fn implicit_pointer_access_warns_and_traps_on_null() {
     let warnings = String::from_utf8_lossy(&output.stderr);
     assert_eq!(warnings.matches("warning[type]").count(), 1);
     assert!(warnings.contains("main.fib:1:"));
-    let plan = BuildPlan::single_file(&source).unwrap();
+    let plan = BuildPlan::single_file(&source)
+        .unwrap()
+        .with_standard_library(fibc::standard_library::StandardLibrary::at(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        ));
     assert!(!Command::new(&plan.output).status().unwrap().success());
 }
 

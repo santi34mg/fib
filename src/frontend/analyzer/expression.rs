@@ -18,7 +18,7 @@ impl Analyzer {
         let Some(first) = name.segments.first() else {
             return Err(name_error("empty qualified name"));
         };
-        if let Some((file, _)) = context.symbols.file_prefix(&name.segments)
+        if let Some((file, _)) = context.symbols.file_prefix(context.file_id, &name.segments)
             && context
                 .recovery
                 .as_ref()
@@ -26,7 +26,10 @@ impl Analyzer {
         {
             return Err(super::recovery::Blocked.into());
         }
-        if context.symbols.file_prefix(&name.segments).is_none()
+        if context
+            .symbols
+            .file_prefix(context.file_id, &name.segments)
+            .is_none()
             && let Some(ResolvedName::Local(id)) = context.lexical.resolve_lexical(first)
             && context.recovery.as_ref().is_some_and(|r| {
                 r.blocked(crate::frontend::analysis_annotation::BindingId::Local(id))
@@ -45,7 +48,11 @@ impl Analyzer {
             }
         } else {
             // Canonical registered file paths bypass ordinary lexical bindings.
-            if context.symbols.file_prefix(&name.segments).is_some() {
+            if context
+                .symbols
+                .file_prefix(context.file_id, &name.segments)
+                .is_some()
+            {
                 ResolvedName::Entity(context.symbols.resolve_path_using(
                     context.file_id,
                     &name.segments,

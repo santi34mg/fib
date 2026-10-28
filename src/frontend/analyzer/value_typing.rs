@@ -901,3 +901,87 @@ pub(super) fn dereference_info(
         type_value: None,
     })
 }
+
+/// Recomputed independently by annotation validation; compiler identities select the operation.
+pub(super) fn intrinsic_info(
+    builtin: crate::builtins::BuiltinFunction,
+    args: &[ExpressionInfo],
+    types: &SemanticTypes,
+) -> anyhow::Result<ExpressionInfo> {
+    let find = |ty: T| {
+        types
+            .types
+            .iter()
+            .position(|t| *t == ty)
+            .map(|i| TypeId(i as u32))
+            .ok_or_else(|| type_error("missing intrinsic result type"))
+    };
+    use crate::builtins::BuiltinFunction as F;
+    if let Some(arity) = builtin.syscall_arity() {
+        if args.len() != arity + 1 || !matches!(types.get(args[0].ty)?, T::Builtin(B::UInt64)) {
+            return Err(type_error(
+                "syscall requires a uint64 number and zero through six arguments",
+            ));
+        }
+        for arg in &args[1..] {
+            if !matches!(
+                types.container(arg.ty)?.0,
+                T::Builtin(B::UInt64) | T::Pointer(_)
+            ) {
+                return Err(type_error(
+                    "syscall arguments must be uint64 words or typed pointers",
+                ));
+            }
+        }
+        return Ok(ExpressionInfo {
+            ty: find(T::Builtin(B::Int64))?,
+            category: ValueCategory::Value,
+            type_value: None,
+        });
+    }
+    match (builtin, args) {
+        (F::PointerFromWord, [word]) => {
+            if !matches!(types.get(word.ty)?, T::Builtin(B::UInt64)) {
+                return Err(type_error("pointer_from_word requires uint64"));
+            }
+            let byte = find(T::Builtin(B::UInt8))?;
+            Ok(ExpressionInfo {
+                ty: find(T::Pointer(byte))?,
+                category: ValueCategory::Value,
+                type_value: None,
+            })
+        }
+        (F::UncheckedDeref, [pointer]) => dereference_info(pointer.ty, types),
+        (F::SliceFromParts, [pointer, length]) => {
+            let (T::Pointer(element), readonly) = types.container(pointer.ty)? else {
+                return Err(type_error("slice_from_parts requires a typed pointer"));
+            };
+            if types.is_opaque(*element)? {
+                return Err(type_error("slice elements cannot be void"));
+            }
+            if !matches!(types.get(length.ty)?, T::Builtin(B::Usize)) {
+                return Err(type_error("slice length must be usize"));
+            }
+            let ty = find(T::Slice(*element))?;
+            let ty = if readonly { find(T::Readonly(ty))? } else { ty };
+            Ok(ExpressionInfo {
+                ty,
+                category: ValueCategory::Value,
+                type_value: None,
+            })
+        }
+        (F::SliceData, [slice]) => {
+            let (T::Slice(element), readonly) = types.container(slice.ty)? else {
+                return Err(type_error("slice_data requires a slice"));
+            };
+            let ty = find(T::Pointer(*element))?;
+            let ty = if readonly { find(T::Readonly(ty))? } else { ty };
+            Ok(ExpressionInfo {
+                ty,
+                category: ValueCategory::Value,
+                type_value: None,
+            })
+        }
+        _ => Err(type_error("invalid intrinsic invocation")),
+    }
+}

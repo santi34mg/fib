@@ -1,0 +1,2 @@
+// Compiler-owned unchecked_deref, slice_from_parts and slice_data declarations
+// are registered in this module. Calls and aliases retain compiler identities.

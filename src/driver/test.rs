@@ -4,7 +4,14 @@ fn source(text: &str) -> (tempfile::TempDir, BuildPlan) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("program.fib");
     std::fs::write(&path, text).unwrap();
-    let plan = BuildPlan::single_file(&path).unwrap();
+    let mut plan = BuildPlan::single_file(&path).unwrap();
+    plan.standard_library = if text.contains("std::") {
+        crate::standard_library::StandardLibrary::at(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        )
+    } else {
+        crate::standard_library::StandardLibrary::disabled()
+    };
     (directory, plan)
 }
 
@@ -321,6 +328,7 @@ fn current_capabilities_project_lowers_without_llvm() {
     )
     .unwrap();
     let plan = crate::plan::PlanBuilder::from(build_file)
+        .with_standard_library(crate::standard_library::StandardLibrary::disabled())
         .compile_and_interpret_build_file()
         .unwrap();
     assert_eq!(plan.files.len(), 2);
@@ -364,7 +372,7 @@ fn struct_storage_sample_lowers_to_verified_memory_ir() {
 #[test]
 fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
     use crate::ir::{Terminator, TrapReason};
-    for (read, guards) in [("p*", 1), ("memory::unchecked_deref(p)", 0)] {
+    for (read, guards) in [("p*", 1), ("std::memory::unchecked_deref(p)", 0)] {
         let text = format!(
             "fn read(p: *int32) int32 {{ return {read}; }} fn main() int32 {{ x := 42; return read(x&); }}"
         );
@@ -382,7 +390,7 @@ fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
             guards
         );
     }
-    let text = "comp S: type = struct { next: *int32 }; fn read(p: *S) int32 { return memory::unchecked_deref(p).next*; } fn main() int32 { return 0; }";
+    let text = "comp S: type = struct { next: *int32 }; fn read(p: *S) int32 { return std::memory::unchecked_deref(p).next*; } fn main() int32 { return 0; }";
     let (_directory, plan) = source(text);
     let ir = crate::ir::lowering::lower(&run_frontend(&plan).unwrap()).unwrap();
     assert_eq!(

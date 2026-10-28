@@ -54,6 +54,7 @@ pub struct NativeInputs {
 
 #[derive(Debug, Clone)]
 pub struct BuildPlan {
+    pub standard_library: crate::standard_library::StandardLibrary,
     pub native: NativeInputs,
     pub packages: Vec<PackageSpec>,
     pub files: Vec<SourceFile>,
@@ -63,6 +64,14 @@ pub struct BuildPlan {
 }
 
 impl BuildPlan {
+    pub fn with_standard_library(
+        mut self,
+        standard_library: crate::standard_library::StandardLibrary,
+    ) -> Self {
+        self.standard_library = standard_library;
+        self
+    }
+
     pub(crate) fn file_regions(
         &self,
     ) -> anyhow::Result<std::collections::HashMap<FileId, FileRegion>> {
@@ -111,8 +120,9 @@ impl BuildPlan {
                     .iter()
                     .find(|file| file.id == *id)
                     .ok_or_else(|| anyhow::anyhow!("package references an unknown source file"))?;
+                let source_path = std::path::absolute(&file.path)?;
                 anyhow::ensure!(
-                    file.path.starts_with(&package.source_root)
+                    source_path.starts_with(&package.source_root)
                         && !file
                             .path
                             .components()
@@ -125,8 +135,7 @@ impl BuildPlan {
                             *id,
                             FileRegion {
                                 package: package.id,
-                                directory: file
-                                    .path
+                                directory: source_path
                                     .parent()
                                     .unwrap_or(&package.source_root)
                                     .to_owned()
@@ -161,6 +170,7 @@ impl BuildPlan {
             "source must have an extension to choose a distinct output path"
         );
         Ok(Self {
+            standard_library: crate::standard_library::StandardLibrary::default(),
             native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: vec![SourceFile {
@@ -177,6 +187,7 @@ impl BuildPlan {
 /// BuilderObject uses the builder pattern to create an object that
 /// guides the build process of the project.
 pub struct PlanBuilder {
+    pub standard_library: crate::standard_library::StandardLibrary,
     /// True if the build configuration is done
     pub build_stage: BuildStage,
     /// Main file that orchestrates the compilation process
@@ -197,6 +208,7 @@ pub struct PlanBuilder {
 impl From<PathBuf> for PlanBuilder {
     fn from(value: PathBuf) -> Self {
         Self {
+            standard_library: crate::standard_library::StandardLibrary::default(),
             build_stage: BuildStage::Configuration,
             build_file: value,
             modules: Vec::new(),
@@ -209,6 +221,14 @@ impl From<PathBuf> for PlanBuilder {
 }
 
 impl PlanBuilder {
+    pub fn with_standard_library(
+        mut self,
+        standard_library: crate::standard_library::StandardLibrary,
+    ) -> Self {
+        self.standard_library = standard_library;
+        self
+    }
+
     /// Compile and interpret the selected build file, then atomically finalize its
     /// host-owned state into the immutable plan consumed by the normal pipeline.
     pub fn compile_and_interpret_build_file(self) -> anyhow::Result<BuildPlan> {
@@ -236,7 +256,8 @@ impl PlanBuilder {
             .to_path_buf();
 
         self.build_stage = BuildStage::BuildFileCompilation;
-        let bootstrap = BuildPlan::single_file(&build_file)?;
+        let mut bootstrap = BuildPlan::single_file(&build_file)?;
+        bootstrap.standard_library = self.standard_library.clone();
         let ir = compile_build_file_to_ir_with_sources(&bootstrap, sources)?;
         interpret_ir(ir, &mut self)?;
         self.finalize(project_root, build_file)
@@ -341,6 +362,7 @@ impl PlanBuilder {
         );
         self.build_stage = BuildStage::IndividualIrCompilation;
         Ok(BuildPlan {
+            standard_library: self.standard_library,
             native,
             packages: Vec::new(),
             files,
@@ -432,6 +454,7 @@ mod tests {
         .unwrap();
 
         let plan = PlanBuilder::from(build_file)
+            .with_standard_library(crate::standard_library::StandardLibrary::disabled())
             .compile_and_interpret_build_file()
             .unwrap();
         assert_eq!(plan.files.len(), 2);
@@ -497,6 +520,7 @@ mod package_metadata_tests {
 
     fn plan() -> BuildPlan {
         BuildPlan {
+            standard_library: crate::standard_library::StandardLibrary::disabled(),
             native: crate::plan::NativeInputs::default(),
             files: vec![SourceFile {
                 id: FileId(0),

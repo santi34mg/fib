@@ -8,5 +8,6 @@ pub mod ir;
 pub mod ir_interpreter;
 pub(crate) mod numeric;
 pub mod plan;
+pub mod standard_library;
 
 pub use diagnostics::CompilerError;

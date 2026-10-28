@@ -114,17 +114,16 @@ impl Source<'_> {
             .copied()
             .ok_or_else(|| self.error(Span::new(1, 1), "unsupported memory storage type"))
     }
-    fn intrinsic(&self, callee: &Expression) -> bool {
+    fn builtin(&self, callee: &Expression) -> Option<crate::builtins::BuiltinFunction> {
         if let E::QualifiedIdentifier(name) = &callee.kind
             && let Some(ResolvedName::Entity(Entity::Declaration(id))) = name.annotation.resolved
         {
-            return self
-                .project
-                .builtins
-                .get(&id)
-                .is_some_and(|b| b.is_intrinsic());
+            return self.project.builtins.get(&id).copied();
         }
-        false
+        None
+    }
+    fn intrinsic(&self, callee: &Expression) -> bool {
+        self.builtin(callee).is_some_and(|b| b.is_intrinsic())
     }
     fn value_type(&self, ty: SemanticId, span: Span) -> anyhow::Result<TypeId> {
         self.ir_type(ty, span)?
@@ -964,6 +963,45 @@ impl Lowerer<'_, '_, '_> {
                 .position(|c| c.ty == constant.ty && c.kind == constant.kind)
                 .ok_or_else(|| self.source.error(expr.span, "missing prepared constant"))?;
             return Ok(Operand::Constant(ConstantId(index)));
+        }
+        if let E::Call { callee, args } = &expr.kind
+            && let Some(builtin) = self.source.builtin(callee).filter(|b| b.is_intrinsic())
+        {
+            use crate::builtins::BuiltinFunction as F;
+            if builtin == F::UncheckedDeref {
+                let address = self.value_expression(state, &args[0])?;
+                return self.instruction(
+                    state,
+                    InstructionKind::Load {
+                        address: Address(address),
+                    },
+                    self.source.expression_type(expr)?,
+                );
+            }
+            let values = args
+                .iter()
+                .map(|a| self.value_expression(state, a))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let kind = if builtin.syscall_arity().is_some() {
+                InstructionKind::Syscall {
+                    number: values[0],
+                    args: values[1..].to_vec(),
+                }
+            } else {
+                match builtin {
+                    F::SliceData => InstructionKind::SliceData(values[0]),
+                    F::SliceFromParts => InstructionKind::Slice {
+                        data: values[0],
+                        length: values[1],
+                    },
+                    F::PointerFromWord => InstructionKind::Cast {
+                        kind: CastKind::IntegerToPointer,
+                        operand: values[0],
+                    },
+                    _ => return Err(self.source.error(expr.span, "unsupported intrinsic")),
+                }
+            };
+            return self.instruction(state, kind, self.source.expression_type(expr)?);
         }
         let construction = match &expr.kind {
             E::Call { callee, args } => self.source.variant(callee).map(|v| (v, args.as_slice())),

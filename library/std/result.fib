@@ -1,0 +1,7 @@
+// Reusable success/error values. Identical arguments preserve nominal identity.
+pub comp fn Result(T: type, E: type) type {
+    return enum {
+        Ok { value: T },
+        Err { error: E }
+    };
+}

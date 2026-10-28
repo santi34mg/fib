@@ -41,7 +41,7 @@ pub struct AnalyzedProject {
     pub units: Vec<CompilationUnit>,
     pub symbols: ProjectSymbols,
     pub types: SemanticTypes,
-    /// Build-environment functions keyed by their synthetic declaration identity.
+    /// Compiler-owned operations keyed by their canonical declaration identity.
     pub builtins: HashMap<DeclId, BuiltinFunction>,
     /// Original plan paths retained for diagnostics after analysis.
     pub source_paths: HashMap<FileId, std::path::PathBuf>,
@@ -186,7 +186,8 @@ impl Analyzer {
                 "compilation-unit IDs do not match build-plan file IDs",
             ));
         }
-        Self {
+        let registration = plan.standard_library.loaded.clone();
+        let mut analyzer = Self {
             entry: plan.entry,
             units,
             symbols,
@@ -196,18 +197,43 @@ impl Analyzer {
             builtins: HashMap::new(),
             phase: NamePhase::New,
             recovery: None,
+        };
+        if let Some(std) = registration {
+            for file in [std.memory, std.os, std.private, std.prelude] {
+                anyhow::ensure!(
+                    analyzer
+                        .symbols
+                        .regions
+                        .get(&file)
+                        .is_some_and(|r| r.package == std.package),
+                    "invalid std module registration"
+                );
+            }
+            for (file, module) in [
+                (std.memory, SyntheticModule::MEMORY),
+                (std.os, SyntheticModule::OS),
+                (std.private, SyntheticModule::OS_PRIVATE),
+            ] {
+                analyzer = analyzer.with_module_intrinsics(file, module)?;
+            }
         }
-        .with_synthetic_module(SyntheticModule::MEMORY)
+        Ok(analyzer)
     }
 
     /// Add a compiler-provided namespace to the same analysis pipeline used by
     /// source modules. Synthetic declarations have identities and semantic types,
     /// but no source AST or path.
     pub fn with_synthetic_module(mut self, module: SyntheticModule) -> anyhow::Result<Self> {
+        let name = crate::frontend::namespace::normalize_path(module.name)?;
         if self
             .symbols
             .files_by_name
-            .contains_key(&FileName(module.name.into()))
+            .contains_key(&FileName(name.clone()))
+            || self
+                .symbols
+                .package_files
+                .keys()
+                .any(|(_, path)| path == &name)
         {
             return Err(name_error(format!(
                 "duplicate file or synthetic module name '{}'",
@@ -218,16 +244,39 @@ impl Analyzer {
             .symbols
             .files_by_name
             .values()
+            .chain(self.symbols.regions.keys())
             .chain(self.synthetic_modules.iter().map(|(id, _)| id))
             .map(|id| id.0)
             .max()
             .unwrap_or(0)
             .checked_add(1)
+            .filter(|id| *id != u32::MAX)
             .ok_or_else(|| name_error("synthetic module file ID space exhausted"))?;
         let file = FileId(next);
-        self.symbols
-            .files_by_name
-            .insert(FileName(module.name.into()), file);
+        self.symbols.files_by_name.insert(FileName(name), file);
+        self.with_module_intrinsics(file, module)
+    }
+
+    /// Augment a registered source or synthetic module with compiler declarations.
+    /// Both origins share declaration collection, visibility and alias resolution.
+    pub fn with_module_intrinsics(
+        mut self,
+        file: FileId,
+        module: SyntheticModule,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            self.phase == NamePhase::New,
+            "compiler modules must be registered before collection"
+        );
+        anyhow::ensure!(
+            self.symbols.regions.contains_key(&file)
+                || self.symbols.files_by_name.values().any(|id| *id == file),
+            "unknown compiler module file identity"
+        );
+        anyhow::ensure!(
+            !self.synthetic_modules.iter().any(|(id, _)| *id == file),
+            "duplicate compiler module registration"
+        );
         self.synthetic_modules.push((file, module));
         Ok(self)
     }
@@ -463,11 +512,15 @@ impl Analyzer {
             result.map_err(|e| with_path(e, self.paths.get(&file_id)))?;
         }
         for &(file_id, module) in &self.synthetic_modules {
-            let mut namespace = Namespace {
-                file_id,
-                declarations: Vec::new(),
-                names: HashMap::new(),
-            };
+            let mut namespace =
+                self.symbols
+                    .namespaces
+                    .remove(&file_id)
+                    .unwrap_or_else(|| Namespace {
+                        file_id,
+                        declarations: Vec::new(),
+                        names: HashMap::new(),
+                    });
             for &builtin in module.functions {
                 let id = add_declaration(
                     &mut namespace,
@@ -477,11 +530,97 @@ impl Analyzer {
                     Span::new(1, 1),
                     true,
                 )?;
+                if builtin == BuiltinFunction::PointerFromWord {
+                    namespace.declarations[id.index as usize].visibility = Visibility::Package;
+                }
                 self.builtins.insert(id, builtin);
+                self.symbols.compiler_declarations.insert(id, builtin);
             }
             self.symbols.namespaces.insert(file_id, namespace);
         }
+        for (&file, ns) in &self.symbols.namespaces {
+            for name in ns.names.keys() {
+                if self.symbols.reserved_package_root(file, name) {
+                    return Err(name_error(format!(
+                        "package name '{name}' cannot be shadowed"
+                    )));
+                }
+            }
+        }
+        self.install_library_prelude()?;
         self.phase = NamePhase::Collected;
+        Ok(())
+    }
+
+    fn install_library_prelude(&mut self) -> anyhow::Result<()> {
+        let Some(file) = self.symbols.library_prelude else {
+            return Ok(());
+        };
+        let package = self.symbols.regions[&file].package;
+        let mut exports = self.symbols.namespaces[&file]
+            .names
+            .iter()
+            .filter(|(_, id)| {
+                self.symbols
+                    .declaration(**id)
+                    .is_ok_and(|d| d.visibility == Visibility::Public)
+            })
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        exports.sort();
+        if exports.is_empty() {
+            return Ok(());
+        }
+        let source = exports
+            .iter()
+            .map(|name| format!("comp {name} := std::prelude::{name};"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for unit in &mut self.units {
+            if self.symbols.regions[&unit.source_file_id].package == package {
+                continue;
+            }
+            for name in &exports {
+                if self
+                    .symbols
+                    .reserved_package_root(unit.source_file_id, name)
+                {
+                    return Err(name_error(format!(
+                        "package name '{name}' cannot be shadowed by a prelude export"
+                    )));
+                }
+            }
+            let path = &self.paths[&unit.source_file_id];
+            let mut ast = crate::frontend::parser::Parser::with_source(
+                crate::frontend::tokenizer::Tokenizer::new(&source),
+                path,
+                &source,
+            )
+            .parse()?;
+            let ns = self
+                .symbols
+                .namespaces
+                .get_mut(&unit.source_file_id)
+                .unwrap();
+            for node in &mut ast.statements {
+                let StatementKind::VariableDeclaration(var) = &mut node.kind else {
+                    unreachable!()
+                };
+                // These aliases have no textual occurrence in the consuming
+                // document. Do not let tooling classify unrelated user tokens
+                // at positions from the generated declaration text.
+                var.annotation.source_span = None;
+                if let Some(crate::frontend::ast::expression::Expression {
+                    kind: ExpressionKind::QualifiedIdentifier(name),
+                    ..
+                }) = &mut var.expression
+                {
+                    name.annotation.source_span = None;
+                }
+                collect_variable(ns, var, node.span, false, false)?;
+            }
+            unit.ast.statements.extend(ast.statements);
+        }
         Ok(())
     }
 
@@ -752,27 +891,26 @@ fn validate_analysis_with_paths(
             "analysis requires completed type resolution",
         ));
     }
+    if project.builtins != project.symbols.compiler_declarations {
+        return Err(crate::frontend::semantic_type::type_error(
+            "compiler declaration registry mismatch",
+        ));
+    }
     for (&id, &builtin) in &project.builtins {
-        if builtin.is_intrinsic() {
-            let memory = project
-                .symbols
-                .files_by_name
-                .get(&FileName("memory".into()));
-            if memory != Some(&id.file_id)
-                || project.symbols.declaration(id)?.name != "unchecked_deref"
-                || !matches!(
-                    project
-                        .types
-                        .declarations
-                        .get(&id)
-                        .and_then(|ty| project.types.get(*ty).ok()),
-                    Some(SemanticType::IntrinsicFunction)
-                )
-            {
-                return Err(crate::frontend::semantic_type::type_error(
-                    "invalid memory intrinsic identity",
-                ));
-            }
+        project.symbols.declaration(id)?;
+        if builtin.is_intrinsic()
+            && !matches!(
+                project
+                    .types
+                    .declarations
+                    .get(&id)
+                    .and_then(|ty| project.types.get(*ty).ok()),
+                Some(SemanticType::IntrinsicFunction)
+            )
+        {
+            return Err(crate::frontend::semantic_type::type_error(
+                "invalid intrinsic identity",
+            ));
         }
     }
     let mut units = project.units.clone();

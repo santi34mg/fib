@@ -51,6 +51,10 @@ pub(super) fn validate(
     // Compiler-provided namespaces have no source AST to walk. Their declarations
     // are nevertheless canonical bindings and must still pass the semantic-table
     // consistency checks below.
+    for id in symbols.compiler_declarations.keys() {
+        symbols.declaration(*id)?;
+        v.bindings.insert(BindingId::Declaration(*id));
+    }
     for namespace in symbols
         .namespaces
         .values()
@@ -928,25 +932,21 @@ impl Validator<'_> {
                         let Some(id) = super::evaluation::function_id(callee) else {
                             return Err(type_error("intrinsic requires a named declaration"));
                         };
-                        if self
+                        let builtin = self
                             .symbols
-                            .files_by_name
-                            .get(&crate::plan::FileName("memory".into()))
-                            != Some(&id.file_id)
-                            || self.symbols.declaration(id)?.name != "unchecked_deref"
-                        {
-                            return Err(type_error("invalid intrinsic call identity"));
-                        }
-                        let [pointer] = args.as_slice() else {
-                            return Err(type_error(
-                                "unchecked_deref requires one pointer argument",
-                            ));
-                        };
-                        let pointer = self.expression(pointer)?;
+                            .compiler_declarations
+                            .get(&id)
+                            .copied()
+                            .filter(|b| b.is_intrinsic())
+                            .ok_or_else(|| type_error("invalid intrinsic call identity"))?;
+                        let arguments = args
+                            .iter()
+                            .map(|arg| self.expression(arg))
+                            .collect::<anyhow::Result<Vec<_>>>()?;
                         let expected =
-                            super::value_typing::dereference_info(pointer.ty, self.types)?;
+                            super::value_typing::intrinsic_info(builtin, &arguments, self.types)?;
                         if info != expected {
-                            return Err(type_error("intrinsic place annotation mismatch"));
+                            return Err(type_error("intrinsic result annotation mismatch"));
                         }
                         return Ok(info);
                     }

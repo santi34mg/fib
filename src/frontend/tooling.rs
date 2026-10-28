@@ -164,6 +164,7 @@ pub fn compiler_error(error: anyhow::Error, path: &Path) -> CompilerError {
 /// A standalone editor document need not exist on disk or define an entry function.
 pub fn standalone_plan(path: &Path) -> BuildPlan {
     BuildPlan {
+        standard_library: crate::standard_library::StandardLibrary::default(),
         native: crate::plan::NativeInputs::default(),
         packages: vec![],
         files: vec![SourceFile {
@@ -188,6 +189,16 @@ pub fn analyze_plan(
     build_file: bool,
 ) -> ProjectAnalysis {
     let mut output = ProjectAnalysis::default();
+    let prepared = match plan.prepare() {
+        Ok(plan) => plan,
+        Err(error) => {
+            if let Some(file) = plan.files.iter().find(|f| f.id == plan.entry) {
+                output.add_error(&file.path, error, sources);
+            }
+            return output;
+        }
+    };
+    let plan = &prepared;
     let mut units = Vec::new();
     let mut roles = HashMap::<FileId, HashMap<Span, &'static str>>::new();
     let mut unavailable = std::collections::HashSet::new();
@@ -471,6 +482,11 @@ pub fn encode_tokens(
 
 #[cfg(test)]
 mod tests {
+    fn standalone_plan(path: &std::path::Path) -> crate::plan::BuildPlan {
+        super::standalone_plan(path)
+            .with_standard_library(crate::standard_library::StandardLibrary::disabled())
+    }
+
     use super::super::source::OverlaySources;
     use super::*;
 
@@ -603,6 +619,11 @@ mod tests {
 
 #[cfg(test)]
 mod project_tests {
+    fn standalone_plan(path: &std::path::Path) -> crate::plan::BuildPlan {
+        super::standalone_plan(path)
+            .with_standard_library(crate::standard_library::StandardLibrary::disabled())
+    }
+
     use super::super::source::OverlaySources;
     use super::*;
     #[test]

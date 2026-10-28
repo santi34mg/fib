@@ -24,7 +24,7 @@ fn main() int32 {
     copy := shifted(shape);
     move((copy.origin&), 5);
     pointer := copy.origin&;
-    memory::unchecked_deref(pointer).y = 27;
+    std::memory::unchecked_deref(pointer).y = 27;
     node := Node { next: null, value: 1 };
     tail := Node { value: 2, next: node& };
     counter := 0;

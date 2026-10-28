@@ -86,6 +86,11 @@ impl Analyzer {
         alias: bool,
         context: &ResolveContext<'_>,
     ) -> anyhow::Result<()> {
+        if context.symbols.reserved_package_root(context.file_id, name) {
+            return Err(name_error(format!(
+                "package name '{name}' cannot be shadowed"
+            )));
+        }
         if BuiltinType::from_name(name).is_some() {
             return Err(name_error(format!(
                 "prelude type name '{name}' cannot be shadowed"
@@ -94,7 +99,7 @@ impl Analyzer {
         if context.lexical.resolve_lexical(name).is_some() {
             return Err(name_error(format!("duplicate lexical identifier '{name}'")));
         }
-        if alias && context.symbols.reserved_file_root(name) {
+        if alias && context.symbols.reserved_file_root(context.file_id, name) {
             return Err(name_error(format!(
                 "local alias '{name}' cannot reuse a build-plan file name or file root"
             )));

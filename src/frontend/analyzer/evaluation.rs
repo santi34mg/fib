@@ -325,16 +325,75 @@ impl TypeContext<'_> {
         };
         let info = self.expression(callee, None)?;
         if matches!(self.types.get(info.ty)?, T::IntrinsicFunction) {
-            if function_id(callee).is_none() {
-                return Err(type_error(
-                    "intrinsic requires a named compiler declaration",
-                ));
+            let id = function_id(callee)
+                .ok_or_else(|| type_error("intrinsic requires a named compiler declaration"))?;
+            use crate::builtins::BuiltinFunction as F;
+            let builtin = self
+                .symbols
+                .compiler_declarations
+                .get(&id)
+                .copied()
+                .filter(|b| b.is_intrinsic())
+                .ok_or_else(|| type_error("invalid intrinsic call identity"))?;
+            let expected_count = builtin
+                .syscall_arity()
+                .map(|n| n + 1)
+                .unwrap_or(if builtin == F::SliceFromParts { 2 } else { 1 });
+            if args.len() != expected_count {
+                return Err(type_error("invalid intrinsic argument count"));
             }
-            let [pointer] = args else {
-                return Err(type_error("unchecked_deref requires one pointer argument"));
-            };
-            let pointer = self.expression(pointer, None)?;
-            return super::value_typing::dereference_info(pointer.ty, self.types);
+            let usize_type = self.types.builtin(B::Usize);
+            let word = self.types.builtin(B::UInt64);
+            self.types.builtin(B::Int64);
+            let byte = self.types.builtin(B::UInt8);
+            self.types.intern(T::Pointer(byte));
+            let mut arguments = Vec::new();
+            for (index, arg) in args.iter_mut().enumerate() {
+                let expected = if builtin == F::SliceFromParts && index == 1 {
+                    Some(usize_type)
+                } else if (builtin.syscall_arity().is_some()
+                    && (index == 0
+                        || matches!(
+                            arg.kind,
+                            E::Literal(crate::frontend::tokens::Literal::Integer(_))
+                        )))
+                    || builtin == F::PointerFromWord
+                {
+                    Some(word)
+                } else {
+                    None
+                };
+                arguments.push(self.expression(arg, expected)?);
+            }
+            match builtin {
+                F::SliceFromParts => {
+                    let (T::Pointer(element), readonly) = self.types.container(arguments[0].ty)?
+                    else {
+                        return Err(type_error("slice_from_parts requires a typed pointer"));
+                    };
+                    let element = *element;
+                    if self.types.is_opaque(element)? {
+                        return Err(type_error("slice elements cannot be void"));
+                    }
+                    let slice = self.types.intern(T::Slice(element));
+                    if readonly {
+                        self.types.intern(T::Readonly(slice));
+                    }
+                }
+                F::SliceData => {
+                    let (T::Slice(element), readonly) = self.types.container(arguments[0].ty)?
+                    else {
+                        return Err(type_error("slice_data requires a slice"));
+                    };
+                    let element = *element;
+                    let pointer = self.types.intern(T::Pointer(element));
+                    if readonly {
+                        self.types.intern(T::Readonly(pointer));
+                    }
+                }
+                _ => {}
+            }
+            return super::value_typing::intrinsic_info(builtin, &arguments, self.types);
         }
         let T::Function(mut signature) = self.types.get(info.ty)?.clone() else {
             return Err(type_error("expression is not callable"));

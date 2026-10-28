@@ -17,6 +17,10 @@ struct Client {
 impl Client {
     fn new(root: &Path) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_fib-lsp"))
+            .env(
+                "FIB_SYSROOT",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -114,7 +118,9 @@ fn uri(path: &Path) -> String {
 #[test]
 fn lifecycle_multiple_errors_edits_tokens_and_close() {
     let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("not yet saved.fib");
+    let workspace = root.path().join("not yet saved");
+    std::fs::create_dir(&workspace).unwrap();
+    let path = workspace.join("main.fib");
     let mut client = Client::new(root.path());
     client.open(&path, "fn f() { missing; another; }");
     let errors = client.published(&path, 1);
@@ -144,6 +150,39 @@ fn lifecycle_multiple_errors_edits_tokens_and_close() {
     client.send(json!({"jsonrpc":"2.0","id":3,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":uri(&path)}}}));
     assert_eq!(client.wait(|m| m["id"] == 3)["error"]["code"], -32602);
     client.finish();
+}
+
+#[test]
+fn installed_std_resolves_in_unsaved_documents_and_keeps_private_helpers_private() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("syscalls.fib");
+    let mut client = Client::new(root.path());
+    client.open(
+        &path,
+        "fn main() int32 { return std::os::syscall0(39) as int32; }",
+    );
+    let valid = client.published(&path, 1);
+    assert!(
+        valid["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{valid}"
+    );
+    client.change(
+        &path,
+        "fn main() int32 { p := std::os_abi::pointer_from_word(0); return 0; }",
+        2,
+    );
+    let errors = client.published(&path, 2);
+    assert!(
+        errors["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["message"].as_str().is_some_and(|m| m.contains("private"))),
+        "{errors}"
+    );
 }
 
 #[test]

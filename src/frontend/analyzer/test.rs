@@ -38,6 +38,7 @@ fn symbols() -> ProjectSymbols {
         regions: HashMap::new(),
         files_by_name: HashMap::new(),
         namespaces: HashMap::new(),
+        ..ProjectSymbols::default()
     }
 }
 
@@ -199,6 +200,7 @@ fn synthetic_builtins_resolve_type_and_survive_analysis_only_when_configured() {
             .unwrap();
         (
             BuildPlan {
+                standard_library: crate::standard_library::StandardLibrary::disabled(),
                 native: crate::plan::NativeInputs::default(),
                 packages: Vec::new(),
                 files: vec![SourceFile {
@@ -276,6 +278,7 @@ fn synthetic_builtin_namespace_does_not_collide_with_source_names() {
         .parse()
         .unwrap();
     let plan = BuildPlan {
+        standard_library: crate::standard_library::StandardLibrary::disabled(),
         native: crate::plan::NativeInputs::default(),
         packages: Vec::new(),
         files: vec![SourceFile {
@@ -402,7 +405,7 @@ mod name_resolution {
         fn named_units_register_without_reading_paths() {
             let (plan, units) = inputs(&[("main", ""), ("pkg::util", "")]);
             let analyzer = Analyzer::new(plan, units).unwrap();
-            assert_eq!(analyzer.symbols.files_by_name.len(), 3);
+            assert_eq!(analyzer.symbols.files_by_name.len(), 2);
             assert_eq!(
                 analyzer
                     .symbols
@@ -2346,6 +2349,7 @@ mod name_resolution {
 
     fn inputs(files: &[(&str, &str)]) -> (BuildPlan, Vec<CompilationUnit>) {
         let plan = BuildPlan {
+            standard_library: crate::standard_library::StandardLibrary::disabled(),
             native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: files
@@ -2720,6 +2724,7 @@ mod name_resolution {
     }
     fn empty_symbols() -> ProjectSymbols {
         ProjectSymbols::from_plan(&BuildPlan {
+            standard_library: crate::standard_library::StandardLibrary::disabled(),
             native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: Vec::new(),
@@ -2756,6 +2761,7 @@ mod type_resolution {
             .unwrap_or_else(|e| panic!("fixture did not parse: {source}\n{e:#}"));
         Analyzer::new(
             BuildPlan {
+                standard_library: crate::standard_library::StandardLibrary::disabled(),
                 native: crate::plan::NativeInputs::default(),
                 packages: Vec::new(),
                 files: vec![SourceFile {
@@ -3687,6 +3693,7 @@ mod type_resolution {
         use crate::driver::CompilationUnit;
         use crate::plan::{BuildPlan, SourceFile};
         let plan = BuildPlan {
+            standard_library: crate::standard_library::StandardLibrary::disabled(),
             native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: files
@@ -4280,6 +4287,7 @@ mod type_resolution {
             let main = analyzer("comp ident := lib::identity; a := ident(int8, 1); comp maker := lib::box; comp Box := maker(int32); b: Box = Box { x: 1 };").units.remove(0);
             let mut a = Analyzer::new(
                 BuildPlan {
+                    standard_library: crate::standard_library::StandardLibrary::disabled(),
                     native: crate::plan::NativeInputs::default(),
                     packages: Vec::new(),
                     files: vec![
@@ -4933,6 +4941,7 @@ mod generic_flow_regressions {
         .unwrap_or_else(|error| panic!("fixture did not parse: {source}\n{error:#}"));
         Analyzer::new(
             BuildPlan {
+                standard_library: crate::standard_library::StandardLibrary::disabled(),
                 native: crate::plan::NativeInputs::default(),
                 packages: Vec::new(),
                 files: vec![SourceFile {
@@ -5264,6 +5273,7 @@ mod validation_regressions {
             .unwrap_or_else(|error| panic!("fixture did not parse: {source}\n{error:#}"));
         Analyzer::new(
             BuildPlan {
+                standard_library: crate::standard_library::StandardLibrary::disabled(),
                 native: crate::plan::NativeInputs::default(),
                 packages: Vec::new(),
                 files: vec![SourceFile {
@@ -5598,6 +5608,7 @@ mod memory_intrinsics {
     fn analyze(text: &str) -> anyhow::Result<AnalyzedProject> {
         let ast = Parser::with_source(Tokenizer::new(text), Path::new("main.fib"), text).parse()?;
         let plan = BuildPlan {
+            standard_library: crate::standard_library::StandardLibrary::disabled(),
             native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: vec![SourceFile {
@@ -5615,42 +5626,52 @@ mod memory_intrinsics {
                 ast,
             }],
         )?
+        .with_synthetic_module(crate::builtins::SyntheticModule::MEMORY)?
         .analyze()
     }
 
     #[test]
     fn unchecked_places_preserve_pointer_qualifiers_and_initialization_checks() {
         for text in [
-            "fn f(p: const *int32) int32 { return memory::unchecked_deref(p); }",
-            "fn f(p: *int32) { memory::unchecked_deref(p) = 42; }",
-            "comp S: type = struct { x: int32 }; fn f(p: *S) { memory::unchecked_deref(p).x = 42; }",
-            "fn f(p: *int32) *int32 { return memory::unchecked_deref(p)&; }",
-            "fn f(p: *int32) int32 { comp d := memory::unchecked_deref; return d(p); }",
+            "fn f(p: const *int32) int32 { return std::memory::unchecked_deref(p); }",
+            "fn f(p: *int32) { std::memory::unchecked_deref(p) = 42; }",
+            "comp S: type = struct { x: int32 }; fn f(p: *S) { std::memory::unchecked_deref(p).x = 42; }",
+            "fn f(p: *int32) *int32 { return std::memory::unchecked_deref(p)&; }",
+            "fn f(p: *int32) int32 { comp d := std::memory::unchecked_deref; return d(p); }",
         ] {
             analyze(text).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
         }
         for (text, expected) in [
-            ("fn f() { memory::unchecked_deref(); }", "one pointer"),
             (
-                "fn f(p: *int32) { memory::unchecked_deref(p, p); }",
-                "one pointer",
+                "fn f() { std::memory::unchecked_deref(); }",
+                "argument count",
             ),
-            ("fn f() { x := memory::unchecked_deref(42); }", "pointer"),
             (
-                "fn f(p: *void) { x := memory::unchecked_deref(p); }",
+                "fn f(p: *int32) { std::memory::unchecked_deref(p, p); }",
+                "argument count",
+            ),
+            (
+                "fn f() { x := std::memory::unchecked_deref(42); }",
+                "pointer",
+            ),
+            (
+                "fn f(p: *void) { x := std::memory::unchecked_deref(p); }",
                 "opaque",
             ),
             (
-                "fn f(p: const *int32) { memory::unchecked_deref(p) = 42; }",
+                "fn f(p: const *int32) { std::memory::unchecked_deref(p) = 42; }",
                 "mutable",
             ),
             (
-                "fn f() { p: *int32; x := memory::unchecked_deref(p); }",
+                "fn f() { p: *int32; x := std::memory::unchecked_deref(p); }",
                 "uninitialized",
             ),
-            ("fn f() { d := memory::unchecked_deref; }", "runtime value"),
             (
-                "fn f() { d := [memory::unchecked_deref]; }",
+                "fn f() { d := std::memory::unchecked_deref; }",
+                "runtime value",
+            ),
+            (
+                "fn f() { d := [std::memory::unchecked_deref]; }",
                 "runtime value",
             ),
             (
@@ -5665,7 +5686,8 @@ mod memory_intrinsics {
 
     #[test]
     fn intrinsic_place_annotations_are_independently_rechecked() {
-        let mut project = analyze("fn f(p: *int32) { memory::unchecked_deref(p) = 42; }").unwrap();
+        let mut project =
+            analyze("fn f(p: *int32) { std::memory::unchecked_deref(p) = 42; }").unwrap();
         let S::FunctionDeclaration(f) = &mut project.units[0].ast.statements[0].kind else {
             panic!("function")
         };
@@ -5674,7 +5696,10 @@ mod memory_intrinsics {
         };
         left.annotation.resolved.as_mut().unwrap().category = ValueCategory::Value;
         let error = validate_analysis(&project).unwrap_err();
-        assert!(format!("{error:#}").contains("intrinsic place annotation"));
+        assert!(
+            format!("{error:#}").contains("intrinsic result annotation"),
+            "{error:#}"
+        );
     }
 
     #[test]
@@ -5705,11 +5730,12 @@ mod memory_intrinsics {
     }
 
     #[test]
-    fn memory_namespace_is_reserved_and_intrinsic_is_not_a_function_value() {
+    fn memory_namespace_uses_normal_module_registration() {
         let project = analyze("fn main() int32 { return 0; }").unwrap();
         let mut units = project.units;
         units[0].source_file_id = FileId(0);
         let plan = BuildPlan {
+            standard_library: crate::standard_library::StandardLibrary::disabled(),
             native: crate::plan::NativeInputs::default(),
             packages: Vec::new(),
             files: vec![SourceFile {
@@ -5720,8 +5746,12 @@ mod memory_intrinsics {
             entry: FileId(0),
             output: "unused".into(),
         };
-        let result = Analyzer::new(plan, units);
-        assert!(result.err().unwrap().to_string().contains("duplicate"));
+        let analyzer = Analyzer::new(plan, units).unwrap();
+        analyzer
+            .with_synthetic_module(crate::builtins::SyntheticModule::MEMORY)
+            .unwrap()
+            .analyze()
+            .unwrap();
     }
 }
 
@@ -5747,7 +5777,17 @@ mod package_visibility {
             let source = if index == 0 {
                 "pub(dir) fn directory() int32 { return 1; } pub(root) fn package() int32 { return 2; } fn hidden() int32 { return 3; } pub comp published := hidden;".to_string()
             } else if index == accessor {
-                format!("fn use_value() int32 {{ return {expression}; }}")
+                format!(
+                    "fn use_value() int32 {{ return {}; }}",
+                    expression.replace(
+                        "owner::",
+                        if accessor == 3 {
+                            "App::dir::owner::"
+                        } else {
+                            "root::dir::owner::"
+                        }
+                    )
+                )
             } else {
                 String::new()
             };
@@ -5767,6 +5807,7 @@ mod package_visibility {
         }
         Analyzer::new(
             BuildPlan {
+                standard_library: crate::standard_library::StandardLibrary::disabled(),
                 native: crate::plan::NativeInputs::default(),
                 files,
                 entry: FileId(0),
@@ -5921,5 +5962,160 @@ mod collecting_diagnostics {
             "{:?}",
             report.errors
         );
+    }
+}
+
+mod package_lookup {
+    use super::*;
+    use crate::{
+        driver::CompilationUnit,
+        frontend::{parser::Parser, tokenizer::Tokenizer},
+        plan::{BuildPlan, PackageId, PackageSpec, SourceFile},
+    };
+    use std::path::Path;
+
+    fn fixture(main: &str) -> (BuildPlan, Vec<CompilationUnit>) {
+        let sources = [
+            ("/app/src/main.fib", main),
+            (
+                "/app/src/tools/Helper.fib",
+                "pub(root) fn number() int32 { return 2; }",
+            ),
+            (
+                "/dep/src/Math.fib",
+                "pub fn add(value: int32) int32 { return Utils::values::number() + value; }",
+            ),
+            (
+                "/util/src/values.fib",
+                "pub fn number() int32 { return 40; }",
+            ),
+        ];
+        let mut files = Vec::new();
+        let mut units = Vec::new();
+        for (index, (path, source)) in sources.iter().enumerate() {
+            files.push(SourceFile {
+                id: FileId(index as u32),
+                name: "same_logical_name".to_string().into(),
+                path: path.into(),
+            });
+            units.push(CompilationUnit {
+                source_file_id: FileId(index as u32),
+                ast: Parser::with_source(Tokenizer::new(source), Path::new(path), source)
+                    .parse()
+                    .unwrap(),
+            });
+        }
+        (
+            BuildPlan {
+                standard_library: crate::standard_library::StandardLibrary::disabled(),
+                native: Default::default(),
+                files,
+                entry: FileId(0),
+                output: "unused".into(),
+                packages: vec![
+                    PackageSpec {
+                        id: PackageId(1),
+                        source_root: "/app/src".into(),
+                        dependencies: [("Math-Dep".into(), PackageId(7))].into(),
+                        files: vec![FileId(0), FileId(1)],
+                    },
+                    PackageSpec {
+                        id: PackageId(7),
+                        source_root: "/dep/src".into(),
+                        dependencies: [("Utils".into(), PackageId(9))].into(),
+                        files: vec![FileId(2)],
+                    },
+                    PackageSpec {
+                        id: PackageId(9),
+                        source_root: "/util/src".into(),
+                        dependencies: Default::default(),
+                        files: vec![FileId(3)],
+                    },
+                ],
+            },
+            units,
+        )
+    }
+
+    #[test]
+    fn package_relative_dependencies_root_and_normalized_file_paths_share_resolution() {
+        let (plan, units) = fixture(
+            "comp math := MaTh_DeP::mATH; fn main() int32 { return math::add(root::TOOLS::helper::number()); }",
+        );
+        let project = Analyzer::new(plan, units).unwrap().analyze().unwrap();
+        crate::ir::lowering::lower(&project).unwrap();
+    }
+
+    #[test]
+    fn dependencies_cannot_see_each_others_private_environments_and_roots_are_protected() {
+        for source in [
+            "fn main() int32 { return Utils::values::number(); }",
+            "fn main() int32 { return values::number(); }",
+            "fn main() int32 { root := 1; return root; }",
+            "fn main(math_dep: int32) int32 { return math_dep; }",
+            "fn Math_Dep() int32 { return 1; }",
+        ] {
+            let (plan, units) = fixture(source);
+            assert!(
+                Analyzer::new(plan, units).unwrap().analyze().is_err(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalized_namespace_collisions_and_invalid_segments_fail_before_analysis() {
+        for path in [
+            "/app/src/MAIN.fib",
+            "/app/src/main/child.fib",
+            "/app/src/bad name.fib",
+            "/app/src/while.fib",
+        ] {
+            let (mut plan, _) = fixture("fn main() int32 { return 0; }");
+            plan.files[1].path = path.into();
+            assert!(ProjectSymbols::from_plan(&plan).is_err(), "{path}");
+        }
+        let (mut plan, _) = fixture("fn main() int32 { return 0; }");
+        plan.packages[0]
+            .dependencies
+            .insert("math_dep".into(), PackageId(9));
+        assert!(ProjectSymbols::from_plan(&plan).is_err());
+        let (mut plan, _) = fixture("fn main() int32 { return 0; }");
+        plan.files[0].path = "/app/src/Tools/main.fib".into();
+        assert!(ProjectSymbols::from_plan(&plan).is_err());
+    }
+
+    #[test]
+    fn source_and_intrinsic_declarations_share_one_module_and_reject_duplicates() {
+        let (plan, units) = fixture(
+            "pub fn number() int32 { return 42; } fn main() int32 { return root::main::syscall0(39) as int32; }",
+        );
+        let project = Analyzer::new(plan, units)
+            .unwrap()
+            .with_module_intrinsics(FileId(0), crate::builtins::SyntheticModule::OS)
+            .unwrap()
+            .analyze()
+            .unwrap();
+        crate::ir::lowering::lower(&project).unwrap();
+        let (plan, units) = fixture("fn syscall0() int32 { return 0; }");
+        let error = Analyzer::new(plan, units)
+            .unwrap()
+            .with_module_intrinsics(FileId(0), crate::builtins::SyntheticModule::OS)
+            .unwrap()
+            .analyze()
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("duplicate identifier"));
+        let (plan, units) =
+            fixture("fn main() int32 { return KERNEL_CALLS::syscall0(39) as int32; }");
+        let project = Analyzer::new(plan, units)
+            .unwrap()
+            .with_synthetic_module(crate::builtins::SyntheticModule {
+                name: "Kernel-Calls",
+                functions: crate::builtins::SyntheticModule::OS.functions,
+            })
+            .unwrap()
+            .analyze()
+            .unwrap();
+        crate::ir::lowering::lower(&project).unwrap();
     }
 }

@@ -36,6 +36,8 @@ pub struct CompilationUnit {
 
 /// Compile only the files explicitly enumerated and named by the plan.
 pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<CompilationOutput> {
+    let prepared = plan.prepare()?;
+    let plan = &prepared;
     println!("Running pipeline with goal {}...", goal);
     let project = run_frontend(plan)?;
     require_entry(&project, "main")?;
@@ -127,6 +129,8 @@ pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<Comp
 }
 
 fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
+    let prepared = plan.prepare()?;
+    let plan = &prepared;
     let project =
         crate::frontend::analyzer::Analyzer::new(plan.clone(), parse_files(plan)?)?.analyze()?;
     for warning in &project.warnings {
@@ -144,6 +148,8 @@ pub fn compile_build_file_to_ir_with_sources(
     plan: &BuildPlan,
     sources: &dyn crate::frontend::source::SourceProvider,
 ) -> anyhow::Result<Ir> {
+    let prepared = plan.prepare()?;
+    let plan = &prepared;
     let project = crate::frontend::analyzer::Analyzer::new(
         plan.clone(),
         parse_files_with_sources(plan, sources)?,

@@ -14,6 +14,18 @@ pub enum Command {
         single_file: Option<PathBuf>,
         #[arg(long, value_name = "PATH")]
         build_file: Option<PathBuf>,
+        /// Installed version-matched standard-library sysroot.
+        #[arg(long, value_name = "PATH", conflicts_with = "no_std")]
+        sysroot: Option<PathBuf>,
+        /// Compile without the standard-library dependency or its prelude.
+        #[arg(long)]
+        no_std: bool,
+        #[arg(long = "c-source", value_name = "PATH")]
+        c_sources: Vec<PathBuf>,
+        #[arg(short = 'l', long = "link-lib", value_name = "LIB")]
+        libraries: Vec<String>,
+        #[arg(short = 'L', long = "library-path", value_name = "PATH")]
+        library_paths: Vec<PathBuf>,
     },
 
     #[command(name = "run")]
@@ -26,39 +38,43 @@ pub enum Command {
 pub fn exec_command(command: Command, _env_vars: env::VarsOs) -> anyhow::Result<()> {
     match command {
         Command::Build {
-            single_file: None,
-            build_file: None,
+            single_file,
+            build_file,
+            sysroot,
+            no_std,
+            c_sources,
+            libraries,
+            library_paths,
         } => {
-            anyhow::bail!("either single_file or build_file must be provided")
-        }
-        Command::Build {
-            single_file: Some(_),
-            build_file: Some(_),
-        } => {
-            anyhow::bail!("cannot provide single_file and build_file at the same time")
-        }
-        Command::Build {
-            single_file: Some(path),
-            build_file: None,
-        } => {
-            println!("Beginning compilation process...");
-            let plan = crate::plan::BuildPlan::single_file(&path)?;
-            let output = crate::driver::run_pipeline(&plan, crate::driver::PipelineGoal::Binary)?;
-            if let crate::driver::compiler_output::CompilationOutput::Binary(path) = output {
-                println!("{}", path.display());
-            }
-            Ok(())
-        }
-        Command::Build {
-            single_file: None,
-            build_file: Some(build_file),
-        } => {
-            println!("Beginning compilation process...");
-            let path = build_file;
-            if !path.is_file() {
-                anyhow::bail!("build.fib not found in the current working directory");
-            }
-            let plan = PlanBuilder::from(path).compile_and_interpret_build_file()?;
+            let standard_library = if no_std {
+                crate::standard_library::StandardLibrary::disabled()
+            } else {
+                crate::standard_library::StandardLibrary {
+                    sysroot,
+                    ..Default::default()
+                }
+            };
+            let mut plan = match (single_file, build_file) {
+                (Some(path), None) => crate::plan::BuildPlan::single_file(&path)?,
+                (None, Some(path)) => {
+                    let mut builder = PlanBuilder::from(path);
+                    builder.standard_library = standard_library.clone();
+                    builder.compile_and_interpret_build_file()?
+                }
+                (None, None) => anyhow::bail!("either single_file or build_file must be provided"),
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("cannot provide single_file and build_file at the same time")
+                }
+            };
+            plan.standard_library = standard_library;
+            plan.native.sources.extend(
+                c_sources
+                    .into_iter()
+                    .map(|p| p.canonicalize())
+                    .collect::<std::io::Result<Vec<_>>>()?,
+            );
+            plan.native.libraries.extend(libraries);
+            plan.native.library_paths.extend(library_paths);
             let output = crate::driver::run_pipeline(&plan, crate::driver::PipelineGoal::Binary)?;
             if let crate::driver::compiler_output::CompilationOutput::Binary(path) = output {
                 println!("{}", path.display());
