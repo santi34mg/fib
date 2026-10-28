@@ -1,5 +1,31 @@
-// Compiler-owned unchecked_deref, slice_from_parts and slice_data declarations
-// are registered in this module. Calls and aliases retain compiler identities.
+// The compiler injects the functions documented below into std::memory.
+// Signatures are comments, not source declarations. T is inferred from the
+// pointer or slice argument; do not pass it as a separate type argument.
+// Calls and aliases retain compiler identities.
+//
+// pub fn unchecked_deref(pointer: *T) T
+// pub fn unchecked_deref(pointer: const *T) T
+// Access the pointed-to place without the usual null-pointer trap. The result
+// can be assigned to or addressed; a readonly pointer yields a readonly place.
+// The caller must supply live, aligned storage valid for the access. This does
+// not allocate, copy the pointee, or extend its lifetime. *void is not supported.
+// Example: std::memory::unchecked_deref(pointer) = value;
+//
+// pub fn slice_from_parts(pointer: *T, length: usize) T[]
+// pub fn slice_from_parts(pointer: const *T, length: usize) const T[]
+// Construct a view with length elements (not bytes), preserving readonly access.
+// No allocation, copy, pointer dereference or backing-storage validation occurs.
+// The caller maintains the storage's lifetime and sufficient capacity; later
+// indexing checks the declared length, not the actual allocation. T cannot be
+// void. A typed null pointer with length zero creates an empty slice:
+// empty := std::memory::slice_from_parts(null as *uint8, 0);
+//
+// pub fn slice_data(slice: T[]) *T
+// pub fn slice_data(slice: const T[]) const *T
+// Return the backing pointer, preserving readonly access, without dereferencing
+// it or changing the slice. The pointer borrows the same storage and lifetime.
+// Empty slices may have null or non-null data; use .len to test for emptiness.
+// Example: pointer := std::memory::slice_data(bytes);
 
 // Fill every byte in destination. Empty slices do not access storage.
 pub fn memset(destination: uint8[], value: uint8) {

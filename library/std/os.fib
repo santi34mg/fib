@@ -1,4 +1,41 @@
-// Linux x86-64 implementation. Syscall0 through syscall6 are compiler-owned.
+// Linux x86-64 implementation.
+//
+// The compiler injects syscall0 through syscall6 into std::os. The signatures
+// below are documentation, not source declarations. Each argument a1 through
+// a6 accepts either a uint64 word or a typed pointer, including readonly pointers;
+// the uint64 forms shown here also describe the register representation.
+// Typed numeric values require explicit conversion to uint64. The syscall
+// number must be uint64; integer literals receive that context automatically.
+//
+// pub fn syscall0(number: uint64) int64
+// Invoke a raw syscall without arguments, e.g. std::os::syscall0(39) for getpid.
+//
+// pub fn syscall1(number: uint64, a1: uint64) int64
+// Invoke a raw syscall with one argument, e.g. std::os::syscall1(3, 1) for close.
+//
+// pub fn syscall2(number: uint64, a1: uint64, a2: uint64) int64
+// Invoke a raw syscall with two arguments, e.g. munmap's address and byte length.
+//
+// pub fn syscall3(number: uint64, a1: uint64, a2: uint64, a3: uint64) int64
+// Invoke a raw syscall with three arguments, e.g. write's fd, pointer and length.
+//
+// pub fn syscall4(number: uint64, a1: uint64, a2: uint64, a3: uint64, a4: uint64) int64
+// Invoke a raw syscall with four arguments, e.g. openat's dirfd, path, flags, mode.
+//
+// pub fn syscall5(number: uint64, a1: uint64, a2: uint64, a3: uint64, a4: uint64, a5: uint64) int64
+// Invoke a raw syscall with five arguments in Linux x86-64 register order.
+//
+// pub fn syscall6(number: uint64, a1: uint64, a2: uint64, a3: uint64, a4: uint64, a5: uint64, a6: uint64) int64
+// Invoke a raw syscall with six arguments, e.g. mmap's complete argument list.
+//
+// All forms return the raw signed kernel result. They do not translate errors
+// into Result, retry interrupted operations, or complete short reads/writes.
+// Most Linux syscalls encode errno as -1 through -4095; brk is an exception
+// handled by sbrk below. Callers supply syscall-specific valid pointer regions,
+// lengths, permissions and lifetimes. Calls use inline assembly with memory
+// clobbers; no libc wrapper is involved. Other targets and execution in build
+// files are not supported. Prefer the typed wrappers below when available.
+
 comp Result := root::result::Result;
 // Type annotations name aliases; computed types are instantiated in comp bindings.
 pub comp CountResult := Result(usize, int32);
