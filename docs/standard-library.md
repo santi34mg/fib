@@ -5,6 +5,16 @@ files use the same package lookup, visibility and alias rules as application
 dependencies. Ordinary Fib functions and compiler intrinsics can share a file
 namespace; compiler operations are selected by canonical declaration identity.
 
+`core::sizeof(T)` is a compiler intrinsic available with `--no-std` as well.
+It is exposed only in the compiler-owned `core` namespace. It accepts
+one type value and returns `usize`, measuring target allocation size in bytes
+(including padding and array stride). Empty structs and zero-length arrays have
+size zero; void, never and metatypes are unsized and rejected. Generic type
+arguments are measured after specialization. LLVM resolves the size using the
+selected target; frontend constant evaluation does not yet support it in `comp`
+values, array lengths or global initializers. Compiler-declaration revision 3
+records this compiler contract; reinstall sources alongside the compiler.
+
 Install the binaries and sources together:
 
 ```sh
@@ -96,8 +106,8 @@ and `Err: int32`. Switch bindings are the result/error values directly, with no
 ## Operating-system boundary
 
 `std::os` currently implements Linux x86-64. It provides `read`, `write`, `close`,
-`getpid`, `openat`, `mmap`, and `munmap`. Named wrappers return typed results with
-positive errno values. They make one syscall: short reads/writes, EOF and EINTR
+`getpid`, `openat`, `mmap`, `munmap`, and `sbrk`. Named wrappers return typed results with
+positive errno values. The I/O wrappers make one syscall: short reads/writes, EOF and EINTR
 are returned to the caller without retrying. `openat` accepts a live,
 NUL-terminated `const *uint8`, for example `c"/dev/null"`. Flags, mode and mmap
 offset follow Linux's contracts; no implicit allocation or path conversion occurs.
@@ -111,8 +121,38 @@ Raw `syscall0` through `syscall6` take a `uint64` number and the corresponding
 number of `uint64` words or typed pointer arguments, returning the raw `int64`
 kernel result. Known integer literals receive uint64 context; other numeric
 values require explicit casts. Pointer/register conversions happen internally.
-The helper that constructs mmap's pointer result is package-restricted and is
-not a public pointer/integer conversion API.
+The typed `pointer_from_word(T, uint64)` and `pointer_to_word(pointer)` helpers
+are package-restricted; they do not expose public pointer/integer conversions.
+
+`sbrk(increment: int64)` returns `MappingResult`: the previous break on success
+or `Err(12)` (ENOMEM) on failure. Zero queries the break; negative increments
+shrink it. It queries Linux on every call, checks arithmetic before changing the
+break, and compares the raw `brk` result to the requested address. Linux returns
+the unchanged break on failure, rather than a negative errno. See
+[brk(2)](https://man7.org/linux/man-pages/man2/brk.2.html).
+
+## Allocation
+
+`std::memory::alloc(T, n: uint32)` returns a writable `T[]` of length `n`.
+Zero count, overflow or allocation failure returns an empty slice. Storage is
+uninitialized: write elements before reading them. Zero-sized types receive a
+live allocation for nonzero counts. Blocks have 16-byte alignment for the
+supported Linux x86-64 runtime types, with checked count/size arithmetic.
+
+`std::memory::free(T, ptr: *T)` releases the allocation whose original pointer
+is `ptr`. Obtain it with `std::memory::slice_data(slice)`. Null and unknown
+pointers are ignored; passing a stale pointer after reuse is invalid. Every view
+expires when its allocation is freed. No automatic lifetime checking is provided.
+
+The allocator uses a linked first-fit list, splits oversized free blocks and
+coalesces physically adjacent free blocks. It retains storage for reuse rather
+than returning it to Linux. It is single-threaded and does not coordinate with
+libc's allocator or concurrent break manipulation. Do not shrink the break over
+live allocator storage. It tolerates alignment gaps from intervening break growth.
+See [allocator sample](../samples/allocator.fib).
+
+Build files may load runtime modules containing unused global state. The narrow
+build-file interpreter still rejects global accesses and allocator calls.
 
 Emission uses the [Linux register ABI](https://github.com/torvalds/linux/blob/master/arch/x86/entry/entry_64.S)
 and side-effecting LLVM inline assembly with register, flags and memory clobbers.
@@ -121,4 +161,4 @@ and host-linker startup contract remain in use. Other targets reject syscall
 emission explicitly; build-file interpretation rejects syscall execution.
 
 Conditional compilation, portable flags/errors, higher-level I/O, formatting,
-collections, allocators and compiler-enforced resource ownership remain future work.
+collections, concurrent allocation and compiler-enforced resource ownership remain future work.

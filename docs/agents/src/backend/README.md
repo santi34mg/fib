@@ -9,6 +9,10 @@ globals execute.
 
 See the [backend implementation contract](../../../../src/backend/README.md).
 
+Private std typed pointer/word conversions now emit verified `ptrtoint`/`inttoptr`
+operations for the Linux x86-64 source allocator. Allocation itself remains Fib
+source using `sbrk`, rather than a backend-owned runtime shim.
+
 With LLVM enabled, `emit_llvm(ir, target)` verifies SSA and classifies each function
 from its signature and resolved target. The ABI adapter uses that description
 for declarations, incoming arguments, calls to the function, and returns from it.

@@ -12,6 +12,11 @@ creates a target machine with LLVM 21/Inkwell, applies its triple and data layou
 predeclares functions, emits the supported instructions and returns textual IR
 only after LLVM module verification. There is no frontend-to-LLVM fallback.
 
+Private std pointer/word conversions emit LLVM `ptrtoint`/`inttoptr` after IR
+verification requires typed pointers and uint64 words. They support the source
+Linux x86-64 `sbrk` allocator; generic pointer construction preserves the selected
+pointee type, including nested readonly qualifiers.
+
 ## Executable subset
 
 The C entry ABI supports 32-bit integer parameters/results and void returns.

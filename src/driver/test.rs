@@ -53,7 +53,7 @@ fn build_file_builtins_lower_to_verified_bytes_calls_and_interpret() {
 #[test]
 fn build_file_globals_fail_before_applying_operations() {
     let (_directory, plan) = source(
-        "value := 42; fn build() int32 { build_api::add_source(\"main.fib\"[..]); return 0; }",
+        "value := 42; fn build() int32 { build_api::add_source(\"main.fib\"[..]); return value; }",
     );
     let ir = compile_build_file_to_ir(&plan).unwrap();
     let mut builder = crate::plan::PlanBuilder::from(plan.files[0].path.clone());
@@ -473,6 +473,28 @@ fn struct_storage_sample_lowers_to_verified_memory_ir() {
 #[test]
 fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
     use crate::ir::{Terminator, TrapReason};
+    fn read_guards(ir: &crate::ir::Ir) -> usize {
+        let read = ir
+            .functions
+            .iter()
+            .find(|f| {
+                f.identifier == "read"
+                    || (f.identifier.starts_with("fib.0.") && f.identifier.ends_with(".read"))
+            })
+            .unwrap();
+        let crate::ir::FunctionBody::Definition { blocks, .. } = &read.body else {
+            panic!("read body")
+        };
+        blocks
+            .iter()
+            .filter(|id| {
+                matches!(
+                    ir.blocks[id.0].terminator,
+                    Terminator::Trap(TrapReason::NullPointerDereference)
+                )
+            })
+            .count()
+    }
     for (read, guards) in [("p*", 1), ("std::memory::unchecked_deref(p)", 0)] {
         let text = format!(
             "fn read(p: *int32) int32 {{ return {read}; }} fn main() int32 {{ x := 42; return read(x&); }}"
@@ -480,30 +502,12 @@ fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
         let (_directory, plan) = source(&text);
         let project = run_frontend(&plan).unwrap();
         let ir = crate::ir::lowering::lower(&project).unwrap();
-        assert_eq!(
-            ir.blocks
-                .iter()
-                .filter(|b| matches!(
-                    b.terminator,
-                    Terminator::Trap(TrapReason::NullPointerDereference)
-                ))
-                .count(),
-            guards
-        );
+        assert_eq!(read_guards(&ir), guards);
     }
     let text = "comp S: type = struct { next: *int32 }; fn read(p: *S) int32 { return std::memory::unchecked_deref(p).next*; } fn main() int32 { return 0; }";
     let (_directory, plan) = source(text);
     let ir = crate::ir::lowering::lower(&run_frontend(&plan).unwrap()).unwrap();
-    assert_eq!(
-        ir.blocks
-            .iter()
-            .filter(|b| matches!(
-                b.terminator,
-                Terminator::Trap(TrapReason::NullPointerDereference)
-            ))
-            .count(),
-        1
-    );
+    assert_eq!(read_guards(&ir), 1);
 }
 
 #[test]

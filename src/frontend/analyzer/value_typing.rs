@@ -940,13 +940,41 @@ pub(super) fn intrinsic_info(
         });
     }
     match (builtin, args) {
-        (F::PointerFromWord, [word]) => {
+        (F::Sizeof, [argument]) => {
+            let ty = argument
+                .type_value
+                .ok_or_else(|| type_error("sizeof requires a type argument"))?;
+            if matches!(
+                types.get(types.canonical(ty)?)?,
+                T::Builtin(B::Void | B::Never | B::MetaType) | T::IntrinsicFunction
+            ) {
+                return Err(type_error("sizeof requires a sized runtime type"));
+            }
+            Ok(ExpressionInfo {
+                ty: find(T::Builtin(B::Usize))?,
+                category: ValueCategory::Value,
+                type_value: None,
+            })
+        }
+        (F::PointerToWord, [pointer]) => {
+            if !matches!(types.container(pointer.ty)?.0, T::Pointer(_)) {
+                return Err(type_error("pointer_to_word requires a typed pointer"));
+            }
+            Ok(ExpressionInfo {
+                ty: find(T::Builtin(B::UInt64))?,
+                category: ValueCategory::Value,
+                type_value: None,
+            })
+        }
+        (F::PointerFromWord, [target, word]) => {
             if !matches!(types.get(word.ty)?, T::Builtin(B::UInt64)) {
                 return Err(type_error("pointer_from_word requires uint64"));
             }
-            let byte = find(T::Builtin(B::UInt8))?;
+            let target = target
+                .type_value
+                .ok_or_else(|| type_error("pointer_from_word requires a type argument"))?;
             Ok(ExpressionInfo {
-                ty: find(T::Pointer(byte))?,
+                ty: find(T::Pointer(target))?,
                 category: ValueCategory::Value,
                 type_value: None,
             })

@@ -834,6 +834,23 @@ impl Checker<'_, '_> {
             return Ok(());
         }
         self.source.expression_type(expr)?;
+        if let E::Call { callee, args } = &expr.kind
+            && self.source.builtin(callee) == Some(crate::builtins::BuiltinFunction::Sizeof)
+        {
+            let ty = args[0]
+                .annotation
+                .resolved
+                .and_then(|i| i.type_value)
+                .ok_or_else(|| {
+                    self.source
+                        .error(expr.span, "sizeof requires a type argument")
+                })?;
+            self.source.ir_type(ty, expr.span)?.ok_or_else(|| {
+                self.source
+                    .error(expr.span, "sizeof requires a sized runtime type")
+            })?;
+            return Ok(());
+        }
         if self.source.comp_value(expr)?.is_some() {
             return Ok(());
         }
@@ -1166,6 +1183,25 @@ impl Lowerer<'_, '_, '_> {
             && let Some(builtin) = self.source.builtin(callee).filter(|b| b.is_intrinsic())
         {
             use crate::builtins::BuiltinFunction as F;
+            if builtin == F::Sizeof {
+                let ty = args[0]
+                    .annotation
+                    .resolved
+                    .and_then(|i| i.type_value)
+                    .ok_or_else(|| {
+                        self.source
+                            .error(expr.span, "sizeof requires a type argument")
+                    })?;
+                let ty = self.source.ir_type(ty, expr.span)?.ok_or_else(|| {
+                    self.source
+                        .error(expr.span, "sizeof requires a sized runtime type")
+                })?;
+                return self.instruction(
+                    state,
+                    InstructionKind::Sizeof(ty),
+                    self.source.expression_type(expr)?,
+                );
+            }
             if builtin == F::UncheckedDeref {
                 let address = self.value_expression(state, &args[0])?;
                 return self.instruction(
@@ -1178,6 +1214,7 @@ impl Lowerer<'_, '_, '_> {
             }
             let values = args
                 .iter()
+                .filter(runtime_argument)
                 .map(|a| self.value_expression(state, a))
                 .collect::<anyhow::Result<Vec<_>>>()?;
             let kind = if builtin.syscall_arity().is_some() {
@@ -1194,6 +1231,10 @@ impl Lowerer<'_, '_, '_> {
                     },
                     F::PointerFromWord => InstructionKind::Cast {
                         kind: CastKind::IntegerToPointer,
+                        operand: values[0],
+                    },
+                    F::PointerToWord => InstructionKind::Cast {
+                        kind: CastKind::PointerToInteger,
                         operand: values[0],
                     },
                     _ => return Err(self.source.error(expr.span, "unsupported intrinsic")),

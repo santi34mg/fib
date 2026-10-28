@@ -335,10 +335,13 @@ impl TypeContext<'_> {
                 .copied()
                 .filter(|b| b.is_intrinsic())
                 .ok_or_else(|| type_error("invalid intrinsic call identity"))?;
-            let expected_count = builtin
-                .syscall_arity()
-                .map(|n| n + 1)
-                .unwrap_or(if builtin == F::SliceFromParts { 2 } else { 1 });
+            let expected_count = builtin.syscall_arity().map(|n| n + 1).unwrap_or(
+                if matches!(builtin, F::SliceFromParts | F::PointerFromWord) {
+                    2
+                } else {
+                    1
+                },
+            );
             if args.len() != expected_count {
                 return Err(type_error("invalid intrinsic argument count"));
             }
@@ -357,7 +360,7 @@ impl TypeContext<'_> {
                             arg.kind,
                             E::Literal(crate::frontend::tokens::Literal::Integer(_))
                         )))
-                    || builtin == F::PointerFromWord
+                    || (builtin == F::PointerFromWord && index == 1)
                 {
                     Some(word)
                 } else {
@@ -366,6 +369,12 @@ impl TypeContext<'_> {
                 arguments.push(self.expression(arg, expected)?);
             }
             match builtin {
+                F::PointerFromWord => {
+                    let target = arguments[0]
+                        .type_value
+                        .ok_or_else(|| type_error("pointer_from_word requires a type argument"))?;
+                    self.types.intern(T::Pointer(target));
+                }
                 F::SliceFromParts => {
                     let (T::Pointer(element), readonly) = self.types.container(arguments[0].ty)?
                     else {

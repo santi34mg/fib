@@ -9,9 +9,9 @@ globals execute; value-returning `comp fn` execution remains explicit scaffoldin
 
 Status reviewed against source and tests on 2026-10-28. Source and tests take
 precedence over historical comments, samples and language proposals. Dated
-validation results are recorded in the [test guide](tests/README.md). The indexing/global
-tests pass in isolation; unfiltered suites currently encounter the unfinished std
-allocator's unresolved `sizeof`. Earlier complete-suite records remain dated below.
+validation results are recorded in the [test guide](tests/README.md). The source std
+allocator now executes through Linux `sbrk`, with aligned blocks, reuse, splitting
+and coalescing. Earlier suite records remain dated below.
 
 ## Actual status
 
@@ -34,6 +34,11 @@ conversions. Native helpers use a limited direct Fib fastcc ABI; main keeps the
 C int32 entry contract. Struct values, partial initialization, stack storage,
 field/pointer mutation and internal struct/pointer calls work. Ordinary dereference
 traps on null; `std::memory::unchecked_deref(pointer)` returns an unchecked place.
+`core::sizeof(T)` returns `usize` byte sizes from LLVM's
+selected target allocation layout, including padding. Concrete generic arguments
+work. Values, void, never and metatypes are rejected. This target-dependent
+operation is not yet available to frontend constant evaluation (including array
+lengths, `comp` values and global initializers).
 Enum constructors, payload copies, switches, storage and internal calls also execute; see [enum semantics](../enum-semantics.md). Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Checked array/slice projections and constant-initialized globals also execute. Broader runtime representations remain unfinished. See
 [scalar semantics](../scalar-semantics.md) for numeric rules and
 [struct/storage semantics](../struct-storage-semantics.md) for memory rules.

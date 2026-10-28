@@ -109,7 +109,7 @@ fn directly_opened_std_modules_keep_their_package_and_document_identity() {
             .with_standard_library(StandardLibrary::at("/missing/installed/sysroot"));
         let prepared = plan.prepare().unwrap();
         assert_eq!(prepared.entry, plan.entry);
-        assert_eq!(prepared.files.len(), 5);
+        assert_eq!(prepared.files.len(), 6);
         assert_eq!(prepared.packages.len(), 1);
         assert_eq!(prepared.files.iter().filter(|f| f.path == path).count(), 1);
         assert!(prepared.packages[0].files.contains(&plan.entry));
@@ -138,6 +138,10 @@ fn invalid_syscall_arguments_and_private_conversions_are_rejected() {
         ),
         (
             "p := std::os_abi::pointer_from_word(0); return 0;",
+            "private",
+        ),
+        (
+            "p: *uint8 = null; x := std::os_abi::pointer_to_word(p); return 0;",
             "private",
         ),
         ("p: *uint8 = null; x := p as uint64; return 0;", "cast"),
@@ -248,6 +252,48 @@ fn intrinsic_metadata_and_syscall_ir_are_independently_validated() {
         }
         assert!(verify_ir(&bad).is_err());
     }
+    for invalid_source in [false, true] {
+        let mut bad = ir.clone();
+        let boolean = TypeId(
+            bad.types
+                .iter()
+                .position(|t| matches!(t, IrType::Bool))
+                .unwrap(),
+        );
+        let constant = Operand::Constant(ConstantId(bad.constants.len()));
+        bad.constants.push(Constant {
+            ty: boolean,
+            kind: ConstantKind::Bool(true),
+        });
+        let instruction = bad
+            .blocks
+            .iter_mut()
+            .flat_map(|b| &mut b.instructions)
+            .find(|i| {
+                matches!(
+                    i.kind,
+                    InstructionKind::Cast {
+                        kind: CastKind::PointerToInteger,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        if invalid_source {
+            let InstructionKind::Cast { operand, .. } = &mut instruction.kind else {
+                unreachable!()
+            };
+            *operand = constant;
+        } else {
+            bad.values[instruction.results[0].0].ty = boolean;
+        }
+        assert!(
+            verify_ir(&bad)
+                .unwrap_err()
+                .to_string()
+                .contains("pointer-to-integer")
+        );
+    }
 }
 
 #[test]
@@ -262,7 +308,7 @@ fn prelude_exports_are_ordinary_aliases_and_collisions_are_errors() {
         installed.join("sysroot.toml"),
     )
     .unwrap();
-    for name in ["memory", "os", "os_abi", "prelude", "result"] {
+    for name in ["memory", "os", "os_abi", "prelude", "result", "io"] {
         std::fs::copy(
             sysroot().join(format!("std/{name}.fib")),
             installed.join(format!("std/{name}.fib")),
@@ -307,6 +353,79 @@ fn prelude_exports_are_ordinary_aliases_and_collisions_are_errors() {
     .unwrap();
     std::fs::write(&plan.files[0].path, "fn main() int32 { return 0; }").unwrap();
     assert!(format!("{:#}", analyze(&plan).unwrap_err()).contains("cannot be shadowed"));
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn allocator_and_sbrk_execute_against_installed_sources() {
+    for source in [
+        include_str!("../samples/allocator.fib"),
+        include_str!("programs/sbrk.fib"),
+        r#"
+        comp m := std::memory;
+        fn main() int32 {
+            // Force an unaligned initial break before the allocator starts.
+            switch (std::os::sbrk(1)) { when .Ok(p) {} when .Err(e) { return 1; } };
+            big := m::alloc(uint8, 256);
+            guard := m::alloc(uint128, 2);
+            if big.len != 256 || guard.len != 2 { return 2; };
+            guard[0] = 42;
+            original := m::slice_data(big);
+            m::free(uint8, original);
+            left := m::alloc(uint8, 64);
+            right := m::alloc(uint8, 64);
+            if left.len != 64 || right.len != 64 || m::slice_data(left) != original { return 3; };
+            if m::slice_data(left) == m::slice_data(right) { return 4; };
+            left[63] = 41;
+            right[0] = 42;
+            if left[63] != 41 || right[0] != 42 || guard[0] != 42 { return 5; };
+            m::free(uint8, m::slice_data(right));
+            m::free(uint8, m::slice_data(left));
+            merged := m::alloc(uint8, 256);
+            if merged.len != 256 || m::slice_data(merged) != original { return 6; };
+            m::free(uint8, m::slice_data(merged));
+            m::free(uint128, m::slice_data(guard));
+            // Adjacent independently requested regions also coalesce.
+            larger := m::alloc(uint8, 300);
+            if larger.len != 300 || m::slice_data(larger) != original { return 7; };
+            larger[299] = 42;
+            // An unrelated pointer must not corrupt the list.
+            local := 1;
+            m::free(int32, local&);
+            m::free(uint8, m::slice_data(larger));
+            again := m::alloc(uint8, 300);
+            if again.len != 300 || m::slice_data(again) != original { return 8; };
+            return 42;
+        }
+        "#,
+        r#"
+        fn main() int32 {
+            // Reject multiplication beyond the signed sbrk limit before asking Linux.
+            huge := std::memory::alloc(uint64[1073741824], 4294967295);
+            if huge.len != 0 { return 1; };
+            live := std::memory::alloc(uint8, 16);
+            if live.len != 16 { return 4; };
+            live[0] = 42;
+            // setrlimit(RLIMIT_DATA, {0, 0}) makes brk growth fail deterministically.
+            limits: uint64[2] = [0, 0];
+            if std::os::syscall2(160, 2, limits&) != 0 { return 2; };
+            failed := std::memory::alloc(uint8, 32);
+            if failed.len != 0 { return 3; };
+            if live[0] != 42 { return 5; };
+            original := std::memory::slice_data(live);
+            std::memory::free(uint8, original);
+            reused := std::memory::alloc(uint8, 16);
+            if reused.len != 16 || std::memory::slice_data(reused) != original { return 6; };
+            return 42;
+        }
+        "#,
+    ] {
+        let (_directory, plan) = input(source);
+        fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary)
+            .unwrap_or_else(|e| panic!("{source}\n{e:#}"));
+        let output = std::process::Command::new(&plan.output).output().unwrap();
+        assert_eq!(output.status.code(), Some(42), "{source}\n{output:?}");
+    }
 }
 
 #[cfg(feature = "llvm")]

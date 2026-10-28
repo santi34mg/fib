@@ -329,6 +329,18 @@ fn data_program(text: &str) -> std::process::ExitStatus {
 }
 
 #[test]
+fn sizeof_uses_target_storage_layout() {
+    assert_eq!(
+        data_program(include_str!("../samples/sizeof.fib")).code(),
+        Some(42)
+    );
+    assert_eq!(
+        data_program("fn main() int32 { return (core::sizeof(int32) as int32) + 38; }").code(),
+        Some(42)
+    );
+}
+
+#[test]
 fn every_integer_width_wraps_and_crosses_calls_and_joins() {
     for width in [8, 16, 32, 64, 128] {
         for signed in [false, true] {

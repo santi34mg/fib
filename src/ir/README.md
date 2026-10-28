@@ -188,11 +188,17 @@ they do not block the supported scalar/control-flow subset.
 
 ## Standard-library operations
 
+`Sizeof(TypeId)` produces a pointer-width unsigned byte count without evaluating
+a runtime argument. The verifier requires a sized runtime type and a `usize`
+result; LLVM uses the selected target's ABI allocation size, including padding.
+Source exposes this only as `core::sizeof(T)`, including without std.
+
 Memory intrinsics resolve under `std::memory`. Source lowering supports
 `slice_from_parts`, `slice_data` and slice `.len`, preserving the existing
 limitations on general runtime indexing/slicing. `Syscall` takes a uint64 number
 and up to six uint64/pointer arguments and returns int64. Verification checks
 types, signatures, ownership and dominance. LLVM emits Linux x86-64 inline
 assembly with side effects and register/flags/memory clobbers; other targets fail.
-The package-private mmap helper lowers to a verified uint64-to-pointer cast.
+Package-private typed pointer/word helpers lower to verified uint64-to-pointer
+and pointer-to-uint64 casts. Source std uses them for mappings and allocation.
 Build-file interpretation never executes syscalls.

@@ -10,10 +10,6 @@ use crate::{
 
 pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
     crate::ir::verify_ir(&ir)?;
-    anyhow::ensure!(
-        ir.globals.is_empty(),
-        "globals are not implemented in the build-file interpreter"
-    );
     // TODO: add general CFG/value interpretation; this initial build-file subset is
     // deliberately limited to direct builtin calls with constant byte strings.
     let build_function = ir
@@ -33,6 +29,15 @@ pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
                 .expect("couldn't get build entry block");
             if blocks.len() != 1 || !matches!(entry_block.terminator, Terminator::Return { .. }) {
                 bail!("unsupported control flow in build-file interpreter");
+            }
+            // Installed runtime modules may own storage without build() using it.
+            // Reject actual accesses before applying any builder operations.
+            if entry_block
+                .instructions
+                .iter()
+                .any(|i| matches!(i.kind, InstructionKind::GlobalAddress(_)))
+            {
+                bail!("globals are not implemented in the build-file interpreter");
             }
             for instruction in entry_block.instructions.iter() {
                 match instruction.kind {
@@ -55,7 +60,8 @@ pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
                         };
                         let string = std::str::from_utf8(bytes)?;
                         match builtin {
-                            BuiltinFunction::UncheckedDeref
+                            BuiltinFunction::Sizeof
+                            | BuiltinFunction::UncheckedDeref
                             | BuiltinFunction::SliceFromParts
                             | BuiltinFunction::SliceData
                             | BuiltinFunction::Syscall0
@@ -65,7 +71,8 @@ pub fn interpret_ir(ir: Ir, bo: &mut PlanBuilder) -> anyhow::Result<()> {
                             | BuiltinFunction::Syscall4
                             | BuiltinFunction::Syscall5
                             | BuiltinFunction::Syscall6
-                            | BuiltinFunction::PointerFromWord => {
+                            | BuiltinFunction::PointerFromWord
+                            | BuiltinFunction::PointerToWord => {
                                 bail!("runtime intrinsic cannot be interpreted")
                             }
                             BuiltinFunction::AddSource => {

@@ -9,6 +9,15 @@ globals have structural and isolated executable coverage.
 
 ## Indexing and global storage validation (2026-10-28)
 
+Allocator follow-up (2026-10-28): the unfiltered no-default suite passes (760
+library tests, four LSP unit tests, seven LSP integration tests, eight std
+integration tests). LLVM 21 library tests pass (772), as do all 12 std integration
+tests, including native allocator/sbrk execution, failure under RLIMIT_DATA,
+overflow, alignment, reuse, splitting/coalescing and zero-sized/qualified types.
+The executable suite passes 36 tests; eight pre-existing function-pointer fixtures
+fail parsing on missing semicolons. Formatting and strict LLVM Clippy pass.
+This supersedes the allocator-related failure status in the older record below.
+
 - No-default library tests: 755 passed with three std-source-dependent tests
   filtered out. LLVM 21 library tests: 767 passed with the same exclusions.
   The excluded tests are `checked_and_unchecked_places_have_distinct_null_guard_ir`,

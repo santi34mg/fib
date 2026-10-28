@@ -61,11 +61,12 @@ slots, while slices of places retain original storage. `Syscall` takes a uint64 
 and up to six uint64/pointer arguments and returns int64. Verification checks
 types, signatures, ownership and dominance. LLVM emits Linux x86-64 inline
 assembly with side effects and register/flags/memory clobbers; other targets fail.
-The package-private mmap helper lowers to a verified uint64-to-pointer cast.
+Package-private typed pointer/word helpers lower to verified uint64-to-pointer
+and pointer-to-uint64 casts, supporting source std mappings and allocation.
 Build-file interpretation never executes syscalls.
 
 File-level storage has constant initial data, including relocations and slice
 views. Lowering registers all global identities before initializers or bodies.
-No startup function is generated; the build-file interpreter rejects globals
+No startup function is generated; the build-file interpreter rejects global accesses
 before applying operations. Value-returning `comp fn` evaluation is scaffolding
 with an explicit diagnostic, never a runtime fallback.

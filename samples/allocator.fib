@@ -1,0 +1,39 @@
+comp memory := std::memory;
+comp Pair := struct { first: uint64, second: uint64 };
+comp Empty := struct {};
+comp View := struct { bytes: const uint8[] };
+
+fn main() int32 {
+    numbers := memory::alloc(int32, 8);
+    if numbers.len != 8 { return 1; };
+    i: usize = 0;
+    while (i < numbers.len) {
+        numbers[i] = i as int32;
+        i = i + 1;
+    };
+    pairs := memory::alloc(Pair, 2);
+    if pairs.len != 2 { return 2; };
+    pairs[0] = Pair { first: 20, second: 22 };
+    if pairs[0].first + pairs[0].second != 42 || numbers[7] != 7 { return 3; };
+    original := memory::slice_data(numbers);
+    memory::free(int32, original);
+    reused := memory::alloc(int32, 8);
+    if reused.len != 8 || memory::slice_data(reused) != original { return 4; };
+    reused[0] = 42;
+    if reused[0] != 42 { return 5; };
+    memory::free(int32, memory::slice_data(reused));
+    memory::free(Pair, memory::slice_data(pairs));
+    empty := memory::alloc(Empty, 3);
+    if empty.len != 3 { return 6; };
+    empty[2] = Empty {};
+    memory::free(Empty, memory::slice_data(empty));
+    zero := memory::alloc(int32, 0);
+    if zero.len != 0 { return 7; };
+    memory::free(int32, memory::slice_data(zero));
+    views := memory::alloc(View, 1);
+    if views.len != 1 { return 8; };
+    views[0] = View { bytes: "hello"[..] };
+    if views[0].bytes[0] != 104 { return 9; };
+    memory::free(View, memory::slice_data(views));
+    return 42;
+}

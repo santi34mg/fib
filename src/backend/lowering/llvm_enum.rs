@@ -353,7 +353,8 @@ fn constant_uses(ir: &Ir, blocks: &[BlockId]) -> HashSet<ConstantId> {
                 } => operands.extend([*aggregate, *value]),
                 I::ExtractElement { aggregate, index } => operands.extend([*aggregate, *index]),
                 I::ElementAddress { base, index } => operands.extend([base.0, *index]),
-                I::FunctionAddress(_) | I::StackAddress(_) | I::GlobalAddress(_) => {}
+                I::Sizeof(_) | I::FunctionAddress(_) | I::StackAddress(_) | I::GlobalAddress(_) => {
+                }
             }
         }
         match &block.terminator {

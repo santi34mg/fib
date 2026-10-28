@@ -281,6 +281,13 @@ pub(super) fn emit_classified(
             builder.position_at_end(predecessor);
             for inst in &block.instructions {
                 match &inst.kind {
+                    InstructionKind::Sizeof(ty) => {
+                        let size = machine.get_target_data().get_abi_size(&types[ty.0]);
+                        let result = types[ir.values[inst.results[0].0].ty.0]
+                            .into_int_type()
+                            .const_int(size, false);
+                        values.insert(inst.results[0], result.into());
+                    }
                     InstructionKind::Constant(id) => {
                         values.insert(inst.results[0], constants[id.0]);
                     }
@@ -352,6 +359,20 @@ pub(super) fn emit_classified(
                                 operand(*value, &constants, &values)?.into_int_value(),
                                 types[dest.0].into_pointer_type(),
                                 "syscall.pointer",
+                            )
+                            .map_err(error)?;
+                        values.insert(inst.results[0], value.into());
+                    }
+                    InstructionKind::Cast {
+                        kind: CastKind::PointerToInteger,
+                        operand: value,
+                    } => {
+                        let dest = ir.values[inst.results[0].0].ty;
+                        let value = builder
+                            .build_ptr_to_int(
+                                operand(*value, &constants, &values)?.into_pointer_value(),
+                                types[dest.0].into_int_type(),
+                                "pointer.word",
                             )
                             .map_err(error)?;
                         values.insert(inst.results[0], value.into());

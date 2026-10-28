@@ -405,7 +405,13 @@ mod name_resolution {
         fn named_units_register_without_reading_paths() {
             let (plan, units) = inputs(&[("main", ""), ("pkg::util", "")]);
             let analyzer = Analyzer::new(plan, units).unwrap();
-            assert_eq!(analyzer.symbols.files_by_name.len(), 2);
+            assert_eq!(analyzer.symbols.files_by_name.len(), 3); // source files plus core
+            assert!(
+                analyzer
+                    .symbols
+                    .files_by_name
+                    .contains_key(&"core".to_string().into())
+            );
             assert_eq!(
                 analyzer
                     .symbols
@@ -5764,6 +5770,66 @@ mod memory_intrinsics {
         )?
         .with_synthetic_module(crate::builtins::SyntheticModule::MEMORY)?
         .analyze()
+    }
+
+    #[test]
+    fn sizeof_ir_rejects_invalid_type_and_result_annotations() {
+        use crate::ir::{InstructionKind, IrType};
+        let project = analyze("fn f() usize { return core::sizeof(int32); }").unwrap();
+        let ir = crate::ir::lowering::lower(&project).unwrap();
+        for invalid_type in [false, true] {
+            let mut broken = ir.clone();
+            let instruction = broken
+                .blocks
+                .iter_mut()
+                .flat_map(|b| &mut b.instructions)
+                .find(|i| matches!(i.kind, InstructionKind::Sizeof(_)))
+                .unwrap();
+            if invalid_type {
+                instruction.kind = InstructionKind::Sizeof(crate::ir::TypeId(usize::MAX));
+            } else {
+                let bool_type = broken
+                    .types
+                    .iter()
+                    .position(|t| matches!(t, IrType::Bool))
+                    .unwrap();
+                broken.values[instruction.results[0].0].ty = crate::ir::TypeId(bool_type);
+            }
+            assert!(format!("{:#}", crate::ir::verify_ir(&broken).unwrap_err()).contains("sizeof"));
+        }
+    }
+
+    #[test]
+    fn sizeof_accepts_types_and_rejects_values_and_unsized_types() {
+        for text in [
+            "fn f() usize { return core::sizeof(int32); }",
+            "fn f(T: type) usize { return core::sizeof(T); } fn g() usize { return f(int64); }",
+            "comp S := struct { a: uint8, b: uint64 }; fn f() usize { comp size := core::sizeof; return size(S); }",
+            "fn f() usize { return core::sizeof(int32[3]); }",
+        ] {
+            let project = analyze(text).unwrap_or_else(|e| panic!("{text}: {e:#}"));
+            validate_analysis(&project).unwrap();
+            crate::ir::lowering::lower(&project).unwrap();
+        }
+        for (text, message) in [
+            ("fn f() { x := core::sizeof(42); }", "type argument"),
+            ("fn f() { x := core::sizeof(void); }", "sized runtime type"),
+            ("fn f() { x := core::sizeof(type); }", "sized runtime type"),
+            ("fn f() { x := core::sizeof(); }", "argument count"),
+            (
+                "fn f() { x := core::sizeof(int32, int64); }",
+                "argument count",
+            ),
+            ("fn f() { x := sizeof(int32); }", "unresolved"),
+            ("fn f() { x := std::memory::sizeof(int32); }", "unresolved"),
+            (
+                "fn f() { x: uint64 = core::sizeof(int32); }",
+                "incompatible types",
+            ),
+        ] {
+            let error = analyze(text).unwrap_err();
+            assert!(format!("{error:#}").contains(message), "{text}: {error:#}");
+        }
     }
 
     #[test]

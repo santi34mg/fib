@@ -7,48 +7,119 @@ comp Block := struct {
     is_free: bool,
 };
 
-// these are "static"
-const free_list: *Block = null;
-const heap_start: *Block = null;
+head: *Block = null;
 
-fn find_free_block(size: usize) const *Block {
-    current: *Block = free_list;
+fn header_size() usize {
+    return ((core::sizeof(Block) + 15) / 16) * 16;
+}
+
+fn address(pointer: *Block) uint64 {
+    return root::os_abi::pointer_to_word(pointer);
+}
+
+fn block_at(word: uint64) *Block {
+    return root::os_abi::pointer_from_word(Block, word);
+}
+
+fn data(block: *Block) *uint8 {
+    return root::os_abi::pointer_from_word(uint8, address(block) + (header_size() as uint64));
+}
+
+fn find_free_block(size: usize) *Block {
+    current := head;
     while (current != null) {
-        if ((current*).is_free && (current*).size >= size) {
-            return current;
-        };
+        if (current*).is_free && (current*).size >= size { return current; };
+        current = (current*).next;
     };
     return null;
 }
 
-// TODO: make this return a result instead of nulls for errors
-fn request_memory(T: type, size: usize) const *Block {
-    // TODO: sizeof
-    total_size: usize = sizeof(Block) + size;
-
-    // TODO: have the os return system page size
-    page_size: usize = std::os::get_page_size();
-    aligned_size: usize = ((total_size + page_size - 1) / page_size) * page_size;
-
-    block: *Block;
-    block_result := std::os::sbrk(aligned_size);
-    switch (block_result) {
-        when .Ok(block_ptr) { block = block_ptr; }
-        when .Err(err_str) {
-            std::io::eprintf(std::os::stderr, err_str[..]);
-            return null;
+fn request_memory(size: usize) *Block {
+    header := header_size();
+    if size > 9223372036854775807 - header - 15 { return null; };
+    start: uint64;
+    switch (root::os::sbrk(0)) {
+        when .Err(error) { return null; }
+        when .Ok(pointer) { start = root::os_abi::pointer_to_word(pointer); }
+    };
+    padding := (16 - start % 16) % 16;
+    total := size + header + (padding as usize);
+    switch (root::os::sbrk(total as int64)) {
+        when .Err(error) { return null; }
+        when .Ok(pointer) {
+            block := block_at(start + padding);
+            block* = Block { size: size, next: null, is_free: true };
+            if head == null {
+                head = block;
+            } else {
+                tail := head;
+                while ((tail*).next != null) { tail = (tail*).next; };
+                (tail*).next = block;
+            };
+            return block;
         }
     };
 }
 
-
-// given a type T and an amount of elements n, return a slice of type T with n
-// space for n elements of type T reserved
-pub fn alloc(T: type, n: uint32) T[] {
-    // TODO
-    arr : T[0] = [];
-    return arr[..];
+fn split(block: *Block, size: usize) {
+    header := header_size();
+    if (block*).size - size >= header + 16 {
+        remainder := block_at(address(block) + ((header + size) as uint64));
+        remainder* = Block {
+            size: (block*).size - size - header,
+            next: (block*).next,
+            is_free: true
+        };
+        (block*).next = remainder;
+        (block*).size = size;
+    };
+    (block*).is_free = false;
 }
 
-pub fn free(T: type, ptr: *T) void {
+// Returns an empty slice for zero count, size overflow or exhaustion.
+// Storage is uninitialized. Supported Linux x86-64 types fit 16-byte alignment.
+// Zero-sized elements still receive a live allocation.
+pub fn alloc(T: type, n: usize) T[] {
+    empty: *T = null;
+    if n == 0 { return root::memory::slice_from_parts(empty, 0); };
+    element := core::sizeof(T);
+    limit: usize = 9223372036854775807;
+    if element > limit / n { return root::memory::slice_from_parts(empty, 0); };
+    size := element * n;
+    if size > limit - 15 { return root::memory::slice_from_parts(empty, 0); };
+    size = ((size + 15) / 16) * 16;
+    if size == 0 { size = 16; };
+    block := find_free_block(size);
+    if block == null { block = request_memory(size); };
+    if block == null { return root::memory::slice_from_parts(empty, 0); };
+    split(block, size);
+    pointer := root::os_abi::pointer_from_word(T, root::os_abi::pointer_to_word(data(block)));
+    return root::memory::slice_from_parts(pointer, n);
+}
+
+// Free only an allocation's original pointer; all views then expire.
+// Null, unknown and already-free pointers are ignored. Storage is retained.
+pub fn free(T: type, ptr: *T) {
+    if ptr == null { return; };
+    target := root::os_abi::pointer_to_word(ptr);
+    current := head;
+    while (current != null) {
+        if root::os_abi::pointer_to_word(data(current)) == target {
+            (current*).is_free = true;
+            // Another sbrk user may have left a gap between owned regions.
+            block := head;
+            while (block != null) {
+                next := (block*).next;
+                if next != null && (block*).is_free && (next*).is_free &&
+                    address(block) + ((header_size() + (block*).size) as uint64) == address(next) {
+                    (block*).size = (block*).size + header_size() + (next*).size;
+                    (block*).next = (next*).next;
+                } else {
+                    block = next;
+                };
+            };
+            return;
+        };
+        current = (current*).next;
+    };
 }

@@ -12,6 +12,8 @@ pub struct Instruction {
 
 #[derive(Debug, Clone)]
 pub enum InstructionKind {
+    /// Allocation size in bytes, including padding, from the selected target layout.
+    Sizeof(super::TypeId),
     Constant(ConstantId),
     /// Arithmetic/bitwise operands have the same type; comparisons return Bool.
     /// Signedness and float semantics come from the operand types, not the

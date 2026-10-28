@@ -217,7 +217,7 @@ impl Analyzer {
                 analyzer = analyzer.with_module_intrinsics(file, module)?;
             }
         }
-        Ok(analyzer)
+        analyzer.with_synthetic_module(SyntheticModule::CORE)
     }
 
     /// Add a compiler-provided namespace to the same analysis pipeline used by
@@ -530,7 +530,10 @@ impl Analyzer {
                     Span::new(1, 1),
                     true,
                 )?;
-                if builtin == BuiltinFunction::PointerFromWord {
+                if matches!(
+                    builtin,
+                    BuiltinFunction::PointerFromWord | BuiltinFunction::PointerToWord
+                ) {
                     namespace.declarations[id.index as usize].visibility = Visibility::Package;
                 }
                 self.builtins.insert(id, builtin);

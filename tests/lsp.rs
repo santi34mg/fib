@@ -197,7 +197,7 @@ fn editing_std_uses_its_own_manifest_and_unsaved_sibling_sources() {
         sysroot.join("sysroot.toml"),
     )
     .unwrap();
-    for name in ["os", "memory", "result", "os_abi", "prelude"] {
+    for name in ["os", "memory", "result", "os_abi", "prelude", "io"] {
         std::fs::copy(
             repository.join(format!("std/{name}.fib")),
             sources.join(format!("{name}.fib")),

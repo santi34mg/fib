@@ -1,0 +1,40 @@
+comp os := std::os;
+comp memory := std::memory;
+
+fn main() int32 {
+    original: *uint8;
+    switch (os::sbrk(0)) {
+        when .Ok(pointer) { original = pointer; }
+        when .Err(error) { return 1; }
+    };
+    switch (os::sbrk(4096)) {
+        when .Ok(pointer) { if pointer != original { return 2; }; }
+        when .Err(error) { return 3; }
+    };
+    bytes := memory::slice_from_parts(original, 4096);
+    bytes[0] = 42;
+    bytes[4095] = 43;
+    if bytes[0] != 42 || bytes[4095] != 43 { return 4; };
+    end := memory::slice_data(bytes[4096..]);
+    switch (os::sbrk(0)) {
+        when .Ok(pointer) { if pointer != end { return 5; }; }
+        when .Err(error) { return 6; }
+    };
+    switch (os::sbrk(-4096)) {
+        when .Ok(pointer) { if pointer != end { return 7; }; }
+        when .Err(error) { return 8; }
+    };
+    switch (os::sbrk(9223372036854775807)) {
+        when .Ok(pointer) { return 9; }
+        when .Err(error) { if error != 12 { return 10; }; }
+    };
+    switch (os::sbrk(-9223372036854775808)) {
+        when .Ok(pointer) { return 11; }
+        when .Err(error) { if error != 12 { return 12; }; }
+    };
+    switch (os::sbrk(0)) {
+        when .Ok(pointer) { if pointer != original { return 13; }; }
+        when .Err(error) { return 14; }
+    };
+    return 42;
+}

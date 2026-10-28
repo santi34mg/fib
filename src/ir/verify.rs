@@ -430,6 +430,26 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
             for (position, inst) in b.instructions.iter().enumerate() {
                 let results: Vec<_> = inst.results.iter().map(|v| ir.values[v.0].ty).collect();
                 let expected = match &inst.kind {
+                    InstructionKind::Sizeof(ty) => {
+                        require(
+                            ir.types
+                                .get(ty.0)
+                                .is_some_and(|t| !matches!(t, IrType::Opaque | IrType::Bytes)),
+                            "sizeof requires a sized runtime type",
+                        )?;
+                        require(
+                            results.len() == 1
+                                && matches!(
+                                    ir.types.get(results[0].0),
+                                    Some(IrType::Integer {
+                                        width: IntegerWidth::Pointer,
+                                        signed: false
+                                    })
+                                ),
+                            "sizeof result must be usize",
+                        )?;
+                        results.clone()
+                    }
                     InstructionKind::Constant(id) => {
                         vec![operand(Operand::Constant(*id), position)?]
                     }
@@ -561,6 +581,25 @@ pub fn verify_ir(ir: &Ir) -> IrResult<()> {
                             ) && results.len() == 1
                                 && matches!(ir.get_type(results[0]), Some(IrType::Pointer { .. })),
                             "integer-to-pointer cast requires uint64 and a pointer result",
+                        )?;
+                        results.clone()
+                    }
+                    InstructionKind::Cast {
+                        kind: CastKind::PointerToInteger,
+                        operand: value,
+                    } => {
+                        let source = operand(*value, position)?;
+                        require(
+                            matches!(ir.get_type(source), Some(IrType::Pointer { .. }))
+                                && results.len() == 1
+                                && matches!(
+                                    ir.get_type(results[0]),
+                                    Some(IrType::Integer {
+                                        width: IntegerWidth::Bits(64),
+                                        signed: false
+                                    })
+                                ),
+                            "pointer-to-integer cast requires a pointer and uint64 result",
                         )?;
                         results.clone()
                     }

@@ -14,6 +14,10 @@ pub struct SyntheticModule {
 }
 
 impl SyntheticModule {
+    pub const CORE: Self = Self {
+        name: "core",
+        functions: &[BuiltinFunction::Sizeof],
+    };
     pub const MEMORY: Self = Self {
         name: "std::memory",
         functions: &[
@@ -36,7 +40,10 @@ impl SyntheticModule {
     };
     pub const OS_PRIVATE: Self = Self {
         name: "std::os_abi",
-        functions: &[BuiltinFunction::PointerFromWord],
+        functions: &[
+            BuiltinFunction::PointerFromWord,
+            BuiltinFunction::PointerToWord,
+        ],
     };
     pub const BUILD_API: Self = Self {
         name: "build_api",
@@ -47,6 +54,7 @@ impl SyntheticModule {
 /// Stable identity for functions supplied by a synthetic compiler module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinFunction {
+    Sizeof,
     AddSource,
     SetEntry,
     SetOutput,
@@ -64,6 +72,7 @@ pub enum BuiltinFunction {
     Syscall5,
     Syscall6,
     PointerFromWord,
+    PointerToWord,
 }
 
 impl BuiltinFunction {
@@ -78,6 +87,7 @@ impl BuiltinFunction {
 
     pub const fn name(self) -> &'static str {
         match self {
+            Self::Sizeof => "sizeof",
             Self::AddSource => "add_source",
             Self::SetEntry => "set_entry",
             Self::SetOutput => "set_output",
@@ -95,13 +105,15 @@ impl BuiltinFunction {
             Self::Syscall5 => "syscall5",
             Self::Syscall6 => "syscall6",
             Self::PointerFromWord => "pointer_from_word",
+            Self::PointerToWord => "pointer_to_word",
         }
     }
 
     pub fn is_intrinsic(self) -> bool {
         matches!(
             self,
-            Self::UncheckedDeref
+            Self::Sizeof
+                | Self::UncheckedDeref
                 | Self::SliceFromParts
                 | Self::SliceData
                 | Self::Syscall0
@@ -112,6 +124,7 @@ impl BuiltinFunction {
                 | Self::Syscall5
                 | Self::Syscall6
                 | Self::PointerFromWord
+                | Self::PointerToWord
         )
     }
 
