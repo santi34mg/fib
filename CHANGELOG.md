@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Enum variants carry one direct payload type with `Name: Type`; struct payloads require an explicit struct type and one struct argument. Omitted, void, empty-struct and recursively unit-only struct payloads share bare-value construction and optional void switch bindings. Removed legacy field-list variants and calls on unit variants. Standard Result and OS status bindings now expose their payload values directly.
 - Replace the shell installer with the Rust `fib-install` tool, retaining `--prefix` and `--debug`, discovering executable paths from Cargo build messages, and replacing installed files atomically.
 
 ### Fixed

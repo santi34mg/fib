@@ -5,10 +5,20 @@ are implemented. Coverage is validated independently of reachability and recheck
 by annotation validation.
 
 Enum types are nominal. Variants use declaration-order, zero-based discriminants.
-A payloadless variant is a value (`E.Empty`); a variant declared with payload
-fields is a constructor (`E.Number(42)`). An empty payload still requires a call
-(`E.Unit()`). Constructor arguments evaluate once, from left to right. Compile-time
-aliases of the enum type preserve its identity and constructors.
+A variant is declared as `Name` or `Name: Type`. A non-unit payload is one value
+of that type: `Number: int32` is constructed with `E.Number(42)`. Struct payloads
+use explicit struct types and one struct argument; anonymous payload field lists
+and positional field arguments are removed. Named struct types provide ordinary
+struct-value construction. Payload type expressions may use aliases or eligible
+type-producing calls.
+
+Omitted payloads, `void`, empty structs, and recursively unit-only structs all
+normalize to no payload data. These variants are constructed as bare values
+(`E.Empty`); parentheses and explicit payload arguments are rejected. Classification
+follows aliases and is repeated after generic substitution/type computation.
+Other zero-sized types, such as zero-length arrays, retain one payload value.
+Distinct variants keep their tags, and enum/struct identities remain nominal.
+Constructor arguments evaluate once. Compile-time aliases preserve identity.
 
 Enums support initialized locals, whole-value assignment, addresses, typed pointer
 loads/stores, struct fields, other enum payloads, and direct internal Fib helper
@@ -20,7 +30,7 @@ remains `int32`/void; this is not external C enum interoperability.
 
 `switch (subject) { when .Number(payload) { ... } when else { ... } };`
 evaluates the subject once. A selected payload binding is a mutable copy of the
-variant's payload struct. Changing its fields leaves the original enum unchanged;
+variant's single payload value. Replacing it or changing its fields leaves the original enum unchanged;
 following a pointer contained in it still reaches the original pointed-to storage.
 The binding is scoped to its arm. Duplicate variants and arms after a wildcard
 are rejected by analysis.
@@ -32,10 +42,16 @@ may still complete normally and continue after the switch. Return, break and con
 meaning; break/continue target the enclosing loop. A switch does not introduce a
 loop. An empty enum has no constructed values, and switching over one is exhaustive.
 
+Bindings on normalized unit variants are optional and always have type `void`.
+They retain no declared unit-struct field shape. Runtime unit values may be copied,
+assigned, compared for equality, stored in aggregates and passed to Fib functions;
+void-returning calls execute their effects before yielding unit in value positions.
+Function `void` returns remain resultless, and `*void` remains opaque.
+
 ## Verified IR
 
 An enum type records variant discriminants and payload field types. Source lowering
-uses one payload-struct field per payload variant, or no fields for a payloadless
+uses one field of the actual payload type per non-unit variant, or no fields for a unit
 variant. Construction, tag extraction and payload extraction use `Enum`, `EnumTag`
 and `EnumField`; dispatch uses the integer `Switch` terminator. Source tag values
 use `uint32`, while raw IR permits discriminants through `u128::MAX`.
@@ -69,6 +85,7 @@ materialized in dependency order at function entry. Native enum values pass
 directly through the existing internal Fib fastcc ABI; layout is an internal
 implementation contract, not a stable external ABI.
 
-The executable sample is [`enum_runtime.fib`](../samples/enum_runtime.fib).
+The executable samples are [`enum_runtime.fib`](../samples/enum_runtime.fib) and
+[`enum_payloads.fib`](../samples/enum_payloads.fib).
 Runtime indexing/slices, runtime globals and enum-to-integer
 casts are outside this lowering extension.

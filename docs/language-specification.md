@@ -150,11 +150,25 @@ form guarantees lifetime, allocation validity or ownership safety.
 
 ## Enums and switches
 
-Variant tags are zero-based in declaration order. Payloadless variants are values
-(`E.Empty`); payload variants are positional constructors (`E.Number(42)`). An
-explicitly empty payload uses `E.Unit()`. Arguments evaluate once, left-to-right.
-A switch evaluates its subject once; an arm's payload binding is a mutable copy
-scoped to that arm, with pointer aliases preserved.
+Variant tags are zero-based in declaration order. A variant is declared as `Name`
+or `Name: Type`, where the payload expression must denote a storable type.
+Non-unit variants are one-argument constructors (`E.Number(42)`). Struct payloads
+use an explicit struct type and take one struct value, for example
+`Pair: PairType` and `E.Pair(PairType { left: 1, right: 2 })`.
+The former `Name { field: Type }` declaration syntax is removed.
+
+An omitted payload, `void`, an empty struct, or a struct composed recursively
+only of these unit types normalizes to no payload data. Aliases are followed and
+generic payloads are classified after specialization. Such variants are values
+(`E.Empty`), and calls such as `E.Empty()` are rejected. Other zero-sized types,
+including zero-length arrays, retain their payloads. Normalization does not merge
+distinct variant tags or change nominal type identity.
+
+A switch evaluates its subject once; an optional arm binding is a mutable copy
+of the single payload value, scoped to that arm, with pointer aliases preserved.
+Every normalized unit variant permits an optional binding of type `void`, even
+if its declared payload was a unit struct. Its original struct fields are not
+members of that binding. Payload construction evaluates its argument once.
 
 Every enum switch must be exhaustive: list every variant or cover the remainder
 with `when else`. Missing coverage is a compile-time error, with no implicit
