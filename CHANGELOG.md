@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replace the shell installer with the Rust `fib-install` tool, retaining `--prefix` and `--debug`, discovering executable paths from Cargo build messages, and replacing installed files atomically.
+
 ### Fixed
 
 - Analyze directly opened std files in their owning source package, preserving `root` lookup, intrinsic identities and unsaved sibling edits instead of duplicating them as application files.

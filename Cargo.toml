@@ -5,6 +5,10 @@ version = "0.1.1"
 edition = "2024"
 license = "MIT"
 
+[[bin]]
+name = "fib-install"
+path = "scripts/install.rs"
+
 [features]
 default = ["llvm"]
 llvm = ["inkwell"]

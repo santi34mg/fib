@@ -17,7 +17,15 @@ exhaustive switches.
 
 ## Installation
 
-<!--Pending-->
+Install compiler binaries and matching standard-library sources together:
+
+```sh
+cargo run --no-default-features --bin fib-install -- --prefix "$HOME/.local"
+```
+
+For development, use `cargo run -- build --sysroot library --single-file samples/syscalls.fib`.
+See [standard-library setup and contracts](docs/standard-library.md), including
+`--no-std` and LSP configuration.
 
 ## Contributing
 
