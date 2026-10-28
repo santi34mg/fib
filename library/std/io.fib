@@ -1,0 +1,7 @@
+//
+
+pub fn printf(format: const char[], values: (*void)[]) void {
+    buffer: uint8[] = format[..];
+
+    root::os::write(root::os::stdout, buffer);
+}

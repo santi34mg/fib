@@ -4,7 +4,12 @@ comp Result := root::result::Result;
 pub comp CountResult := Result(usize, int32);
 pub comp IntResult := Result(int32, int32);
 pub comp MappingResult := Result(*uint8, int32);
-pub comp Status := enum { Ok, Err { error: int32 } };
+pub comp Status := enum { Ok, Err: int32 };
+
+
+pub const stdout := 1;
+// TODO: i think its 2 but have to check
+pub const stderr := 2;
 
 fn failed(value: int64) bool {
     return value < 0 && value >= -4095;

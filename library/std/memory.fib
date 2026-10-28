@@ -1,2 +1,54 @@
 // Compiler-owned unchecked_deref, slice_from_parts and slice_data declarations
 // are registered in this module. Calls and aliases retain compiler identities.
+
+comp Block := struct {
+    size: usize,
+    next: *Block,
+    is_free: bool,
+};
+
+// these are "static"
+const free_list: *Block = null;
+const heap_start: *Block = null;
+
+fn find_free_block(size: usize) const *Block {
+    current: *Block = free_list;
+    while (current != null) {
+        if ((current*).is_free && (current*).size >= size) {
+            return current;
+        };
+    };
+    return null;
+}
+
+// TODO: make this return a result instead of nulls for errors
+fn request_memory(T: type, size: usize) const *Block {
+    // TODO: sizeof
+    total_size: usize = sizeof(Block) + size;
+
+    // TODO: have the os return system page size
+    page_size: usize = std::os::get_page_size();
+    aligned_size: usize = ((total_size + page_size - 1) / page_size) * page_size;
+
+    block: *Block;
+    block_result := std::os::sbrk(aligned_size);
+    switch (block_result) {
+        when .Ok(block_ptr) { block = block_ptr; }
+        when .Err(err_str) {
+            std::io::eprintf(std::os::stderr, err_str[..]);
+            return null;
+        }
+    };
+}
+
+
+// given a type T and an amount of elements n, return a slice of type T with n
+// space for n elements of type T reserved
+pub fn alloc(T: type, n: uint32) T[] {
+    // TODO
+    arr : T[0] = [];
+    return arr[..];
+}
+
+pub fn free(T: type, ptr: *T) void {
+}
