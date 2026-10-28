@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Analyze directly opened std files in their owning source package, preserving `root` lookup, intrinsic identities and unsaved sibling edits instead of duplicating them as application files.
 - Bound simultaneously active generic specializations to 16 so runaway expansion reports a diagnostic on the default debug-test stack instead of overflowing it. Cached instances and recursion at the same concrete signature remain supported.
 - Reject inconsistent C ABI boundary plans and invalid C parameter type IDs without panicking.
 

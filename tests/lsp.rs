@@ -186,6 +186,52 @@ fn installed_std_resolves_in_unsaved_documents_and_keeps_private_helpers_private
 }
 
 #[test]
+fn editing_std_uses_its_own_manifest_and_unsaved_sibling_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let sysroot = directory.path().join("local-library");
+    let sources = sysroot.join("std");
+    std::fs::create_dir_all(&sources).unwrap();
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("library");
+    std::fs::copy(
+        repository.join("sysroot.toml"),
+        sysroot.join("sysroot.toml"),
+    )
+    .unwrap();
+    for name in ["os", "memory", "result", "os_abi", "prelude"] {
+        std::fs::copy(
+            repository.join(format!("std/{name}.fib")),
+            sources.join(format!("{name}.fib")),
+        )
+        .unwrap();
+    }
+    // A source package is independent of an enclosing application's build file.
+    std::fs::write(directory.path().join("build.fib"), "invalid build file").unwrap();
+    let os = sources.join("os.fib");
+    let result = sources.join("result.fib");
+    let mut client = Client::new(directory.path());
+    client.open(&os, &std::fs::read_to_string(&os).unwrap());
+    let valid = client.published(&os, 1);
+    assert_eq!(valid["params"]["diagnostics"], json!([]), "{valid}");
+    client.open(
+        &result,
+        "pub comp fn Result(T: type, E: type) type { return bool; }",
+    );
+    let invalid = client.published(&os, 1);
+    assert!(
+        invalid["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "type"),
+        "{invalid}"
+    );
+    client.change(&result, &std::fs::read_to_string(&result).unwrap(), 2);
+    let restored = client.published(&os, 1);
+    assert_eq!(restored["params"]["diagnostics"], json!([]), "{restored}");
+    client.finish();
+}
+
+#[test]
 fn project_analysis_uses_unsaved_dependency_and_build_file() {
     let root = tempfile::tempdir().unwrap();
     let main = root.path().join("main.fib");

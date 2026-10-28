@@ -175,6 +175,19 @@ fn analyze(snapshot: Snapshot) -> ProjectAnalysis {
     let mut builds = HashSet::new();
     let mut planned = HashSet::new();
     for document in snapshot.documents.values() {
+        if planned.contains(&document.path) {
+            continue;
+        }
+        if snapshot.standard_library.enabled
+            && fibc::standard_library::source_sysroot(&document.path).is_some()
+        {
+            // A std source belongs to its own manifest, even when an enclosing
+            // workspace has a build file or the server uses an installed std.
+            let analysis = tooling::analyze_plan(&standalone_plan(&document.path), &sources, false);
+            planned.extend(analysis.documents.keys().cloned());
+            output.merge(analysis);
+            continue;
+        }
         if let Some(build) = build_file(&document.path, &snapshot.roots, &sources)
             && builds.insert(build.clone())
         {

@@ -161,3 +161,19 @@ node --test lsp/editors/vscode/test/extension.test.js
 ```
 
 Automated protocol/launcher tests do not replace an interactive editor smoke test.
+
+## Standard-library sources
+
+Install binaries and std together with
+`cargo run --no-default-features --bin fib-install -- --prefix PREFIX`.
+For a source checkout, set `FIB_SYSROOT` to the absolute `library` directory or
+launch `fib-lsp --sysroot /path/to/fib/library`. `fib-lsp --no-std` omits std while
+retaining primitive types. Missing/mismatched sysroots produce diagnostics.
+Both project planning and unsaved standalone documents use the same source and
+module preparation as the CLI. See [the std guide](../docs/standard-library.md).
+
+When editing a std source directly, the server uses the `sysroot.toml` owning that
+source tree, preserving std's `root` namespace and private intrinsics. This also
+works for checkout sources when the server itself is installed elsewhere. Open
+sibling std files contribute unsaved overlays; enclosing application build files
+do not override the std manifest.
