@@ -82,7 +82,7 @@ fn unsupported_source_exits_unsuccessfully_without_binary() {
     let source = directory.path().join("main.fib");
     std::fs::write(
         &source,
-        "fn main() int32 { defer { x := [1, 2][..]; }; return 42; }",
+        "fn main() int32 { defer { x := 'a'; }; return 42; }",
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
@@ -180,6 +180,150 @@ fn scalar_program(text: &str) -> std::process::ExitStatus {
         .with_standard_library(fibc::standard_library::StandardLibrary::at(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
         ));
+    run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
+    Command::new(&plan.output).status().unwrap()
+}
+
+#[test]
+fn checked_array_and_slice_operations_execute() {
+    for text in [
+        include_str!("../samples/indexed_globals.fib"),
+        "fn main() int32 { a := [1, 2, 3]; i := 1; a[i] = 42; return a[i]; }",
+        "fn main() int32 { const a := [1, 2]; i := 0; a[i] = 42; return a[i]; }",
+        "fn main() int32 { a := [1, 2, 3]; s := a[1..]; s[0] = 42; return a[1]; }",
+        "fn main() int32 { a := [1, 2, 3]; s := a[..]; t := s[1.=1]; t[0] = 42; if t.len != 1 { return 1; }; return a[1]; }",
+        "fn main() int32 { a := [42]; s := a[1..1]; t := a[..0]; if s.len == 0 && t.len == 0 { return a[0]; }; return 1; }",
+        "fn main() int32 { a := [42]; i: uint128 = 0; return a[i]; }",
+        "fn make() int32[2] { return [1, 42]; } fn main() int32 { i := 1; return make()[i]; }",
+        "fn make() int32[2] { return [1, 42]; } fn main() int32 { s := make()[..]; return s[1]; }",
+        "fn main() int32 { a := [[1, 2], [3, 4]]; i := 1; a[i][0] = 42; return a[1][0]; }",
+        "comp P := struct { x: int32 }; fn main() int32 { a := [P { x: 1 }]; i := 0; a[i].x = 42; return a[0].x; }",
+        "fn main() int32 { a := [1]; i := 0; p := a[i]&; p* = 42; return a[0]; }",
+        "fn pick(a: int32[], i: int32) int32 { return a[i]; } fn main() int32 { a := [1, 42]; return pick(a[..], 1); }",
+        "fn main() int32 { a: int32[0] = []; s := a[..]; if s.len == 0 { return 42; }; return 1; }",
+        "fn main() int32 { a: int32[2]; a[0] = 1; a[1] = 42; i := 1; return a[i]; }",
+        "fn main() int32 { s := \"*\"[..]; return s[0] as int32; }",
+        "fn main() int32 { a := [1, 2]; b := a; b[0] = 42; if a[0] != 1 { return 1; }; return b[0]; }",
+        "fn main() int32 { p: *int32 = null; s := std::memory::slice_from_parts(p, 0); empty := s[..]; if empty.len == 0 { return 42; }; return 1; }",
+    ] {
+        assert_eq!(data_program(text).code(), Some(42), "{text}");
+    }
+}
+
+#[test]
+fn checked_index_and_slice_failures_trap() {
+    for text in [
+        "fn main() int32 { a := [1]; i := -1; return a[i]; }",
+        "fn main() int32 { a := [1]; i := 1; return a[i]; }",
+        "fn main() int32 { a := [1]; i: uint128 = 18446744073709551616; return a[i]; }",
+        "fn main() int32 { a := [1]; i: int128 = -18446744073709551616; return a[i]; }",
+        "fn main() int32 { a: int32[0] = []; i := 0; a[i] = 42; return 1; }",
+        "fn main() int32 { a := [1]; s := a[..]; i := 1; return s[i]; }",
+        "fn main() int32 { a := [1]; i := -1; s := a[i..]; return s.len as int32; }",
+        "fn main() int32 { a := [1]; i := 2; s := a[..i]; return s.len as int32; }",
+        "fn main() int32 { a := [1, 2]; i := 2; j := 1; s := a[i..j]; return s.len as int32; }",
+        "fn main() int32 { a := [1]; i: uint128 = 340282366920938463463374607431768211455; s := a[..i]; return s.len as int32; }",
+        "fn main() int32 { a := [1]; i: uint64 = 18446744073709551615; s := a[0.=i]; return s.len as int32; }",
+        "fn main() int32 { p: *int32 = null; s := std::memory::slice_from_parts(p, 1); return s[0]; }",
+    ] {
+        assert!(!data_program(text).success(), "{text}");
+    }
+}
+
+#[test]
+fn global_constant_data_and_relocations_execute() {
+    for text in [
+        "value := 41; fn main() int32 { value = value + 1; return value; }",
+        "const value := 6 * 7; fn main() int32 { return value; }",
+        "comp value := 6; answer := value * 7; fn main() int32 { return answer; }",
+        "flag := (2.0 < 3.0) && (0.0 / 0.0 != 0.0); fn main() int32 { if flag { return 42; }; return 1; }",
+        "table := [1, 2]; view := table[1..]; fn main() int32 { view[0] = 42; return table[1]; }",
+        "view := table[1.=1]; table := [1, 2]; fn main() int32 { view[0] = 42; return table[1]; }",
+        "view := [1, 42][..]; fn main() int32 { return view[1]; }",
+        "comp view := [1, 2][..]; first := view; second := view; fn main() int32 { first[0] = 42; return second[0]; }",
+        "first := [1][..]; second := [1][..]; fn main() int32 { first[0] = 42; if second[0] != 1 { return 1; }; return first[0]; }",
+        "view := \"*\"[..]; fn main() int32 { return view[0] as int32; }",
+        "comp P := struct { x: int32, y: int32 }; p := P { y: 1, x: 42 }; address := p.x&; fn main() int32 { return address*; }",
+        "address := table[1]&; table := [1, 42]; fn main() int32 { return address*; }",
+        "comp E := enum { Empty, Number: int32 }; value := E.Number(42); fn main() int32 { switch(value) { when .Empty { return 1; } when .Number(n) { return n; } }; }",
+        "comp E := enum { Empty, Pointer: *int32 }; number := 42; value := E.Pointer(number&); fn main() int32 { switch(value) { when .Empty { return 1; } when .Pointer(p) { return p*; } }; }",
+        "comp E := enum { Empty, Number: int32 }; values := [E.Empty, E.Number(42)]; fn main() int32 { switch(values[1]) { when .Empty { return 1; } when .Number(n) { return n; } }; }",
+        "comp P := struct { next: *P, value: int32 }; first: P = P { next: second&, value: 1 }; second: P = P { next: first&, value: 42 }; fn main() int32 { return first.next.value; }",
+        "first, const second := 40, 2; fn main() int32 { return first + second; }",
+        "comp fn calculate() int32 { return 42; } answer := 42; fn main() int32 { return answer; }",
+        "fn calculate() int32 { return 42; } callback := calculate; fn main() int32 { return callback(); }",
+        "number := 42; pointer := (number&) as *void; fn main() int32 { p := pointer as *int32; return p*; }",
+        "comp Pair := struct { first: int32, second: int32 }; comp E := enum { Nothing, Pair: Pair }; value := E.Pair(Pair { first: 40, second: 2 }); fn main() int32 { switch(value) { when .Nothing { return 1; } when .Pair(p) { return p.first + p.second; } }; }",
+        "comp i := 1; table := [1, 42]; view := table[i..]; fn main() int32 { return view[0]; }",
+        "fn main() int32 { comp value := 6 * 7; return value; }",
+        "comp S := struct { label: int32, callback: fn(int32) -> int32 }; fn first(x: int32) int32 { return x + 1; } fn second(x: int32) int32 { return x + 2; } callbacks := [S { label: 1, callback: first }]; fn main() int32 { callbacks[0].callback = second; return callbacks[0].callback(40); }",
+        "comp E := enum { Small: uint8, Wide: uint128, Pointer: *int32 }; comp S := struct { before: uint8, value: E, after: int32 }; number := 42; value := S { before: 1, value: E.Pointer(number&), after: 7 }; fn main() int32 { if value.after != 7 { return 1; }; switch(value.value) { when .Small(n) { return n as int32; } when .Wide(n) { return n as int32; } when .Pointer(p) { return p*; } }; }",
+        "comp E := enum { Small: uint8, Wide: uint128, Pointer: *int32 }; number := 42; values := [E.Small(1), E.Pointer(number&), E.Wide(2)]; fn main() int32 { switch(values[1]) { when .Small(n) { return n as int32; } when .Wide(n) { return n as int32; } when .Pointer(p) { return p*; } }; }",
+    ] {
+        assert_eq!(data_program(text).code(), Some(42), "{text}");
+    }
+}
+
+#[test]
+fn indexed_assignment_and_slice_bounds_evaluate_once_in_order() {
+    let text = r#"
+        trace := 0;
+        table := [1, 2];
+        fn rhs() int32 { trace = trace * 10 + 1; return 42; }
+        fn receiver() int32[] { trace = trace * 10 + 2; return table[..]; }
+        fn index() int32 { trace = trace * 10 + 3; return 1; }
+        fn start() int32 { trace = trace * 10 + 4; return 0; }
+        fn end() int32 { trace = trace * 10 + 5; return 2; }
+        fn main() int32 {
+            receiver()[index()] = rhs();
+            if trace != 123 { return 1; };
+            trace = 0;
+            view := receiver()[start()..end()];
+            if trace != 245 { return 2; };
+            return view[1];
+        }
+    "#;
+    assert_eq!(data_program(text).code(), Some(42));
+}
+
+#[test]
+fn multiple_files_share_global_storage_and_views() {
+    let directory = tempfile::tempdir().unwrap();
+    let main = directory.path().join("main.fib");
+    let state = directory.path().join("state.fib");
+    std::fs::write(&main, "comp storage := state; fn main() int32 { storage::update(); state::counter = state::view[1] + 1; return storage::counter; }").unwrap();
+    std::fs::write(&state, "pub counter := 40; table := [1, 2]; pub view := table[..]; pub fn update() { counter = counter + 1; view[1] = counter; }").unwrap();
+    let mut plan = BuildPlan::single_file(&main).unwrap();
+    plan.standard_library = fibc::standard_library::StandardLibrary::disabled();
+    plan.files.push(fibc::plan::SourceFile {
+        id: fibc::plan::FileId(1),
+        name: "state".to_owned().into(),
+        path: state,
+    });
+    run_pipeline(&plan, PipelineGoal::Binary).unwrap();
+    assert_eq!(
+        Command::new(&plan.output).status().unwrap().code(),
+        Some(42)
+    );
+}
+
+/// Isolate storage semantics from source-library implementations. The minimal
+/// source package still exercises normal installed compiler-intrinsic registration.
+fn data_program(text: &str) -> std::process::ExitStatus {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("main.fib");
+    std::fs::write(&source, text).unwrap();
+    let mut plan = BuildPlan::single_file(&source).unwrap();
+    plan.standard_library = fibc::standard_library::StandardLibrary::disabled();
+    if text.contains("std::") {
+        let root = directory.path().join("sysroot");
+        std::fs::create_dir_all(root.join("std")).unwrap();
+        std::fs::write(root.join("sysroot.toml"), format!("compiler_version = \"{}\"\ndeclaration_revision = {}\nsources = [\"memory.fib\", \"os.fib\", \"os_abi.fib\", \"prelude.fib\", \"result.fib\"]\n", env!("CARGO_PKG_VERSION"), fibc::standard_library::DECLARATION_REVISION)).unwrap();
+        for name in ["memory", "os", "os_abi", "prelude", "result"] {
+            std::fs::write(root.join("std").join(format!("{name}.fib")), "").unwrap();
+        }
+        plan.standard_library = fibc::standard_library::StandardLibrary::at(root);
+    }
     run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{text}\n{e:#}"));
     Command::new(&plan.output).status().unwrap()
 }
@@ -648,18 +792,43 @@ fn enums_construct_switch_copy_and_cross_helper_boundaries() {
     for text in [
         include_str!("../samples/enum_runtime.fib"),
         "comp E: type = enum {}; fn impossible(e: E) int32 { switch(e) {}; } fn main() int32 { return 42; }",
-        "comp E: type = enum { A { x: int32 }, B { y: int32 } }; fn main() int32 { switch(E.A(42)) { when .A(v) { return v.x; } when .B(v) { return v.y; } }; }",
-        "comp E: type = enum { Large { a: uint64, b: uint64, c: uint64, d: uint64, e: uint64 }, Aligned { x: int128 } }; fn copy(e: E) E { return e; } fn main() int32 { large := copy(E.Large(1, 2, 3, 4, 42)); aligned := copy(E.Aligned(42)); switch(large) { when .Large(v) { if (v.a != 1 || v.b != 2 || v.c != 3 || v.d != 4 || v.e != 42) { return 7; }; } when else { return 1; } }; switch(aligned) { when .Aligned(v) { return v.x as int32; } when else { return 7; } }; }",
+        "comp E: type = enum { A: int32, B: int32 }; fn main() int32 { switch(E.A(42)) { when .A(v) { return v; } when .B(v) { return v; } }; }",
+        "comp Large := struct { a: uint64, b: uint64, c: uint64, d: uint64, e: uint64 }; comp E: type = enum { Large: Large, Aligned: int128 }; fn copy(e: E) E { return e; } fn main() int32 { large := copy(E.Large(Large { a: 1, b: 2, c: 3, d: 4, e: 42 })); aligned := copy(E.Aligned(42)); switch(large) { when .Large(v) { if (v.a != 1 || v.b != 2 || v.c != 3 || v.d != 4 || v.e != 42) { return 7; }; } when else { return 1; } }; switch(aligned) { when .Aligned(v) { return v as int32; } when else { return 7; } }; }",
         "comp E: type = enum { A, B }; fn main() int32 { x := 7; switch(E.B) { when .A { x = 0; } when .B { x = 42; } }; return x; }",
         "comp E: type = enum { A, B }; fn main() int32 { x := 42; switch(E.B) { when .A { x = 7; } when else {} }; return x; }",
-        "comp E: type = enum { N { x: int32 }, End }; fn main() int32 { e: E; p := e&; p* = E.N(42); switch(p*) { when .N(v) { return v.x; } when else { return 7; } }; }",
-        "comp E: type = enum { N { x: int32 }, End }; fn main() int32 { x := 0; e := E.N(0); while (x < 42) { x += 1; e = E.N(x); switch(e) { when .N(v) { if v.x < 42 { continue; }; break; } when else { return 7; } }; }; switch(e) { when .N(v) { return v.x; } when else { return 7; } }; }",
-        "comp E: type = enum { N { x: int32 }, End }; comp S: type = struct { e: E }; comp Outer: type = enum { Wrapped { s: S }, Empty }; fn copy(e: Outer) Outer { return e; } fn main() int32 { e := copy(Outer.Wrapped(S { e: E.N(42) })); switch(e) { when .Wrapped(v) { switch(v.s.e) { when .N(n) { return n.x; } when else {} }; } when else {} }; return 7; }",
-        "comp E: type = enum { Ref { p: *int32 }, Empty }; fn copy(e: E) E { return e; } fn main() int32 { x := 7; e := copy(E.Ref(x&)); switch(e) { when .Ref(v) { (v.p)* = 42; } when else {} }; return x; }",
-        "comp E: type = enum { Next { next: *E }, End }; fn main() int32 { e := E.End; link := E.Next(e&); switch(link) { when .Next(v) { switch((v.next)*) { when .End { return 42; } when else {} }; } when else {} }; return 7; }",
+        "comp E: type = enum { N: int32, End }; fn main() int32 { e: E; p := e&; p* = E.N(42); switch(p*) { when .N(v) { return v; } when else { return 7; } }; }",
+        "comp E: type = enum { N: int32, End }; fn main() int32 { x := 0; e := E.N(0); while (x < 42) { x += 1; e = E.N(x); switch(e) { when .N(v) { if v < 42 { continue; }; break; } when else { return 7; } }; }; switch(e) { when .N(v) { return v; } when else { return 7; } }; }",
+        "comp E: type = enum { N: int32, End }; comp S: type = struct { e: E }; comp Outer: type = enum { Wrapped: S, Empty }; fn copy(e: Outer) Outer { return e; } fn main() int32 { e := copy(Outer.Wrapped(S { e: E.N(42) })); switch(e) { when .Wrapped(v) { switch(v.e) { when .N(n) { return n; } when else {} }; } when else {} }; return 7; }",
+        "comp E: type = enum { Ref: *int32, Empty }; fn copy(e: E) E { return e; } fn main() int32 { x := 7; e := copy(E.Ref(x&)); switch(e) { when .Ref(v) { v* = 42; } when else {} }; return x; }",
+        "comp E: type = enum { Next: *E, End }; fn main() int32 { e := E.End; link := E.Next(e&); switch(link) { when .Next(v) { switch(v*) { when .End { return 42; } when else {} }; } when else {} }; return 7; }",
     ] {
         assert_eq!(bounded_program(text).code(), Some(42), "{text}");
     }
+}
+
+#[test]
+fn direct_enum_payloads_and_normalized_unit_values_execute() {
+    assert_eq!(
+        bounded_program(include_str!("../samples/enum_payloads.fib")).code(),
+        Some(42)
+    );
+    let text = r#"
+        comp Result := std::result::Result;
+        fn ignore(T: type, value: T) {}
+        fn inspect(T: type) int32 {
+            comp R := Result(T, int32);
+            value := R.Err(42);
+            switch (value) {
+                when .Ok(payload) { ignore(T, payload); return 0; }
+                when .Err(error) { return error; }
+            };
+        }
+        fn main() int32 {
+            if inspect(int32) != 42 { return 1; };
+            return inspect(void);
+        }
+    "#;
+    assert_eq!(bounded_program(text).code(), Some(42));
 }
 
 #[test]
@@ -670,13 +839,14 @@ fn enum_payloads_preserve_target_alignment_and_numeric_widths() {
     ] {
         let text = format!(
             r#"
-            comp E: type = enum {{ Small {{ x: uint8 }}, Wide {{ flag: bool, x: {ty}, tail: uint8 }} }};
+            comp Wide := struct {{ flag: bool, x: {ty}, tail: uint8 }};
+            comp E: type = enum {{ Small: uint8, Wide: Wide }};
             fn copy(e: E) E {{ return e; }}
             fn main() int32 {{
-                e := copy(E.Wide(true, 42, 7));
+                e := copy(E.Wide(Wide {{ flag: true, x: 42, tail: 7 }}));
                 switch(e) {{
                     when .Wide(v) {{ if (v.flag && v.x == 42 && v.tail == 7) {{ return (v.x as int32); }}; }}
-                    when .Small(v) {{ return (v.x as int32); }}
+                    when .Small(v) {{ return (v as int32); }}
                 }};
                 return 1;
             }}
@@ -689,9 +859,10 @@ fn enum_payloads_preserve_target_alignment_and_numeric_widths() {
 #[test]
 fn enum_subjects_and_constructor_arguments_evaluate_once_in_order() {
     let text = r#"
-        comp E: type = enum { Pair { first: int32, second: int32 }, Empty };
+        comp Pair := struct { first: int32, second: int32 };
+        comp E: type = enum { Pair: Pair, Empty };
         fn mark(p: *int32, digit: int32) int32 { p* = (p*) * 10 + digit; return digit; }
-        fn make(p: *int32) E { return E.Pair(mark(p, 1), mark(p, 2)); }
+        fn make(p: *int32) E { return E.Pair(Pair { first: mark(p, 1), second: mark(p, 2) }); }
         fn main() int32 {
             trace := 0;
             switch(make(trace&)) {
@@ -714,7 +885,7 @@ fn specification_conversions_views_and_generic_instances_execute() {
         "fn sum(T:type, x:T) T { if(x == 0) { return 0; }; return x+sum(T,x-1); } fn main() int32 { return sum(int32, 6)+21; }",
         "fn make(p:*int32) int32[2] { (p*) = 40; return [1,2]; } fn id(T:type, x:T) T { return x; } fn main() int32 { n := 0; a := id(int32[2], make(n&)); b := a; b = [3,4]; return n+(b.len as int32); }",
         "comp A:type = int32[0]; fn empty() A { return []; } fn main() int32 { const a := empty(); return (a.len as int32)+42; }",
-        "comp E:type = enum { A { x:int32[2] } }; fn id(e:E) E { return e; } fn main() int32 { e := id(E.A([1,2])); switch(e) { when .A(x) { return (x.x.len as int32)+40; } }; }",
+        "comp E:type = enum { A: int32[2] }; fn id(e:E) E { return e; } fn main() int32 { e := id(E.A([1,2])); switch(e) { when .A(x) { return (x.len as int32)+40; } }; }",
         "fn set(p:*int32, n:int32) int32 { (p*) = n; return n; } fn main() int32 { outer := 0; const a:int32, b:int32 = set(outer&,20), set(outer&,22); return a+b; }",
         "comp S:type = struct { x:int32 }; fn lhs(p:*int32,s:*S) *S { (p*) = (p*)*10+2; return s; } fn rhs(p:*int32) int32 { (p*) = (p*)*10+1; return 42; } fn main() int32 { trace := 0; s := S { x:0 }; lhs(trace&,s&).x = rhs(trace&); if(trace != 12) { return 1; }; return s.x; }",
         "fn accumulate(T:type,n:T) T { x:T = 0; i:T = 0; while(i<n) { x = x+i; i = i+1; }; return x; } fn main() int32 { return (accumulate(int64,7) as int32)+21; }",
@@ -875,5 +1046,320 @@ fn defer_blocks_execute_on_lexical_exits() {
     assert_eq!(
         bounded_program(include_str!("../samples/defer.fib")).code(),
         Some(42)
+    );
+}
+
+#[test]
+fn function_pointer_struct_fields_construct_and_execute() {
+    let cases: Vec<(&str, i32)> = vec![
+        // Basic struct with function pointer field
+        (
+            r#"
+            comp Callback: type = fn(int32) int32;
+            comp S: type = struct { value: int32, callback: Callback };
+            fn add_one(x: int32) int32 { return x + 1; }
+            fn main() int32 {
+                s := S { value: 42, callback: add_one };
+                result := (s.callback)(s.value);
+                if result == 43 { return 0; } else { return 1; }
+            }
+        "#,
+            0,
+        ),
+        // Struct with multiple function pointers
+        (
+            r#"
+            comp Callback: type = fn(int32) int32;
+            comp S: type = struct { a: int32, b: int32, callback_a: Callback, callback_b: Callback };
+            fn double(x: int32) int32 { return x * 2; }
+            fn triple(x: int32) int32 { return x * 3; }
+            fn main() int32 {
+                s := S { a: 10, b: 20, callback_a: double, callback_b: triple };
+                result_a := (s.callback_a)(s.a);
+                result_b := (s.callback_b)(s.b);
+                if result_a == 20 && result_b == 60 { return 0; } else { return 1; }
+            }
+        "#,
+            0,
+        ),
+        // Function pointer in struct with other fields
+        (
+            r#"
+            comp Callback: type = fn(int32, int32) int32;
+            comp S: type = struct { name: string, multiplier: uint, callback: Callback };
+            fn multiply(x: int32, y: int32) int32 { return x * y; }
+            fn main() int32 {
+                s := S { name: "test", multiplier: 5, callback: multiply };
+                result := (s.callback)(4, s.multiplier);
+                if result == 20 { return 0; } else { return 1; }
+            }
+        "#,
+            0,
+        ),
+        // Function pointer that modifies struct field
+        (
+            r#"
+            comp Callback: type = fn(*int32) void;
+            comp S: type = struct { value: int32, callback: Callback };
+            fn increment(p: *int32) {
+                p* = (p*) + 10;
+            }
+            fn main() int32 {
+                s := S { value: 5, callback: increment };
+                s.callback(&s.value);
+                if s.value == 15 { return 0; } else { return 1; }
+            }
+        "#,
+            0,
+        ),
+        // Function pointer passed as argument to another function using struct field
+        (
+            r#"
+            comp Callback: type = fn(int32) int32;
+            comp S: type = struct { value: int32, callback: Callback };
+            fn apply(callback: Callback, input: int32) int32 {
+                return (callback)(input);
+            }
+            fn double(x: int32) int32 { return x * 2; }
+            fn main() int32 {
+                s := S { value: 100, callback: double };
+                result := apply(s.callback, s.value / 2);
+                if result == 50 { return 0; } else { return 1; }
+            }
+        "#,
+            0,
+        ),
+        // Nested function pointers in struct
+        (
+            r#"
+            comp Callback: type = fn(int32) int32;
+            comp S: type = struct { value: int32, multiplier: uint, callback: Callback };
+            fn add(x: int32) int32 { return x + 1; }
+            fn main() int32 {
+                s := S { value: 5, multiplier: 3, callback: add };
+                result := (s.callback)(s.value * s.multiplier);
+                if result == 16 { return 0; } else { return 1; }
+            }
+        "#,
+            0,
+        ),
+    ];
+
+    for (source_text, expected) in cases {
+        let status = bounded_program(source_text);
+        assert_eq!(status.code(), Some(expected), "Failed for:\n{source_text}");
+    }
+}
+
+#[test]
+fn function_pointer_callback_in_struct_with_multiple_fields() {
+    // Test that function pointers work correctly in structs with many fields
+    let source = r#"
+        comp Callback: type = fn(int32) int32;
+        comp S: type = struct {
+            x: int32,
+            y: int32,
+            z: uint,
+            callback: Callback,
+            name: string
+        };
+        fn square(x: int32) int32 { return x * x; }
+        fn main() int32 {
+            s := S {
+                x: 7,
+                y: 14,
+                z: 3,
+                callback: square,
+                name: "test"
+            };
+            result := (s.callback)(s.x + s.y);
+            if result == 289 { return 0; } else { return 1; }
+        }
+    "#;
+
+    let status = bounded_program(source);
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "Function pointer in struct with multiple fields failed"
+    );
+}
+
+#[test]
+fn function_pointer_in_struct_can_be_assigned_and_called() {
+    // Test assigning and calling function pointers stored in structs
+    let source = r#"
+        comp Callback: type = fn(int32) int32;
+        comp S: type = struct { callback: Callback };
+        fn add_one(x: int32) int32 { return x + 1; }
+        fn sub_one(x: int32) int32 { return x - 1; }
+
+        // Create multiple structs with different callbacks
+        s1 := S { callback: add_one };
+        s2 := S { callback: sub_one };
+
+        result1 := (s1.callback)(10);
+        result2 := (s2.callback)(10);
+
+        if result1 == 11 && result2 == 9 { return 0; } else { return 1; }
+    "#;
+
+    let status = bounded_program(source);
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "Function pointer assignment and call failed"
+    );
+}
+
+#[test]
+fn struct_with_function_pointer_can_be_passed_as_argument() {
+    // Test passing a struct containing a function pointer as an argument
+    let source = r#"
+        comp Callback: type = fn(int32) int32;
+        comp S: type = struct { callback: Callback };
+        comp Result: type = struct { input: int32, output: int32 };
+
+        fn apply_callback(callback: Callback, input: int32) Result {
+            return Result { input: input, output: (callback)(input) };
+        }
+
+        fn double(x: int32) int32 { return x * 2; }
+
+        s := S { callback: double };
+        result := apply_callback(s.callback, 21);
+
+        if result.output == 42 && result.input == 21 { return 0; } else { return 1; }
+    "#;
+
+    let status = bounded_program(source);
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "Passing struct with function pointer as argument failed"
+    );
+}
+
+#[test]
+fn function_pointer_in_struct_with_array_fields() {
+    // Test function pointers in structs that also contain arrays
+    let source = r#"
+        comp Callback: type = fn(int32) int32;
+        comp S: type = struct {
+            value: int32,
+            callback: Callback,
+            counts: uint[5]
+        };
+        fn increment(x: int32) int32 { return x + 1; }
+
+        fn main() int32 {
+            s := S {
+                value: 42,
+                callback: increment,
+                counts: [1, 2, 3, 4, 5]
+            };
+            result := (s.callback)(s.value);
+            if result == 43 && s.counts[0] == 1 { return 0; } else { return 1; }
+        }
+    "#;
+
+    let status = bounded_program(source);
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "Function pointer in struct with array fields failed"
+    );
+}
+
+#[test]
+fn function_pointer_in_struct_with_enum_fields() {
+    // Test function pointers in structs that also contain enums
+    let source = r#"
+        comp Callback: type = fn(int32) int32;
+        enum Status { Success, Failure };
+
+        comp S: type = struct {
+            value: int32,
+            callback: Callback,
+            status: Status
+        };
+        fn square(x: int32) int32 { return x * x; }
+
+        fn main() int32 {
+            s := S {
+                value: 7,
+                callback: square,
+                status: Status::Success
+            };
+            result := (s.callback)(s.value);
+            if result == 49 && s.status == Status::Success { return 0; } else { return 1; }
+        }
+    "#;
+
+    let status = bounded_program(source);
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "Function pointer in struct with enum fields failed"
+    );
+}
+
+#[test]
+fn function_pointer_mutations_in_struct() {
+    // Test that function pointers stored in structs can be mutated
+    let source = r#"
+        comp Callback: type = fn(int32) int32;
+        comp S: type = struct { callback: Callback, value: int32 };
+        fn add(x: int32) int32 { return x + 1; }
+        fn double(x: int32) int32 { return x * 2; }
+
+        // Create a struct with an initial callback
+        s := S { callback: add, value: 10 };
+
+        // Mutate the function pointer field
+        s.callback = double;
+
+        result := (s.callback)(s.value);
+
+        if result == 20 { return 0; } else { return 1; }
+    "#;
+
+    let status = bounded_program(source);
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "Function pointer mutation in struct failed"
+    );
+}
+
+#[test]
+fn function_pointer_in_struct_with_nested_structs() {
+    // Test function pointers in structs with nested struct definitions
+    let source = r#"
+        comp Callback: type = fn(int32) int32;
+
+        comp Inner: type = struct { value: int32 };
+        comp Outer: type = struct {
+            inner: Inner,
+            callback: Callback
+        };
+
+        fn increment(x: int32) int32 { return x + 1; }
+
+        fn main() int32 {
+            o := Outer {
+                inner: Inner { value: 42 },
+                callback: increment
+            };
+            result := (o.callback)(o.inner.value);
+            if result == 43 { return 0; } else { return 1; }
+        }
+    "#;
+
+    let status = bounded_program(source);
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "Function pointer in struct with nested structs failed"
     );
 }

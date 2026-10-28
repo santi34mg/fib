@@ -1,6 +1,6 @@
 // These implementation types and helpers stay private to this source file.
 comp Point: type = struct { x: int32, y: int32 };
-comp Measurement: type = enum { Empty, Count { value: int32 }, Position { point: Point } };
+comp Measurement: type = enum { Empty, Count: int32, Position: Point };
 
 fn translate(point: *Point, amount: int32) {
     (point*).x = (point*).x + amount;
@@ -26,8 +26,8 @@ fn measurement_score(value: Measurement) int32 {
     // Every variant is named, so no fallback arm is required.
     switch (value) {
         when .Empty { return 0; }
-        when .Count(payload) { return payload.value; }
-        when .Position(payload) { return total(payload.point&); }
+        when .Count(payload) { return payload; }
+        when .Position(payload) { return total(payload&); }
     };
 }
 
@@ -39,7 +39,7 @@ pub(root) fn enums_and_switches() bool {
     // Switch bindings are payload copies; changing one leaves the enum intact.
     switch (copy) {
         when .Empty {}
-        when .Count(payload) { payload.value = 7; }
+        when .Count(payload) { payload = 7; }
         when .Position(payload) {}
     };
     position := Measurement.Position(Point { x: 20, y: 22 });

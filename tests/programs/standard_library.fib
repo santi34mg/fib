@@ -8,20 +8,20 @@ fn main() int32 {
         || os::syscall3(39, 1, 2, 3) != pid || os::syscall4(39, 1, 2, 3, 4) != pid
         || os::syscall5(39, 1, 2, 3, 4, 5) != pid || os::syscall6(39, 1, 2, 3, 4, 5, 6) != pid { return 2; };
     switch (os::getpid()) {
-        when .Ok(p) { if p.value as int64 != pid { return 3; }; }
+        when .Ok(p) { if p as int64 != pid { return 3; }; }
         when .Err(e) { return 4; }
     };
     switch (os::close(-1)) {
         when .Ok { return 5; }
-        when .Err(e) { if e.error != 9 { return 6; }; }
+        when .Err(e) { if e != 9 { return 6; }; }
     };
     switch (os::openat(-100, c"/fib-stdlib-test-missing/path", 0, 0)) {
-        when .Ok(p) { os::close(p.value); return 7; }
-        when .Err(e) { if e.error != 2 { return 8; }; }
+        when .Ok(p) { os::close(p); return 7; }
+        when .Err(e) { if e != 2 { return 8; }; }
     };
     switch (os::mmap(null, 4096, 3, 34, -1, 0)) {
         when .Ok(mapping) {
-            pointer := mapping.value;
+            pointer := mapping;
             defer { os::munmap(pointer, 4096); };
             (pointer*) = 42;
             if (pointer*) != 42 { return 9; };
@@ -29,9 +29,9 @@ fn main() int32 {
             if buffer.len != 16 { return 10; };
             switch (os::openat(-100, c"/dev/zero", 0, 0)) {
                 when .Ok(file) {
-                    defer { os::close(file.value); };
-                    switch (os::read(file.value, buffer)) {
-                        when .Ok(count) { if count.value != 16 || (pointer*) != 0 { return 11; }; }
+                    defer { os::close(file); };
+                    switch (os::read(file, buffer)) {
+                        when .Ok(count) { if count != 16 || (pointer*) != 0 { return 11; }; }
                         when .Err(e) { return 12; }
                     };
                 }
@@ -39,9 +39,9 @@ fn main() int32 {
             };
             switch (os::openat(-100, c"/dev/null", 0, 0)) {
                 when .Ok(file) {
-                    defer { os::close(file.value); };
-                    switch (os::read(file.value, buffer)) {
-                        when .Ok(count) { if count.value != 0 { return 14; }; }
+                    defer { os::close(file); };
+                    switch (os::read(file, buffer)) {
+                        when .Ok(count) { if count != 0 { return 14; }; }
                         when .Err(e) { return 15; }
                     };
                 }
@@ -51,11 +51,11 @@ fn main() int32 {
         when .Err(e) { return 17; }
     };
     switch (os::mmap(null, 4096, 3, 34, -1, 1)) {
-        when .Ok(mapping) { os::munmap(mapping.value, 4096); return 18; }
-        when .Err(e) { if e.error != 22 { return 19; }; }
+        when .Ok(mapping) { os::munmap(mapping, 4096); return 18; }
+        when .Err(e) { if e != 22 { return 19; }; }
     };
     switch (os::write(1, "std syscalls\n"[..])) {
-        when .Ok(count) { if count.value != 13 { return 20; }; }
+        when .Ok(count) { if count != 13 { return 20; }; }
         when .Err(e) { return 21; }
     };
     return 0;

@@ -51,6 +51,18 @@ fn build_file_builtins_lower_to_verified_bytes_calls_and_interpret() {
 }
 
 #[test]
+fn build_file_globals_fail_before_applying_operations() {
+    let (_directory, plan) = source(
+        "value := 42; fn build() int32 { build_api::add_source(\"main.fib\"[..]); return 0; }",
+    );
+    let ir = compile_build_file_to_ir(&plan).unwrap();
+    let mut builder = crate::plan::PlanBuilder::from(plan.files[0].path.clone());
+    let error = crate::ir_interpreter::interpret_ir(ir, &mut builder).unwrap_err();
+    assert!(error.to_string().contains("globals"));
+    assert!(builder.modules.is_empty());
+}
+
+#[test]
 fn frontend_and_ir_pipeline_preserve_file_identity() {
     let (_directory, plan) = source("fn main() int32 { return 42; }");
     let project = run_frontend(&plan).unwrap();
@@ -63,6 +75,95 @@ fn frontend_and_ir_pipeline_preserve_file_identity() {
         CompilationOutput::Checked
     ));
     assert!(!plan.output.exists());
+}
+
+#[test]
+fn globals_require_constant_initializers_and_comp_value_calls_remain_explicit() {
+    for (text, message) in [
+        (
+            "value: int32; fn main() int32 { return 0; }",
+            "explicit initializer",
+        ),
+        (
+            "fn calculate() int32 { return 42; } answer := calculate(); fn main() int32 { return answer; }",
+            "runtime calls",
+        ),
+        (
+            "comp fn calculate() int32 { return 42; } answer := calculate(); fn main() int32 { return answer; }",
+            "not implemented",
+        ),
+        (
+            "const first := 1; second := first; fn main() int32 { return second; }",
+            "runtime binding reads",
+        ),
+        (
+            "fn calculate() bool { return true; } answer := false && calculate(); fn main() int32 { return 0; }",
+            "runtime calls",
+        ),
+        (
+            "fn calculate() int32 { return 42; } callback := calculate; copy := callback; fn main() int32 { return 0; }",
+            "runtime binding reads",
+        ),
+        (
+            "fn main() int32 { comp i := 2; a := [1, 2]; return a[i]; }",
+            "bounds",
+        ),
+        (
+            "fn main() int32 { value := 1; comp wrong := value + 1; return 0; }",
+            "runtime binding reads",
+        ),
+        (
+            "fn main() int32 { a: int32[2]; a[0] = 42; i := 0; return a[i]; }",
+            "uninitialized",
+        ),
+        (
+            "fn main() int32 { a: int32[2]; a[0] = 42; view := a[..1]; return view[0]; }",
+            "uninitialized",
+        ),
+        (
+            "fn main() int32 { a: const int32[1] = [1]; i := 0; a[i] = 42; return 0; }",
+            "readonly",
+        ),
+    ] {
+        let (_directory, plan) = source(text);
+        let error = run_pipeline(&plan, PipelineGoal::Check).unwrap_err();
+        assert!(error.to_string().contains(message), "{text}: {error:#}");
+        let diagnostic = error
+            .downcast_ref::<crate::diagnostics::CompilerError>()
+            .unwrap();
+        assert_eq!(diagnostic.kind, crate::diagnostics::ErrorKind::Type);
+        assert!(diagnostic.span.is_some());
+        assert_eq!(diagnostic.filename.as_ref(), Some(&plan.files[0].path));
+        assert!(!plan.output.exists());
+    }
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn global_initializers_are_embedded_data_without_startup_code() {
+    let (_directory, plan) =
+        source("table := [1, 42]; view := table[1..]; fn main() int32 { return view[0]; }");
+    let project = run_frontend(&plan).unwrap();
+    let ir = crate::ir::lowering::lower(&project).unwrap();
+    let llvm = crate::backend::emit_llvm(
+        &ir,
+        &crate::backend::lowering::llvm_lower::host_target().unwrap(),
+    )
+    .unwrap();
+    assert!(llvm.ir_text().contains("fib.global."));
+    assert!(llvm.ir_text().contains("getelementptr"));
+    assert!(!llvm.ir_text().contains("llvm.global_ctors"));
+    assert!(
+        !llvm.ir_text().contains("alloca"),
+        "global initial data must not be copied into main's stack"
+    );
+    assert_eq!(
+        ir.functions
+            .iter()
+            .filter(|f| matches!(f.body, crate::ir::FunctionBody::Definition { .. }))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -130,11 +231,11 @@ fn helpers_conditionals_and_mutable_locals_lower_to_verified_ssa() {
 fn scalar_subset_rejections_are_located_backend_diagnostics_even_in_dead_code() {
     use crate::diagnostics::{CompilerError, ErrorKind};
     for text in [
-        "fn main() int32 { if false { x := [1, 2][..]; }; return 42; }",
-        "fn main() int32 { while (false) { x := [1, 2][..]; }; return 42; }",
-        "fn main() int32 { while () { break; x := [1, 2][..]; }; return 42; }",
-        "fn main() int32 { while () { continue; x := [1, 2][..]; }; }",
-        "fn main() int32 { defer { x := [1, 2][..]; }; return 42; }",
+        "fn main() int32 { if false { x := 'a'; }; return 42; }",
+        "fn main() int32 { while (false) { x := 'a'; }; return 42; }",
+        "fn main() int32 { while () { break; x := 'a'; }; return 42; }",
+        "fn main() int32 { while () { continue; x := 'a'; }; }",
+        "fn main() int32 { defer { x := 'a'; }; return 42; }",
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
@@ -406,7 +507,7 @@ fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
 }
 
 #[test]
-fn unsupported_struct_initializers_and_dead_memory_syntax_fail_before_artifacts() {
+fn indexed_struct_initializers_and_dead_memory_syntax_lower_before_artifacts() {
     for text in [
         "fn main() int32 { values := [1, 2]; index := 0; value := values[index]; return value; }",
         "comp S: type = struct { a: int32[] }; fn main() int32 { s := S { a: [1, 2][..] }; return 0; }",
@@ -415,17 +516,8 @@ fn unsupported_struct_initializers_and_dead_memory_syntax_fail_before_artifacts(
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
-        let error = crate::ir::lowering::lower(&project).unwrap_err();
-        let diagnostic = error
-            .downcast_ref::<crate::diagnostics::CompilerError>()
-            .unwrap_or_else(|| panic!("{error:#}"));
-        assert_eq!(diagnostic.kind, crate::diagnostics::ErrorKind::Backend);
-        assert!(
-            diagnostic.message.contains("unsupported expression"),
-            "{error:#}"
-        );
-        assert!(diagnostic.span.is_some());
-        assert_eq!(diagnostic.filename.as_ref(), Some(&plan.files[0].path));
+        let ir = crate::ir::lowering::lower(&project).unwrap();
+        crate::ir::verify_ir(&ir).unwrap();
         assert!(!plan.output.exists());
         assert!(!plan.output.with_extension("o").exists());
     }
@@ -461,36 +553,36 @@ fn enums_lower_to_verified_switches_and_payload_copies() {
 }
 
 #[test]
+fn direct_enum_payloads_and_unit_values_lower_without_llvm() {
+    let (_directory, plan) = source(include_str!("../../samples/enum_payloads.fib"));
+    let CompilationOutput::Ir(ir) = run_pipeline(&plan, PipelineGoal::Ir).unwrap() else {
+        panic!("expected IR");
+    };
+    crate::ir::verify_ir(&ir).unwrap();
+}
+
+#[test]
 fn enum_lowering_checks_unmatched_and_dead_arms() {
     for text in [
         "comp E: type = enum { A, B }; fn main() int32 { e := E.B; x := 42; switch(e) { when .A { x = 7; } when else {} }; return x; }",
         "comp E: type = enum { A, B }; fn main() int32 { e := E.A; switch(e) { when .A {} when .B {} }; return 42; }",
         "comp E: type = enum {}; fn impossible(e: E) int32 { switch(e) {}; } fn main() int32 { return 42; }",
-        "comp E: type = enum { Next { next: *E }, End }; fn main() int32 { e := E.End; return 42; }",
-        "comp E: type = enum { A, Items { values: int32[] } }; fn main() int32 { e := E.A; return 42; }",
+        "comp E: type = enum { Next: *E, End }; fn main() int32 { e := E.End; return 42; }",
+        "comp E: type = enum { A, Items: int32[] }; fn main() int32 { e := E.A; return 42; }",
     ] {
         let (_directory, plan) = source(text);
         let ir = crate::ir::lowering::lower(&run_frontend(&plan).unwrap()).unwrap();
         crate::ir::verify_ir(&ir).unwrap();
     }
     for text in [
-        "comp E: type = enum { A, Items { values: int32[] } }; fn main() int32 { e := E.Items([1, 2][..]); return 42; }",
+        "comp E: type = enum { A, Items: int32[] }; fn main() int32 { e := E.Items([1, 2][..]); return 42; }",
         "comp E: type = enum { A, B }; fn main() int32 { switch(E.A) { when .A {} when .B { data := [1, 2][..]; } }; return 42; }",
         "comp E: type = enum { A }; fn main() int32 { x := 0; if false { switch(E.A) { when .A { defer { data := [1, 2][..]; }; } }; }; return 42; }",
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
-        let error = crate::ir::lowering::lower(&project).unwrap_err();
-        let diagnostic = error
-            .downcast_ref::<crate::diagnostics::CompilerError>()
-            .unwrap_or_else(|| panic!("{error:#}"));
-        assert_eq!(diagnostic.kind, crate::diagnostics::ErrorKind::Backend);
-        assert!(
-            diagnostic.message.contains("unsupported expression"),
-            "{error:#}"
-        );
-        assert!(diagnostic.span.is_some());
-        assert_eq!(diagnostic.filename.as_ref(), Some(&plan.files[0].path));
+        let ir = crate::ir::lowering::lower(&project).unwrap();
+        crate::ir::verify_ir(&ir).unwrap();
         assert!(!plan.output.exists());
         assert!(!plan.output.with_extension("o").exists());
     }

@@ -41,8 +41,8 @@ fn installed_sources_prepare_idempotently_and_lower_with_canonical_aliases() {
         fn main() int32 {
             value := identity(A.Ok(42));
             switch (value) {
-                when .Ok(payload) { return payload.value; }
-                when .Err(payload) { return payload.error as int32; }
+                when .Ok(payload) { return payload; }
+                when .Err(payload) { return payload as int32; }
             };
         }
     "#,
@@ -253,7 +253,7 @@ fn intrinsic_metadata_and_syscall_ir_are_independently_validated() {
 #[test]
 fn prelude_exports_are_ordinary_aliases_and_collisions_are_errors() {
     let (directory, mut plan) = input(
-        "fn main() int32 { comp R := Result(int32, bool); value := R.Ok(42); switch (value) { when .Ok(p) { return p.value; } when .Err(p) { return 0; } }; }",
+        "fn main() int32 { comp R := Result(int32, bool); value := R.Ok(42); switch (value) { when .Ok(p) { return p; } when .Err(p) { return 0; } }; }",
     );
     let installed = directory.path().join("sysroot");
     std::fs::create_dir_all(installed.join("std")).unwrap();
@@ -397,19 +397,19 @@ fn file_backed_mapping_and_short_reads_preserve_kernel_results() {
         fn main() int32 {
             switch (os::openat(-100, c"FILE", 0, 0)) {
                 when .Ok(file) {
-                    defer { os::close(file.value); };
-                    switch (os::mmap(null, 4096, 3, 2, file.value, 0)) {
+                    defer { os::close(file); };
+                    switch (os::mmap(null, 4096, 3, 2, file, 0)) {
                         when .Ok(mapping) {
-                            pointer := mapping.value;
+                            pointer := mapping;
                             defer { os::munmap(pointer, 4096); };
                             if (pointer*) != 42 { return 1; };
                             buffer := std::memory::slice_from_parts(pointer, 16);
-                            switch (os::read(file.value, buffer)) {
-                                when .Ok(count) { if count.value != 3 { return 2; }; }
+                            switch (os::read(file, buffer)) {
+                                when .Ok(count) { if count != 3 { return 2; }; }
                                 when .Err(e) { return 3; }
                             };
-                            switch (os::read(file.value, buffer)) {
-                                when .Ok(count) { if count.value != 0 { return 4; }; }
+                            switch (os::read(file, buffer)) {
+                                when .Ok(count) { if count != 0 { return 4; }; }
                                 when .Err(e) { return 5; }
                             };
                         }

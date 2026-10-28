@@ -1490,17 +1490,17 @@ mod name_resolution {
 
         #[test]
         fn invalid_comp_initializers_have_source_diagnostics() {
-            for source in ["comp alias := 1 + 2;", "comp alias: int32;"] {
-                let mut analyzer = collected(&[("main", source)]);
-                let error = analyzer
-                    .resolve_names()
-                    .unwrap_err()
-                    .downcast::<crate::diagnostics::CompilerError>()
-                    .unwrap();
-                assert_eq!(error.kind, crate::diagnostics::ErrorKind::Name);
-                assert_eq!(error.filename, Some("main.fib".into()));
-                assert!(error.span.is_some());
-            }
+            let mut valid = collected(&[("main", "comp value := 1 + 2;")]);
+            valid.resolve_names().unwrap();
+            let mut analyzer = collected(&[("main", "comp alias: int32;")]);
+            let error = analyzer
+                .resolve_names()
+                .unwrap_err()
+                .downcast::<crate::diagnostics::CompilerError>()
+                .unwrap();
+            assert_eq!(error.kind, crate::diagnostics::ErrorKind::Name);
+            assert_eq!(error.filename, Some("main.fib".into()));
+            assert!(error.span.is_some());
         }
 
         #[test]
@@ -1635,7 +1635,7 @@ mod name_resolution {
         );
         type_ok!(
             enum_payload_types_are_not_lexical_bindings,
-            "enum { Variant { payload: T }, Empty }",
+            "enum { Variant: T, Empty }",
             1
         );
         type_ok!(nested_composite_type, "*(T, fn(T[]) -> *T)[3]", 3);
@@ -1662,10 +1662,7 @@ mod name_resolution {
         type_bad!(missing_function_argument, "fn(T, Missing) -> T");
         type_bad!(missing_function_return, "fn(T) -> Missing");
         type_bad!(missing_struct_field_type, "struct { field: Missing }");
-        type_bad!(
-            missing_enum_payload_type,
-            "enum { Variant { payload: Missing } }"
-        );
+        type_bad!(missing_enum_payload_type, "enum { Variant: Missing }");
 
         #[test]
         fn file_binding_types_and_function_signatures_resolve_forward_names() {
@@ -2484,10 +2481,8 @@ mod name_resolution {
                 }
                 TypeExpressionKind::Enum { variants } => {
                     for variant in variants {
-                        if let Some(fields) = &mut variant.payload {
-                            for field in fields {
-                                self.expr(&mut field.expression);
-                            }
+                        if let Some(payload) = &mut variant.payload {
+                            self.expr(payload);
                         }
                     }
                 }
@@ -2969,12 +2964,98 @@ mod type_resolution {
     );
     ok!(
         enum_constructors,
-        "comp E: type = enum { Empty, Number { value: int32 }, Unit {} }; a := E.Empty; b := E.Number(7); c := E.Unit();"
+        "comp E: type = enum { Empty, Number: int32, Unit: struct {} }; a := E.Empty; b := E.Number(7); c := E.Unit;"
     );
     ok!(
         payload_pattern,
-        "comp E: type = enum { Number { value: int32 }, Empty }; fn f(e: E) { switch (e) { when .Number(p) { x := p.value; } when else {} }; }"
+        "comp E: type = enum { Number: int32, Empty }; fn f(e: E) { switch (e) { when .Number(p) { x := p; } when else {} }; }"
     );
+
+    #[test]
+    fn direct_enum_payload_types_and_unit_normalization() {
+        good(
+            r#"
+            comp Empty := struct {};
+            comp Nested := struct { first: void, second: Empty };
+            comp Pair := struct { left: int32, right: int32 };
+            comp fn choose(T: type) type { return T; }
+            comp E := enum {
+                Absent, NoValue: void, Empty: Empty, Nested: Nested,
+                Number: choose(int32), Pair: Pair, Inline: struct { value: bool },
+                Array: int32[0], Pointer: *Empty
+            };
+            fn consume(value: void) void { return value; }
+            fn f() {
+                a := E.Absent; b := E.NoValue; c := E.Empty; d := E.Nested;
+                pair := E.Pair(Pair { right: 22, left: 20 });
+                array := E.Array([]);
+                switch (pair) {
+                    when .Pair(p) { total: int32 = p.left + p.right; }
+                    when .Number(n) { number: int32 = n; }
+                    when .Absent(u) { consume(u); }
+                    when .NoValue(u) { consume(u); }
+                    when .Empty(u) { consume(u); }
+                    when .Nested(u) { consume(u); }
+                    when else {}
+                };
+            }
+        "#,
+        );
+        for payload in ["void", "struct {}", "struct { value: void }"] {
+            bad(
+                &format!("comp E := enum {{ Unit: {payload} }}; fn f() {{ x := E.Unit(); }}"),
+                "not callable",
+            );
+            bad(
+                &format!("comp E := enum {{ Unit: {payload} }}; fn f() {{ x := E.Unit(1); }}"),
+                "not callable",
+            );
+        }
+        bad("comp E := enum { Value: int32 }; x := E.Value();", "arity");
+        bad(
+            "comp E := enum { Value: int32 }; x := E.Value(1, 2);",
+            "arity",
+        );
+        bad("comp E := enum { Value: 42 };", "requires a type value");
+        bad("comp E := enum { Value: type };", "cannot be stored");
+        bad("comp E := enum { Value: never };", "cannot be stored");
+        bad("comp E := enum { Value: E };", "by-value");
+        bad(
+            "comp S := struct { value: S }; comp E := enum { Value: S };",
+            "by-value",
+        );
+    }
+
+    #[test]
+    fn enum_specialization_rechecks_normalized_binding_types_and_constructors() {
+        good(
+            r#"
+            comp fn Result(T: type, E: type) type { return enum { Ok: T, Err: E }; }
+            fn ignore(T: type, value: T) {}
+            fn inspect(T: type) int32 {
+                comp R := Result(T, int32);
+                value := R.Err(42);
+                switch (value) {
+                    when .Ok(payload) { ignore(T, payload); return 0; }
+                    when .Err(error) { return error; }
+                };
+            }
+            fn f() { a := inspect(void); b := inspect(int32); }
+        "#,
+        );
+        bad(
+            r#"
+            comp fn Result(T: type) type { return enum { Ok: T }; }
+            fn make(T: type, value: T) {
+                comp R := Result(T);
+                result := R.Ok(value);
+            }
+            fn unit() {}
+            fn f() { make(void, unit()); }
+        "#,
+            "not callable",
+        );
+    }
     ok!(
         real_len_field,
         "comp S: type = struct { len: bool }; s := S { len: true }; result: bool = s.len;"
@@ -3205,13 +3286,12 @@ mod type_resolution {
     ok!(bool_numeric_cast, "x := true as int32; y := 1 as bool;");
     err!(
         bad_payload_argument,
-        "comp E: type = enum { N { value: int32 } }; x := E.N(true);",
+        "comp E: type = enum { N: int32 }; x := E.N(true);",
         "incompatible"
     );
-    err!(
+    ok!(
         payloadless_binding,
-        "comp E: type = enum { Empty }; fn f(e: E) { switch (e) { when .Empty(p) {} }; }",
-        "payload"
+        "comp E: type = enum { Empty }; fn f(e: E) { switch (e) { when .Empty(p) {} }; }"
     );
     err!(
         missing_pattern_variant,
@@ -3753,7 +3833,7 @@ mod type_resolution {
     #[test]
     fn validation_is_read_only() {
         let (mut a, t) =
-            run("comp E: type = enum { Value { x: int32 }, Empty }; value := E.Value(1);").unwrap();
+            run("comp E: type = enum { Value: int32, Empty }; value := E.Value(1);").unwrap();
         let before_units = a.units.clone();
         let before_types = t.types.clone();
         crate::frontend::analyzer::validate_type_annotations(&mut a.units, &a.symbols, &t).unwrap();
@@ -3761,8 +3841,60 @@ mod type_resolution {
         assert_eq!(t.types, before_types);
     }
     #[test]
+    fn switch_payload_binding_types_are_independently_validated() {
+        for (declaration, construction, wrong_type) in [
+            ("Value: int32", "E.Value(42)", BuiltinType::Void),
+            ("Value: void", "E.Value", BuiltinType::Int32),
+            (
+                "Value: struct { field: void }",
+                "E.Value",
+                BuiltinType::Int32,
+            ),
+            ("Value", "E.Value", BuiltinType::Int32),
+        ] {
+            let (mut analyzer, mut types) = run(&format!(
+                "comp E := enum {{ {declaration} }}; fn inspect() {{ switch ({construction}) {{ when .Value(payload) {{}} }}; }}"
+            ))
+            .unwrap();
+            let StatementKind::FunctionDeclaration(function) =
+                &analyzer.units[0].ast.statements[1].kind
+            else {
+                panic!("expected function");
+            };
+            let StatementKind::Switch { arms, .. } =
+                &function.body.as_ref().unwrap().statements[0].kind
+            else {
+                panic!("expected switch");
+            };
+            let crate::frontend::ast::pattern::Pattern::EnumVariant {
+                binding: Some(binding),
+                ..
+            } = &arms[0].pattern
+            else {
+                panic!("expected payload binding");
+            };
+            let id = binding.annotation.binding.unwrap();
+            let mut info = types.bindings[&id];
+            info.ty = types.builtin(wrong_type);
+            types.bind(id, info);
+            let error = crate::frontend::analyzer::validate_type_annotations(
+                &mut analyzer.units,
+                &analyzer.symbols,
+                &types,
+            )
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("switch payload binding type mismatch"),
+                "{error:#}"
+            );
+        }
+    }
+
+    #[test]
     fn variant_constructor_table_is_validated_even_without_calls() {
-        let (mut a, mut t) = run("comp E: type = enum { Value { x: int32 } };").unwrap();
+        let (mut a, mut t) = run("comp E: type = enum { Value: int32 };").unwrap();
         let key = *t.variant_constructors.keys().next().unwrap();
         t.variant_constructors.insert(key, TypeId(999));
         assert!(
@@ -4120,7 +4252,7 @@ mod type_resolution {
         );
         pass!(
             enum_payload_initialized,
-            "comp E: type = enum { A { x: int32 } }; fn f(e: E) int32 { switch(e) { when .A(p) { return p.x; } }; }"
+            "comp E: type = enum { A: int32 }; fn f(e: E) int32 { switch(e) { when .A(p) { return p; } }; }"
         );
         fail!(
             branch_may_not_initialize,
@@ -4182,32 +4314,32 @@ mod type_resolution {
         fail!(
             file_forward_read,
             "first := second; second := 1;",
-            "uninitialized"
+            "runtime binding reads"
         );
         fail!(
             file_initialization_cycle,
             "first: int32 = second; second: int32 = first;",
-            "uninitialized"
+            "runtime binding reads"
         );
         pass!(
             specialized_pointer,
-            "fn identity(T: type, x: *T) *T { return x; } x := 1; p := identity(int32, x&);"
+            "fn identity(T: type, x: *T) *T { return x; } fn test() { x := 1; p := identity(int32, x&); }"
         );
         pass!(
             specialized_array,
-            "fn identity(T: type, x: T[2]) T[2] { return x; } a := identity(int8, [1, 2]);"
+            "fn identity(T: type, x: T[2]) T[2] { return x; } fn test() { a := identity(int8, [1, 2]); }"
         );
         pass!(
             specialized_function,
-            "fn identity(T: type, f: fn(T) -> T) fn(T) -> T { return f; } fn inc(x: int32) int32 { return x + 1; } result := identity(int32, inc)(2);"
+            "fn identity(T: type, f: fn(T) -> T) fn(T) -> T { return f; } fn inc(x: int32) int32 { return x + 1; } fn test() { result := identity(int32, inc)(2); }"
         );
         pass!(
             forwarding_generic,
-            "fn identity(T: type, x: T) T { return x; } fn forward(U: type, x: U) U { return identity(U, x); } result := forward(int32, 1);"
+            "fn identity(T: type, x: T) T { return x; } fn forward(U: type, x: U) U { return identity(U, x); } fn test() { result := forward(int32, 1); }"
         );
         pass!(
             recursive_generic,
-            "fn recur(T: type, x: T) T { return recur(T, x); } result := recur(int32, 1);"
+            "fn recur(T: type, x: T) T { return recur(T, x); } fn test() { result := recur(int32, 1); }"
         );
         pass!(
             computed_local_type,
@@ -4263,7 +4395,7 @@ mod type_resolution {
         );
         pass!(
             computed_cache_preserves_nominal_identity,
-            "comp fn box(T: type) type { return struct { x: T }; } comp A := box(int8); comp B := box(int8); a: A = A { x: 1 }; b: B = a;"
+            "comp fn box(T: type) type { return struct { x: T }; } comp A := box(int8); comp B := box(int8); fn test() { a: A = A { x: 1 }; b: B = a; }"
         );
         fail!(
             unreachable_break_is_invalid,
@@ -4391,16 +4523,17 @@ mod type_resolution {
         fail!(
             initializer_function_reads_later_global,
             "fn f() int32 { return late; } early := f(); late := 1;",
-            "uninitialized"
+            "runtime calls"
         );
         fail!(
             initializer_function_chain_reads_later_global,
             "fn f() int32 { return g(); } fn g() int32 { return late; } early := f(); late := 1;",
-            "uninitialized"
+            "runtime calls"
         );
-        pass!(
+        fail!(
             initializer_function_reads_earlier_global,
-            "late := 1; fn f() int32 { return late; } early := f();"
+            "late := 1; fn f() int32 { return late; } early := f();",
+            "runtime calls"
         );
         err!(
             computed_runtime_call_is_rejected,
@@ -4529,7 +4662,7 @@ mod type_resolution {
                 .unwrap()
                 .signature = corrupt;
             assert!(validate_type_annotations(&a.units, &a.symbols, &types).is_err());
-            analyzer("fn identity(T: type, x: T) T { return x; } value := identity(int32, 7);")
+            analyzer("fn identity(T: type, x: T) T { return x; } fn test() { value := identity(int32, 7); }")
                 .analyze()
                 .unwrap();
         }
@@ -4569,7 +4702,9 @@ mod type_resolution {
         #[test]
         fn unsupported_comp_declarations_have_diagnostics_even_without_calls() {
             bad("comp fn choose() type;", "body");
-            bad("comp fn choose() int32 { return 1; }", "must return type");
+            analyzer("comp fn choose() int32 { return 1; }")
+                .analyze()
+                .unwrap();
             bad(
                 "comp fn choose() type { while (true) { return int32; }; }",
                 "bounded comp function",
@@ -5118,7 +5253,7 @@ mod generic_flow_regressions {
     #[test]
     fn template_initializer_calls_do_not_reapply_concrete_projection_rules() {
         analyze(
-            "comp S := struct { x: int32 }; fn make(T: type) T { value: T; value.x = 1; return value; } value := make(S);",
+            "comp S := struct { x: int32 }; fn make(T: type) T { value: T; value.x = 1; return value; } fn test() { value := make(S); }",
         );
     }
 
@@ -5322,7 +5457,8 @@ mod validation_regressions {
     #[test]
     fn concrete_instance_return_literals_are_not_trusted() {
         for builtin in [B::Boolean, B::Int64] {
-            let mut project = analyze("fn f(T: type) T { return 1; } value := f(int32);");
+            let mut project =
+                analyze("fn f(T: type) T { return 1; } fn test() { value := f(int32); }");
             let ty = project.types.builtin(builtin.clone());
             let instance = project.types.generic_instances.values_mut().next().unwrap();
             returns(instance.body.as_mut().unwrap()).as_mut().unwrap()[0]
