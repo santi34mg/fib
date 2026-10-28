@@ -2616,7 +2616,7 @@ mod name_resolution {
                     }
                     self.statements(body);
                 }
-                StatementKind::Defer(stmt) => self.statement(stmt),
+                StatementKind::Defer(body) => self.statements(body),
                 StatementKind::Switch { subject, arms } => {
                     self.expr(subject);
                     for arm in arms {
@@ -4035,6 +4035,61 @@ mod type_resolution {
         pass!(
             array_element_initialization,
             "fn f() int32[2] { a: int32[2]; a[0] = 1; a[1] = 2; return a; }"
+        );
+        pass!(
+            defer_block_reads_at_exit,
+            "fn f() { x: int32; defer { y := x; x = y + 1; }; x = 41; }"
+        );
+        pass!(
+            defer_block_initializes_outer,
+            "fn f() int32 { x: int32; if true { defer { y := 42; x = y; }; }; return x; }"
+        );
+        pass!(
+            defer_block_sibling_scopes,
+            "fn f() int32 { x := 42; defer { y := x + 1; }; defer { y := x + 2; }; return x; }"
+        );
+        #[test]
+        fn defer_block_names_follow_lexical_scope() {
+            for (source, name) in [
+                (
+                    "fn f() int32 { defer { hidden := 42; }; return hidden; }",
+                    "hidden",
+                ),
+                ("fn f() { defer { y := later; }; later := 42; }", "later"),
+            ] {
+                let error = analyzer(source).analyze().unwrap_err();
+                let error = error
+                    .downcast_ref::<crate::diagnostics::CompilerError>()
+                    .unwrap();
+                assert_eq!(error.kind, crate::diagnostics::ErrorKind::Name);
+                assert!(error.message.contains(name), "{error}");
+                assert!(error.span.is_some());
+            }
+        }
+        fail!(
+            defer_block_read_before_initialization,
+            "fn f() { x: int32; defer { y := x; }; }",
+            "uninitialized"
+        );
+        fail!(
+            defer_block_nested_defer_rejected,
+            "fn f() { defer { if true { defer {}; }; }; }",
+            "defer"
+        );
+        fail!(
+            defer_block_return_rejected,
+            "fn f() { defer { return; }; }",
+            "defer"
+        );
+        fail!(
+            defer_block_continue_rejected,
+            "fn f() { while (true) { defer { continue; }; break; }; }",
+            "defer"
+        );
+        fail!(
+            defer_block_must_complete,
+            "fn f() { defer { while (true) {}; }; }",
+            "complete normally"
         );
         pass!(
             defer_reads_at_exit,

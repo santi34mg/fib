@@ -350,7 +350,7 @@ impl TypeContext<'_> {
                     return Err(type_error("defer requires a function scope"));
                 }
                 self.state.in_defer = true;
-                let result = self.statement(node);
+                let result = self.statements(node);
                 self.state.in_defer = false;
                 result?;
             }

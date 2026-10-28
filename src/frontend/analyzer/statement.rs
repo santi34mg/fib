@@ -122,7 +122,7 @@ impl Analyzer {
                 }
                 block(body, context)?;
             }
-            StatementKind::Defer(statement) => Self::resolve_name_statement(statement, context)?,
+            StatementKind::Defer(body) => block(body, context)?,
             StatementKind::Switch { subject, arms } => {
                 Self::resolve_name_expression(subject, context)?;
                 for arm in arms {

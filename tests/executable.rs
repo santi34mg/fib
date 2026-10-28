@@ -74,7 +74,7 @@ fn unsupported_source_exits_unsuccessfully_without_binary() {
     let source = directory.path().join("main.fib");
     std::fs::write(
         &source,
-        "fn main() int32 { x := 0; defer x = 1; return 42; }",
+        "fn main() int32 { defer { x := [1, 2][..]; }; return 42; }",
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
@@ -83,7 +83,7 @@ fn unsupported_source_exits_unsuccessfully_without_binary() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported statement"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported"));
     assert!(!source.with_extension("").exists());
 }
 
@@ -782,4 +782,42 @@ fn implicit_pointer_access_warns_and_traps_on_null() {
     assert!(warnings.contains("main.fib:1:"));
     let plan = BuildPlan::single_file(&source).unwrap();
     assert!(!Command::new(&plan.output).status().unwrap().success());
+}
+
+#[test]
+fn defer_blocks_execute_on_lexical_exits() {
+    for text in [
+        // Reverse order, with values read at exit rather than registration.
+        "fn main() int32 { x := 0; if true { defer { x = x * 10 + 2; }; defer x = x * 10 + 4; }; return x; }",
+        // Deferred locals and branches have their own scope; empty blocks work.
+        "fn choose(b: bool) int32 { x := 1; if b { defer { temporary := 40; if b { temporary = temporary + 2; }; }; defer {}; } else { defer x = 9; }; return x; } fn main() int32 { return choose(true) + choose(false) + 32; }",
+        // Normal loop exit and continue each run exactly one body cleanup.
+        "fn f(n: int32) int32 { x := 0; i := 0; while (i < n) { defer { x = x + 7; }; i = i + 1; if i < n { continue; }; }; return x; } fn main() int32 { return f(6); }",
+        // Break leaves inner scopes, preserving the enclosing function defer.
+        "fn main() int32 { x := 0; defer x = 99; while (true) { defer x = x + 2; if true { defer x = x + 40; break; }; }; return x; }",
+        // Return captures the result before all pending cleanups, inner first.
+        "fn f(p: *int32, b: bool) int32 { defer { p* = (p*) * 10 + 2; }; if b { defer p* = (p*) * 10 + 4; return p*; }; return 9; } fn main() int32 { x := 0; r := f(x&, true); return x + r; }",
+        // Distinct dynamic return paths retain their own cleanup registrations.
+        "fn f(p: *int32, b: bool) { defer p* = (p*) + 20; if b { defer p* = (p*) + 1; return; }; defer p* = (p*) + 1; } fn main() int32 { x := 0; f(x&, true); f(x&, false); return x; }",
+        // Return unwinds loop scopes and function scopes.
+        "fn f(p: *int32) { defer p* = (p*) + 2; while (true) { defer p* = (p*) + 40; return; }; } fn main() int32 { x := 0; f(x&); return x; }",
+        // A nested loop's break must leave the outer body cleanup registered.
+        "fn main() int32 { x := 0; i := 0; while (i < 2) { defer x = x + 20; while (true) { defer x = x + 1; break; }; i = i + 1; }; return x; }",
+        // Storage classification visits address-taking and aggregates in cleanup.
+        "comp S: type = struct { x: int32 }; fn set(p: *int32) { p* = 42; } fn main() int32 { x := 0; if true { defer { s := S { x: 1 }; set(s.x&); x = s.x; }; }; return x; }",
+        // Cleanup can initialize a previously uninitialized outer binding.
+        "fn main() int32 { x: int32; if true { defer { x = 42; }; }; return x; }",
+        // Switch arm cleanup runs before the enclosing body cleanup.
+        "comp E: type = enum { A, B }; fn f(e: E) int32 { x := 0; switch(e) { when .A { defer x = 42; } when .B { defer x = 7; } }; return x; } fn main() int32 { return f(E.A); }",
+        // Concrete generic instances also retain deferred bodies.
+        "fn f(T: type, p: *T, x: T) { defer { p* = x; }; } fn main() int32 { x := 0; f(int32, x&, 42); return x; }",
+        // Aggregate return values are copied before cleanup mutates storage.
+        "comp S: type = struct { x: int32 }; fn f() S { s := S { x: 42 }; defer s.x = 7; return s; } fn main() int32 { return f().x; }",
+    ] {
+        assert_eq!(bounded_program(text).code(), Some(42), "{text}");
+    }
+    assert_eq!(
+        bounded_program(include_str!("../samples/defer.fib")).code(),
+        Some(42)
+    );
 }

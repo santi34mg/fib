@@ -583,7 +583,7 @@ impl Flow<'_> {
                 continue;
             }
             if let S::Defer(deferred) = &node.kind {
-                defers.push(deferred.as_ref());
+                defers.push(deferred.as_slice());
                 active = Some(state);
                 continue;
             }
@@ -624,11 +624,9 @@ impl Flow<'_> {
         }
         Ok(exits)
     }
-    fn defers(&mut self, nodes: &[&Statement], state: &mut State) -> anyhow::Result<()> {
+    fn defers(&mut self, nodes: &[&[Statement]], state: &mut State) -> anyhow::Result<()> {
         for node in nodes.iter().rev() {
-            let exits = self
-                .statement(node, state.clone())
-                .map_err(|e| at_span(e, node.span))?;
+            let exits = self.block(node, state.clone())?;
             *state = self
                 .merge(
                     exits

@@ -154,7 +154,7 @@ fn statement(v: &mut impl Visitor, node: &mut Statement, file: bool) -> Result {
             }
             statements(v, body, false)?;
         }
-        S::Defer(stmt) => statement(v, stmt, false)?,
+        S::Defer(body) => statements(v, body, false)?,
         S::Switch { subject, arms } => {
             expression(v, subject)?;
             for arm in arms {

@@ -75,12 +75,16 @@ A return records no value or a comma-separated expression list.
 
 ```fib
 defer cleanup();
+defer {
+    cleanup();
+    release();
+};
 defer if ready { cleanup(); };
 ```
 
-`defer` wraps a single statement. One final `;` terminates the outer defer and
-its wrapped statement; it is not `defer cleanup();;`. Statements inside a
-wrapped block still need their terminators.
+`defer` wraps a statement or a brace-delimited block. One final `;` terminates
+the outer defer. Each statement inside a deferred block needs its own terminator.
+Deferred blocks have a lexical scope for their local declarations.
 
 ## `switch`
 
@@ -92,4 +96,5 @@ Related follow-up is collected in this [GitHub issue #14](https://github.com/san
 Parser coverage: `test_if_statement`, `test_if_else_statement`,
 `test_if_name_condition_is_not_struct_construct`, `test_while_loop`,
 `test_while_without_condition`, `test_break_continue`, `test_return_void`, and
-`test_defer_statement`.
+`test_defer_statement`, `defer_blocks_preserve_statements_and_spans`, and
+`malformed_defer_blocks_are_rejected`.

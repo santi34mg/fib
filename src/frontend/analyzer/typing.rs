@@ -161,7 +161,7 @@ pub(super) fn resolve_project_collecting(
                         collect(&arm.body, definitions);
                     }
                 }
-                S::Defer(node) => collect(std::slice::from_ref(node), definitions),
+                S::Defer(node) => collect(node, definitions),
                 _ => {}
             }
         }

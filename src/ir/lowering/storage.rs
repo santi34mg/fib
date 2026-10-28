@@ -87,6 +87,7 @@ pub(super) fn storage_bindings(
                         expression(e, stored);
                     }
                 }
+                S::Defer(body) => statements(body, source, stored)?,
                 S::While { condition, body } => {
                     if let Some(e) = condition {
                         expression(e, stored);

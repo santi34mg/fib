@@ -1328,6 +1328,34 @@ mod tests {
     }
 
     #[test]
+    fn defer_blocks_preserve_statements_and_spans() {
+        let ast = get_ast("defer {\n x := 1;\n cleanup(x);\n}; defer // empty cleanup\n {};");
+        let stmts = module_statements(&ast);
+        let StatementKind::Defer(body) = &stmts[0] else {
+            panic!("expected defer")
+        };
+        assert_eq!(body.len(), 2);
+        assert_eq!(body[0].span.line, 2);
+        assert_eq!(body[1].span.line, 3);
+        assert!(matches!(&stmts[1], StatementKind::Defer(body) if body.is_empty()));
+    }
+
+    #[test]
+    fn malformed_defer_blocks_are_rejected() {
+        for source in [
+            "defer {",
+            "defer { cleanup();",
+            "defer { cleanup() };",
+            "defer {}",
+            "defer;",
+        ] {
+            let mut parser =
+                Parser::with_source(Tokenizer::new(source), Path::new("defer.fib"), source);
+            assert!(parser.parse().is_err(), "accepted {source}");
+        }
+    }
+
+    #[test]
     fn test_multiple_statements() {
         let test_string = "x := 1;\ny := 2;\nz := 3;";
         let ast = get_ast(test_string);

@@ -455,7 +455,7 @@ impl Validator<'_> {
                         self.collect(&arm.body)?;
                     }
                 }
-                S::Defer(node) => self.collect(std::slice::from_ref(node))?,
+                S::Defer(node) => self.collect(node)?,
                 _ => {}
             }
         }
@@ -1442,7 +1442,7 @@ impl Validator<'_> {
                     self.statements(&arm.body)?;
                 }
             }
-            S::Defer(node) => self.statement(node)?,
+            S::Defer(nodes) => self.statements(nodes)?,
             S::Break | S::Continue => {}
         }
         Ok(())

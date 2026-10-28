@@ -150,14 +150,26 @@ where
                 }
                 TokenKind::Keyword(Keyword::Defer) => {
                     self.next(); // consume 'defer'
-                    // Single `;` terminates the whole `defer <stmt>;`,
-                    // so the inner statement is parsed without one.
-                    let (kind, iline, icolumn) = self.parse_statement_inner_some()?;
-                    let inner = Statement {
-                        kind,
-                        span: crate::diagnostics::Span::new(iline, icolumn),
+                    while matches!(
+                        self.peek().map(|token| token.kind),
+                        Some(TokenKind::Comment)
+                    ) {
+                        self.next();
+                    }
+                    // The outer defer owns the trailing semicolon for either form.
+                    let body = if matches!(
+                        self.peek().map(|token| token.kind),
+                        Some(TokenKind::Punctuation(Punctuation::OpeningCurlyBrace))
+                    ) {
+                        self.parse_body()?
+                    } else {
+                        let (kind, iline, icolumn) = self.parse_statement_inner_some()?;
+                        vec![Statement {
+                            kind,
+                            span: crate::diagnostics::Span::new(iline, icolumn),
+                        }]
                     };
-                    StatementKind::Defer(Box::new(inner))
+                    StatementKind::Defer(body)
                 }
                 TokenKind::Keyword(Keyword::Break) => {
                     self.next(); // consume 'break'

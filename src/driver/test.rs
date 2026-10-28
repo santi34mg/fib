@@ -127,7 +127,7 @@ fn scalar_subset_rejections_are_located_backend_diagnostics_even_in_dead_code() 
         "fn main() int32 { while (false) { x := [1, 2][..]; }; return 42; }",
         "fn main() int32 { while () { break; x := [1, 2][..]; }; return 42; }",
         "fn main() int32 { while () { continue; x := [1, 2][..]; }; }",
-        "fn main() int32 { x := 0; defer x = 1; return 42; }",
+        "fn main() int32 { defer { x := [1, 2][..]; }; return 42; }",
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
@@ -468,18 +468,36 @@ fn enum_lowering_checks_unmatched_and_dead_arms() {
     for text in [
         "comp E: type = enum { A, Items { values: int32[] } }; fn main() int32 { e := E.Items([1, 2][..]); return 42; }",
         "comp E: type = enum { A, B }; fn main() int32 { switch(E.A) { when .A {} when .B { data := [1, 2][..]; } }; return 42; }",
-        "comp E: type = enum { A }; fn main() int32 { x := 0; if false { switch(E.A) { when .A { defer x = 1; } }; }; return 42; }",
+        "comp E: type = enum { A }; fn main() int32 { x := 0; if false { switch(E.A) { when .A { defer { data := [1, 2][..]; }; } }; }; return 42; }",
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
         let error = crate::ir::lowering::lower(&project).unwrap_err();
+        let diagnostic = error
+            .downcast_ref::<crate::diagnostics::CompilerError>()
+            .unwrap_or_else(|| panic!("{error:#}"));
+        assert_eq!(diagnostic.kind, crate::diagnostics::ErrorKind::Backend);
         assert!(
-            error
-                .downcast_ref::<crate::diagnostics::CompilerError>()
-                .is_some(),
+            diagnostic.message.contains("unsupported expression"),
             "{error:#}"
         );
-        assert!(error.to_string().contains("unsupported"), "{error:#}");
+        assert!(diagnostic.span.is_some());
+        assert_eq!(diagnostic.filename.as_ref(), Some(&plan.files[0].path));
         assert!(!plan.output.exists());
+        assert!(!plan.output.with_extension("o").exists());
+    }
+}
+
+#[test]
+fn defer_blocks_lower_to_verified_ir() {
+    for text in [
+        include_str!("../../samples/defer.fib"),
+        "fn f(p: *int32, b: bool) { defer { p* = (p*) + 1; }; if b { defer p* = (p*) + 40; return; }; defer p* = (p*) + 2; } fn main() int32 { x := 0; f(x&, true); return x + 1; }",
+        "fn main() int32 { x := 0; i := 0; while (i < 4) { defer x = x + 1; i = i + 1; if i < 3 { continue; }; break; }; return x; }",
+    ] {
+        let (_directory, plan) = source(text);
+        let project = run_frontend(&plan).unwrap();
+        let ir = crate::ir::lowering::lower(&project).unwrap();
+        crate::ir::verify_ir(&ir).unwrap();
     }
 }

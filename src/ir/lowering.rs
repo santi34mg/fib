@@ -533,6 +533,7 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
             constants: &constants,
             builder,
             loops: Vec::new(),
+            defers: Vec::new(),
             slots,
         };
         let remaining = lowerer.statements(
@@ -900,6 +901,7 @@ impl Checker<'_, '_> {
                         self.statements(&arm.body)?;
                     }
                 }
+                S::Defer(body) => self.statements(body)?,
                 S::Break | S::Continue => {}
                 S::Return(None) => {}
                 S::Return(Some(values)) if values.len() == 1 => self.expression(&values[0])?,
@@ -934,6 +936,7 @@ struct State {
 // Body-local bindings never escape through a break or continue.
 struct LoopContext {
     header: BlockId,
+    defer_depth: usize,
     exit: Option<BlockId>,
     locals: Vec<LocalId>,
     types: Vec<TypeId>,
@@ -944,6 +947,8 @@ struct Lowerer<'a, 'p, 'ir> {
     constants: &'a [Constant],
     builder: FunctionBuilder<'ir>,
     loops: Vec<LoopContext>,
+    // One registration list per active lexical block; bodies run at exit.
+    defers: Vec<Vec<Vec<Statement>>>,
     slots: BTreeMap<LocalId, Operand>,
 }
 impl Lowerer<'_, '_, '_> {
@@ -1390,6 +1395,38 @@ impl Lowerer<'_, '_, '_> {
         Ok(())
     }
     fn statements(&mut self, nodes: &[Statement], state: State) -> anyhow::Result<Option<State>> {
+        self.defers.push(Vec::new());
+        let result = self.statements_inner(nodes, state);
+        let result = match result {
+            Ok(Some(state)) => self.run_defers(state, self.defers.len() - 1).map(Some),
+            other => other,
+        };
+        self.defers.pop();
+        result
+    }
+
+    /// Emit only cleanup for scopes being exited. Keep registrations intact so
+    /// sibling CFG paths can emit their own exits from the same lexical scopes.
+    fn run_defers(&mut self, mut state: State, depth: usize) -> anyhow::Result<State> {
+        let bodies = self.defers[depth..]
+            .iter()
+            .rev()
+            .flat_map(|frame| frame.iter().rev().cloned())
+            .collect::<Vec<_>>();
+        for body in bodies {
+            state = self.scope(&body, state)?.ok_or_else(|| {
+                self.source
+                    .error(Span::new(1, 1), "defer must complete normally")
+            })?;
+        }
+        Ok(state)
+    }
+
+    fn statements_inner(
+        &mut self,
+        nodes: &[Statement],
+        state: State,
+    ) -> anyhow::Result<Option<State>> {
         let mut current = Some(state);
         for node in nodes {
             let Some(mut state) = current.take() else {
@@ -1450,17 +1487,34 @@ impl Lowerer<'_, '_, '_> {
                     current = self.while_loop(state, condition.as_ref(), body, node.span)?;
                     continue;
                 }
+                S::Defer(body) => {
+                    self.defers
+                        .last_mut()
+                        .expect("active lexical block")
+                        .push(body.clone());
+                }
                 S::Break | S::Continue => {
+                    let depth = self
+                        .loops
+                        .last()
+                        .ok_or_else(|| {
+                            self.source
+                                .error(node.span, "break/continue requires an enclosing loop")
+                        })?
+                        .defer_depth;
+                    state = self.run_defers(state, depth)?;
                     self.loop_jump(state, matches!(node.kind, S::Break), node.span)?;
                     continue;
                 }
                 S::Return(None) => {
+                    state = self.run_defers(state, 0)?;
                     self.builder
                         .set_terminator(state.block, Terminator::Return { values: vec![] })?;
                     continue;
                 }
                 S::Return(Some(values)) => {
                     let value = self.value_expression(&mut state, &values[0])?;
+                    state = self.run_defers(state, 0)?;
                     self.builder.set_terminator(
                         state.block,
                         Terminator::Return {
@@ -1766,6 +1820,7 @@ impl Lowerer<'_, '_, '_> {
         };
         self.loops.push(LoopContext {
             header,
+            defer_depth: self.defers.len(),
             exit,
             locals,
             types,

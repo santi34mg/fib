@@ -56,7 +56,7 @@ pub enum StatementKind {
     },
     Break,
     Continue,
-    Defer(Box<Statement>),
+    Defer(Vec<Statement>),
     Switch {
         subject: Expression,
         arms: Vec<SwitchArm>,

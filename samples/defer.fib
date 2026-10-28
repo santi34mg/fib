@@ -1,0 +1,13 @@
+// Deferred blocks run in reverse order when their lexical scope exits.
+fn main() int32 {
+    result := 0;
+    if true {
+        defer {
+            result = result * 10 + 2;
+        };
+        defer {
+            result = result * 10 + 4;
+        };
+    };
+    return result;
+}
