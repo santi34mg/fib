@@ -2,9 +2,10 @@
 
 The confirmed [package and visibility design](language-specification.md#names-packages-and-source-discovery)
 uses package-rooted paths, source discovery, prelude type values and scoped
-visibility. Prelude identifiers and scoped visibility are implemented. Package
-metadata is explicit in build plans; package-rooted lookup/discovery integration
-remains deferred. The resolver still uses explicit flat file paths.
+visibility. Prelude identifiers, scoped visibility and package-rooted lookup
+are implemented. Package metadata is explicit in build plans; recursive source
+discovery remains deferred. Installed std is registered before parsing, using
+ordinary package environments and file namespaces.
 
 The name pass runs on the original parsed AST through `Analyzer::new`,
 `collect_declarations`, and `resolve_names`. It resolves bindings, file paths,
@@ -33,8 +34,10 @@ project-unique `LocalId`s. Alias uses carry the canonical target's identity.
 ## Lookup and visibility
 
 Unqualified lookup checks lexical bindings, current-file declarations, then
-registered file names. Qualified lookup selects the longest matching canonical
-file prefix before considering a lexical or current-file alias. A canonical file
+registered file names. Qualified lookup selects `root` or a declared dependency
+in the requesting package's environment, then finds its package-relative file
+path. File prefixes are normalized for ASCII case and hyphens, while declarations
+remain case-sensitive. Flat plans retain their longest-prefix compatibility path. A canonical file
 path bypasses a same-spelled runtime local. Only files, including aliases to files,
 can be intermediate namespaces; variables, functions, and types can be final targets.
 
@@ -43,7 +46,8 @@ containing directory subtree in the same package; `pub(root)` permits package-wi
 access; `pub` permits external access through the current file registry. Scope
 checks use explicit package/file regions before following alias targets. Public
 aliases may re-export accessible private targets while keeping the original path
-restricted. Dependency-environment lookup remains deferred. Resolution uses
+restricted. Dependency environments are package-relative: a consumer cannot name
+another package's dependencies unless it declares them itself. Resolution uses
 registered names, never include paths or recursive filesystem imports.
 
 ## Compile-time types and aliases
@@ -116,3 +120,13 @@ preserved.
 initialization and structured flow checks. The six inline specification phases
 in `src/frontend/analyzer/test.rs` exercise the working resolver; see
 [validation](agents/tests/README.md).
+
+## Compiler and installed source modules
+
+One module can contain both parsed Fib declarations and compiler-owned declarations.
+Registration allocates distinct file/declaration identities, rejects duplicate names
+and records compiler operations by `DeclId`. Aliases preserve these identities.
+`std::prelude` selects implicit aliases through public exports; the initial export
+list is empty. `std` follows ordinary dependency-root protection, while primitive
+prelude names retain their existing independent protection. See
+[standard-library setup](standard-library.md).

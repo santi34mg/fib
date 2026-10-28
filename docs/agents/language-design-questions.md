@@ -3,8 +3,8 @@
 The [language specification](../language-specification.md) defines file namespaces,
 package-rooted paths, `root`, source roots/discovery, scoped visibility, protected
 prelude type names, suffix arrays, lexical order, numeric/Boolean behavior,
-mutability and exhaustive switches. The independently specified semantic features now execute. Package/discovery
-integration and runtime indexing/slices still depend on open details; implementing
+mutability and exhaustive switches. The independently specified semantic features now execute. Recursive discovery
+integration and general runtime indexing/slices still depend on open details; implementing
 the other settled choices is not a new language-design question. Compare the implementation guides before claiming
 support; the current compiler predates several decisions.
 

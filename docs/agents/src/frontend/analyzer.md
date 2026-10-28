@@ -2,8 +2,9 @@
 
 The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 Current source is
 [`analyzer.rs`](../../../../src/frontend/analyzer.rs) and `analyzer/`.
@@ -38,7 +39,9 @@ an explicit iterative dependency stack with cycle-chain diagnostics and cached
 canonical targets; long chains do not recurse through the Rust stack.
 
 Unqualified names prefer lexical bindings, then current-file declarations, then
-registered file names. Qualified paths prefer the longest canonical file prefix.
+registered file names. Qualified paths resolve `root` and dependency names using
+the defining package's environment, then normalized package-relative file paths.
+Flat plans retain longest-prefix compatibility.
 Only files and aliases to files can be intermediate namespaces.
 
 Local bindings and aliases follow declaration order. All multi-binding initializers
@@ -79,3 +82,11 @@ pending cases now pass, with added initialization, flow, defer, specialization
 and computed-type regressions.
 See [type-resolution rules](../../../type-resolution.md). See [name-resolution behavior](../../../name-resolution.md) and
 [semantic tables and annotations](semantic-types.md).
+
+Source and compiler declarations share namespaces, including mixed modules. The
+`ProjectSymbols::compiler_declarations` registry is keyed by canonical `DeclId` and
+is shared by inference, independent validation and lowering. Installed std is
+prepared before parsing; `Analyzer::new` attaches its intrinsic descriptors.
+`with_module_intrinsics` augments a registered module through the same collection
+path as source declarations. Synthetic module file IDs exclude every planned
+source file, even when package-aware lookup uses separate file maps.

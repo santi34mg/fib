@@ -2,8 +2,9 @@
 
 The [language specification](../../docs/language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 The executable boundary is `AnalyzedProject -> Ir -> backend`. Arena records
 remain public and unverified until `verify_ir` succeeds. IDs are stable indices
@@ -67,9 +68,12 @@ rechecked bodies and binding facts; symbolic templates are never emitted.
 helpers and direct calls,
 initialized locals, assignment, arithmetic, bitwise/shifts, explicit numeric casts,
 short-circuit booleans, comparisons, conditionals, while loops, break/continue and returns.
+Defer statements and blocks execute in reverse registration order on lexical
+scope exit, including return, break and continue. Return operands are evaluated
+before cleanup. Cleanup lowers to ordinary CFG instructions; traps do not unwind.
 Enums support constructors, payload copies and switches; see [enum semantics](../../docs/enum-semantics.md). SSA branch joins use block parameters. Structs, uninitialized locals and
 address-taken bindings use stack storage. Ordinary source dereference emits an
-explicit null-check/trap CFG; `memory::unchecked_deref` omits that check. The IR
+explicit null-check/trap CFG; `std::memory::unchecked_deref` omits that check. The IR
 verifier proves structural memory typing, not allocation validity or initialization.
 See [struct/storage semantics](../../docs/struct-storage-semantics.md).
 See `../backend/README.md` for ABI restrictions and executable tests.
@@ -171,3 +175,14 @@ successful lookup, or a formatted dump as evidence that verification ran.
 
 These questions must be resolved before executing the corresponding operations;
 they do not block the supported scalar/control-flow subset.
+
+## Standard-library operations
+
+Memory intrinsics resolve under `std::memory`. Source lowering supports
+`slice_from_parts`, `slice_data` and slice `.len`, preserving the existing
+limitations on general runtime indexing/slicing. `Syscall` takes a uint64 number
+and up to six uint64/pointer arguments and returns int64. Verification checks
+types, signatures, ownership and dominance. LLVM emits Linux x86-64 inline
+assembly with side effects and register/flags/memory clobbers; other targets fail.
+The package-private mmap helper lowers to a verified uint64-to-pointer cast.
+Build-file interpretation never executes syscalls.

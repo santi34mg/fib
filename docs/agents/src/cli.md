@@ -2,8 +2,9 @@
 
 The [language specification](../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 `main.rs` parses Clap commands and delegates to `cli::exec_command`.
 The binary target is `fibc`; the Clap tool name is `fib`.

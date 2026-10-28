@@ -2,10 +2,11 @@
 
 The [language specification](../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
-Status reviewed against source and tests on 2026-10-24. Source and tests take
+Status reviewed against source and tests on 2026-10-27. Source and tests take
 precedence over historical comments, samples and language proposals. Dated
 validation results are recorded in the [test guide](tests/README.md); the specification implementation passed the no-default and LLVM-enabled suites.
 
@@ -29,8 +30,8 @@ while loops, break/continue and returns. Typed numeric values require explicit
 conversions. Native helpers use a limited direct Fib fastcc ABI; main keeps the
 C int32 entry contract. Struct values, partial initialization, stack storage,
 field/pointer mutation and internal struct/pointer calls work. Ordinary dereference
-traps on null; `memory::unchecked_deref(pointer)` returns an unchecked place.
-Enum constructors, payload copies, switches, storage and internal calls also execute; see [enum semantics](../enum-semantics.md). Defer, runtime globals and broader runtime representations remain unfinished. See
+traps on null; `std::memory::unchecked_deref(pointer)` returns an unchecked place.
+Enum constructors, payload copies, switches, storage and internal calls also execute; see [enum semantics](../enum-semantics.md). Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Runtime globals and broader runtime representations remain unfinished. See
 [scalar semantics](../scalar-semantics.md) for numeric rules and
 [struct/storage semantics](../struct-storage-semantics.md) for memory rules.
 `build.fib` has an
@@ -69,6 +70,11 @@ errors and suppresses dependent checks. Strict `Analyzer::analyze` retains its
 validated-project contract. Identifier annotation locations support highlighting
 without a separate language grammar. See [LSP setup](../../lsp/README.md).
 
+Directly opened std files use their owning sysroot manifest and reuse the open
+document's ID in the std package. This preserves `root` and compiler intrinsic
+identities, avoids duplicate application/library copies, and shares unsaved std
+sibling overlays even when the running server uses another installed source tree.
+
 ## Specification implementation gaps
 
 Primitive names resolve through protected synthetic prelude declarations. Direct
@@ -84,11 +90,14 @@ maps and file membership. Scoped visibility uses package/directory regions;
 public aliases preserve target identity without exposing the original path.
 Existing single-file/flat-plan callers use the compatibility adapter.
 
-Still deferred: Unicode namespace normalization; public package/discovery build-API
-signatures; package-rooted lookup and discovery/deduplication integration; runtime
-indexing/slicing bounds and lifetime policy; and public compiler namespace spelling.
-Current lookup still uses explicit flat file names and longest-prefix matching.
-General build interpretation, globals, defer, indirect calls and broader ABI remain
+Package-qualified lookup uses each source package's dependency environment and
+package-relative file paths, with ASCII case/hyphen normalization and collision
+checks. Flat-plan callers retain their compatibility path. Installed std is added
+before parsing; see [standard library](../standard-library.md).
+Still deferred: Unicode namespace normalization, public package/discovery build-API
+signatures and discovery/deduplication integration, general runtime indexing/slicing
+and lifetime policy, and broader compiler namespace spelling.
+General build interpretation, globals, indirect calls and broader ABI remain
 unfinished. These are implementation boundaries, not amendments to the specification.
 ## Map
 

@@ -9,8 +9,10 @@ for literal source/entry/output calls, and identity-based interpreter dispatch i
 sources, names, entry and output safety. General CFG/value interpretation and broader
 builder orchestration are not implemented. Both `fib build --single-file PATH`
 and the narrow `fib build --build-file PATH` route compile supported programs.
-Explicit multi-file plans now lower and execute. Package metadata/scoped visibility
-are represented, while package-rooted lookup/discovery integration remains deferred.
+Explicit multi-file plans now lower and execute. Package metadata, scoped visibility
+and package-rooted lookup work. Recursive discovery remains deferred. Build-file
+analysis loads installed std through shared plan preparation, while interpretation
+rejects runtime syscalls.
 
 The chosen direction is to compile `build.fib` through the normal frontend into
 verified, backend-independent IR and interpret that IR inside `fibc`. The compiler
@@ -67,13 +69,15 @@ they must never be treated as successful no-ops.
 ## Build entry and API boundary
 
 The current build file provides `build() int32` and calls the synthetic
-`build_api` namespace with literal strings:
+`build_api` namespace with explicitly sliced string literals. Its text parameters
+have type `const uint8[]`; literals are readonly `uint8` arrays, and array-to-slice
+conversion is explicit:
 
 ```fib
 fn build() int32 {
-    build_api::add_source("src/main.fib");
-    build_api::set_entry("main");
-    build_api::set_output("build/app");
+    build_api::add_source("src/main.fib"[..]);
+    build_api::set_entry("main"[..]);
+    build_api::set_output("build/app"[..]);
     return 0;
 }
 ```
@@ -85,9 +89,9 @@ a future API could receive a host-owned plan builder and mutate it:
 ```fib
 // Illustrative future API; this is not guaranteed parser syntax.
 pub fn build(builder: *PlanBuilder) void {
-    builder.add_source("src/main.fib");
-    builder.set_entry("main");
-    builder.set_output("build/app");
+    builder.add_source("src/main.fib"[..]);
+    builder.set_entry("main"[..]);
+    builder.set_output("build/app"[..]);
 }
 ```
 

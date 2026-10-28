@@ -28,11 +28,11 @@ semantics are documented in the [implementation guide](../agents/README.md),
 
 | # | Proposal | Remaining work |
 | --- | --- | --- |
-| 00 | [Package paths and canonical linkage](00-cross-module-linkage.md) | Implement confirmed package-rooted lookup/visibility, cross-file lowering and stable symbol identity |
+| 00 | [Package paths and canonical linkage](00-cross-module-linkage.md) | Unicode namespace normalization, package acquisition/version identity and stable public symbol encoding |
 | 05 | [String representation redesign](05-remove-string.md) | Literal/FFI/ownership policy and ordinary standard-library string APIs |
 | 06 | [Function overloading](06-function-overloading.md) | Overload selection, return-type policy and canonical overload identity |
 | 07 | [Interfaces and constraints](07-interfaces.md) | Constraint syntax, conformance identity and specialization checking |
-| 08 | [Interpreted build files](08-interpreted-build-files.md) | Package source roots, recursive source discovery, default build-file discovery and general interpretation |
+| 08 | [Interpreted build files](08-interpreted-build-files.md) | Package/discovery build APIs, recursive source discovery, default build-file discovery and general interpretation |
 
 ## Language specification
 
@@ -48,9 +48,9 @@ concrete rechecked instances also execute through verified IR and LLVM.
 
 - [x] Resolve all type names as ordinary identifiers through a protected implicit
       prelude; preserve unified bindings and metatype specialization.
-- [ ] Implement package/source-root identities, `root` paths and namespace aliases;
-      normalize case/hyphens for package/directory/file segments, reject collisions,
-      and retain case-sensitive declaration/local names.
+- [x] Implement package/source-root identities, `root` paths and namespace aliases;
+      normalize ASCII case/hyphens for package/directory/file segments, reject collisions,
+      and retain case-sensitive declaration/local names. Unicode normalization remains open.
 - [x] Add `pub(dir)` and `pub(root)`, preserving file-private/default and public
       access; permit explicit re-exports of accessible restricted targets.
 - [x] Give direct same-family literal cast operands destination context; implement
@@ -65,7 +65,7 @@ concrete rechecked instances also execute through verified IR and LLVM.
       globals and dynamic bounds checks.
 - [x] Lower concrete generic specializations and calls across explicitly planned
       source files, preserving canonical declaration/instance identities.
-- [ ] Lower lexical defer, including cleanup on return, break and
+- [x] Lower lexical defer, including cleanup on return, break and
       continue, according to [implemented flow semantics](../type-resolution.md).
 
 See the [SSA contract](../../src/ir/README.md) for representation boundaries.
@@ -109,7 +109,9 @@ See the [backend contract](../../src/backend/README.md) and
       runtime tests. Historical experimental sources have been removed. Validate
       allocation failure, overflow, genuine atomics and platform FFI contracts
       rather than restoring unchecked bindings or success-returning stubs.
-- [ ] Design metatype-based result/option types, owned/borrowed bytes, UTF-8 text,
+- [x] Provide installed, versioned std/prelude registration, reusable `Result(T, E)`
+      and Linux x86-64 typed syscall wrappers through verified IR and LLVM.
+- [ ] Design option types, owned/borrowed bytes, UTF-8 text,
       paths and move-only files; specify allocation failure and embedded NUL.
 - [ ] Replace public libc dependencies with a private platform layer, immediate
       errno translation, retry handling and C shims for ABI-sensitive structures.

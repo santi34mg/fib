@@ -1,9 +1,16 @@
 # AGENTS.md
 
+## Tooling restrictions
+
+Never use Bash or Python in this project. Do not invoke either interpreter or add
+scripts written in either language. Use Rust for project tooling and direct
+file-edit tools for changes.
+
 The [language specification](docs/language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 [current implementation guide](docs/agents/README.md), not historical compiler claims.
@@ -26,7 +33,7 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   the driver validates the selected entry contract and chooses the IR consumer. Program lowering supports
   multi-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
-  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Concrete generic functions, fixed-array values and multi-binding locals execute. Defer, runtime globals, runtime indexing/slices and indirect calls still fail.
+  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `std::memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Concrete generic functions, fixed-array values and multi-binding locals execute. Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Runtime globals, runtime indexing/slices and indirect calls still fail.
 - `src/bin/fib-lsp.rs` implements a native stdio LSP sharing compiler tokenization,
   parsing, collecting analysis and build planning. `frontend::source` supplies
   unsaved overlays; `frontend::tooling` produces highlights and diagnostics.
@@ -38,8 +45,9 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   numeric/bool conversions share constant/runtime rules. Shallow readonly views,
   warned one-layer pointer field access and exhaustive enum switches are enforced.
   `BuildPlan::packages` records explicit package IDs/source roots/dependency maps;
-  scoped visibility uses package/directory regions. Package-rooted lookup/discovery
-  integration and runtime indexing/slices remain deferred.
+  scoped visibility uses package/directory regions. Package-rooted lookup resolves
+  `root` and dependency environments with ASCII case/hyphen normalization. Recursive
+  discovery and general runtime indexing/slices remain deferred.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
   Build files have an initial `build_api` semantic namespace and a narrow verified-IR
   path for literal source/entry/output operations. It finalizes deterministic plans
@@ -60,6 +68,17 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   Old positional-file, include-root, check/emit/link/release flags do not exist.
 
 See [scalar semantics](docs/scalar-semantics.md) for wrapping, casts, traps and IEEE rules. Typed numeric values require explicit conversions; no implicit widening is performed.
+
+## Standard library
+
+`library/std` contains ordinary Fib sources; `library/sysroot.toml` pins compiler
+version and compiler-declaration revision. CLI/build/LSP plans load the installed
+sources before parsing. Use `--sysroot library` or `FIB_SYSROOT="$PWD/library"` for
+development; `--no-std` retains primitive types without std. Low-level analyzer
+fixtures explicitly select their modules. `std::memory` replaces automatic
+`memory::` access; explicit namespace aliases remain supported. Install binaries
+and sources with `cargo run --no-default-features --bin fib-install -- --prefix PREFIX`. See
+[standard-library contracts](docs/standard-library.md).
 
 ## Toolchain and commands
 
@@ -111,7 +130,8 @@ its function type is `comp fn(type) -> type`. Variadics are removed. Type-level
 Legacy `@` types, `var`, `for`, dot-index and imports
 are not the current working grammar. Parsing is not semantic/runtime support.
 See [parser details](docs/agents/src/frontend/parser.md). Samples use current
-syntax and have automatic parser coverage. Standard-library implementations remain pending.
+syntax and have automatic parser coverage. The installed source std provides `std::result::Result(T, E)`, `std::memory`
+intrinsics and Linux x86-64 `std::os` syscalls. General library modules remain pending.
 
 `FileId`/`FileName`/paths live in `plan.rs`; syntax retains point spans and
 pending analysis slots. `AnalyzedProject::source_paths` retains plan paths after analysis; there is no

@@ -70,5 +70,5 @@ directly through the existing internal Fib fastcc ABI; layout is an internal
 implementation contract, not a stable external ABI.
 
 The executable sample is [`enum_runtime.fib`](../samples/enum_runtime.fib).
-Arrays/slices, runtime globals, defer, generic runtime bodies and enum-to-integer
+Runtime indexing/slices, runtime globals and enum-to-integer
 casts are outside this lowering extension.

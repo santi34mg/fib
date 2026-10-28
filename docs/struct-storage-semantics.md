@@ -125,15 +125,15 @@ planned source namespace. The place-returning intrinsic accepts one typed pointe
 
 ```fib
 pointer := point&;
-value := memory::unchecked_deref(pointer).x;
-memory::unchecked_deref(pointer).x = 42;
-address := memory::unchecked_deref(pointer)&;
+value := std::memory::unchecked_deref(pointer).x;
+std::memory::unchecked_deref(pointer).x = 42;
+address := std::memory::unchecked_deref(pointer)&;
 ```
 
-`memory::unchecked_deref(pointer)` evaluates the pointer once and yields its
+`std::memory::unchecked_deref(pointer)` evaluates the pointer once and yields its
 pointee place without a null guard. It can be read, written, projected or addressed.
 Type, arity, mutability and pointer-initialization checks still apply. A later
-ordinary dereference, such as `memory::unchecked_deref(node).next*`, checks the
+ordinary dereference, such as `std::memory::unchecked_deref(node).next*`, checks the
 new pointer normally. Invalid unchecked accesses have no guaranteed trap behavior.
 
 The intrinsic is not an ordinary runtime function or function-pointer value.

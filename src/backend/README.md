@@ -2,8 +2,9 @@
 
 The [language specification](../../docs/language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 `emit_llvm(&Ir, &TargetSpec)` consumes only owned SSA IR. It runs `verify_ir`,
 creates a target machine with LLVM 21/Inkwell, applies its triple and data layout,

@@ -2,8 +2,9 @@
 
 The [language specification](../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 `driver.rs` implements `parse_files`, frontend/bootstrap orchestration and
 `run_pipeline`. Plans explicitly enumerate files; parsing preserves their IDs and
@@ -51,7 +52,9 @@ linking invokes host `cc`, preserving stderr on failure. Object output needs LLV
 lowering route. It configures the compiler-provided synthetic
 `build_api::{add_source, set_entry, set_output}` module on the ordinary analyzer, validates
 one `build() int32` entry, and invokes the same lowering used by normal source. Builtins retain semantic `DeclId` identities through a
-`FunctionId -> BuiltinFunction` IR table; strings become interpreter-only byte values.
+`FunctionId -> BuiltinFunction` IR table. Build API text parameters are `const uint8[]`;
+string literals are readonly byte arrays and must be explicitly sliced (`"text"[..]`).
+These literal slices become interpreter-only byte values.
 Unsupported build-file syntax fails explicitly and this IR is not sent to LLVM.
 
 `BuildPlan::single_file` canonicalizes a source path, derives its namespace from
@@ -74,12 +77,12 @@ build-file executable and will not expose Rust ABI or Rust object layouts. See t
 `test` remains unimplemented; `build --build-file PATH` supports the narrow interpreted
 subset and then enters the normal binary pipeline.
 Ordinary dereference emits a null-check/trap CFG. The automatically registered
-`memory::unchecked_deref` intrinsic yields a typed place without that guard. It
+`std::memory::unchecked_deref` intrinsic yields a typed place without that guard. It
 emits memory operations rather than a builtin declaration/call and does not select
 the bootstrap entry. See [struct/storage semantics](../../struct-storage-semantics.md).
 Enum constructors, payload copies and switches lower through the same verified pipeline. See [enum semantics](../../enum-semantics.md).
 Concrete generic instances, fixed-array values, multi-bindings and calls across
-planned files lower. Defer, runtime globals, runtime indexing/slices, indirect
+planned files and lexical defer statements/blocks lower. Runtime globals, runtime indexing/slices, indirect
 calls and multiple-result initializers remain unsupported.
 
 `BuildPlan::packages` accepts host-created `PackageSpec` records with `PackageId`,
@@ -89,3 +92,16 @@ dependency targets. Empty package metadata retains the existing flat-plan adapte
 Entry selection is confined to `plan.entry`; other files' `main` functions are
 ordinary internal helpers. Compilation renders the analyzed project's warnings
 without changing successful exit status.
+
+## Installed std
+
+The driver prepares plans before parsing, loading an installed version-matched
+source tree selected by `--sysroot`, `FIB_SYSROOT`, or the executable installation
+prefix. `--no-std` opts out. `BuildPlan::prepare` is idempotent and preserves existing
+file IDs and entry selection. Build-file and LSP analysis use the same preparation.
+For a standalone document belonging to a std source tree, preparation uses that
+tree's manifest and retains the document in the std package instead of creating
+an application copy. Only manifest-listed sources are selected.
+`std::os` contains Fib wrappers and compiler syscall declarations in one namespace.
+Call results may be discarded while retaining their result definitions and effects,
+including cleanup calls in defer blocks. See [library contracts](../../standard-library.md).

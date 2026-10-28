@@ -145,7 +145,7 @@ dereference uses postfix `pointer*`. `pointer.field` may insert exactly one
 implicit dereference per field access and emits a warning; a second pointer layer
 requires explicit dereference. Inserted dereferences preserve readonly permissions
 and ordinary null checks. Ordinary dereference traps on null;
-`memory::unchecked_deref(pointer)` skips only the selected null check. Neither
+`std::memory::unchecked_deref(pointer)` skips only the selected null check. Neither
 form guarantees lifetime, allocation validity or ownership safety.
 
 ## Enums and switches

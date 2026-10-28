@@ -2,8 +2,9 @@
 
 The [language specification](language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 Reviewed against the current checkout on 2026-10-24. This document describes the
 working pipeline and its extension boundaries. Detailed implementation references
@@ -180,14 +181,17 @@ body, and unconditional loops create an exit only for reachable breaks. Divergin
 functions need no artificial return or unreachable block.
 
 Fixed-array values, multi-binding locals and concrete generic instances lower.
-Runtime globals, runtime indexing/slices/tuples, defer, indirect calls and
+Lexical defer statements and blocks lower in reverse order on scope exit, including
+return, break and continue. Return values are evaluated before cleanup.
+Runtime globals, runtime indexing/slices/tuples, indirect calls and
 multiple-result source functions remain unsupported by lowering. Analysis may accept these constructs;
 that does not make them executable.
 
 ### Checked and unchecked places
 
-`Analyzer::new` installs the compiler-provided `memory` namespace for both normal
-and build-file analysis. `memory::unchecked_deref(pointer)` is an intrinsic with
+Plan preparation loads the installed std package for CLI, LSP and build-file
+analysis. `Analyzer::new` attaches compiler declarations to the registered std
+source modules; no top-level memory namespace is installed. `std::memory::unchecked_deref(pointer)` is an intrinsic with
 a dedicated semantic callable marker and a typed mutable/readonly place result.
 It resolves by declaration identity, supports compile-time aliases and cannot be
 stored as a runtime callable. Independent validation rechecks its arguments,
@@ -348,3 +352,18 @@ consumer together. Raw representation records and positive parsing tests do not
 establish executable behavior. Add meaningful positive/negative regressions,
 preserve source identities and diagnostics, and keep unsupported operations as
 explicit errors until their invariants and semantics are implemented.
+
+## Installed standard-library modules
+
+`BuildPlan::prepare` validates the versioned sysroot and deterministically adds std
+source files and package dependencies before parsing. `ProjectSymbols` resolves
+package-rooted paths in the defining package's dependency environment. Source and
+synthetic declarations share namespaces and a canonical `DeclId` compiler registry,
+including mixed source/intrinsic modules. Public `std::prelude` exports become
+ordinary implicit aliases; the initial export list is empty.
+
+`std::result::Result(T, E)` is a Fib type computation, independent of OS errors.
+`std::os` wrappers translate Linux x86-64 raw syscall results into typed results.
+Verified `Syscall` IR carries word/pointer arguments and observable memory effects.
+LLVM emits constrained side-effecting inline assembly; other targets and build-file
+execution reject syscalls. See [standard library](standard-library.md).

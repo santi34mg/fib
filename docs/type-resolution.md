@@ -187,11 +187,15 @@ propagated back to callers. Raw-pointer/slice aliasing and indirect-call effects
 are not an ownership or interprocedural initialization proof; code relying on
 initialization through aliases or call effects is outside this pass's guarantees.
 
-Defer requires function scope and rejects nested defer and control transfers.
+Defer accepts a single statement or a brace-delimited block (`defer { ... };`).
+Deferred bodies have their own lexical scope. Defer requires function scope and
+rejects nested defer and control transfers.
 Deferred statements are checked at each lexical scope exit in reverse order;
 return expressions are read before deferred work. Conditional exits, loop breaks
 and continues run the defers belonging to scopes they leave. Deferred work must
-complete normally under this implementation.
+complete normally under this implementation. Lowering executes these cleanups on
+normal block completion, return, break and continue. Values are read at cleanup
+time; return values are captured before cleanup. Traps do not unwind defers.
 
 ## Acceptance boundary
 

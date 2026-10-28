@@ -2,8 +2,9 @@
 
 The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 See the [IR implementation contract](../../../../src/ir/README.md).
 
@@ -24,6 +25,10 @@ currently valid only for interpreted build-API calls and have no LLVM ABI loweri
 `ir::lowering::lower` produces verified SSA for fixed-width integer/float/bool
 helpers/calls, initialized locals, assignments, arithmetic/bitwise/shifts,
 comparisons, explicit casts, short-circuit booleans, if/else, while loops, break/continue and returns.
+Defer statements and blocks register at their source position and execute in
+reverse order on lexical scope exits. Return expressions are evaluated before
+cleanup; break/continue clean up only scopes left by that loop transfer. Cleanup
+uses ordinary verified CFG and memory operations; traps do not unwind it.
 See [scalar semantics](../../../scalar-semantics.md) for operation rules.
 Enum constructors and switches with copied payload bindings also lower; see [enum semantics](../../../enum-semantics.md). SSA variable merges and loop-carried values use block parameters. Struct,
 uninitialized and address-taken locals use explicit stack storage; ordinary
@@ -36,3 +41,14 @@ Type parameters/arguments are absent from runtime signatures/calls. Multi-file
 function identities are registered before bodies; internal symbols distinguish
 same-spelled declarations. Fixed-array aggregates validate lengths, element
 signatures and by-value cycles. Numeric casts include explicit bool conversions.
+
+## Standard-library operations
+
+Memory intrinsics resolve under `std::memory`. Source lowering supports
+`slice_from_parts`, `slice_data` and slice `.len`, preserving the existing
+limitations on general runtime indexing/slicing. `Syscall` takes a uint64 number
+and up to six uint64/pointer arguments and returns int64. Verification checks
+types, signatures, ownership and dominance. LLVM emits Linux x86-64 inline
+assembly with side effects and register/flags/memory clobbers; other targets fail.
+The package-private mmap helper lowers to a verified uint64-to-pointer cast.
+Build-file interpretation never executes syscalls.

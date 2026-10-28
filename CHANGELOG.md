@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Installed, version-matched Fib std sources with `--sysroot`/`--no-std`, CLI/LSP/build-plan integration, package-rooted dependency lookup, ASCII namespace normalization, and shared source/intrinsic module registration. `std::prelude` supports explicit exports and initially exports nothing.
 - Reusable `std::result::Result(T, E)` and Linux x86-64 `std::os` raw syscall0–6 plus typed read/write/close/getpid/openat/mmap/munmap wrappers. Verified syscall IR emits side-effecting LLVM assembly with register and memory clobbers, with no native shim.
 - `std::memory` replaces automatic `memory::` access. Slice-data/from-parts intrinsics and slice lengths lower to native IR; call results can be discarded while retaining effects, including explicit cleanup in defer blocks.
+
 - Executable defer statements and `defer { ... };` blocks, with lexical local scope and reverse-order cleanup on normal completion, return, break and continue. Return expressions evaluate before cleanup.
 
 ### Language server

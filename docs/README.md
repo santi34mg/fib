@@ -24,6 +24,9 @@ contracts and unfinished pipeline boundaries. The
 [agent implementation guide](agents/README.md) provides source-level details,
 testing instructions, and contributor guidance.
 
+The [standard-library guide](standard-library.md) describes installed sources,
+package/prelude integration, reusable results and the Linux x86-64 syscall boundary.
+
 ## Language design and future work
 
 - [Name resolution](name-resolution.md): current namespace, alias, visibility and

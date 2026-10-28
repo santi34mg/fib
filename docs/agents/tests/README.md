@@ -2,14 +2,15 @@
 
 The [language specification](../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 Unit tests live beside implementation under `src/`. `tests/executable.rs` is an
 LLVM-feature-gated acceptance suite requiring LLVM 21 and host `cc`. Its fixtures
 include `tests/programs/return_42.fib`, `conditionals.fib`, and the samples
 `builtin_scalars.fib`, `scalar_loops.fib`, `struct_storage.fib` and
-`enum_runtime.fib`. Other samples have parser coverage without an execution claim.
+`enum_runtime.fib` and `defer.fib`. Other samples have parser coverage without an execution claim.
 The runnable `example-project/` is copied into a temporary directory for both
 no-default frontend/IR validation and an LLVM-enabled CLI build-file/exit-0 test.
 Both tests copy the build file and its two sources. Plan assertions check file
@@ -218,7 +219,87 @@ numeric payload widths/alignment and once-only source evaluation order. Backend
 coverage includes enum constants and switch PHIs/backedges. This inventory is
 source evidence, not a new validation run or test count.
 
+## Defer validation (2026-10-27)
+
+`cargo test --offline --no-default-features defer` passed all 27 matching tests.
+The LLVM-enabled `defer_blocks_execute_on_lexical_exits` test passed 14 compiled programs, including
+`samples/defer.fib`. Coverage includes reverse-order
+cleanup, values read at exit, block-local declarations, normal loop completion,
+break/continue, nested loops, both return paths, implicit void return, pointer and
+aggregate storage, deferred initialization, switches, generic instances and
+aggregate return capture. Strict LLVM-enabled Clippy passed with
+`--all-targets -- -D warnings`.
+
+The full no-default library run had 721 passes and 19 failures; the LLVM library
+run had 731 passes and 20 failures. These runs used `RUST_MIN_STACK=16777216`
+after the default test stack overflowed in the generic-expansion regression.
+Failures remain in the checkout's string/build-API, C ABI and older rejection
+expectations. The full executable suite had 28 passes and one failure in
+`current_capabilities_project_builds_from_build_file_and_runs`, reporting an
+incompatible readonly string argument to the build API. The full suites are not
+green; the passing defer checks do not imply otherwise.
+
+## Test-failure repair (2026-10-27)
+
+Focused parser (113), tokenizer (53), no-default backend (10), LLVM backend
+(21), plan (3) and LSP integration (5) tests passed during repair. Generic
+expansion now has explicit 2 MiB-stack regression tests: runaway expansion
+reports a diagnostic after 16 active specializations, while cached/same-instance
+recursion remains valid. Both stack regressions passed without an increased
+`RUST_MIN_STACK`.
+
+Build API fixtures use explicit `"text"[..]` byte slices rather than implicit
+array-to-slice conversion. Old string-primitive and unsupported-C-ABI assertions
+were updated to the current contracts. Both no-default and all-features
+`cargo check --offline` passed, as did formatting. Final full-suite validation
+is blocked by the example project's removed `features.fib`, still referenced by
+the driver fixture's `include_str!`; its `main.fib` is also empty. These concurrent
+example changes were not reverted, and the full suites are not claimed green.
+
+## Installed std and syscalls validation (2026-10-27)
+
+This later record supersedes the earlier same-day full-suite limitations above.
+The capability fixture now lives under `tests/programs/capabilities`, independently
+of the evolving user-facing example project.
+
+- `cargo test --offline --no-default-features`: 750 library tests, four LSP binary
+  unit tests, six framed-stdio LSP integration tests and seven std integration
+  tests passed, without an increased stack size or an installed sysroot.
+- LLVM 21 `cargo test --offline --all-features`: 761 library tests, four LSP binary
+  unit tests, 29 executable acceptance tests, six LSP integration tests and ten
+  std integration tests passed.
+- No-default and LLVM checks, formatting and strict Clippy passed. The LLVM
+  commands use `LLVM_SYS_211_PREFIX=/usr/lib/llvm/21` in this environment.
+- Std coverage includes package-relative dependency environments, normalized
+  names/collisions, mixed source/intrinsic modules, canonical Result identities,
+  prelude exports/collisions, private pointer conversion helpers, version failures,
+  no-std mode, syscall IR corruption and rejected build-time syscall execution.
+- Native coverage includes raw syscall arities, typed errors, output, short reads
+  and EOF, anonymous/file-backed mappings, cleanup, register constraints and
+  execution after LLVM O2 optimization. Non-Linux/non-x86-64 emission is rejected.
+- The previous installer installed binaries and sources under a temporary prefix.
+  The installed compiler built and ran `samples/syscalls.fib` without an explicit
+  sysroot, including after relocation. `--no-std` compiled a program returning 42
+  with `FIB_SYSROOT` pointing to a nonexistent directory.
+
+General runtime indexing/slicing, recursive source discovery, portable OS
+selection and resource ownership enforcement are not established by these tests.
+
 ## Change guidance
+
+Direct std-source editing regressions passed with no default features: each of
+the five std modules retains its original document ID in one std package, and
+the framed LSP test resolves std's own `root` paths while tracking unsaved sibling
+edits and ignoring an enclosing invalid application build file. Full no-default
+and LLVM-enabled suites passed with seven LSP integration tests and respectively
+eight and eleven std integration tests.
+
+The Rust installer (`scripts/install.rs`, Cargo binary `fib-install`) was validated
+with a debug installation into a temporary prefix. Its installed compiler built
+and ran the syscall sample without an explicit sysroot; installed std sources
+matched the checkout. Installer help, formatting and strict no-default Clippy
+also passed. The installer builds only `fibc` and `fib-lsp` and obtains their
+executable paths from Cargo's JSON artifact messages.
 
 Use `Parser::with_source(Tokenizer::new(source), Path::new("test.fib"), source)`
 for disk-free parser tests. Add accepted and malformed syntax cases. For diagnostics,

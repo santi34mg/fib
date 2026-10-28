@@ -4,7 +4,7 @@ The package path and visibility direction is now confirmed in
 [language specification](../language-specification.md#names-packages-and-source-discovery).
 Each package has a source root; `root` identifies the defining package; fully
 qualified paths use package/directory/file segments, with explicit aliases for
-shortened paths. This replaces the current longest-file-prefix lookup policy.
+shortened paths. Package-aware plans implement this lookup policy; flat plans retain a compatibility adapter.
 File namespaces remain; explicit namespace blocks are not being introduced.
 Package/directory/file segments are case-insensitive, hyphens normalize to
 underscores, and collisions are errors. Declarations and locals stay case-sensitive.
@@ -46,8 +46,9 @@ into owned IR functions/globals before the backend consumes them.
 ## Work and acceptance tests
 
 - [x] Implement declaration collection and alias/file resolution in analysis.
-- [ ] Add package/source-root identities, package-relative dependency environments,
-      path normalization/collision checks, scoped visibility and re-export access.
+- [x] Add package/source-root identities, package-relative dependency environments,
+      ASCII path normalization/collision checks, scoped visibility and re-export access.
+      Unicode normalization remains open.
 - [ ] Define canonical symbol encoding and instance keys independent of local
       dependency aliases and filesystem spelling/case.
 - [ ] Carry identities through AST annotations and `ir::lowering::lower` maps into

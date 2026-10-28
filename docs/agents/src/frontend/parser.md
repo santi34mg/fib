@@ -2,8 +2,9 @@
 
 The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
-multiple source files and fixed-array values execute. Package metadata/scoped
-visibility exist; package-rooted lookup/discovery and runtime indexing/slices remain deferred.
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery and general runtime indexing/slices remain deferred.
 
 [`Parser`](../../../../src/frontend/parser.rs) consumes a token iterator and
 returns `anyhow::Result<Ast>` from `parse()`. For in-memory tests:
@@ -50,7 +51,8 @@ This is parsing only. It does not type-check or compile the function.
 - Statements require `;`, including `if`, `while`, and `switch` blocks.
   Type bindings also require `;`, including after closing struct/enum braces.
   Top-level function definitions do not take an extra `;`.
-  `defer` owns one terminator for its inner statement.
+  `defer` accepts a single statement or a brace-delimited block and owns one
+  outer terminator; statements inside its block retain their terminators.
 - Top-level ordinary statements/bindings are accepted by `parse()` alongside
   functions. `pub`, `const`, and `comp` on bindings record flags only, not semantic
   visibility or compile-time evaluation. Import has no supported loader or parsed
