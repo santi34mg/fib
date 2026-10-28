@@ -204,6 +204,15 @@ pub(super) fn emit_classified(
         .enumerate()
         .map(|(i, f)| abi.declare(&module, FunctionId(i), f))
         .collect::<Result<Vec<_>, _>>()?;
+    let native_data = super::llvm_data::emit(
+        &context,
+        &module,
+        ir,
+        &types,
+        &enum_layouts,
+        &machine.get_target_data(),
+        &functions,
+    )?;
     let builder = context.create_builder();
     for (fi, f) in ir.functions.iter().enumerate() {
         let FunctionBody::Definition {
@@ -231,9 +240,8 @@ pub(super) fn emit_classified(
             ir,
             types: &types,
             layouts: &enum_layouts,
-            module: &module,
         };
-        let constants = enum_emitter.constants()?;
+        let constants = enum_emitter.constants(&native_data.constants, blocks)?;
         let mut slots = std::collections::HashMap::new();
         for &slot in stack_slots {
             let allocation = builder
@@ -276,6 +284,12 @@ pub(super) fn emit_classified(
                     InstructionKind::Constant(id) => {
                         values.insert(inst.results[0], constants[id.0]);
                     }
+                    InstructionKind::GlobalAddress(id) => {
+                        values.insert(
+                            inst.results[0],
+                            native_data.globals[id.0].as_pointer_value().into(),
+                        );
+                    }
                     InstructionKind::Binary { op, lhs, rhs } => {
                         let ty = ir
                             .operand_type(*lhs)
@@ -283,7 +297,10 @@ pub(super) fn emit_classified(
                         let rhs_ty = ir
                             .operand_type(*rhs)
                             .ok_or_else(|| error("missing scalar operand type"))?;
-                        if matches!(ir.types[ty.0], IrType::Pointer { .. }) {
+                        if matches!(
+                            ir.types[ty.0],
+                            IrType::Pointer { .. } | IrType::FunctionPointer(_)
+                        ) {
                             let predicate = match op {
                                 BinaryOp::Eq => inkwell::IntPredicate::EQ,
                                 BinaryOp::Ne => inkwell::IntPredicate::NE,
@@ -491,6 +508,41 @@ pub(super) fn emit_classified(
                             builder.build_gep(types[pointee.0], pointer, &indices, "field.address")
                         }
                         .map_err(error)?;
+                        values.insert(inst.results[0], value.into());
+                    }
+                    InstructionKind::FunctionPointerAddress { base, field } => {
+                        let pointer = operand(base.0, &constants, &values)?.into_pointer_value();
+
+                        // Get the struct type containing the field
+                        let Some(IrType::Struct { fields, .. }) =
+                            ir.operand_type(base.0).and_then(|ty| ir.get_type(ty))
+                        else {
+                            return Err(error("expected struct containing function pointer field"));
+                        };
+
+                        // Use the first field's element type for GEP (function pointers are typically first)
+                        let Some(field_id) = fields.first() else {
+                            return Err(error("struct has no fields"));
+                        };
+
+                        let llvm_element_type = types[field_id.0];
+
+                        // Compute GEP to extract the function pointer value
+                        let indices = [
+                            context.i32_type().const_zero(),                    // Struct offset
+                            context.i32_type().const_int(*field as u64, false), // Field index
+                        ];
+
+                        let value = unsafe {
+                            builder.build_gep(
+                                llvm_element_type,
+                                pointer,
+                                &indices,
+                                "function.pointer.address",
+                            )
+                        }
+                        .map_err(|e| error(format!("GEP failed: {e}")))?;
+
                         values.insert(inst.results[0], value.into());
                     }
                     InstructionKind::Aggregate { elements } => {

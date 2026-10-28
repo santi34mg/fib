@@ -18,8 +18,8 @@ fn error(message: impl ToString) -> BackendError {
 }
 
 pub(super) struct EnumLayout<'ctx> {
-    tag: IntType<'ctx>,
-    variants: Vec<StructType<'ctx>>,
+    pub(super) tag: IntType<'ctx>,
+    pub(super) variants: Vec<StructType<'ctx>>,
 }
 pub(super) type Layouts<'ctx> = HashMap<TypeId, EnumLayout<'ctx>>;
 
@@ -159,7 +159,6 @@ pub(super) fn complete_types<'ctx>(
 
 pub(super) struct EnumEmitter<'a, 'ctx> {
     pub context: &'ctx Context,
-    pub module: &'a inkwell::module::Module<'ctx>,
     pub builder: &'a Builder<'ctx>,
     pub entry: BasicBlock<'ctx>,
     pub ir: &'a Ir,
@@ -281,104 +280,112 @@ impl<'ctx> EnumEmitter<'_, 'ctx> {
             .build_load(field_ty, address, "enum.field")
             .map_err(error)
     }
-    fn byte_global(
+    pub fn constants(
         &self,
-        index: usize,
-        bytes: &[u8],
-        terminated: bool,
-    ) -> Result<PointerValue<'ctx>, BackendError> {
-        let name = format!("fib.literal.{index}");
-        let global = if let Some(g) = self.module.get_global(&name) {
-            g
-        } else {
-            let value = self.context.const_string(bytes, terminated);
-            let global = self.module.add_global(value.get_type(), None, &name);
-            global.set_initializer(&value);
-            global.set_constant(true);
-            global.set_linkage(inkwell::module::Linkage::Private);
-            global
-        };
-        Ok(global.as_pointer_value())
-    }
-    pub fn constants(&self) -> Result<Vec<BasicValueEnum<'ctx>>, BackendError> {
-        let mut values = vec![None; self.ir.constants.len()];
-        // Verification has already established an acyclic graph, including forward references.
-        while values.iter().any(Option::is_none) {
-            for (index, c) in self.ir.constants.iter().enumerate() {
-                if values[index].is_some() {
-                    continue;
-                }
-                let fields = match &c.kind {
-                    ConstantKind::Aggregate(fields) | ConstantKind::Enum { fields, .. } => {
-                        let Some(fields) = fields
-                            .iter()
-                            .map(|id| values[id.0])
-                            .collect::<Option<Vec<_>>>()
-                        else {
-                            continue;
-                        };
-                        fields
-                    }
-                    _ => vec![],
-                };
-                let ty = self.types[c.ty.0];
-                values[index] = Some(match &c.kind {
-                    ConstantKind::Bytes(bytes) => match &self.ir.types[c.ty.0] {
-                        IrType::Array { .. } => {
-                            let elements = bytes
-                                .iter()
-                                .map(|b| {
-                                    self.context.i8_type().const_int((*b).into(), false).into()
-                                })
-                                .collect::<Vec<_>>();
-                            self.aggregate(c.ty, &elements)?
-                        }
-                        IrType::Slice { .. } => {
-                            let pointer = self.byte_global(index, bytes, false)?;
-                            self.aggregate(
-                                c.ty,
-                                &[
-                                    pointer.into(),
-                                    ty.into_struct_type()
-                                        .get_field_type_at_index(1)
-                                        .unwrap()
-                                        .into_int_type()
-                                        .const_int(bytes.len() as u64, false)
-                                        .into(),
-                                ],
-                            )?
-                        }
-                        _ => return Err(error("interpreter bytes cannot be emitted natively")),
-                    },
-                    ConstantKind::CString(bytes) => self.byte_global(index, bytes, true)?.into(),
-                    ConstantKind::Null => ty.into_pointer_type().const_null().into(),
-                    ConstantKind::Bool(b) => {
-                        ty.into_int_type().const_int(u64::from(*b), false).into()
-                    }
-                    ConstantKind::Integer { bits } => {
-                        let integer = ty.into_int_type();
-                        let width = integer.get_bit_width();
-                        if width < 128 && *bits >= (1u128 << width) {
-                            return Err(error("integer constant exceeds target width"));
-                        }
-                        integer
-                            .const_int_arbitrary_precision(&[*bits as u64, (bits >> 64) as u64])
-                            .into()
-                    }
-                    ConstantKind::Float { bits } => {
-                        super::llvm_scalar::float_constant(ty.into_float_type(), *bits).into()
-                    }
-                    ConstantKind::Aggregate(_) => self.aggregate(c.ty, &fields)?,
-                    ConstantKind::Enum { variant, .. } => {
-                        self.construct(c.ty, *variant, &fields)?
-                    }
-                    _ => return Err(error("unsupported LLVM constant")),
-                });
+        native: &[BasicValueEnum<'ctx>],
+        blocks: &[BlockId],
+    ) -> Result<Vec<BasicValueEnum<'ctx>>, BackendError> {
+        let used = constant_uses(self.ir, blocks);
+        let mut values = Vec::with_capacity(native.len());
+        for (index, (constant, value)) in self.ir.constants.iter().zip(native).enumerate() {
+            let logical = self.types[constant.ty.0];
+            if value.get_type() == logical || !used.contains(&ConstantId(index)) {
+                values.push(*value);
+            } else {
+                // Physical constant layouts have already been checked against
+                // logical layouts. Loading through opaque pointers restores the
+                // canonical SSA type without losing relocation-bearing fields.
+                let scratch = self.scratch(value.get_type())?;
+                self.builder.build_store(scratch, *value).map_err(error)?;
+                values.push(
+                    self.builder
+                        .build_load(logical, scratch, "constant.value")
+                        .map_err(error)?,
+                );
             }
         }
-        Ok(values
-            .into_iter()
-            .map(|v| v.expect("materialized constant"))
-            .collect())
+        Ok(values)
     }
+}
+
+/// Global initializers are not function operands. In particular, a large static
+/// array must not be copied onto every function's stack merely because its
+/// initializer appears in the module constant arena.
+fn constant_uses(ir: &Ir, blocks: &[BlockId]) -> HashSet<ConstantId> {
+    let mut used = HashSet::new();
+    let mut operands = Vec::new();
+    for block in blocks.iter().map(|id| &ir.blocks[id.0]) {
+        for instruction in &block.instructions {
+            use InstructionKind as I;
+            match &instruction.kind {
+                I::Constant(id) => {
+                    used.insert(*id);
+                }
+                I::Binary { lhs, rhs, .. } => operands.extend([*lhs, *rhs]),
+                I::Unary { operand, .. }
+                | I::Cast { operand, .. }
+                | I::SliceData(operand)
+                | I::SliceLength(operand)
+                | I::EnumTag { value: operand }
+                | I::EnumField { value: operand, .. } => operands.push(*operand),
+                I::Call { args, .. } => operands.extend(args),
+                I::CallIndirect { callee, args } => {
+                    operands.push(*callee);
+                    operands.extend(args);
+                }
+                I::Syscall { number, args } => {
+                    operands.push(*number);
+                    operands.extend(args);
+                }
+                I::Slice { data, length } => operands.extend([*data, *length]),
+                I::ArrayData(base)
+                | I::FieldAddress { base, .. }
+                | I::FunctionPointerAddress { base, .. } => operands.push(base.0),
+                I::Load { address } => operands.push(address.0),
+                I::Store { address, value } => operands.extend([address.0, *value]),
+                I::Aggregate { elements }
+                | I::Enum {
+                    fields: elements, ..
+                } => operands.extend(elements),
+                I::ExtractField { aggregate, .. } => operands.push(*aggregate),
+                I::InsertField {
+                    aggregate, value, ..
+                } => operands.extend([*aggregate, *value]),
+                I::ExtractElement { aggregate, index } => operands.extend([*aggregate, *index]),
+                I::ElementAddress { base, index } => operands.extend([base.0, *index]),
+                I::FunctionAddress(_) | I::StackAddress(_) | I::GlobalAddress(_) => {}
+            }
+        }
+        match &block.terminator {
+            Terminator::Jump(edge) => operands.extend(&edge.args),
+            Terminator::Branch {
+                condition,
+                then_edge,
+                else_edge,
+            } => {
+                operands.push(*condition);
+                operands.extend(&then_edge.args);
+                operands.extend(&else_edge.args);
+            }
+            Terminator::Switch {
+                subject,
+                cases,
+                default,
+            } => {
+                operands.push(*subject);
+                operands.extend(&default.args);
+                for case in cases {
+                    used.insert(case.value);
+                    operands.extend(&case.edge.args);
+                }
+            }
+            Terminator::Return { values } => operands.extend(values),
+            Terminator::Trap(_) | Terminator::Unreachable => {}
+        }
+    }
+    used.extend(operands.into_iter().filter_map(|operand| match operand {
+        Operand::Constant(id) => Some(id),
+        Operand::Value(_) => None,
+    }));
+    used
 }

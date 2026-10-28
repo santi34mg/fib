@@ -98,6 +98,11 @@ pub enum InstructionKind {
         base: Address,
         index: Operand,
     },
+    /// Get the address of a function pointer field within a struct (for indirect calls)
+    FunctionPointerAddress {
+        base: Address, // Pointer to the struct containing the function pointer
+        field: usize,  // Index of the function pointer field
+    },
     Enum {
         variant: usize,
         fields: Vec<Operand>,

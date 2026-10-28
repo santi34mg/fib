@@ -7,6 +7,12 @@ pub enum BackendError {
     NotImplemented { operation: &'static str },
 }
 
+impl From<String> for BackendError {
+    fn from(value: String) -> Self {
+        Self::Invalid { message: value }
+    }
+}
+
 impl std::fmt::Display for BackendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

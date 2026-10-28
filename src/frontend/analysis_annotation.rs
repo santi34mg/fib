@@ -83,6 +83,7 @@ pub struct ExpressionAnnotation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemberKind {
     Field(u32),
+    Function(),
     EnumVariant(u32),
     Length,
     /// Selection whose owner is dependent; the instance must resolve it again.

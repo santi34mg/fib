@@ -8,6 +8,8 @@ pub mod ir_lower;
 #[cfg(feature = "llvm")]
 mod llvm_abi;
 #[cfg(feature = "llvm")]
+mod llvm_data;
+#[cfg(feature = "llvm")]
 mod llvm_enum;
 pub mod llvm_lower;
 #[cfg(feature = "llvm")]
