@@ -449,7 +449,9 @@ impl TypeContext<'_> {
             return Ok(self.metatype(ty));
         }
         if signature.is_comp {
-            return Err(type_error("bounded comp function must return type"));
+            return Err(type_error(
+                super::constant_data::EvaluationError::NotImplemented.to_string(),
+            ));
         }
         Ok(self.value(signature.return_type))
     }

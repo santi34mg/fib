@@ -37,13 +37,12 @@ impl FunctionDeclaration {
                     "comp function requires a non-extern function body",
                 ));
             }
-            if !matches!(
+            if matches!(
                 context.types.get(function.return_type)?,
                 SemanticType::Builtin(crate::frontend::tokens::builtin::BuiltinType::MetaType)
             ) {
-                return Err(type_error("bounded comp function must return type"));
+                super::evaluation::validate_comp_body(&self.body.as_ref().unwrap().statements)?;
             }
-            super::evaluation::validate_comp_body(&self.body.as_ref().unwrap().statements)?;
         }
         if self.body.is_none() && !self.is_extern {
             return Err(type_error("bodyless functions require callconv \"C\""));

@@ -743,14 +743,12 @@ fn inline_type(expr: Option<&crate::frontend::ast::expression::Expression>) -> b
 }
 
 fn computed_type(expr: Option<&crate::frontend::ast::expression::Expression>) -> bool {
-    matches!(
-        expr.map(|e| &e.kind),
-        Some(
-            ExpressionKind::Call { .. }
-                | ExpressionKind::IndexAccess { .. }
-                | ExpressionKind::SliceLiteral { .. }
+    expr.is_some_and(|e| {
+        !matches!(
+            e.kind,
+            ExpressionKind::QualifiedIdentifier(_) | ExpressionKind::TypeValue(_)
         )
-    )
+    })
 }
 
 fn collect_variable(
@@ -923,6 +921,7 @@ mod recovery;
 pub use recovery::Recovery;
 pub mod ast;
 mod constant;
+pub(crate) mod constant_data;
 mod evaluation;
 pub mod expression;
 mod flow;

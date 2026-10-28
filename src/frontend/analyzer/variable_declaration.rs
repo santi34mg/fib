@@ -142,14 +142,7 @@ impl Analyzer {
             return Ok(Some(Entity::Declaration(id)));
         }
         // Computed values retain their own binding; typing evaluates the call.
-        if matches!(
-            expr.map(|e| &e.kind),
-            Some(
-                ExpressionKind::Call { .. }
-                    | ExpressionKind::IndexAccess { .. }
-                    | ExpressionKind::SliceLiteral { .. }
-            )
-        ) {
+        if expr.is_some_and(|e| !matches!(e.kind, ExpressionKind::QualifiedIdentifier(_))) {
             return Ok(None);
         }
         match reference {

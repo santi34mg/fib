@@ -137,7 +137,31 @@ fn float_binary<F: Float>(a: u128, b: u128, op: O) -> anyhow::Result<u128> {
         _ => anyhow::bail!("invalid floating operator"),
     })
 }
+fn float_order<F: Float>(a: u128, b: u128) -> Option<std::cmp::Ordering> {
+    F::from_bits(a).partial_cmp(&F::from_bits(b))
+}
 impl NumericValue {
+    pub fn compare(self, rhs: Self, op: O) -> anyhow::Result<bool> {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        anyhow::ensure!(self.ty == rhs.ty, "comparison operand type mismatch");
+        let order = match self.ty {
+            NumericType::Integer {
+                width,
+                signed: true,
+            } => Some(signed(self.bits, width).cmp(&signed(rhs.bits, width))),
+            NumericType::Integer { .. } => Some(self.bits.cmp(&rhs.bits)),
+            NumericType::Float(width) => float_dispatch!(width, float_order, self.bits, rhs.bits),
+        };
+        Ok(match op {
+            O::DoubleEquals => order == Some(Equal),
+            O::Different => order != Some(Equal),
+            O::LesserThan => order == Some(Less),
+            O::LesserEqual => matches!(order, Some(Less | Equal)),
+            O::GreaterThan => order == Some(Greater),
+            O::GreaterEqual => matches!(order, Some(Greater | Equal)),
+            _ => anyhow::bail!("invalid comparison operator"),
+        })
+    }
     pub fn literal(literal: &Literal, ty: NumericType, negative: bool) -> anyhow::Result<Self> {
         let bits = match (literal, ty) {
             (Literal::Integer(magnitude), NumericType::Integer { width, signed }) => {

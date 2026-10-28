@@ -40,14 +40,9 @@ struct Exit {
 }
 struct Flow<'a> {
     types: &'a SemanticTypes,
+    constant_data: Option<super::constant_data::DataEvaluator<'a>>,
     loops: usize,
-    functions: HashMap<
-        crate::frontend::identifier::DeclId,
-        &'a crate::frontend::ast::function_declaration::FunctionDeclaration,
-    >,
-    checking_initializers: bool,
     template: bool,
-    active_calls: HashSet<crate::frontend::identifier::DeclId>,
     recovery: Option<super::Recovery>,
     file: crate::plan::FileId,
     paths: HashMap<crate::plan::FileId, std::path::PathBuf>,
@@ -77,30 +72,15 @@ fn validate_parts(
 ) -> anyhow::Result<()> {
     let mut flow = Flow {
         types,
+        constant_data: Some(super::constant_data::DataEvaluator::new(units, types)),
         loops: 0,
-        functions: units
-            .iter()
-            .flat_map(|u| &u.ast.statements)
-            .filter_map(|node| {
-                if let S::FunctionDeclaration(f) = &node.kind
-                    && let Some(BindingId::Declaration(id)) = f.signature.annotation.binding
-                {
-                    Some((id, f))
-                } else {
-                    None
-                }
-            })
-            .collect(),
-        checking_initializers: false,
         template: false,
-        active_calls: HashSet::new(),
         recovery: None,
         file: crate::plan::FileId(0),
         paths: HashMap::new(),
     };
     flow.recovery = recovery;
     flow.paths = paths.cloned().unwrap_or_default();
-    let mut initialized = State::new();
     let mut globals = State::new();
     for unit in units {
         for node in &unit.ast.statements {
@@ -132,6 +112,10 @@ fn validate_parts(
     for phase in phases {
         for unit in units {
             flow.file = unit.source_file_id;
+            flow.constant_data
+                .as_mut()
+                .unwrap()
+                .set_file(unit.source_file_id);
             for node in &unit.ast.statements {
                 if phase.is_some_and(|functions| {
                     matches!(node.kind, S::FunctionDeclaration(_)) != functions
@@ -192,12 +176,43 @@ fn validate_parts(
                             }
                         }
                     } else {
-                        flow.checking_initializers = true;
-                        let result = flow.statement(node, initialized.clone());
-                        flow.checking_initializers = false;
-                        let exits = result?;
-                        if let Some(exit) = exits.into_iter().find(|e| e.kind == ExitKind::Next) {
-                            initialized = exit.state;
+                        use super::constant_data::require_initializer;
+                        match &node.kind {
+                            S::VariableDeclaration(v) if !v.is_comp => {
+                                flow.constant_data.as_mut().unwrap().evaluate(
+                                    require_initializer(v.expression.as_ref(), node.span)?,
+                                )?;
+                            }
+                            S::VariableDeclaration(v)
+                                if v.expression.as_ref().is_some_and(|e| {
+                                    e.annotation
+                                        .resolved
+                                        .is_some_and(|i| i.type_value.is_none())
+                                        && !matches!(e.kind, E::QualifiedIdentifier(_))
+                                }) =>
+                            {
+                                flow.constant_data
+                                    .as_mut()
+                                    .unwrap()
+                                    .evaluate(v.expression.as_ref().unwrap())?;
+                            }
+                            S::MultiVariableDeclaration { bindings, values } => {
+                                for (i, binding) in bindings.iter().enumerate() {
+                                    if !binding.is_comp
+                                        || values.get(i).is_some_and(|e| {
+                                            e.annotation
+                                                .resolved
+                                                .is_some_and(|i| i.type_value.is_none())
+                                                && !matches!(e.kind, E::QualifiedIdentifier(_))
+                                        })
+                                    {
+                                        flow.constant_data.as_mut().unwrap().evaluate(
+                                            require_initializer(values.get(i), node.span)?,
+                                        )?;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     Ok(())
@@ -230,11 +245,9 @@ pub(super) fn validate_specialization(
     };
     let mut flow = Flow {
         types,
+        constant_data: None,
         loops: 0,
-        functions: HashMap::new(),
-        checking_initializers: false,
         template: false,
-        active_calls: HashSet::new(),
         recovery: None,
         file: crate::plan::FileId(0),
         paths: HashMap::new(),
@@ -340,6 +353,94 @@ fn place(expr: &Expression, types: &SemanticTypes) -> anyhow::Result<Option<Plac
     Ok(None)
 }
 impl Flow<'_> {
+    fn known_bound(
+        &mut self,
+        expr: &Expression,
+        length: Option<u64>,
+        allow_end: bool,
+    ) -> anyhow::Result<Option<u128>> {
+        use super::constant_data::DataKind;
+        let Some(evaluator) = &mut self.constant_data else {
+            return Ok(None);
+        };
+        let Some(value) = evaluator.try_evaluate(expr)? else {
+            return Ok(None);
+        };
+        let DataKind::Numeric(value) = value.kind else {
+            return Ok(None);
+        };
+        if matches!(value.ty, crate::numeric::NumericType::Integer { width, signed: true } if crate::numeric::signed(value.bits, width) < 0)
+            || length.is_some_and(|n| {
+                if allow_end {
+                    value.bits > u128::from(n)
+                } else {
+                    value.bits >= u128::from(n)
+                }
+            })
+        {
+            return Err(at_span(
+                type_error("index or slice bounds out of bounds"),
+                expr.span,
+            ));
+        }
+        Ok(Some(value.bits))
+    }
+
+    fn check_bounds(&mut self, expr: &Expression) -> anyhow::Result<()> {
+        let object = match &expr.kind {
+            E::IndexAccess { object, .. } | E::SliceLiteral { object, .. } => object,
+            _ => return Ok(()),
+        };
+        let Some(info) = object.annotation.resolved else {
+            return Ok(());
+        };
+        if info.type_value.is_some() {
+            return Ok(());
+        }
+        let length = match self.types.container(info.ty)?.0 {
+            T::Array { length, .. } => Some(*length),
+            _ => None,
+        };
+        match &expr.kind {
+            E::IndexAccess { index, .. } => {
+                self.known_bound(index, length, false)?;
+            }
+            E::SliceLiteral {
+                start,
+                end,
+                inclusive,
+                ..
+            } => {
+                let from = if let Some(start) = start {
+                    self.known_bound(start, length, true)?
+                } else {
+                    Some(0)
+                };
+                let to = if let Some(end) = end {
+                    self.known_bound(end, length, !inclusive)?
+                        .map(|n| {
+                            if *inclusive {
+                                n.checked_add(1)
+                                    .ok_or_else(|| type_error("inclusive slice bound overflows"))
+                            } else {
+                                Ok(n)
+                            }
+                        })
+                        .transpose()?
+                } else {
+                    length.map(u128::from)
+                };
+                if let (Some(from), Some(to)) = (from, to)
+                    && from > to
+                {
+                    return Err(at_span(type_error("slice bounds are reversed"), expr.span));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn initialize(&self, v: &VariableDeclaration, state: &mut State) -> anyhow::Result<()> {
         state.insert(root(
             v.annotation
@@ -400,6 +501,7 @@ impl Flow<'_> {
         }
     }
     fn read(&mut self, expr: &Expression, state: &State) -> anyhow::Result<()> {
+        self.check_bounds(expr)?;
         if binding(expr).is_some_and(|id| self.recovery.as_ref().is_some_and(|r| r.blocked(id))) {
             return Err(super::recovery::Blocked.into());
         }
@@ -449,38 +551,6 @@ impl Flow<'_> {
                     for a in args {
                         read!(a);
                     }
-                    if self.checking_initializers
-                        && !expr.annotation.resolved.is_some_and(|i| {
-                            matches!(self.types.get(i.ty), Ok(T::Builtin(B::MetaType)))
-                        })
-                        && let Some(id) = super::evaluation::function_id(callee)
-                        && let Some(fun) = self.functions.get(&id).copied()
-                        && let Some(body) = &fun.body
-                        && self.active_calls.insert(id)
-                    {
-                        if self.active_calls.len() > 64 {
-                            return Err(type_error(
-                                "file-initializer call analysis depth limit exceeded",
-                            ));
-                        }
-                        let mut state = state.clone();
-                        for p in &fun.signature.parameters {
-                            state.insert(root(
-                                p.annotation
-                                    .binding
-                                    .ok_or_else(|| type_error("pending parameter"))?,
-                            ));
-                        }
-                        let loops = self.loops;
-                        self.loops = 0;
-                        let previous_template =
-                            std::mem::replace(&mut self.template, is_template(fun, self.types));
-                        let result = self.block(&body.statements, state);
-                        self.template = previous_template;
-                        self.loops = loops;
-                        self.active_calls.remove(&id);
-                        result?;
-                    }
                 }
                 E::ExprAcess { expr, .. } => self.read(expr, state)?,
                 E::StructConstruct { fields, .. } => {
@@ -494,10 +564,14 @@ impl Flow<'_> {
                         matches!(self.types.container(i.ty), Ok((T::Array { .. }, _)))
                     }) {
                         self.address(object, state)?;
+                        // The actual element is read only after the index has
+                        // completed. A diverging index reads no array elements.
+                        read!(index);
+                        self.read(object, state)?;
                     } else {
                         read!(object);
+                        read!(index);
                     }
-                    read!(index);
                 }
                 E::SliceLiteral {
                     object, start, end, ..
@@ -519,6 +593,7 @@ impl Flow<'_> {
         result.map_err(|e| at_span(e, expr.span))
     }
     fn address(&mut self, expr: &Expression, state: &State) -> anyhow::Result<()> {
+        self.check_bounds(expr)?;
         match &expr.kind {
             E::QualifiedIdentifier(_) => Ok(()),
             E::ExprAcess { expr, member, .. } => {
@@ -529,7 +604,6 @@ impl Flow<'_> {
                 }
             }
             E::IndexAccess { object, index } => {
-                self.read(index, state)?;
                 if matches!(
                     object
                         .annotation
@@ -537,10 +611,11 @@ impl Flow<'_> {
                         .and_then(|i| self.types.container(i.ty).ok()),
                     Some((T::Array { .. }, _))
                 ) {
-                    self.address(object, state)
+                    self.address(object, state)?;
                 } else {
-                    self.read(object, state)
+                    self.read(object, state)?;
                 }
+                self.read(index, state)
             }
             E::Call { callee, args }
                 if callee
@@ -687,6 +762,29 @@ impl Flow<'_> {
         Ok(Some(result))
     }
     fn statement(&mut self, node: &Statement, mut state: State) -> anyhow::Result<Vec<Exit>> {
+        let comp_values: Vec<_> = match &node.kind {
+            S::VariableDeclaration(v) if v.is_comp => v.expression.iter().collect(),
+            S::MultiVariableDeclaration { bindings, values } => bindings
+                .iter()
+                .zip(values)
+                .filter_map(|(v, e)| v.is_comp.then_some(e))
+                .collect(),
+            _ => vec![],
+        };
+        for expr in comp_values {
+            if expr
+                .annotation
+                .resolved
+                .is_some_and(|i| i.type_value.is_none())
+                && !matches!(expr.kind, E::QualifiedIdentifier(_))
+                && !self
+                    .types
+                    .is_symbolic(expr.annotation.resolved.unwrap().ty)?
+                && let Some(evaluator) = &mut self.constant_data
+            {
+                evaluator.evaluate(expr)?;
+            }
+        }
         let mut kind = ExitKind::Next;
         // Evaluate mandatory inputs in the same order as the statement below.
         // Divergence is an exit, not a successful write, return, or branch join.

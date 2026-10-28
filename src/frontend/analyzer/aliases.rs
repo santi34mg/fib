@@ -41,22 +41,7 @@ pub(super) fn definitions(
             ));
         };
         let ExpressionKind::QualifiedIdentifier(name) = &expr.kind else {
-            if matches!(
-                expr.kind,
-                ExpressionKind::TypeValue(_)
-                    | ExpressionKind::Call { .. }
-                    | ExpressionKind::IndexAccess { .. }
-                    | ExpressionKind::SliceLiteral { .. }
-            ) {
-                return Ok(());
-            }
-            return Err(at_span(
-                name_error(format!(
-                    "unsupported computed comp initializer for '{}'",
-                    var.identifier
-                )),
-                expr.span,
-            ));
+            return Ok(());
         };
         let Some(BindingId::Declaration(id)) = var.annotation.binding else {
             return Err(name_error("missing file declaration identity"));
