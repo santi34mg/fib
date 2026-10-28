@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Implement `std::io::print`, `printf`, `fprintf` and `write_all` with tagged arguments, brace formatting, full-range integer conversion, format validation and explicit I/O errors.
+
 - Add source-level `std::memory::memset` and `memcpy` for byte slices, including readonly copy sources and destination capacity checks before writes.
 
 - Add `core::sizeof(T)`, returning target allocation size in bytes as `usize`, including aggregate padding. Supports concrete generic type arguments; rejects values and unsized types. Available without std, exclusively in the compiler-owned `core` namespace.
@@ -25,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show readable types and readonly qualifiers in type mismatch diagnostics instead of internal type IDs.
 - Explain readonly removal and element-type conversion failures in slice-cast diagnostics, with guidance to copy into a new buffer.
-- Build-file interpretation tolerates unused runtime-library globals while rejecting global accesses before applying builder operations. Correct the unfinished `printf` stub to accept readonly bytes without an invalid mutable/character-slice conversion; formatting remains unimplemented.
+- Build-file interpretation tolerates unused runtime-library globals while rejecting global accesses before applying builder operations.
 
 - Analyze directly opened std files in their owning source package, preserving `root` lookup, intrinsic identities and unsaved sibling edits instead of duplicating them as application files.
 - Bound simultaneously active generic specializations to 16 so runaway expansion reports a diagnostic on the default debug-test stack instead of overflowing it. Cached instances and recursion at the same concrete signature remain supported.

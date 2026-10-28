@@ -15,6 +15,10 @@ and coalescing. Earlier suite records remain dated below.
 
 ## Actual status
 
+The source std I/O module implements literal output and tagged-argument `{}`
+formatting, with escaped braces, format validation before writes, full-range
+64-bit integer conversion and write loops handling short writes and EINTR.
+
 The source std memory module implements byte-slice `memset` and `memcpy` with
 checked loops. Copy accepts readonly sources and checks destination capacity
 before writing; callers must provide nonoverlapping regions.

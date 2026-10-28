@@ -1,8 +1,10 @@
 // Hello-world smoke test.
-// Intended output (unverified; compiler pipeline unfinished):
+// Expected output:
 //   Hello, World!
 
 fn main() int32 {
-    std::io::printf("Hello, World!\n"[..]);
-    return 0;
+    switch (std::io::print("Hello, World!\n"[..])) {
+        when .Ok(_) { return 0; }
+        when .Err(_) { return 1; }
+    };
 }

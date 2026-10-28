@@ -81,6 +81,29 @@ alias. `unchecked_deref` skips its null check, while `slice_from_parts` and
 `slice_data` preserve the element type and readonly qualifier. Neither allocation
 validity nor view lifetime is guaranteed by these operations.
 
+## Formatted output
+
+`std::io::print(bytes: const uint8[])` writes literal bytes to stdout.
+`printf(format: const uint8[], values: const Arg[])` formats to stdout;
+`fprintf(fd: int32, format: const uint8[], values: const Arg[])` selects a
+descriptor. All return `PrintResult = Result(usize, PrintError)`, with the number
+of bytes written on success. `Arg` variants are `Bytes: const uint8[]`,
+`Signed: int64`, `Unsigned: uint64` and `Boolean: bool`. Arguments are passed in
+an explicitly typed array and sliced, as in the [formatting sample](../samples/formatting.fib).
+
+Each `{}` consumes one argument and uses its default representation: raw bytes,
+decimal integers or `true`/`false`. `{{` and `}}` emit literal braces. Syntax and
+argument counts are validated before output; errors are `InvalidFormat` or
+`ArgumentCount`. All argument variants support `{}`, so there is no argument-type
+error variant. Width, precision, type specifiers and floating-point formatting
+are not implemented. Integer formatting includes the full int64/uint64 range.
+
+`write_all(fd: int32, bytes: const uint8[])` retries interrupted and short writes;
+empty writes make no syscall. Other errors return `PrintError.Io(errno)`, with
+positive errno; a zero-progress write reports EIO (5). I/O errors can leave
+partial output. Formatting writes segments directly, uses stack storage for
+integers and performs no allocation. Calls are not atomic across segments.
+
 ## Results
 
 `std::result::Result(T, E)` computes a nominal enum with variants
@@ -142,7 +165,7 @@ Empty operations do not access storage, including for null-backed empty slices.
 These ordinary Fib functions use checked byte loops; they do not convert element
 types. See [memory sample](../samples/memory.fib).
 
-`std::memory::alloc(T, n: uint32)` returns a writable `T[]` of length `n`.
+`std::memory::alloc(T, n: usize)` returns a writable `T[]` of length `n`.
 Zero count, overflow or allocation failure returns an empty slice. Storage is
 uninitialized: write elements before reading them. Zero-sized types receive a
 live allocation for nonzero counts. Blocks have 16-byte alignment for the
@@ -169,5 +192,5 @@ No native shim or libc syscall wrapper is linked. The ordinary executable entry
 and host-linker startup contract remain in use. Other targets reject syscall
 emission explicitly; build-file interpretation rejects syscall execution.
 
-Conditional compilation, portable flags/errors, higher-level I/O, formatting,
+Conditional compilation, portable flags/errors, higher-level I/O, advanced formatting,
 collections, concurrent allocation and compiler-enforced resource ownership remain future work.

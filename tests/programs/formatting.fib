@@ -1,0 +1,71 @@
+comp io := std::io;
+
+fn invalid(format: const uint8[], count_error: bool) bool {
+    empty: io::Arg[0] = [];
+    switch (io::printf(format, empty[..])) {
+        when .Ok(count) { return false; }
+        when .Err(error) {
+            switch (error) {
+                when .InvalidFormat { return !count_error; }
+                when .ArgumentCount { return count_error; }
+                when .Io(errno) { return false; }
+            };
+        }
+    };
+}
+
+fn main() int32 {
+    if !invalid("prefix {"[..], false) || !invalid("prefix }"[..], false) ||
+        !invalid("prefix {x}"[..], false) || !invalid("prefix }{"[..], false) ||
+        !invalid("{}"[..], true) || !invalid("{{}"[..], false) { return 1; };
+    extra: io::Arg[1] = [io::Arg.Boolean(true)];
+    switch (io::printf("prefix"[..], extra[..])) {
+        when .Ok(count) { return 2; }
+        when .Err(error) {
+            switch (error) {
+                when .ArgumentCount {}
+                when .InvalidFormat { return 3; }
+                when .Io(errno) { return 4; }
+            };
+        }
+    };
+    switch (io::write_all(-1, "x"[..])) {
+        when .Ok(count) { return 5; }
+        when .Err(error) {
+            switch (error) {
+                when .Io(errno) { if errno != 9 { return 6; }; }
+                when .InvalidFormat { return 7; }
+                when .ArgumentCount { return 8; }
+            };
+        }
+    };
+    // Empty writes do not touch even an invalid descriptor or null pointer.
+    empty := std::memory::slice_from_parts(null as *uint8, 0);
+    switch (io::write_all(-1, empty)) {
+        when .Err(error) { return 9; }
+        when .Ok(count) { if count != 0 { return 10; }; }
+    };
+    args: io::Arg[7] = [
+        io::Arg.Signed(-9223372036854775808),
+        io::Arg.Signed(9223372036854775807),
+        io::Arg.Signed(0),
+        io::Arg.Unsigned(0),
+        io::Arg.Boolean(false),
+        io::Arg.Bytes(""[..]),
+        io::Arg.Bytes("{raw}\0"[..])
+    ];
+    switch (io::printf("{}|{}|{}|{}|{}|{}|{}\n"[..], args[..])) {
+        when .Err(error) { return 11; }
+        when .Ok(count) { if count != 59 { return 12; }; }
+    };
+    none: io::Arg[0] = [];
+    switch (io::fprintf(2, "{{stderr}}"[..], none[..])) {
+        when .Err(error) { return 13; }
+        when .Ok(count) { if count != 8 { return 14; }; }
+    };
+    switch (io::printf(""[..], none[..])) {
+        when .Err(error) { return 15; }
+        when .Ok(count) { if count != 0 { return 16; }; }
+    };
+    return 0;
+}

@@ -9,6 +9,14 @@ globals have structural and isolated executable coverage.
 
 ## Indexing and global storage validation (2026-10-28)
 
+Formatted-output follow-up (2026-10-28): the full no-default suite passes (762
+library tests, four LSP unit tests, seven LSP integration tests and ten std
+integration tests). All 17 LLVM 21 std integration tests pass. Output coverage
+checks exact bytes/counts, full-range integers, booleans, empty and NUL-containing
+strings, escaped braces, invalid formats/counts before output, descriptor errors,
+and scripted EINTR, short-write and zero-progress behavior. Formatting and strict
+LLVM Clippy across all targets pass. The memory tests now include the I/O module.
+
 Allocator follow-up (2026-10-28): the unfiltered no-default suite passes (760
 library tests, four LSP unit tests, seven LSP integration tests, eight std
 integration tests). LLVM 21 library tests pass (772), as do all 12 std integration

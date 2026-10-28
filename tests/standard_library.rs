@@ -29,33 +29,16 @@ fn analyze(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
     Analyzer::new(prepared.clone(), parse_files(&prepared)?)?.analyze()
 }
 
-// Exercise the installed memory sources independently of the unfinished I/O module.
-fn memory_input(source: &str) -> (tempfile::TempDir, BuildPlan) {
-    let (directory, plan) = input(source);
-    let mut plan = plan.prepare().unwrap();
-    let io = plan
-        .files
-        .iter()
-        .find(|f| f.path == sysroot().join("std/io.fib"))
-        .unwrap()
-        .id;
-    plan.files.retain(|file| file.id != io);
-    for package in &mut plan.packages {
-        package.files.retain(|id| *id != io);
-    }
-    (directory, plan)
-}
-
 #[test]
 fn memory_byte_operations_accept_writable_destinations_and_readonly_sources() {
-    let (_directory, plan) = memory_input(include_str!("../samples/memory.fib"));
+    let (_directory, plan) = input(include_str!("../samples/memory.fib"));
     fibc::ir::verify_ir(&fibc::ir::lowering::lower(&analyze(&plan).unwrap()).unwrap()).unwrap();
     for source in [
         "fn main() { std::memory::memset(\"hi\"[..], 0); }",
         "fn main() { std::memory::memcpy(\"hi\"[..], \"ok\"[..]); }",
         "fn main() { a: uint16[1] = [0]; std::memory::memset(a[..], 0); }",
     ] {
-        let (_directory, plan) = memory_input(source);
+        let (_directory, plan) = input(source);
         let error = analyze(&plan).unwrap_err();
         assert!(
             format!("{error:#}").contains("incompatible types"),
@@ -74,11 +57,137 @@ fn memory_byte_operations_execute_and_trap_for_short_destinations() {
             None,
         ),
     ] {
-        let (_directory, plan) = memory_input(source);
+        let (_directory, plan) = input(source);
         fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
         let output = std::process::Command::new(&plan.output).output().unwrap();
         assert_eq!(output.status.code(), expected, "{source}\n{output:?}");
     }
+}
+
+#[test]
+fn formatting_sources_analyze_and_lower() {
+    for source in [
+        include_str!("../samples/hello_world.fib"),
+        include_str!("../samples/formatting.fib"),
+        include_str!("programs/formatting.fib"),
+    ] {
+        let (_directory, plan) = input(source);
+        fibc::ir::verify_ir(&fibc::ir::lowering::lower(&analyze(&plan).unwrap()).unwrap()).unwrap();
+    }
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn formatting_executes_with_exact_bytes_counts_and_errors() {
+    for (source, stdout, stderr) in [
+        (
+            include_str!("../samples/hello_world.fib"),
+            &b"Hello, World!\n"[..],
+            &b""[..],
+        ),
+        (
+            include_str!("../samples/formatting.fib"),
+            &b"Hello Alice, score: -42, max: 18446744073709551615, active: true {ok}\n"[..],
+            &b""[..],
+        ),
+        (
+            include_str!("programs/formatting.fib"),
+            &b"-9223372036854775808|9223372036854775807|0|0|false||{raw}\0\n"[..],
+            &b"{stderr}"[..],
+        ),
+    ] {
+        let (_directory, plan) = input(source);
+        fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+        let output = std::process::Command::new(&plan.output).output().unwrap();
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(output.stdout, stdout);
+        assert_eq!(output.stderr, stderr);
+    }
+}
+
+#[test]
+#[cfg(feature = "llvm")]
+fn formatting_write_all_retries_interruptions_and_short_writes() {
+    let source = r#"
+        comp io := std::io;
+        fn main() int32 {
+            switch (io::write_all(1, "abcde"[..])) {
+                when .Err(e) { return 1; }
+                when .Ok(n) { if n != 5 || std::os::test_calls() != 4 { return 2; }; }
+            };
+            std::os::test_reset(1);
+            switch (io::write_all(1, "x"[..])) {
+                when .Ok(n) { return 3; }
+                when .Err(e) {
+                    switch (e) {
+                        when .Io(errno) { if errno != 5 { return 4; }; }
+                        when .InvalidFormat { return 5; }
+                        when .ArgumentCount { return 6; }
+                    };
+                }
+            };
+            std::os::test_reset(2);
+            switch (io::write_all(1, "x"[..])) {
+                when .Ok(n) { return 7; }
+                when .Err(e) {
+                    switch (e) {
+                        when .Io(errno) { if errno != 28 { return 8; }; }
+                        when .InvalidFormat { return 9; }
+                        when .ArgumentCount { return 10; }
+                    };
+                }
+            };
+            return 0;
+        }
+    "#;
+    let (directory, mut plan) = input(source);
+    let installed = directory.path().join("sysroot");
+    std::fs::create_dir_all(installed.join("std")).unwrap();
+    std::fs::copy(
+        sysroot().join("sysroot.toml"),
+        installed.join("sysroot.toml"),
+    )
+    .unwrap();
+    for name in ["memory", "os", "os_abi", "prelude", "result", "io"] {
+        std::fs::copy(
+            sysroot().join(format!("std/{name}.fib")),
+            installed.join(format!("std/{name}.fib")),
+        )
+        .unwrap();
+    }
+    // Script the write boundary to force otherwise timing-dependent outcomes.
+    let path = installed.join("std/os.fib");
+    let mut os = std::fs::read_to_string(&path).unwrap();
+    let start = os.find("pub fn write(").unwrap();
+    let end = os[start..].find("pub fn close(").unwrap() + start;
+    os.replace_range(
+        start..end,
+        r#"
+        test_mode: int32 = 0;
+        calls: usize = 0;
+        sent: usize = 0;
+        pub fn test_reset(mode: int32) { test_mode = mode; calls = 0; sent = 0; }
+        pub fn test_calls() usize { return calls; }
+        pub fn write(fd: int32, buffer: const uint8[]) CountResult {
+            calls = calls + 1;
+            if test_mode == 1 { return CountResult.Ok(0); };
+            if test_mode == 2 { return CountResult.Err(28); };
+            if calls == 1 { return CountResult.Err(4); };
+            if buffer.len != 5 - sent || buffer[0] != 97 + (sent as uint8) {
+                return CountResult.Err(22);
+            };
+            count: usize = 2;
+            if buffer.len < count { count = buffer.len; };
+            sent = sent + count;
+            return CountResult.Ok(count);
+        }
+    "#,
+    );
+    std::fs::write(path, os).unwrap();
+    plan.standard_library = StandardLibrary::at(installed);
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+    let output = std::process::Command::new(&plan.output).output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
 #[test]
