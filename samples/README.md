@@ -66,3 +66,10 @@ analysis work is tracked in [GitHub issues](../docs/agents/issues/README.md).
 New syntax changes need positive and malformed-input parser tests. Keep sample
 syntax covered by the discovery test; add real analysis and execution coverage
 as those passes become usable rather than treating parsing as a conformance test.
+
+`defer.fib` demonstrates reverse-order deferred blocks and has LLVM
+compile/link/run coverage, returning 42.
+
+`syscalls.fib` prints through `std::os::write` and handles a typed result. Use an
+installed compiler or `build --sysroot library --single-file samples/syscalls.fib`.
+The library's current OS implementation requires Linux x86-64.

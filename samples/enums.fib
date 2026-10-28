@@ -2,7 +2,7 @@
 // Intended output (unverified; compiler pipeline unfinished):
 //   color discriminant = 1
 
-Color: type = enum {
+comp Color: type = enum {
     Red,
     Green,
     Blue,
@@ -10,6 +10,5 @@ Color: type = enum {
 
 fn main() int32 {
     c: Color = Color.Green;
-    libc::printf("color discriminant = %d\n", c as uint64);
     return 0;
 }

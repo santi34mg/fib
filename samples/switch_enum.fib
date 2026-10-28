@@ -4,7 +4,7 @@
 //   green
 //   blue
 
-Color: type = enum {
+comp Color: type = enum {
     Red,
     Green,
     Blue,
@@ -12,9 +12,9 @@ Color: type = enum {
 
 fn describe(c: Color) void {
     switch (c) {
-        when .Red { libc::printf("red\n"); }
-        when .Green { libc::printf("green\n"); }
-        when .Blue { libc::printf("blue\n"); }
+        when .Red { std::os::write(1, "red\n"[..]); }
+        when .Green{ std::os::write(1, "green\n"[..]); }
+        when .Blue { std::os::write(1, "blue\n"[..]); }
     };
 }
 
