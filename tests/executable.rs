@@ -318,8 +318,10 @@ fn data_program(text: &str) -> std::process::ExitStatus {
     if text.contains("std::") {
         let root = directory.path().join("sysroot");
         std::fs::create_dir_all(root.join("std")).unwrap();
-        std::fs::write(root.join("sysroot.toml"), format!("compiler_version = \"{}\"\ndeclaration_revision = {}\nsources = [\"memory.fib\", \"os.fib\", \"os_abi.fib\", \"prelude.fib\", \"result.fib\"]\n", env!("CARGO_PKG_VERSION"), fibc::standard_library::DECLARATION_REVISION)).unwrap();
-        for name in ["memory", "os", "os_abi", "prelude", "result"] {
+        std::fs::write(root.join("sysroot.toml"), format!("compiler_version = \"{}\"\ndeclaration_revision = {}\nsources = [\"memory.fib\", \"os.fib\", \"os_abi.fib\", \"prelude.fib\", \"result.fib\", \"map.fib\", \"process.fib\"]\n", env!("CARGO_PKG_VERSION"), fibc::standard_library::DECLARATION_REVISION)).unwrap();
+        for name in [
+            "memory", "os", "os_abi", "prelude", "result", "map", "process",
+        ] {
             std::fs::write(root.join("std").join(format!("{name}.fib")), "").unwrap();
         }
         plan.standard_library = fibc::standard_library::StandardLibrary::at(root);
@@ -1073,7 +1075,7 @@ fn function_pointer_struct_fields_construct_and_execute() {
             fn main() int32 {
                 s := S { value: 42, callback: add_one };
                 result := (s.callback)(s.value);
-                if result == 43 { return 0; } else { return 1; }
+                if result == 43 { return 0; } else { return 1; };
             }
         "#,
             0,
@@ -1089,7 +1091,7 @@ fn function_pointer_struct_fields_construct_and_execute() {
                 s := S { a: 10, b: 20, callback_a: double, callback_b: triple };
                 result_a := (s.callback_a)(s.a);
                 result_b := (s.callback_b)(s.b);
-                if result_a == 20 && result_b == 60 { return 0; } else { return 1; }
+                if result_a == 20 && result_b == 60 { return 0; } else { return 1; };
             }
         "#,
             0,
@@ -1098,12 +1100,12 @@ fn function_pointer_struct_fields_construct_and_execute() {
         (
             r#"
             comp Callback: type = fn(int32, int32) int32;
-            comp S: type = struct { name: string, multiplier: uint, callback: Callback };
+            comp S: type = struct { name: const uint8[], multiplier: int32, callback: Callback };
             fn multiply(x: int32, y: int32) int32 { return x * y; }
             fn main() int32 {
-                s := S { name: "test", multiplier: 5, callback: multiply };
+                s := S { name: "test"[..], multiplier: 5, callback: multiply };
                 result := (s.callback)(4, s.multiplier);
-                if result == 20 { return 0; } else { return 1; }
+                if result == 20 { return 0; } else { return 1; };
             }
         "#,
             0,
@@ -1118,8 +1120,8 @@ fn function_pointer_struct_fields_construct_and_execute() {
             }
             fn main() int32 {
                 s := S { value: 5, callback: increment };
-                s.callback(&s.value);
-                if s.value == 15 { return 0; } else { return 1; }
+                s.callback(s.value&);
+                if s.value == 15 { return 0; } else { return 1; };
             }
         "#,
             0,
@@ -1136,7 +1138,7 @@ fn function_pointer_struct_fields_construct_and_execute() {
             fn main() int32 {
                 s := S { value: 100, callback: double };
                 result := apply(s.callback, s.value / 2);
-                if result == 50 { return 0; } else { return 1; }
+                if result == 100 { return 0; } else { return 1; };
             }
         "#,
             0,
@@ -1145,12 +1147,12 @@ fn function_pointer_struct_fields_construct_and_execute() {
         (
             r#"
             comp Callback: type = fn(int32) int32;
-            comp S: type = struct { value: int32, multiplier: uint, callback: Callback };
+            comp S: type = struct { value: int32, multiplier: int32, callback: Callback };
             fn add(x: int32) int32 { return x + 1; }
             fn main() int32 {
                 s := S { value: 5, multiplier: 3, callback: add };
                 result := (s.callback)(s.value * s.multiplier);
-                if result == 16 { return 0; } else { return 1; }
+                if result == 16 { return 0; } else { return 1; };
             }
         "#,
             0,
@@ -1173,7 +1175,7 @@ fn function_pointer_callback_in_struct_with_multiple_fields() {
             y: int32,
             z: uint,
             callback: Callback,
-            name: string
+            name: const uint8[]
         };
         fn square(x: int32) int32 { return x * x; }
         fn main() int32 {
@@ -1182,10 +1184,10 @@ fn function_pointer_callback_in_struct_with_multiple_fields() {
                 y: 14,
                 z: 3,
                 callback: square,
-                name: "test"
+                name: "test"[..]
             };
             result := (s.callback)(s.x + s.y);
-            if result == 289 { return 0; } else { return 1; }
+            if result == 441 { return 0; } else { return 1; };
         }
     "#;
 
@@ -1206,14 +1208,16 @@ fn function_pointer_in_struct_can_be_assigned_and_called() {
         fn add_one(x: int32) int32 { return x + 1; }
         fn sub_one(x: int32) int32 { return x - 1; }
 
-        // Create multiple structs with different callbacks
-        s1 := S { callback: add_one };
-        s2 := S { callback: sub_one };
+        fn main() int32 {
+            // Create multiple structs with different callbacks
+            s1 := S { callback: add_one };
+            s2 := S { callback: sub_one };
 
-        result1 := (s1.callback)(10);
-        result2 := (s2.callback)(10);
+            result1 := (s1.callback)(10);
+            result2 := (s2.callback)(10);
 
-        if result1 == 11 && result2 == 9 { return 0; } else { return 1; }
+            if result1 == 11 && result2 == 9 { return 0; } else { return 1; };
+        }
     "#;
 
     let status = bounded_program(source);
@@ -1232,16 +1236,18 @@ fn struct_with_function_pointer_can_be_passed_as_argument() {
         comp S: type = struct { callback: Callback };
         comp Result: type = struct { input: int32, output: int32 };
 
-        fn apply_callback(callback: Callback, input: int32) Result {
-            return Result { input: input, output: (callback)(input) };
+        fn apply_callback(s: S, input: int32) Result {
+            return Result { input: input, output: (s.callback)(input) };
         }
 
         fn double(x: int32) int32 { return x * 2; }
 
-        s := S { callback: double };
-        result := apply_callback(s.callback, 21);
+        fn main() int32 {
+            s := S { callback: double };
+            result := apply_callback(s, 21);
 
-        if result.output == 42 && result.input == 21 { return 0; } else { return 1; }
+            if result.output == 42 && result.input == 21 { return 0; } else { return 1; };
+        }
     "#;
 
     let status = bounded_program(source);
@@ -1271,7 +1277,7 @@ fn function_pointer_in_struct_with_array_fields() {
                 counts: [1, 2, 3, 4, 5]
             };
             result := (s.callback)(s.value);
-            if result == 43 && s.counts[0] == 1 { return 0; } else { return 1; }
+            if result == 43 && s.counts[0] == 1 { return 0; } else { return 1; };
         }
     "#;
 
@@ -1288,7 +1294,7 @@ fn function_pointer_in_struct_with_enum_fields() {
     // Test function pointers in structs that also contain enums
     let source = r#"
         comp Callback: type = fn(int32) int32;
-        enum Status { Success, Failure };
+        comp Status: type = enum { Success, Failure };
 
         comp S: type = struct {
             value: int32,
@@ -1301,10 +1307,14 @@ fn function_pointer_in_struct_with_enum_fields() {
             s := S {
                 value: 7,
                 callback: square,
-                status: Status::Success
+                status: Status.Success
             };
             result := (s.callback)(s.value);
-            if result == 49 && s.status == Status::Success { return 0; } else { return 1; }
+            if result != 49 { return 1; };
+            switch(s.status) {
+                when .Success { return 0; }
+                when .Failure { return 1; }
+            };
         }
     "#;
 
@@ -1325,15 +1335,17 @@ fn function_pointer_mutations_in_struct() {
         fn add(x: int32) int32 { return x + 1; }
         fn double(x: int32) int32 { return x * 2; }
 
-        // Create a struct with an initial callback
-        s := S { callback: add, value: 10 };
+        fn main() int32 {
+            // Create a struct with an initial callback
+            s := S { callback: add, value: 10 };
 
-        // Mutate the function pointer field
-        s.callback = double;
+            // Mutate the function pointer field
+            s.callback = double;
 
-        result := (s.callback)(s.value);
+            result := (s.callback)(s.value);
 
-        if result == 20 { return 0; } else { return 1; }
+            if result == 20 { return 0; } else { return 1; };
+        }
     "#;
 
     let status = bounded_program(source);
@@ -1364,7 +1376,7 @@ fn function_pointer_in_struct_with_nested_structs() {
                 callback: increment
             };
             result := (o.callback)(o.inner.value);
-            if result == 43 { return 0; } else { return 1; }
+            if result == 43 { return 0; } else { return 1; };
         }
     "#;
 

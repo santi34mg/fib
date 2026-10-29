@@ -1,11 +1,61 @@
 # Tests and validation
 
+## Function-pointer fixture repair (2026-10-29)
+
+All eight previously failing function-pointer executable tests now pass after
+repairing their fixtures: statement semicolons, explicit main functions, current
+enum declarations/variant access, readonly byte slices, postfix address-of,
+consistent numeric operand types, and correct arithmetic expectations. The
+struct-argument case now passes the complete callback-bearing struct. No compiler
+implementation change was needed. This supersedes the fixture failures in the
+dated records below.
+
+The unfiltered offline all-features suite passes: 779 library tests, four LSP
+unit tests, 44 executable tests, eight LSP integration tests and 23 std integration
+tests. Formatting and strict all-target LLVM Clippy also pass.
+
+Opt-in compiler and framed-stdio LSP benchmarks live in `benches/performance.rs`.
+See the [performance report](../../performance.md) for commands, measurement
+scope, results, and optimization candidates. They are not timing gates.
+
 The [language specification](../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
 globals have structural and isolated executable coverage.
+
+## Process entry validation (2026-10-29)
+
+Direct computed-type follow-up: analyzer regressions cover alias-free comp calls
+in parameters, returns, locals, globals, fields, enum payloads, casts, callbacks
+and container elements, plus rejection of runtime type functions and non-type
+results. The process-entry sample uses a direct Result return annotation and
+direct computed-type variant construction; executable cases check its 42/0/1
+exit statuses with controlled arguments and environments.
+
+Generic-map follow-up (2026-10-29): the full no-default suite passes with 764
+library tests and 12 std integration tests (LSP counts unchanged). LLVM 21 passes
+776 library tests and all 23 std integration tests. New tests cover computed
+signature annotations and malformed syntax, nominal specialization identity,
+rejected map/equality type mismatches, scalar and struct keys/values, supplied
+equality during replacement, growth, lookup and cleanup/reuse. The environment
+tests run against `Map(Bytes, Bytes)`. The 36 other executable tests also pass
+with the eight previously failing function-pointer fixtures excluded.
+Formatting and strict LLVM Clippy pass.
+
+The full no-default suite passes: 763 library tests, four LSP unit tests, seven
+LSP integration tests and 11 std integration tests. LLVM 21 library tests pass
+(775). All 21 LLVM std integration tests pass across the full 20-test run and
+the added raw-environment-vector test. New coverage includes optional entry
+parameters, rejected signatures, Result status mapping and recursive main calls,
+empty/Unicode arguments, empty environments, first-equals splitting, duplicate
+replacement, malformed entries, non-UTF-8 values, map growth/replacement and
+cleanup/reuse. Formatting and strict LLVM Clippy across all targets pass.
+
+The broader LLVM executable run passes 36 tests and retains the eight existing
+function-pointer fixture parsing failures recorded below. This is not a green
+unfiltered LLVM checkout suite.
 
 ## Indexing and global storage validation (2026-10-28)
 
