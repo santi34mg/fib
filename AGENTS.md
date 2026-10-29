@@ -32,6 +32,10 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 - `src/driver.rs` implements parsing, analysis and pipeline orchestration. One
   `src/ir/lowering.rs` entry point lowers analyzed source plus any synthetic modules;
   the driver validates the selected entry contract and chooses the IR consumer. Program lowering supports
+  optional main argument slices/environment maps and void/int32/Result returns
+  through an analyzed source startup wrapper; generic `std::map::Map(K, V)` uses
+  supplied equality and specializes byte strings for the environment map.
+  Computed type annotations work in signatures and declarations.
   multi-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
   Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `std::memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Concrete generic functions, fixed-array values and multi-binding locals execute. Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Array/slice indexing, indexed assignment and slicing execute with bounds checks. Globals require explicit constant initializers and have program lifetime; ordinary initializer calls are rejected. No `static` modifier or startup initializer is introduced.

@@ -39,12 +39,31 @@ pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<Comp
     let prepared = plan.prepare()?;
     let plan = &prepared;
     println!("Running pipeline with goal {}...", goal);
-    let project = run_frontend(plan)?;
-    require_entry(&project, "main")?;
+    let mut units = parse_files(plan)?;
+    let mut project = analyze_units(plan, units.clone())?;
+    let wrapper = entry::startup_wrapper(&project, plan)?;
     if goal == PipelineGoal::Check {
         return Ok(CompilationOutput::Checked);
     }
-    let ir = crate::ir::lowering::lower(&project)?;
+    let ir = if let Some((name, source)) = wrapper {
+        let startup = crate::frontend::parser::Parser::with_source(
+            crate::frontend::tokenizer::Tokenizer::new(&source),
+            std::path::Path::new("<process startup>"),
+            &source,
+        )
+        .parse()?;
+        units
+            .iter_mut()
+            .find(|unit| unit.source_file_id == plan.entry)
+            .expect("validated entry file")
+            .ast
+            .statements
+            .extend(startup.statements);
+        project = crate::frontend::analyzer::Analyzer::new(plan.clone(), units)?.analyze()?;
+        crate::ir::lowering::lower_with_entry(&project, &name)?
+    } else {
+        crate::ir::lowering::lower(&project)?
+    };
     if goal == PipelineGoal::Ir {
         return Ok(CompilationOutput::Ir(ir));
     }
@@ -128,11 +147,15 @@ pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<Comp
     Ok(CompilationOutput::Binary(output))
 }
 
+#[cfg(test)]
 fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
     let prepared = plan.prepare()?;
     let plan = &prepared;
-    let project =
-        crate::frontend::analyzer::Analyzer::new(plan.clone(), parse_files(plan)?)?.analyze()?;
+    analyze_units(plan, parse_files(plan)?)
+}
+
+fn analyze_units(plan: &BuildPlan, units: Vec<CompilationUnit>) -> anyhow::Result<AnalyzedProject> {
+    let project = crate::frontend::analyzer::Analyzer::new(plan.clone(), units)?.analyze()?;
     for warning in &project.warnings {
         eprintln!("{}", warning.render());
     }
@@ -236,5 +259,6 @@ pub fn parse_files_with_sources(
 }
 
 pub mod compiler_output;
+mod entry;
 #[cfg(test)]
 mod test;

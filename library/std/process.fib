@@ -1,0 +1,56 @@
+pub comp Bytes := const uint8[];
+pub comp Arguments := Bytes[];
+pub comp Environment := root::map::Map(Bytes, Bytes);
+
+fn failed() {
+    root::os::syscall1(231, 1);
+    while () {};
+}
+
+// Startup borrows the host's NUL-terminated strings for the program lifetime.
+fn string(pointer: *uint8) Bytes {
+    address := root::os_abi::pointer_to_word(pointer);
+    length: usize = 0;
+    while () {
+        byte := root::os_abi::pointer_from_word(uint8, address + (length as uint64));
+        if (byte*) == 0 { break; };
+        length = length + 1;
+    };
+    return root::memory::slice_from_parts(pointer, length);
+}
+
+// Compiler startup helpers. Public so the generated application wrapper can call
+// them; callers must supply valid C startup vectors. Allocation failure exits 1.
+pub fn arguments(argc: int32, argv: **uint8) Arguments {
+    count := argc as usize;
+    result := root::memory::alloc(Bytes, count);
+    if result.len != count { failed(); };
+    pointers := root::memory::slice_from_parts(argv, count);
+    i: usize = 0;
+    while (i < count) {
+        result[i] = string(pointers[i]);
+        i = i + 1;
+    };
+    return result;
+}
+
+pub fn environment(envp: **uint8) Environment {
+    result := root::map::init(Bytes, Bytes, root::map::bytes_equal);
+    address := root::os_abi::pointer_to_word(envp);
+    while () {
+        pointer := (root::os_abi::pointer_from_word(*uint8, address))*;
+        if pointer == null { break; };
+        entry := string(pointer);
+        split: usize = 0;
+        while (split < entry.len && entry[split] != 61) { split = split + 1; };
+        // Ignore malformed entries. The first '=' separates key from value;
+        // later duplicates replace earlier values.
+        if split < entry.len {
+            if !root::map::insert(Bytes, Bytes, result&, entry[..split], entry[split + 1..]) {
+                failed();
+            };
+        };
+        address = address + (core::sizeof(*uint8) as uint64);
+    };
+    return result;
+}

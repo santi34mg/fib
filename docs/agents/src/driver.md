@@ -16,7 +16,17 @@ Both normal and bootstrap projects use `Analyzer::new(...).analyze()` and the si
 `ir::lowering::lower` entry point. The bootstrap configures `build_api` as a synthetic
 module with ordinary declaration/type identities. The driver validates `main` or
 `build` as the selected entry contract and chooses LLVM or the interpreter; lowering
-independently revalidates analysis. The normal executable subset is one file with `main() int32`, fixed-width
+independently revalidates analysis. `driver/entry.rs` validates main's optional
+argument slice and environment map parameters and void/int32/Result return.
+Extended entries append a generated wrapper to the original parsed entry unit,
+reanalyze the units, and select that wrapper through a crate-private entry selector
+in the same lowerer. The wrapper exports C `main(argc, argv, envp) int32`; source
+main retains internal Fib ABI, including recursive/internal calls. Source std
+constructs argument descriptors and the owned byte-string environment map.
+Result Ok supplies zero or its int32 payload; Err supplies status 1.
+Build entries retain their no-parameter int32 contract. See
+[process contracts](../../standard-library.md#process-entry-and-maps).
+The normal executable subset includes fixed-width
 integer/float/bool helper definitions and calls, initialized locals (including
 const), structs/typed pointers, partial initialization, stack storage, field and
 pointer mutation, assignments, scalar arithmetic/bitwise/shifts, explicit numeric casts,

@@ -1,0 +1,17 @@
+comp map := std::map;
+
+fn equal_int(a: int32, b: int32) bool { return a == b; }
+
+fn answer(values: map::Map(int32, int64)) int32 {
+    switch (map::get(int32, int64, values, 7)) {
+        when .Ok(value) { return value as int32; }
+        when .Err { return 1; }
+    };
+}
+
+fn main() int32 {
+    values := map::init(int32, int64, equal_int);
+    defer map::deinit(int32, int64, values&);
+    if !map::insert(int32, int64, values&, 7, 42) { return 1; };
+    return answer(values);
+}

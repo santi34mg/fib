@@ -54,6 +54,74 @@ and package-private helpers resolve normally. Other open std files supply unsave
 overlays in that same package. An enclosing application's `build.fib` does not
 select the library's source membership. `--no-std` still disables this preparation.
 
+## Process entry and maps
+
+On Linux x86-64, `main` may return `int32`, `void`, or an instance of
+`std::result::Result(T, E)` with `T` equal to `int32` or a unit type. A void return
+or unit `Ok` exits with status 0; `int32` and `Ok(int32)` supply the exit status.
+Every `Err` exits with status 1; its payload is discarded without printing.
+The host applies its usual exit-status truncation. Build entries retain
+`build() int32`.
+
+`main` accepts zero parameters, arguments alone, environment alone, or arguments
+followed by environment. Parameter names are arbitrary; types determine their
+role. Type-returning `comp fn` calls can appear directly in type positions;
+aliases are optional. The computed type can also select its enum variants:
+
+```fib
+fn main(args: std::process::Arguments, env: std::process::Environment) std::result::Result(int32, void) {
+    switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "HOME"[..])) {
+        when .Ok(home) { return std::result::Result(int32, void).Ok(0); }
+        when .Err { return std::result::Result(int32, void).Err; }
+    };
+}
+```
+
+`std::process::Bytes` is `const uint8[]`; `Arguments` is `Bytes[]` and
+`Environment` aliases `std::map::Map(Bytes, Bytes)`. Arguments include the executable name at
+index zero when provided by the host. Empty arguments are preserved. Argument
+and environment strings borrow process-lifetime bytes, exclude terminating NULs,
+and need not contain valid UTF-8. Environment entries split at the first `=`;
+empty values are preserved, malformed entries are ignored, and the last duplicate
+key wins. Startup allocation failure exits with status 1.
+
+`std::map::Map(K, V)` is generic over key and value types and uses linear lookup.
+`init(K, V, equal)` creates an empty map with an equality function of type
+`fn(K, K) bool`. Keys match according to that function; callers should supply an
+equivalence relation. `bytes_equal` supplies bytewise, case-sensitive equality for
+`const uint8[]` keys and is used by the environment map.
+`insert(K, V, map&, key, value)` inserts or replaces and returns false on allocation
+failure without changing the map. `get(K, V, map, key)` returns `Result(V, void)`;
+an absent key differs from a present empty value. `map.len` counts distinct keys.
+`deinit(K, V, map&)` frees owned arrays and resets the map for reuse, preserving
+its equality function. Key and value copies follow ordinary Fib value semantics;
+pointer/slice backing storage remains borrowed and must outlive map use.
+Map copies share storage; keep one owner for mutation and cleanup. The environment
+map's ownership passes to `main`; it may be mutated and deinitialized, or left for
+process exit to reclaim. Argument descriptor storage is freed after `main` returns.
+See [process entry sample](../samples/process_entry.fib).
+
+```fib
+fn equal(a: int32, b: int32) bool { return a == b; }
+fn main() int32 {
+    values := std::map::init(int32, int64, equal);
+    defer std::map::deinit(int32, int64, values&);
+    std::map::insert(int32, int64, values&, 7, 42);
+    switch (std::map::get(int32, int64, values, 7)) {
+        when .Ok(value) { return value as int32; }
+        when .Err { return 1; }
+    };
+}
+```
+
+Computed type annotations such as `Map(K, V)` and `Result(V, void)` are accepted
+in signatures and storage declarations. They share the existing bounded type
+evaluator and specialization cache. See [generic map sample](../samples/generic_map.fib).
+
+The driver generates a source wrapper, analyzes it with the application, and
+lowers it through verified SSA and the ordinary C/Fib ABI adapters. Startup uses
+the C runtime's argc/argv/envp boundary and source std allocation/parsing.
+
 ## Names and prelude
 
 Use `std::memory::slice_data`, `std::os::write`, and

@@ -223,6 +223,17 @@ impl Source<'_> {
 /// associated with their source span. Functions that can reach their end must
 /// have no return values; value-returning functions must return or diverge.
 pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
+    let name = if !project.builtins.values().any(|b| !b.is_intrinsic()) {
+        "main"
+    } else {
+        "build"
+    };
+    lower_with_entry(project, name)
+}
+
+/// Lower a compiler-generated process wrapper as the exported C `main`.
+/// The original Fib main keeps its ordinary internal calling convention.
+pub(crate) fn lower_with_entry(project: &AnalyzedProject, entry_name: &str) -> anyhow::Result<Ir> {
     validate_analysis(project)?;
     let mut ir = Ir::new();
     ir.types = SCALARS[..scalar_id(&BuiltinType::String).0]
@@ -342,11 +353,6 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
         ir.builtin_functions.insert(function_id, builtin);
     }
 
-    let entry_name = if !project.builtins.values().any(|b| !b.is_intrinsic()) {
-        "main"
-    } else {
-        "build"
-    };
     for unit in &project.units {
         let source = Source {
             project,
@@ -410,7 +416,12 @@ pub fn lower(project: &AnalyzedProject) -> anyhow::Result<Ir> {
                 lowered_signature.calling_convention = CallingConvention::C;
             }
             ir.functions.push(Function {
-                identifier: if entry || function.is_extern || project.units.len() == 1 {
+                identifier: if entry && entry_name != "build" {
+                    "main".into()
+                } else if entry
+                    || function.is_extern
+                    || (project.units.len() == 1 && entry_name == "main")
+                {
                     signature.identifier.clone()
                 } else {
                     format!(

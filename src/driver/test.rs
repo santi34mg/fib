@@ -16,6 +16,26 @@ fn source(text: &str) -> (tempfile::TempDir, BuildPlan) {
 }
 
 #[test]
+fn void_main_without_std_uses_a_separate_c_wrapper() {
+    let (_directory, plan) = source("fn main() {}");
+    let CompilationOutput::Ir(ir) = run_pipeline(&plan, PipelineGoal::Ir).unwrap() else {
+        panic!("expected IR");
+    };
+    let main = ir
+        .functions
+        .iter()
+        .find(|f| f.identifier == "main")
+        .unwrap();
+    assert_eq!(
+        main.signature.calling_convention,
+        crate::ir::CallingConvention::C
+    );
+    assert_eq!(main.signature.params.len(), 3);
+    assert!(ir.functions.iter().any(|f| f.identifier != "main"
+        && f.signature.calling_convention == crate::ir::CallingConvention::Fib));
+}
+
+#[test]
 fn build_file_builtins_lower_to_verified_bytes_calls_and_interpret() {
     let (_directory, plan) = source(
         "fn build() int32 { build_api::add_source(\"src/main.fib\"[..]); build_api::set_entry(\"main\"[..]); build_api::set_output(\"build/app\"[..]); return 0; }",

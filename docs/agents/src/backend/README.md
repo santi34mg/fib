@@ -18,6 +18,9 @@ from its signature and resolved target. The ABI adapter uses that description
 for declarations, incoming arguments, calls to the function, and returns from it.
 There is no module-wide ABI setting or alternative public emission entry point.
 C 32-bit integer/void entries and internal scalar Fib fastcc classification ship.
+Extended main signatures use an analyzed source wrapper with C argc/argv/envp
+parameters and int32 result; source main retains Fib ABI. Process adaptation is
+implemented by the driver and source std, using the same emission path.
 The latter supports Bool, fixed-width integers, IEEE floats, structs, enums and typed
 pointers directly; full Fib ABI and
 external C interoperability for the new scalars remain unfinished.

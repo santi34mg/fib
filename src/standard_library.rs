@@ -238,6 +238,8 @@ impl BuildPlan {
             prelude: required("prelude")?,
         };
         required("result")?;
+        required("map")?;
+        required("process")?;
         plan.packages.push(PackageSpec {
             id: package,
             source_root: root,

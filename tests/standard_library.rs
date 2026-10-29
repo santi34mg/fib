@@ -30,6 +30,304 @@ fn analyze(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
 }
 
 #[test]
+fn generic_maps_validate_specialization_and_reject_mismatched_types() {
+    let (_directory, plan) = input(include_str!("../samples/generic_map.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Ir).unwrap();
+    for source in [
+        "fn eq(a: int32, b: int32) bool { return a == b; } fn main() { m := std::map::init(int32, int64, eq); std::map::insert(int32, bool, m&, 1, true); }",
+        "fn eq(a: bool, b: bool) bool { return a == b; } fn main() { m := std::map::init(int32, int64, eq); }",
+        "fn value() int32 { return 1; } fn main() { x: value(); }",
+    ] {
+        let (_directory, plan) = input(source);
+        let error = analyze(&plan).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("incompatible types")
+                || format!("{error:#}").contains("requires a type value"),
+            "{source}\n{error:#}"
+        );
+    }
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn generic_maps_execute_with_scalar_and_struct_keys_and_values() {
+    for source in [
+        include_str!("../samples/generic_map.fib"),
+        r#"
+        comp Key := struct { number: int32, ignored: bool };
+        comp Value := struct { answer: int64, flag: bool };
+        fn equal(a: Key, b: Key) bool { return a.number == b.number; }
+        fn main() int32 {
+            m := std::map::init(Key, Value, equal);
+            defer std::map::deinit(Key, Value, m&);
+            i := 0;
+            while (i < 20) {
+                if !std::map::insert(Key, Value, m&, Key { number: i, ignored: false }, Value { answer: i as int64, flag: false }) { return 1; };
+                i = i + 1;
+            };
+            if !std::map::insert(Key, Value, m&, Key { number: 7, ignored: true }, Value { answer: 42, flag: true }) { return 2; };
+            if m.len != 20 { return 3; };
+            switch (std::map::get(Key, Value, m, Key { number: 7, ignored: false })) {
+                when .Ok(value) { if value.answer != 42 || !value.flag { return 4; }; }
+                when .Err { return 5; }
+            };
+            switch (std::map::get(Key, Value, m, Key { number: 25, ignored: false })) {
+                when .Ok(value) { return 6; }
+                when .Err {}
+            };
+            std::map::deinit(Key, Value, m&);
+            if !std::map::insert(Key, Value, m&, Key { number: 1, ignored: true }, Value { answer: 42, flag: true }) { return 7; };
+            return 42;
+        }
+    "#,
+    ] {
+        let (_directory, plan) = input(source);
+        fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary)
+            .unwrap_or_else(|e| panic!("{source}\n{e:#}"));
+        assert_eq!(
+            std::process::Command::new(&plan.output)
+                .status()
+                .unwrap()
+                .code(),
+            Some(42)
+        );
+    }
+}
+
+#[test]
+fn process_entry_contracts_validate_and_lower() {
+    use fibc::driver::{PipelineGoal, run_pipeline};
+    for source in [
+        "fn main() {}",
+        "comp R := std::result::Result(void, int32); fn main() R { return R.Ok; }",
+        "comp R := std::result::Result(int32, void); fn main() R { return R.Ok(42); }",
+        "fn main(args: std::process::Arguments) int32 { return args.len as int32; }",
+        "comp M := std::map::Map(std::process::Bytes, std::process::Bytes); fn main(env: M) int32 { return env.len as int32; }",
+        include_str!("../samples/process_entry.fib"),
+        "fn __fib_process_entry() {} fn main(args: std::process::Arguments) {}",
+    ] {
+        let (_directory, plan) = input(source);
+        run_pipeline(&plan, PipelineGoal::Ir).unwrap_or_else(|e| panic!("{source}\n{e:#}"));
+    }
+    for (source, expected) in [
+        ("fn main(x: int32) int32 { return x; }", "main parameters"),
+        (
+            "fn main(a: std::process::Arguments, b: std::process::Arguments) {}",
+            "main parameters",
+        ),
+        (
+            "fn main(e: std::process::Environment, a: std::process::Arguments) {}",
+            "main parameters",
+        ),
+        ("fn main() int64 { return 0; }", "must return"),
+        (
+            "comp R := enum { Ok, Err }; fn main() R { return R.Ok; }",
+            "must return",
+        ),
+        (
+            "comp R := std::result::Result(bool, void); fn main() R { return R.Ok(true); }",
+            "success type",
+        ),
+        (
+            "comp fn main() int32 { return 0; }",
+            "ordinary Fib definition",
+        ),
+    ] {
+        let (_directory, plan) = input(source);
+        let error = run_pipeline(&plan, PipelineGoal::Check).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(expected),
+            "{source}\n{error:#}"
+        );
+        assert!(!plan.output.exists());
+    }
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn process_entries_execute_with_arguments_environment_and_result_status() {
+    use fibc::driver::{PipelineGoal, run_pipeline};
+    for (source, arguments, environment, status) in [
+        (
+            include_str!("../samples/process_entry.fib"),
+            vec![],
+            vec![("FIB_EXIT", "42")],
+            42,
+        ),
+        (
+            include_str!("../samples/process_entry.fib"),
+            vec!["argument"],
+            vec![],
+            0,
+        ),
+        (
+            include_str!("../samples/process_entry.fib"),
+            vec![],
+            vec![],
+            1,
+        ),
+        ("fn main() {}", vec![], vec![], 0),
+        (
+            "comp R := std::result::Result(void, std::process::Bytes); fn main() R { return R.Err(\"failed\"[..]); }",
+            vec![],
+            vec![],
+            1,
+        ),
+        (
+            "comp R := std::result::Result(int32, void); calls := 0; fn main() R { if calls == 0 { calls = 1; return main(); }; return R.Ok(42); }",
+            vec![],
+            vec![],
+            42,
+        ),
+        (
+            "fn main(args: std::process::Arguments, env: std::process::Environment) int32 { if !std::map::insert(std::process::Bytes, std::process::Bytes, env&, \"new\"[..], \"value\"[..]) { return 1; }; std::map::deinit(std::process::Bytes, std::process::Bytes, env&); if args.len > 0 { return 42; }; return 1; }",
+            vec![],
+            vec![],
+            42,
+        ),
+        (
+            "comp R := std::result::Result(void, int32); fn main() R { return R.Ok; }",
+            vec![],
+            vec![],
+            0,
+        ),
+        (
+            "comp R := std::result::Result(void, int32); fn main() R { return R.Err(42); }",
+            vec![],
+            vec![],
+            1,
+        ),
+        (
+            "comp R := std::result::Result(int32, void); fn main() R { return R.Ok(42); }",
+            vec![],
+            vec![],
+            42,
+        ),
+        (
+            "fn main(args: std::process::Arguments) int32 { if args.len == 1 && args[0].len > 0 { return 42; }; return 1; }",
+            vec![],
+            vec![],
+            42,
+        ),
+        (
+            "fn main(args: std::process::Arguments) int32 { if args.len == 4 && args[1].len == 0 && args[2].len == 3 && args[2][1] == 32 && args[3].len == 2 { return 42; }; return 1; }",
+            vec!["", "a b", "é"],
+            vec![],
+            42,
+        ),
+        (
+            "fn main(env: std::process::Environment) int32 { if env.len == 0 { return 42; }; return 1; }",
+            vec![],
+            vec![],
+            42,
+        ),
+        (
+            r#"comp R := std::result::Result(int32, void);
+            fn main(args: std::process::Arguments, env: std::process::Environment) R {
+                if args.len != 2 || args[1].len != 0 || env.len != 2 { return R.Err; };
+                switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "EMPTY"[..])) {
+                    when .Ok(value) { if value.len != 0 { return R.Err; }; }
+                    when .Err { return R.Err; }
+                };
+                switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "VALUE"[..])) {
+                    when .Ok(value) { if value.len == 3 && value[1] == 61 { return R.Ok(42); }; }
+                    when .Err {}
+                };
+                return R.Err;
+            }"#,
+            vec![""],
+            vec![("EMPTY", ""), ("VALUE", "a=b")],
+            42,
+        ),
+    ] {
+        let (_directory, plan) = input(source);
+        run_pipeline(&plan, PipelineGoal::Binary).unwrap_or_else(|e| panic!("{source}\n{e:#}"));
+        let output = std::process::Command::new(&plan.output)
+            .args(arguments)
+            .env_clear()
+            .envs(environment)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(status), "{source}\n{output:?}");
+    }
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn environment_vectors_split_once_replace_duplicates_and_skip_malformed_entries() {
+    let source = r#"
+        fn main() int32 {
+            first: uint8[4] = [75, 61, 49, 0];
+            malformed: uint8[2] = [88, 0];
+            replacement: uint8[6] = [75, 61, 50, 61, 255, 0];
+            empty: uint8[3] = [69, 61, 0];
+            vector := [first[0]&, malformed[0]&, replacement[0]&, empty[0]&, null as *uint8];
+            env := std::process::environment(vector[0]&);
+            defer std::map::deinit(std::process::Bytes, std::process::Bytes, env&);
+            if env.len != 2 { return 1; };
+            switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "K"[..])) {
+                when .Ok(value) { if value.len != 3 || value[0] != 50 || value[1] != 61 || value[2] != 255 { return 2; }; }
+                when .Err { return 3; }
+            };
+            switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "E"[..])) {
+                when .Ok(value) { if value.len != 0 { return 4; }; }
+                when .Err { return 5; }
+            };
+            return 42;
+        }
+    "#;
+    let (_directory, plan) = input(source);
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+    assert_eq!(
+        std::process::Command::new(&plan.output)
+            .status()
+            .unwrap()
+            .code(),
+        Some(42)
+    );
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn byte_string_map_grows_replaces_and_releases_storage() {
+    let source = r#"
+        fn main() int32 {
+            map := std::map::init(std::process::Bytes, std::process::Bytes, std::map::bytes_equal);
+            defer std::map::deinit(std::process::Bytes, std::process::Bytes, map&);
+            if !std::map::insert(std::process::Bytes, std::process::Bytes, map&, ""[..], ""[..]) { return 1; };
+            keys := ["a"[..], "b"[..], "c"[..], "d"[..], "e"[..], "f"[..], "g"[..], "h"[..], "i"[..]];
+            i: usize = 0;
+            while (i < keys.len) {
+                if !std::map::insert(std::process::Bytes, std::process::Bytes, map&, keys[i], "old"[..]) { return 2; };
+                i = i + 1;
+            };
+            if !std::map::insert(std::process::Bytes, std::process::Bytes, map&, "a"[..], "new"[..]) || map.len != 10 { return 3; };
+            switch (std::map::get(std::process::Bytes, std::process::Bytes, map, "a"[..])) {
+                when .Ok(value) { if value[0] != 110 { return 4; }; }
+                when .Err { return 5; }
+            };
+            switch (std::map::get(std::process::Bytes, std::process::Bytes, map, "absent"[..])) {
+                when .Ok(value) { return 6; }
+                when .Err {}
+            };
+            std::map::deinit(std::process::Bytes, std::process::Bytes, map&);
+            if map.len != 0 { return 7; };
+            if !std::map::insert(std::process::Bytes, std::process::Bytes, map&, "reused"[..], "yes"[..]) { return 8; };
+            return 42;
+        }
+    "#;
+    let (_directory, plan) = input(source);
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+    assert_eq!(
+        std::process::Command::new(&plan.output)
+            .status()
+            .unwrap()
+            .code(),
+        Some(42)
+    );
+}
+
+#[test]
 fn memory_byte_operations_accept_writable_destinations_and_readonly_sources() {
     let (_directory, plan) = input(include_str!("../samples/memory.fib"));
     fibc::ir::verify_ir(&fibc::ir::lowering::lower(&analyze(&plan).unwrap()).unwrap()).unwrap();
@@ -148,7 +446,9 @@ fn formatting_write_all_retries_interruptions_and_short_writes() {
         installed.join("sysroot.toml"),
     )
     .unwrap();
-    for name in ["memory", "os", "os_abi", "prelude", "result", "io"] {
+    for name in [
+        "memory", "os", "os_abi", "prelude", "result", "io", "map", "process",
+    ] {
         std::fs::copy(
             sysroot().join(format!("std/{name}.fib")),
             installed.join(format!("std/{name}.fib")),
@@ -263,14 +563,16 @@ fn loading_std_preserves_flat_plan_names_and_existing_source_ids() {
 
 #[test]
 fn directly_opened_std_modules_keep_their_package_and_document_identity() {
-    for name in ["os", "memory", "result", "os_abi", "prelude"] {
+    for name in [
+        "os", "memory", "result", "os_abi", "prelude", "io", "map", "process",
+    ] {
         let path = sysroot().join(format!("std/{name}.fib"));
         // The owning source tree takes precedence over the server's installation.
         let plan = tooling::standalone_plan(&path)
             .with_standard_library(StandardLibrary::at("/missing/installed/sysroot"));
         let prepared = plan.prepare().unwrap();
         assert_eq!(prepared.entry, plan.entry);
-        assert_eq!(prepared.files.len(), 6);
+        assert_eq!(prepared.files.len(), 8);
         assert_eq!(prepared.packages.len(), 1);
         assert_eq!(prepared.files.iter().filter(|f| f.path == path).count(), 1);
         assert!(prepared.packages[0].files.contains(&plan.entry));
@@ -469,7 +771,9 @@ fn prelude_exports_are_ordinary_aliases_and_collisions_are_errors() {
         installed.join("sysroot.toml"),
     )
     .unwrap();
-    for name in ["memory", "os", "os_abi", "prelude", "result", "io"] {
+    for name in [
+        "memory", "os", "os_abi", "prelude", "result", "io", "map", "process",
+    ] {
         std::fs::copy(
             sysroot().join(format!("std/{name}.fib")),
             installed.join(format!("std/{name}.fib")),
