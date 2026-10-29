@@ -62,6 +62,10 @@ impl Client {
         let initialized = client.wait(|m| m["id"] == 1);
         assert_eq!(initialized["result"]["serverInfo"]["name"], "fib-lsp");
         assert_eq!(
+            initialized["result"]["capabilities"]["completionProvider"]["triggerCharacters"],
+            json!([":"])
+        );
+        assert_eq!(
             initialized["result"]["capabilities"]["positionEncoding"],
             "utf-16"
         );
@@ -197,7 +201,9 @@ fn editing_std_uses_its_own_manifest_and_unsaved_sibling_sources() {
         sysroot.join("sysroot.toml"),
     )
     .unwrap();
-    for name in ["os", "memory", "result", "os_abi", "prelude", "io"] {
+    for name in [
+        "os", "memory", "result", "os_abi", "prelude", "io", "map", "process",
+    ] {
         std::fs::copy(
             repository.join(format!("std/{name}.fib")),
             sources.join(format!("{name}.fib")),
@@ -345,5 +351,46 @@ fn diagnostics_convert_unicode_columns_to_utf16() {
         .count();
     assert_eq!(error["range"]["start"]["character"], start);
     assert_eq!(error["range"]["end"]["character"], start + "missing".len());
+    client.finish();
+}
+
+#[test]
+fn completes_std_paths_in_unfinished_unsaved_expressions() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("main.fib");
+    let mut client = Client::new(root.path());
+    for (version, suffix, expected, kind) in [
+        (1, "std::", "io", 9),
+        (2, "std::io::", "print", 3),
+        (3, "std::io::pri", "printf", 3),
+        (4, "std::os::", "syscall0", 3),
+    ] {
+        let source = format!("fn f() {{ s := \"😀\"; {suffix}");
+        if version == 1 {
+            client.open(&path, &source);
+        } else {
+            client.change(&path, &source, version);
+        }
+        // Request immediately, before background analysis has finished.
+        client.send(json!({"jsonrpc":"2.0","id":version + 20,"method":"textDocument/completion","params":{"textDocument":{"uri":uri(&path)},"position":{"line":0,"character":source.encode_utf16().count()}}}));
+        let response = client.wait(|m| m["id"] == version + 20);
+        let items = response["result"]["items"].as_array().unwrap();
+        assert!(
+            items
+                .iter()
+                .any(|i| i["label"] == expected && i["kind"] == kind),
+            "{response}"
+        );
+        if suffix.ends_with("pri") {
+            assert!(
+                items
+                    .iter()
+                    .all(|i| i["label"].as_str().unwrap().starts_with("pri"))
+            );
+        }
+    }
+    client.change(&path, "fn f() { std::os_abi::", 5);
+    client.send(json!({"jsonrpc":"2.0","id":30,"method":"textDocument/completion","params":{"textDocument":{"uri":uri(&path)},"position":{"line":0,"character":21}}}));
+    assert_eq!(client.wait(|m| m["id"] == 30)["result"]["items"], json!([]));
     client.finish();
 }

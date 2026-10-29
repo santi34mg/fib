@@ -233,6 +233,7 @@ fn analyze(snapshot: Snapshot) -> ProjectAnalysis {
                         tokens,
                         semantic_tokens,
                         diagnostics: vec![],
+                        completions: Default::default(),
                     },
                 );
                 continue;
@@ -248,6 +249,7 @@ fn analyze(snapshot: Snapshot) -> ProjectAnalysis {
 }
 
 struct Server {
+    pending_completions: Vec<(Value, String, tooling::Position)>,
     snapshot: Snapshot,
     initialized: bool,
     shutdown: bool,
@@ -271,6 +273,18 @@ impl Server {
         };
         if *generation != self.snapshot.generation {
             return Ok(());
+        }
+        for (id, uri, position) in self.pending_completions.drain(..) {
+            if let Some(document) = self.snapshot.documents.get(&uri) {
+                let items = result
+                    .documents
+                    .get(&document.path)
+                    .map(|d| tooling::complete(d, position))
+                    .unwrap_or_default();
+                response(id, json!({"isIncomplete":false,"items":items}))?;
+            } else {
+                error(id, -32602, "document is not open")?;
+            }
         }
         for (id, uri) in self.pending.drain(..) {
             if let Some(document) = self.snapshot.documents.get(&uri) {
@@ -380,7 +394,7 @@ impl Server {
             self.initialized = true;
             response(
                 id.unwrap_or(Value::Null),
-                json!({"capabilities":{"positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":1},"semanticTokensProvider":{"legend":{"tokenTypes":tooling::TOKEN_TYPES,"tokenModifiers":[]},"full":true}},"serverInfo":{"name":"fib-lsp","version":env!("CARGO_PKG_VERSION")}}),
+                json!({"capabilities":{"positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":1},"completionProvider":{"triggerCharacters":[":"],"resolveProvider":false},"semanticTokensProvider":{"legend":{"tokenTypes":tooling::TOKEN_TYPES,"tokenModifiers":[]},"full":true}},"serverInfo":{"name":"fib-lsp","version":env!("CARGO_PKG_VERSION")}}),
             )?;
             return Ok(None);
         }
@@ -467,7 +481,41 @@ impl Server {
                     }
                 }
             }
+            "textDocument/completion" => {
+                if let Some(id) = id {
+                    if let Some(message) = &self.failure {
+                        error(id, -32603, message)?;
+                    } else if let (Some(uri), Some(line), Some(character)) = (
+                        params["textDocument"]["uri"]
+                            .as_str()
+                            .filter(|u| self.snapshot.documents.contains_key(*u)),
+                        params["position"]["line"]
+                            .as_u64()
+                            .and_then(|n| u32::try_from(n).ok()),
+                        params["position"]["character"]
+                            .as_u64()
+                            .and_then(|n| u32::try_from(n).ok()),
+                    ) {
+                        self.pending_completions.push((
+                            id,
+                            uri.to_owned(),
+                            tooling::Position { line, character },
+                        ));
+                        self.flush_tokens()?;
+                    } else {
+                        error(id, -32602, "expected an open document and valid position")?;
+                    }
+                }
+            }
             "$/cancelRequest" => {
+                if let Some(index) = self
+                    .pending_completions
+                    .iter()
+                    .position(|(id, _, _)| *id == params["id"])
+                {
+                    let (id, _, _) = self.pending_completions.remove(index);
+                    error(id, -32800, "request cancelled")?;
+                }
                 if let Some(index) = self.pending.iter().position(|(id, _)| *id == params["id"]) {
                     let (id, _) = self.pending.remove(index);
                     error(id, -32800, "request cancelled")?;
@@ -544,6 +592,7 @@ fn run() -> io::Result<i32> {
         }
     });
     let mut server = Server {
+        pending_completions: vec![],
         snapshot: Snapshot {
             standard_library,
             generation: 0,
@@ -576,6 +625,9 @@ fn run() -> io::Result<i32> {
                     json!({"jsonrpc":"2.0","method":"window/logMessage","params":{"type":1,"message":message}}),
                 )?;
                 for (id, _) in server.pending.drain(..) {
+                    error(id, -32603, &message)?;
+                }
+                for (id, _, _) in server.pending_completions.drain(..) {
                     error(id, -32603, &message)?;
                 }
             }
@@ -634,6 +686,7 @@ mod tests {
     fn stale_results_cannot_update_cache_or_publish_diagnostics() {
         let (jobs, _) = mpsc::channel();
         let mut server = Server {
+            pending_completions: vec![],
             snapshot: Snapshot {
                 standard_library: fibc::standard_library::StandardLibrary::disabled(),
                 generation: 3,

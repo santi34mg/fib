@@ -39,7 +39,14 @@ through 128 bits, float16/32/64/128 and bool through locals, arithmetic,
 bitwise/shifts, explicit casts, short-circuit logic, helpers/calls, conditionals,
 while loops, break/continue and returns. Typed numeric values require explicit
 conversions. Native helpers use a limited direct Fib fastcc ABI; main keeps the
-C int32 entry contract. Struct values, partial initialization, stack storage,
+C int32 entry contract. Extended main signatures use an analyzed source wrapper:
+optional `std::process::Arguments` and `Environment` parameters, with void/int32
+or unit/int32-success `std::result::Result` returns. Source `std::map` implements
+generic `Map(K, V)` with supplied equality, specialized to byte strings for the
+environment. Computed type annotations work in signatures and declarations;
+specialization recomputes nominal type identities from substituted arguments.
+See [process contracts](../standard-library.md#process-entry-and-maps).
+Struct values, partial initialization, stack storage,
 field/pointer mutation and internal struct/pointer calls work. Ordinary dereference
 traps on null; `std::memory::unchecked_deref(pointer)` returns an unchecked place.
 `core::sizeof(T)` returns `usize` byte sizes from LLVM's
@@ -93,6 +100,11 @@ information and independent diagnostics; it is never a lowering input.
 errors and suppresses dependent checks. Strict `Analyzer::analyze` retains its
 validated-project contract. Identifier annotation locations support highlighting
 without a separate language grammar. See [LSP setup](../../lsp/README.md).
+
+Qualified-name LSP completion uses collected namespaces, package dependency paths
+and compiler visibility checks. It supports unfinished `std::`/module expressions
+and partial member names, using the current background-analysis generation.
+Local-variable and field completion remain deferred.
 
 Directly opened std files use their owning sysroot manifest and reuse the open
 document's ID in the std package. This preserves `root` and compiler intrinsic

@@ -9,8 +9,13 @@ members, generic specialization, initialization, control flow, and compiler
 warnings. Independent failures are collected across files and statements.
 Checks that depend on failed declarations are deferred to avoid cascades.
 Parsing currently reports the first syntax error in each file, while other
-available files continue through analysis. Hover, completion and navigation
-are not implemented.
+available files continue through analysis. Qualified-name completion suggests
+modules after `std::` and accessible functions, types and values after paths such
+as `std::io::`. Partial names such as `std::io::pri` filter the suggestions.
+Completion works in unfinished expressions and uses installed std sources and
+unsaved overlays; private declarations are filtered by compiler visibility rules.
+Editors can trigger completion on `:` or request it manually. Local-variable,
+field and unqualified-name completion, hover and navigation are not implemented.
 
 ## Install and run
 
@@ -135,6 +140,10 @@ extension through VS Code's extension development workflow or package it using
 when `fib-lsp` is not on PATH. The extension does not bundle a server binary.
 
 ## Development and validation
+
+The [performance report](../docs/performance.md) covers release-mode stdio
+benchmarks for edit-to-diagnostics latency, completion, token requests, and
+scaling with open documents, alongside compiler stage measurements.
 
 From the repository root:
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add LSP qualified-name completion for standard-library modules and accessible functions, types and values, including unfinished expressions and partial names.
+
+- Allow `main` to return void or `std::result::Result` with unit/int32 success and accept an argument slice and environment map. Add source `std::process` startup adaptation and generic `std::map::Map(K, V)` maps with supplied equality, lookup, insertion/replacement, growth and cleanup. The environment map specializes byte-string keys and values.
+- Accept computed type annotations such as `Map(K, V)` in signatures and declarations, preserving nominal computed-type identities during generic specialization.
+
 - Implement `std::io::print`, `printf`, `fprintf` and `write_all` with tagged arguments, brace formatting, full-range integer conversion, format validation and explicit I/O errors.
 
 - Add source-level `std::memory::memset` and `memcpy` for byte slices, including readonly copy sources and destination capacity checks before writes.

@@ -107,6 +107,57 @@ pub struct DocumentAnalysis {
     pub tokens: Vec<Token>,
     pub semantic_tokens: Vec<u32>,
     pub diagnostics: Vec<EditorDiagnostic>,
+    pub completions: BTreeMap<String, Vec<Completion>>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct Completion {
+    pub label: String,
+    pub kind: u32,
+    pub detail: String,
+}
+
+/// Qualified-name completion tolerates an unfinished expression and UTF-16 positions.
+pub fn complete(document: &DocumentAnalysis, position: Position) -> Vec<Completion> {
+    let Some(line) = document.source.split('\n').nth(position.line as usize) else {
+        return vec![];
+    };
+    let mut units = 0;
+    let mut offset = 0;
+    for c in line.chars() {
+        if units == position.character {
+            break;
+        }
+        units += c.len_utf16() as u32;
+        offset += c.len_utf8();
+    }
+    if units != position.character {
+        return vec![];
+    }
+    let index = SourceIndex::new(&document.source);
+    if document.tokens.iter().any(|token| {
+        let range = index.token_range(token);
+        matches!(token.kind, TokenKind::Comment | TokenKind::Literal(_))
+            && (range.start.line, range.start.character) <= (position.line, position.character)
+            && (position.line, position.character) < (range.end.line, range.end.character)
+    }) {
+        return vec![];
+    }
+    let prefix = &line[..offset];
+    let start = prefix
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+        .map_or(0, |i| i + prefix[i..].chars().next().unwrap().len_utf8());
+    let Some((namespace, partial)) = prefix[start..].rsplit_once("::") else {
+        return vec![];
+    };
+    document
+        .completions
+        .get(namespace)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.label.starts_with(partial))
+        .cloned()
+        .collect()
 }
 #[derive(Default, Debug)]
 pub struct ProjectAnalysis {
@@ -128,6 +179,7 @@ impl ProjectAnalysis {
                 source,
                 tokens,
                 diagnostics: Vec::new(),
+                completions: BTreeMap::new(),
             }
         });
         document.diagnostics.push(EditorDiagnostic {
@@ -237,6 +289,7 @@ pub fn analyze_plan(
                 tokens,
                 semantic_tokens,
                 diagnostics,
+                completions: BTreeMap::new(),
             },
         );
         roles.insert(file.id, syntax_roles);
@@ -260,6 +313,93 @@ fn apply_report(
     mut report: AnalysisReport,
     mut roles: HashMap<FileId, HashMap<Span, &'static str>>,
 ) {
+    for file in &plan.files {
+        let Some(document) = output.documents.get_mut(&file.path) else {
+            continue;
+        };
+        let symbols = &report.symbols;
+        let mut paths: BTreeMap<String, FileId> = symbols
+            .files_by_name
+            .iter()
+            .filter(|(_, id)| {
+                symbols.regions.get(id).is_none_or(|r| {
+                    symbols
+                        .regions
+                        .get(&file.id)
+                        .is_some_and(|f| f.package == r.package)
+                })
+            })
+            .map(|(name, id)| (name.0.clone(), *id))
+            .collect();
+        if let Some(region) = symbols.regions.get(&file.id) {
+            for ((package, path), id) in &symbols.package_files {
+                if *package == region.package {
+                    paths.insert(format!("root::{path}"), *id);
+                }
+                if let Some(dependencies) = symbols.dependencies.get(&region.package) {
+                    for (name, target) in dependencies {
+                        if target == package {
+                            paths.insert(format!("{name}::{path}"), *id);
+                        }
+                    }
+                }
+            }
+        }
+        for (path, owner) in paths {
+            let segments: Vec<_> = path.split("::").collect();
+            for n in 1..segments.len() {
+                document
+                    .completions
+                    .entry(segments[..n].join("::"))
+                    .or_default()
+                    .push(Completion {
+                        label: segments[n].into(),
+                        kind: 9,
+                        detail: "module".into(),
+                    });
+            }
+            if let Some(namespace) = symbols.namespaces.get(&owner) {
+                for (name, id) in &namespace.names {
+                    let declaration = &namespace.declarations[id.index as usize];
+                    if !symbols.accessible(file.id, owner, declaration.visibility) {
+                        continue;
+                    }
+                    let info = report
+                        .types
+                        .bindings
+                        .get(&super::analysis_annotation::BindingId::Declaration(*id));
+                    let kind = if info.is_some_and(|info| {
+                        matches!(
+                            report
+                                .types
+                                .canonical(info.ty)
+                                .and_then(|ty| report.types.get(ty)),
+                            Ok(SemanticType::Function(_) | SemanticType::IntrinsicFunction)
+                        )
+                    }) {
+                        3
+                    } else if info.is_some_and(|info| info.type_value.is_some()) {
+                        7
+                    } else {
+                        6
+                    };
+                    document
+                        .completions
+                        .entry(path.clone())
+                        .or_default()
+                        .push(Completion {
+                            label: name.clone(),
+                            kind,
+                            detail: format!("{path}::{name}"),
+                        });
+                }
+            }
+        }
+        for items in document.completions.values_mut() {
+            items.sort_by(|a, b| a.label.cmp(&b.label));
+            items.dedup_by(|a, b| a.label == b.label);
+        }
+    }
     for unit in &mut report.units {
         let Some(file) = plan.files.iter().find(|f| f.id == unit.source_file_id) else {
             continue;
