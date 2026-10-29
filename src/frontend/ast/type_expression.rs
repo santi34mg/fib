@@ -28,6 +28,8 @@ impl TypeExpression {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeExpressionKind {
+    /// A type-returning call, evaluated by the ordinary bounded type evaluator.
+    Computed(Box<crate::frontend::ast::expression::Expression>),
     /// Readonly pointee/elements, independent of binding mutability.
     Readonly(Box<TypeExpression>),
     Builtin(BuiltinType),
@@ -62,6 +64,7 @@ pub enum TypeExpressionKind {
 impl fmt::Display for TypeExpressionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            TypeExpressionKind::Computed(expression) => write!(f, "{:?}", expression.kind),
             TypeExpressionKind::Readonly(ty) => write!(f, "const {ty}"),
             TypeExpressionKind::Builtin(builtin_type) => f.write_str(builtin_type.name()),
             TypeExpressionKind::Function {

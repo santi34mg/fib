@@ -19,6 +19,39 @@ mod tests {
     use crate::frontend::tokens::{Literal, Operator, Token};
 
     #[test]
+    fn computed_type_annotations_and_postfix_containers_parse() {
+        let source = "fn f(K: type, x: *lib::Map(K, int64)) Result(K, void) { return x; } a: Map(int32, Result(int64, void))[];";
+        let ast = get_ast(source);
+        let StatementKind::FunctionDeclaration(f) = &ast.statements[0].kind else {
+            panic!()
+        };
+        assert!(matches!(
+            f.signature.return_type.kind,
+            TypeExpressionKind::Computed(_)
+        ));
+        let StatementKind::VariableDeclaration(a) = &ast.statements[1].kind else {
+            panic!()
+        };
+        assert!(matches!(
+            a.ty.as_ref().unwrap().kind,
+            TypeExpressionKind::Slice { .. }
+        ));
+        for source in [
+            "a: Map(int32, ;",
+            "a: Map(int32;",
+            "fn f() Map( {}",
+            "a: Map(,int32);",
+        ] {
+            assert!(
+                Parser::with_source(Tokenizer::new(source), Path::new("computed.fib"), source)
+                    .parse()
+                    .is_err(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
     fn void_type_values_consume_their_token() {
         let ast = get_ast("f(void);");
         let statements = module_statements(&ast);

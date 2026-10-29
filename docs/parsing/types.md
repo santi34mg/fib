@@ -56,6 +56,11 @@ Remote: type = other::Thing;
 - `fn(A, B) -> R` and `comp fn(A, B) -> R` are distinct function **type**
   syntax. Function **declarations** have no arrow; see [Functions](functions.md).
 - Qualified names such as `other::Thing` parse as named type references.
+- Named calls such as `std::map::Map(int32, int64)` parse in type annotations,
+  including function signatures and pointer/array/slice elements. These use a
+  `Computed` type node containing an ordinary call expression. Nested calls and
+  type-value arguments use normal expression parsing; analysis requires a
+  type-valued result.
 
 The type parser loops over array/slice suffixes and recursively parses pointer
 pointees: `*int32[3]` is a pointer to an array. Parser representation does not

@@ -2460,6 +2460,7 @@ mod name_resolution {
         fn ty(&mut self, ty: &mut TypeExpression) {
             match &mut ty.kind {
                 TypeExpressionKind::Builtin(_) => {}
+                TypeExpressionKind::Computed(expression) => self.expr(expression),
                 TypeExpressionKind::QualifiedIdentifier(name) => self.name(name),
                 TypeExpressionKind::Function {
                     argument_types,
@@ -4141,6 +4142,33 @@ mod type_resolution {
                 }
             };
         }
+        pass!(
+            computed_types_in_annotations_without_aliases,
+            "comp fn choose(wide: bool) type { if wide { return int64; } else { return int32; }; }
+             comp fn identity(T: type) type { return T; }
+             answer: choose(false) = 42;
+             comp Record := struct { value: choose(false), items: identity(int32)[2] };
+             comp Event := enum { Value: choose(false), Empty };
+             fn generic(T: type, value: identity(T)) identity(T) { return value; }
+             fn take(value: choose(false), p: *identity(int32), view: const identity(int32)[]) choose(false) {
+                 local: choose(false) = value;
+                 array: identity(int32)[2] = [local, answer];
+                 callback: fn(identity(int32)) identity(int32) = increment;
+                 return generic(int32, callback(array[0]));
+             }
+             fn increment(value: identity(int32)) identity(int32) { return value + 1; }
+             fn cast(value: int64) identity(int32) { return value as identity(int32); }"
+        );
+        fail!(
+            computed_annotation_rejects_runtime_type_function,
+            "fn choose() type { return int32; } fn f(value: choose()) {}",
+            "use 'comp fn'"
+        );
+        fail!(
+            computed_annotation_requires_a_type_result,
+            "fn choose() int32 { return 1; } fn f(value: choose()) {}",
+            "requires a type value"
+        );
         pass!(
             aggregate_join_preserves_full_initialization,
             "comp S: type = struct { x: int32 }; fn f(b: bool) S { s: S; if b { s = S { x: 1 }; } else { s.x = 2; }; return s; }"

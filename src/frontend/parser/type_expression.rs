@@ -125,8 +125,21 @@ where
                 }
             }
         };
-        // Postfix array/slice type: `type[size]` or `type[]`.
         let mut var_type = var_type;
+        if let TypeExpressionKind::QualifiedIdentifier(name) = &var_type.kind
+            && matches!(
+                self.peek().map(|t| t.kind),
+                Some(TokenKind::Punctuation(Punctuation::OpeningParenthesis))
+            )
+        {
+            use crate::frontend::ast::expression::{Expression, ExpressionKind};
+            let call = self.parse_call(Expression::at(
+                ExpressionKind::QualifiedIdentifier(name.clone()),
+                span,
+            ))?;
+            var_type = TypeExpression::at(TypeExpressionKind::Computed(Box::new(call)), span);
+        }
+        // Postfix array/slice type: `type[size]` or `type[]`.
         while matches!(
             self.peek(),
             Some(Token {

@@ -9,6 +9,7 @@ impl TypeExpression {
         use crate::frontend::{analyzer::Analyzer, ast::type_expression::TypeExpressionKind as T};
         let result = (|| {
             match &mut self.kind {
+                T::Computed(expression) => Analyzer::resolve_name_expression(expression, context)?,
                 T::QualifiedIdentifier(name) => {
                     Analyzer::resolve_name_path(name, context)?;
                 }

@@ -231,6 +231,7 @@ fn expression(v: &mut impl Visitor, expr: &mut Expression) -> Result {
 fn ty_expression(v: &mut impl Visitor, ty: &mut TypeExpression) -> Result {
     v.ty(ty)?;
     match &mut ty.kind {
+        T::Computed(expr) => expression(v, expr)?,
         T::QualifiedIdentifier(name) => v.name(name)?,
         T::Function {
             argument_types,

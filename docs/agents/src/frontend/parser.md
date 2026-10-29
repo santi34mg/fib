@@ -65,6 +65,11 @@ This is parsing only. It does not type-check or compile the function.
 
 ## Implementation map
 
+Named type-returning calls such as `Map(K, V)` also parse in annotations, including
+signature parameters/results and pointer/array/slice element types. The AST stores
+`TypeExpressionKind::Computed` around the ordinary call expression; the shared
+analyzer and bounded evaluator determine whether it denotes a type.
+
 Per-concern modules include declaration/body/type parsing, postfix access/calls,
 pointer, switch, tuple, and literal parsing. Low-to-high binary precedence:
 `||`, `&&`, `|`, `^`, `&`, equality, comparison, `as`, shifts, additive,

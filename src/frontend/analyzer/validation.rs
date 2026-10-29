@@ -567,6 +567,7 @@ impl Validator<'_> {
                 .ok_or_else(|| type_error("pending type annotation"))?;
             self.types.validate_type(id)?;
             let consistent = match (&node.kind, self.types.get(id)?) {
+                (K::Computed(expression), _) => self.expression(expression)?.type_value == Some(id),
                 (K::Builtin(a), T::Builtin(b)) => a == b,
                 (K::QualifiedIdentifier(name), _) => {
                     self.name(name)?.and_then(|info| info.type_value) == Some(id)

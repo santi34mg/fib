@@ -98,7 +98,10 @@ runtime expression types. Reserved label syntax has no applicable slots.
   Repeated calls preserve nominal aggregate identity; distinct argument lists own
   distinct definition sites. Deferred computations retain arguments and boolean
   dependencies for substitution/re-evaluation. Concrete instances reject unresolved
-  computed types in runtime positions. General compile-time execution, numeric
+  computed types in runtime positions. Type-returning calls also work directly
+  in signature and storage annotations, such as `Map(K, V)`; generic substitution
+  recomputes nominal struct/enum results with substituted arguments so their
+  identities match direct calls at the same types. General compile-time execution, numeric
   arguments, mutation, loops, side effects and indirect callable-value evaluation
   remain unsupported. Computed local `comp` bindings retain lexical identity and
   can be aliased without permitting aliases of runtime locals.

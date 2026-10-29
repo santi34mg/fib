@@ -72,7 +72,7 @@ where
         Ok(expr)
     }
 
-    fn parse_call(&mut self, expr: Expression) -> anyhow::Result<Expression> {
+    pub(super) fn parse_call(&mut self, expr: Expression) -> anyhow::Result<Expression> {
         self.expect_token(
             TokenKind::Punctuation(Punctuation::OpeningParenthesis),
             "expected '('",

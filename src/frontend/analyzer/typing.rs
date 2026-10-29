@@ -437,6 +437,10 @@ impl TypeContext<'_> {
     ) -> anyhow::Result<TypeId> {
         // Revisit cached syntax to validate position-specific restrictions as well.
         let ty = match &mut node.kind {
+            K::Computed(expression) => self
+                .expression(expression, None)?
+                .type_value
+                .ok_or_else(|| type_error("computed type annotation requires a type value"))?,
             K::Builtin(b) => self.types.builtin(b.clone()),
             K::QualifiedIdentifier(name) => {
                 let info = self.name_info(

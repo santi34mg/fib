@@ -15,6 +15,13 @@ types and explain that converting elements requires copying into a new buffer.
 Type compatibility diagnostics render builtin and container types with source
 names and layer-local qualifiers instead of internal type-table indices.
 
+Computed type annotations wrap ordinary type-returning calls. Name resolution,
+the shared bounded evaluator, structural walks and completion validation all
+traverse their expressions. Generic substitution recovers cached computations
+for dependent nominal struct/enum results and recomputes them with substituted
+arguments; this preserves identity between `Map(K, V)` annotations and generic
+factory return values.
+
 `Analyzer::new` validates plan/unit IDs using `ProjectSymbols::from_plan` and
 retains source paths for diagnostics. `collect_declarations` assigns and annotates
 file binding identities, visibility, and private local compile-time type slots.

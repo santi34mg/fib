@@ -331,6 +331,41 @@ fn substitute(
     if let T::Parameter(p) = original {
         return Ok(substitutions[&p]);
     }
+    // A computed nominal type must be recomputed with substituted arguments.
+    // Cloning its fields would create a different identity from Map(K, V) (or
+    // Result(T, E)) evaluated directly at the same concrete arguments.
+    if matches!(original, T::Struct(_) | T::Enum(_)) {
+        let computation = types
+            .computation_results
+            .iter()
+            .filter(|((_, args), result)| {
+                **result == id
+                    && !args
+                        .iter()
+                        .any(|arg| matches!(arg, super::evaluation::Argument::Type(t) if *t == id))
+            })
+            .min_by_key(|((function, _), _)| (function.file_id.0, function.index))
+            .map(|((function, args), _)| (*function, args.clone()));
+        if let Some((function, arguments)) = computation {
+            let arguments = arguments
+                .into_iter()
+                .map(|arg| {
+                    Ok(match arg {
+                        super::evaluation::Argument::Type(t) => super::evaluation::Argument::Type(
+                            substitute(t, substitutions, types, memo)?,
+                        ),
+                        other => other,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let recipe = types.intern(T::TypeResult {
+                function,
+                arguments,
+            });
+            memo.insert(id, recipe);
+            return Ok(recipe);
+        }
+    }
     // Reserve nominal identities before traversing pointer-recursive fields.
     let reservation = if matches!(original, T::Struct(_) | T::Enum(_)) {
         let owner = types.intern(T::Pending);
