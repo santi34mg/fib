@@ -9,6 +9,10 @@ license = "MIT"
 name = "fib-install"
 path = "scripts/install.rs"
 
+[[bench]]
+name = "performance"
+harness = false
+
 [features]
 default = ["llvm"]
 llvm = ["inkwell"]

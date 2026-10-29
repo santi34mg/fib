@@ -15,6 +15,9 @@ Implementation status and remaining design work are documented separately below.
 
 ## Verified implementation behavior
 
+The [performance report](performance.md) describes repeatable compiler/LSP
+benchmarks, measured baselines, and optimization candidates without behavior changes.
+
 The [parsing reference](parsing/README.md) records accepted and rejected syntax,
 examples, and parser-test evidence. These pages are an implementation snapshot,
 not the language specification or a promise of semantic/runtime behavior.
