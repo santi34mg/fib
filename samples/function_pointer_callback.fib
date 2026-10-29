@@ -1,23 +1,17 @@
-// Test function pointer callbacks as struct fields.
-// This tests if the language supports function pointers in structs.
-comp Node: type = struct {
-    value: int32,
+comp Enemigo: type = struct {
+    vidas: int32,
+    muere: fn(int32) int32,
 };
 
-fn add_one(x: int32) int32 {
-    return x + 1;
+fn impl_muere(val: int32) int32 {
+    return val + 10;
 }
 
 fn main() int32 {
     // Try to access the struct field through a pointer
-    node := Node { value: 42 };
-    node_ptr := node&;
-
-    result := (node_ptr*).value + 10;
-
-    if (result == 52) {
-        return 0; // Success
-    } else {
-        return 1; // Failure
+    enemigo := Enemigo {
+        vidas: 10,
+        muere: impl_muere,
     };
+    return enemigo.muere(enemigo.vidas);
 }
