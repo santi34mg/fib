@@ -255,6 +255,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn control_flow_build_sample_finalizes_plan() {
+        let directory = tempfile::tempdir().unwrap();
+        let build_file = directory.path().join("build.fib");
+        std::fs::write(
+            &build_file,
+            include_str!("../samples/build_control_flow/build.fib"),
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("main.fib"),
+            "fn main() int32 { return 0; }",
+        )
+        .unwrap();
+        let plan = PlanBuilder::from(build_file)
+            .with_standard_library(crate::standard_library::StandardLibrary::disabled())
+            .compile_and_interpret_build_file()
+            .unwrap();
+        assert_eq!(plan.files.len(), 1);
+        assert_eq!(
+            plan.output,
+            directory.path().canonicalize().unwrap().join("app")
+        );
+    }
+
+    #[test]
     fn interpreted_build_file_finalizes_deterministic_project_plan() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();

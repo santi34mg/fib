@@ -57,8 +57,10 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   recursive discovery and ownership/lifetime checking remain deferred.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
   Build files have an initial `build_api` semantic namespace and a narrow verified-IR
-  path for literal source/entry/output operations. It finalizes deterministic plans
-  with root-relative path/name/entry/output validation. General interpretation and
+  interpreter for CFG/block arguments, loops, direct helpers, boolean/fixed-width
+  integer operations and immutable bytes. Effects commit on success with step/depth
+  limits; memory, floats and indirect calls remain unsupported. It finalizes plans
+  with root-relative path/name/entry/output validation. More general values and
   broader builder orchestration remain unfinished.
 - `crates/fib-ir/src/ir/` is owned SSA. The transactional builder allocates blocks/values/slots;
   verification checks scalar constants/calls/arithmetic/unary/casts/comparisons and jump/branch/return/trap/unreachable,

@@ -85,11 +85,16 @@ the UTF-8 stem and chooses an executable beside it without its source extension
 (`.exe` on Windows). Sources without a distinct output name fail. The CLI's
 `build --single-file PATH` uses this route and prints the resulting binary path.
 
-Build-file interpretation is only an initial straight-line subset: `interpret_ir`
-validates IR and dispatches the three build operations by builtin identity into
-host-owned `PlanBuilder` state. Multi-block control flow is rejected before
-applying build operations. General CFG/value/function interpretation and
-`BuilderObject` orchestration remain unfinished. The current finalizer resolves
+Build-file interpretation validates IR and executes branches, switches, block
+arguments, loops and direct internal calls with separate SSA call frames. Boolean
+and fixed-width integer arithmetic, comparisons, numeric casts and immutable byte
+values (including byte-slice length) execute. Pointer-width integers, floats,
+aggregates, memory operations, indirect/external calls and runtime effects remain
+unsupported. The transitive direct-call graph is checked for unsupported instructions
+even in untaken blocks. All build operations are staged until execution succeeds;
+errors, traps, the 100,000-step budget and the 64-frame call limit leave builder
+state unchanged. Each block, instruction and call consumes a step.
+Broader `BuilderObject` orchestration remains unfinished. The current finalizer resolves
 source/output paths against the build-file directory, assigns deterministic IDs and
 stem-derived logical names, validates the selected entry, and rejects duplicate,
 missing, escaping or overwriting paths. The path remains fixed as `<cwd>/build.fib` discovery, bootstrap

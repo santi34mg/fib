@@ -3,11 +3,13 @@
 ## Status
 
 This document defines the remaining implementation plan. The compiler now has an
-initial synthetic `build_api` namespace, shared analysis, verified straight-line lowering
-for literal source/entry/output calls, and identity-based interpreter dispatch into
+initial synthetic `build_api` namespace, shared analysis, verified CFG lowering
+and identity-based interpreter dispatch into
 `PlanBuilder`. Initial deterministic project-plan finalization validates root-relative
-sources, names, entry and output safety. General CFG/value interpretation and broader
-builder orchestration are not implemented. Both `fib build --single-file PATH`
+sources, names, entry and output safety. CFG/block arguments, loops, direct internal
+calls, boolean/fixed-width integer operations and immutable byte values execute with
+step/depth limits and transactional builder effects. Memory, floats, indirect calls
+and broader builder orchestration remain unsupported. Both `fib build --single-file PATH`
 and the narrow `fib build --build-file PATH` route compile supported programs.
 Explicit multi-file plans now lower and execute. Package metadata, scoped visibility
 and package-rooted lookup work. Recursive discovery remains deferred. Build-file
@@ -226,7 +228,7 @@ interpreter API should eventually record allowed observations as they occur.
    recursive source-discovery/normalization rules, retaining project-root anchoring
    for build operations. Add exact `<cwd>/build.fib` discovery using the existing
    explicit build-file bootstrap path.
-2. Extend the literal-operation API and straight-line interpreter to general
+2. Extend the bounded CFG/value interpreter to broader
    CFG/value/function interpretation, with source-aware traps and explicit errors
    for unsupported IR. Keep Rust layouts and native ABI out of the API.
 3. Extend centralized finalization as target/profile/linker operations are added;
