@@ -1,78 +1,64 @@
 # Samples
 
-For one project that builds and runs with current capabilities, start with
-[`example-project/`](../example-project/README.md). It covers scalar types, casts,
-bit operations, calls, recursion and loops through an explicit build file.
-
-All top-level `.fib` files in this directory use current tokenizer/parser syntax.
-`frontend::parser::test::tests::samples_parse_with_current_frontend` discovers
-and parses every top-level `.fib` sample, rejecting parse failures and empty ASTs.
-This is **syntax regression coverage, not semantic or execution validation**.
-
-Run the focused check from the repository root:
+Every top-level `.fib` sample builds and runs with the current compiler and source
+standard library on Linux x86-64. From the repository root:
 
 ```sh
-cargo test --no-default-features samples_parse_with_current_frontend
+cargo run --bin fibc -- build --sysroot library --single-file samples/hello_world.fib
+./samples/hello_world
 ```
 
-`builtin_scalars.fib`, `scalar_loops.fib`, `struct_storage.fib` and `enum_runtime.fib` also have
-executable acceptance coverage and return 42. Compile them with `fibc build --single-file PATH`.
-`indexed_globals.fib` also returns 42 and exercises embedded global data, borrowed
-slice mutation and runtime array indexing. Its executable test uses no std sources.
-Other samples retain intended/unverified output comments and broader unsupported
-features. The `run` command and historical positional-file / `-I=std` commands
-remain unsupported.
-See the [parsing reference](../docs/parsing/README.md) for verified syntax and
-[compiler status](../README.md) for pipeline boundaries.
+An installed compiler with matching std sources does not need `--sysroot library`.
+The compiler needs LLVM 21 and a host C linker. `run` remains unimplemented; invoke
+the generated executable directly. For a project using a build file, see
+[`example-project/`](../example-project/README.md).
 
-## Dependencies and unresolved semantics
+## Validation
 
-Samples retain qualified `libc::` calls without obsolete import declarations.
-A future build plan must explicitly provide a source file named `libc`; parsing
-these calls does not discover files or validate external signatures. The historical
-standard-library bindings have been removed; replacement library implementations
-and external C interoperability remain pending.
+`tests/samples.rs` discovers every top-level `.fib` sample, preserves its filename,
+builds it through the CLI in a temporary directory, then checks its exit code and
+exact stdout/stderr. Each execution has a ten-second timeout. New samples require
+an explicit expectation. Run the complete sweep with:
 
-- `sorting.fib` retains parsed `T: type` parameters and type-valued arguments;
-  generic analysis/specialization and pointer casts are not validated.
-- `tagged_union.fib` retains payload values using parsed member calls such as
-  `Token.Integer(7)`. Constructors now execute in the supported subset; this older sample still uses unported type bindings and external output.
-- `linked_list.fib` and `memory_pool.fib` retain allocation, casts, indexed pointer
-  stores, and defer calls. Pointer indexing, layout, allocation safety, and cleanup
-  behavior need semantic/runtime tests. The linked-list allocation assumes a
-  16-byte node layout, and the pool uses 64-bit integer addresses; these are
-  illustrative target assumptions, not portable ABI guarantees.
-- `slices.fib` illustrates view/mutation intent without asserting a runtime layout
-  or implemented bounds checks.
+```sh
+LLVM_SYS_211_PREFIX=/usr/lib/llvm/21 cargo test --offline --test samples
+```
 
-Temporary parser restrictions are not intended language-design decisions. Future
-analysis work is tracked in [GitHub issues](../docs/agents/issues/README.md).
+Parser-only discovery also works without LLVM:
 
-## Example topics
+```sh
+cargo test --offline --no-default-features samples_parse_with_current_frontend
+```
 
-- `builtin_scalars.fib`: executable wrapping, explicit widening and float casts.
-- `scalar_loops.fib`: executable nested loops, scalar accumulation, breaks and continues.
-- `enum_runtime.fib`: executable enum constructors, payload copies, switches and helper calls.
-- `enum_payloads.fib`: direct payload types, unit normalization, Result(void, E), generic unit values and preserved call effects; exits 42.
-- `struct_storage.fib`: executable struct copies, partial initialization, pointer mutation and unchecked places.
+## Topics and exit codes
 
-- `hello_world.fib`, `minimal.fib`: entry functions and output.
-- `bitwise_ops.fib`, `unsigned_ops.fib`: arithmetic and bitwise operations.
-- `enums.fib`, `switch_enum.fib`, `tagged_union.fib`: enum and pattern examples.
-- `sorting.fib`, `slices.fib`: generic sorting and slice design examples.
-- `string_functions.fib`, `multiple_returns.fib`: ordinary function declarations/calls and return shapes; string helper implementations are not provided.
-- `nested_assign.fib`: nested field assignment.
-- `linked_list.fib`, `memory_pool.fib`: allocation and cleanup design examples.
-- `fib_bench.fib`: recursive Fibonacci benchmark intent, with 64-bit results
-  sufficient for `fib(50)`; expensive to execute once a runner exists.
+| Samples | Behavior |
+| --- | --- |
+| `hello_world`, `formatting`, `syscalls` | Byte output and typed I/O results; exit 0. |
+| `minimal` | No output; exit 0. |
+| `bitwise_ops`, `unsigned_ops` | IPv4 packing, flags, popcount and unsigned arithmetic; print decimal results; exit 0. |
+| `enums`, `switch_enum`, `tagged_union` | Plain enums, exhaustive switches and direct payloads; print results; exit 0. |
+| `sorting`, `slices` | Generic insertion sort and borrowed array mutation with checked indexing; print results; exit 0. |
+| `linked_list`, `memory_pool` | Heap allocation and deferred cleanup; print results; exit 0. |
+| `string_functions` | Byte-slice concatenation into caller storage, length and equality; prints `Hello, fib!`; exit 0. |
+| `multiple_returns`, `nested_assign` | Struct return containing two named values, multi-binding locals and nested field assignment; print results; exit 0. |
+| `function_pointer_callback` | Struct-stored callback; no output; exit 20. |
+| `fib_bench` | Naive recursive Fibonacci through 20; prints results; exit 0. Increase its limit to 50 for a slow benchmark. |
+| `builtin_scalars`, `scalar_loops`, `struct_storage`, `specification_runtime` | Scalars, flow, storage, generic arrays and readonly pointer access; no output; exit 42. |
+| `enum_runtime`, `enum_payloads` | Constructors, payload copies, unit normalization and generic Result; no output; exit 42. |
+| `const_bindings` | Immutable scalar/struct/enum bindings, readonly slice access and independent mutable copies; no output; exit 42. |
+| `allocator`, `memory`, `generic_map` | Allocation/reuse, byte fill/copy and generic map lookup; no output; exit 42. |
+| `indexed_globals`, `sizeof`, `deferred_blocks` | Global data and slices, target layout and reverse-order defer; no output; exit 42. |
+| `process_entry` | Argument/environment startup and Result return; `FIB_EXIT=42` exits 42, otherwise an extra argument exits 0, and no extra argument exits 1. |
 
-New syntax changes need positive and malformed-input parser tests. Keep sample
-syntax covered by the discovery test; add real analysis and execution coverage
-as those passes become usable rather than treating parsing as a conformance test.
+`specification_runtime` intentionally produces a compiler warning for implicit
+pointer field access. `sizeof` checks the current Linux x86-64 layout.
 
-`defer.fib` demonstrates reverse-order deferred blocks and has LLVM
-compile/link/run coverage, returning 42.
+Tuple returns are checked by analysis but native lowering remains unsupported;
+`multiple_returns` uses an explicit struct to return both results. Slices borrow
+their backing storage. `string_functions` returns a view into its caller's buffer,
+and the heap examples free their allocations after use.
 
-`syscalls.fib` prints through `std::os::write` and handles a typed result. Use an
-installed compiler or `build --sysroot library --single-file samples/syscalls.fib`.
-The library's current OS implementation requires Linux x86-64.
+`deferred_blocks.fib` replaces `defer.fib`: source filenames become namespace
+segments, which cannot be keywords. In `memory.fib`, the std alias is named `mem`
+to avoid colliding with its own file namespace.

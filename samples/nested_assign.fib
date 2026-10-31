@@ -1,18 +1,19 @@
 // Nested struct field assignment.
-// Intended output (unverified; compiler pipeline unfinished):
+// Expected output:
 //   got 42
 
-Inner: type = struct {
+comp Inner: type = struct {
     value: uint64,
 };
 
-Outer: type = struct {
+comp Outer: type = struct {
     inner: Inner,
 };
 
 fn main() int32 {
     o: Outer = Outer { inner: Inner { value: 0 } };
     o.inner.value = 42;
-    libc::printf("got %d\n", o.inner.value);
+    args: std::io::Arg[1] = [std::io::Arg.Unsigned(o.inner.value)];
+    std::io::printf("got {}\n", args[..]);
     return 0;
 }

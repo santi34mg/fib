@@ -1,6 +1,4 @@
-// Plain enum discriminant cast.
-// Intended output (unverified; compiler pipeline unfinished):
-//   color discriminant = 1
+// Plain enum values and exhaustive matching. Prints green.
 
 comp Color: type = enum {
     Red,
@@ -10,5 +8,10 @@ comp Color: type = enum {
 
 fn main() int32 {
     c: Color = Color.Green;
+    switch (c) {
+        when .Red { std::io::print("red\n"); }
+        when .Green { std::io::print("green\n"); }
+        when .Blue { std::io::print("blue\n"); }
+    };
     return 0;
 }

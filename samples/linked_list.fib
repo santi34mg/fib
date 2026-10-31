@@ -1,5 +1,5 @@
-// Heap linked list via malloc/free with defer cleanup.
-// Intended output (unverified; analysis and execution are unfinished):
+// Heap linked list via std allocation with defer cleanup.
+// Expected output:
 //   List:   10 -> 20 -> 30 -> null
 //   Length: 3
 
@@ -9,9 +9,10 @@ comp Node: type = struct {
 };
 
 fn push(head: *Node, val: int32) *Node {
-    node: *Node = std::memory::alloc(Node, 1);
+    node := std::memory::alloc(Node, 1);
+    if node.len == 0 { return head; };
     node[0] = Node { data: val, next: head };
-    return node;
+    return std::memory::slice_data(node);
 }
 
 fn list_length(head: *Node) int32 {
@@ -33,10 +34,11 @@ fn print_list(head: *Node) void {
         if cur == null {
             break;
         };
-        std::io::printf("%d -> "[..], (cur*).data);
+        args: std::io::Arg[1] = [std::io::Arg.Signed((cur*).data as int64)];
+        std::io::printf("{} -> ", args[..]);
         cur = (cur*).next;
     };
-    std::io::printf("null\n"[..]);
+    std::io::print("null\n");
 }
 
 fn free_list(head: *Node) void {
@@ -59,9 +61,10 @@ fn main() int32 {
     head = push(head, 10);
     defer free_list(head);
 
-    std::io::printf("List:   "[..]);
+    std::io::print("List:   ");
     print_list(head);
-    std::io::printf("Length: %d\n"[..], list_length(head));
+    args: std::io::Arg[1] = [std::io::Arg.Signed(list_length(head) as int64)];
+    std::io::printf("Length: {}\n", args[..]);
 
     return 0;
 }

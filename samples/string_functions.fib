@@ -1,11 +1,20 @@
-// Ordinary function declarations and calls; implementations are not provided.
-// String helpers will be implemented by the standard library.
-callconv "C" fn concat(a: string, b: string) string;
-callconv "C" fn str_len(value: string) usize;
-callconv "C" fn str_eq(a: string, b: string) bool;
+// Strings are byte slices. Concatenation borrows caller-owned output storage.
+fn concat(output: uint8[], a: const uint8[], b: const uint8[]) uint8[] {
+    std::memory::memcpy(output, a);
+    std::memory::memcpy(output[a.len..], b);
+    return output[..a.len + b.len];
+}
+
+fn str_len(value: const uint8[]) usize { return value.len; }
+
 fn main() int32 {
-    greeting := concat("Hello, ", "fib!");
-    length := str_len(greeting);
-    equal := str_eq(greeting, greeting);
-    return 0;
+    buffer: uint8[11] = [0,0,0,0,0,0,0,0,0,0,0];
+    greeting := concat(buffer[..], "Hello, ", "fib!");
+    if str_len(greeting) != 11 || !str_eq(greeting, "Hello, fib!") { return 1; };
+    if str_eq(greeting, "Hello") || str_eq("a", "b") { return 2; };
+    if !str_eq("", "") || str_eq("ab", "ac") || str_eq("", "a") { return 4; };
+    switch (std::io::print(greeting)) {
+        when .Ok(_) { return 0; }
+        when .Err(_) { return 3; }
+    };
 }

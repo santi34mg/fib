@@ -1,5 +1,5 @@
 // switch/when dispatch over a plain enum.
-// Intended output (unverified; compiler pipeline unfinished):
+// Expected output:
 //   red
 //   green
 //   blue
@@ -12,9 +12,9 @@ comp Color: type = enum {
 
 fn describe(c: Color) void {
     switch (c) {
-        when .Red { std::os::write(1, "red\n"[..]); }
-        when .Green{ std::os::write(1, "green\n"[..]); }
-        when .Blue { std::os::write(1, "blue\n"[..]); }
+        when .Red { std::os::write(1, "red\n"); }
+        when .Green{ std::os::write(1, "green\n"); }
+        when .Blue { std::os::write(1, "blue\n"); }
     };
 }
 

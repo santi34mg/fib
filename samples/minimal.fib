@@ -1,5 +1,5 @@
 // Smallest valid program: no imports, no output, exit 0.
-// Intended output (unverified; compiler pipeline unfinished): (none)
+// No output; exits 0.
 fn main() int {
     return 0;
 }

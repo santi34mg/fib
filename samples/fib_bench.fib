@@ -1,7 +1,5 @@
-// Naive recursive fib(50) benchmark.
-// Intended benchmark; unverified because the compiler pipeline is unfinished.
-// Naive recursion is expensive; no expected output is pinned.
-// Use int64 results so fib(50) fits without depending on overflow behavior.
+// Naive recursive Fibonacci benchmark. Defaults to fib(20) for a quick run.
+// Increase the limit to 50 for a slow benchmark; int64 holds fib(50).
 
 fn fib(n: int32) int64 {
     if n <= 1 {
@@ -11,12 +9,13 @@ fn fib(n: int32) int64 {
 }
 
 fn main() int32 {
-    std::libc::printf("Fibonacci benchmark (recursive, no memoization)\n");
-    std::libc::printf("-----------------------------------------------\n");
+    std::io::print("Fibonacci benchmark (recursive, no memoization)\n");
+    std::io::print("-----------------------------------------------\n");
     i: int32 = 0;
-    while (i <= 50) {
+    while (i <= 20) {
         result: int64 = fib(i);
-        std::libc::printf("fib(%d) = %lld\n", i, result);
+        args: std::io::Arg[2] = [std::io::Arg.Signed(i as int64), std::io::Arg.Signed(result)];
+        std::io::printf("fib({}) = {}\n", args[..]);
         i += 1;
     };
     return 0;

@@ -1,13 +1,10 @@
 // Enum variants with payloads.
-// Dotted brace constructors do not parse. Member calls below retain the
-// payload values, but are only unresolved calls, not implemented enum
-// constructors; construction and payload binding semantics remain unverified.
-// Intended output (unverified; compiler pipeline unfinished):
+// Expected output:
 //   int=7
 //   bool=1
 //   eof
 
-Token: type = enum {
+comp Token: type = enum {
     Integer: uint32,
     Boolean: bool,
     EOF,
@@ -15,9 +12,15 @@ Token: type = enum {
 
 fn describe(t: Token) void {
     switch (t) {
-        when .Integer(i) { libc::printf("int=%d\n", i); }
-        when .Boolean(b) { libc::printf("bool=%d\n", b as uint32); }
-        when .EOF { libc::printf("eof\n"); }
+        when .Integer(i) {
+            args: std::io::Arg[1] = [std::io::Arg.Unsigned(i as uint64)];
+            std::io::printf("int={}\n", args[..]);
+        }
+        when .Boolean(b) {
+            args: std::io::Arg[1] = [std::io::Arg.Unsigned(b as uint64)];
+            std::io::printf("bool={}\n", args[..]);
+        }
+        when .EOF { std::io::print("eof\n"); }
     };
 }
 

@@ -1,2 +1,17 @@
 // Public declarations here select automatic aliases for consuming packages.
-// Initially empty: use qualified std paths or explicit comp aliases.
+// str_eq is available without qualification in consuming packages.
+
+pub fn str_eq(s1: const uint8[], s2: const uint8[]) bool {
+    l := s1.len;
+    if l != s2.len {
+        return false;
+    };
+    i: usize = 0;
+    while (i < l) {
+        if s1[i] != s2[i] {
+            return false;
+        };
+        i += 1;
+    };
+    return true;
+}

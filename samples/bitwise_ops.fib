@@ -1,17 +1,24 @@
 // Shifts/masks over uint32: IPv4 packing, permission flags, popcount.
-// Intended output (unverified; compiler pipeline unfinished):
-//   Packed IPv4: 0xC0A80164
+// Expected output (numbers use decimal formatting):
+//   Packed IPv4: 3232235876
 //   Octet 0: 192
 //   Octet 1: 168
 //   Octet 2: 1
 //   Octet 3: 100
 //
-//   Initial permissions: 0x3
-//   After grant EXEC:    0x7
-//   After revoke WRITE:  0x5
+//   Initial permissions: 3
+//   After grant EXEC:    7
+//   After revoke WRITE:  5
 //     [x] READ
 //     [x] EXEC
 //   Bits set in perms: 2
+
+comp io := std::io;
+
+fn print_number(format: const uint8[], value: uint32) void {
+    args: io::Arg[1] = [io::Arg.Unsigned(value as uint64)];
+    io::printf(format, args[..]);
+}
 
 fn pack_ipv4(a: uint32, b: uint32, c: uint32, d: uint32) uint32 {
     return (a << 24) | (b << 16) | (c << 8) | d;
@@ -29,11 +36,11 @@ fn popcount(x: uint32) uint32 {
 
 fn main() int32 {
     ip: uint32 = pack_ipv4(192, 168, 1, 100);
-    libc::printf("Packed IPv4: 0x%08X\n", ip);
-    libc::printf("Octet 0: %u\n", (ip >> 24) & 255);
-    libc::printf("Octet 1: %u\n", (ip >> 16) & 255);
-    libc::printf("Octet 2: %u\n", (ip >> 8) & 255);
-    libc::printf("Octet 3: %u\n", ip & 255);
+    print_number("Packed IPv4: {}\n", ip);
+    print_number("Octet 0: {}\n", (ip >> 24) & 255);
+    print_number("Octet 1: {}\n", (ip >> 16) & 255);
+    print_number("Octet 2: {}\n", (ip >> 8) & 255);
+    print_number("Octet 3: {}\n", ip & 255);
 
     PERM_READ: uint32   = 1;
     PERM_WRITE: uint32  = 2;
@@ -41,27 +48,27 @@ fn main() int32 {
     PERM_DELETE: uint32 = 8;
 
     perms: uint32 = PERM_READ | PERM_WRITE;
-    libc::printf("\nInitial permissions: 0x%X\n", perms);
+    print_number("\nInitial permissions: {}\n", perms);
 
     perms = perms | PERM_EXEC;
-    libc::printf("After grant EXEC:    0x%X\n", perms);
+    print_number("After grant EXEC:    {}\n", perms);
 
     perms = perms & ~PERM_WRITE;
-    libc::printf("After revoke WRITE:  0x%X\n", perms);
+    print_number("After revoke WRITE:  {}\n", perms);
 
     if (perms & PERM_READ) != 0 {
-        libc::printf("  [x] READ\n");
+        io::print("  [x] READ\n");
     };
     if (perms & PERM_WRITE) != 0 {
-        libc::printf("  [x] WRITE\n");
+        io::print("  [x] WRITE\n");
     };
     if (perms & PERM_EXEC) != 0 {
-        libc::printf("  [x] EXEC\n");
+        io::print("  [x] EXEC\n");
     };
     if (perms & PERM_DELETE) != 0 {
-        libc::printf("  [x] DELETE\n");
+        io::print("  [x] DELETE\n");
     };
 
-    libc::printf("Bits set in perms: %u\n", popcount(perms));
+    print_number("Bits set in perms: {}\n", popcount(perms));
     return 0;
 }

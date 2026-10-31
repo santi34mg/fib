@@ -3,7 +3,7 @@
 //   Hello, World!
 
 fn main() int32 {
-    switch (std::io::print("Hello, World!\n"[..])) {
+    switch (std::io::print("Hello, World!\n")) {
         when .Ok(_) { return 0; }
         when .Err(_) { return 1; }
     };

@@ -8,7 +8,7 @@ fn impl_muere(val: int32) int32 {
 }
 
 fn main() int32 {
-    // Try to access the struct field through a pointer
+    // Call the function stored in a struct field.
     enemigo := Enemigo {
         vidas: 10,
         muere: impl_muere,

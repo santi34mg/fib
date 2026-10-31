@@ -3,7 +3,7 @@
 // pick the unsigned opcode — `udiv`/`urem`, `ult`/`ule`/`ugt`/`uge`, logical
 // `lshr` — or the results below would be wrong (signed div of i32::MIN+ uses
 // garbage, arithmetic shift right would sign-extend the top bit).
-// Intended output (unverified; compiler pipeline unfinished):
+// Expected output:
 //   div32: 4000000000 / 7 = 571428571
 //   rem32: 4000000000 % 7 = 3
 //   div64: 10000000000000000000 / 3 = 3333333333333333333
@@ -15,23 +15,35 @@
 //   shr32: 4000000000 >> 1 = 2000000000
 //   shr64: 10000000000000000000 >> 1 = 5000000000000000000
 
+comp io := std::io;
+
+fn print_three(format: const uint8[], a: uint64, b: uint64, result: uint64) void {
+    args: io::Arg[3] = [io::Arg.Unsigned(a), io::Arg.Unsigned(b), io::Arg.Unsigned(result)];
+    io::printf(format, args[..]);
+}
+
+fn print_shift(format: const uint8[], value: uint64, result: uint64) void {
+    args: io::Arg[2] = [io::Arg.Unsigned(value), io::Arg.Unsigned(result)];
+    io::printf(format, args[..]);
+}
+
 fn main() int32 {
     a: uint32 = 4000000000;
     b: uint32 = 7;
     x: uint64 = 10000000000000000000;
     y: uint64 = 3;
 
-    libc::printf("div32: %u / %u = %u\n", a, b, a / b);
-    libc::printf("rem32: %u %% %u = %u\n", a, b, a % b);
-    libc::printf("div64: %llu / %llu = %llu\n", x, y, x / y);
-    libc::printf("rem64: %llu %% %llu = %llu\n", x, y, x % y);
+    print_three("div32: {} / {} = {}\n", a as uint64, b as uint64, (a / b) as uint64);
+    print_three("rem32: {} % {} = {}\n", a as uint64, b as uint64, (a % b) as uint64);
+    print_three("div64: {} / {} = {}\n", x, y, x / y);
+    print_three("rem64: {} % {} = {}\n", x, y, x % y);
 
-    libc::printf("cmp32: %u > %u = %u\n", a, b, (a > b) as uint32);
-    libc::printf("cmp32: %u < %u = %u\n", b, a, (b < a) as uint32);
-    libc::printf("cmp32: %u >= %u = %u\n", a, a, (a >= a) as uint32);
-    libc::printf("cmp32: %u <= %u = %u\n", b, b, (b <= b) as uint32);
+    print_three("cmp32: {} > {} = {}\n", a as uint64, b as uint64, (a > b) as uint64);
+    print_three("cmp32: {} < {} = {}\n", b as uint64, a as uint64, (b < a) as uint64);
+    print_three("cmp32: {} >= {} = {}\n", a as uint64, a as uint64, (a >= a) as uint64);
+    print_three("cmp32: {} <= {} = {}\n", b as uint64, b as uint64, (b <= b) as uint64);
 
-    libc::printf("shr32: %u >> 1 = %u\n", a, a >> 1);
-    libc::printf("shr64: %llu >> 1 = %llu\n", x, x >> 1);
+    print_shift("shr32: {} >> 1 = {}\n", a as uint64, (a >> 1) as uint64);
+    print_shift("shr64: {} >> 1 = {}\n", x, x >> 1);
     return 0;
 }

@@ -2,12 +2,12 @@ comp io := std::io;
 
 fn main() int32 {
     args: io::Arg[4] = [
-        io::Arg.Bytes("Alice"[..]),
+        io::Arg.Bytes("Alice"),
         io::Arg.Signed(-42),
         io::Arg.Unsigned(18446744073709551615),
         io::Arg.Boolean(true)
     ];
-    switch (io::printf("Hello {}, score: {}, max: {}, active: {} {{ok}}\n"[..], args[..])) {
+    switch (io::printf("Hello {}, score: {}, max: {}, active: {} {{ok}}\n", args[..])) {
         when .Ok(count) { return 0; }
         when .Err(error) { return 1; }
     };

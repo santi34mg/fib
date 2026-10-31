@@ -1,6 +1,6 @@
 // Build with --sysroot library, or use an installed compiler and matching std.
 fn main() int32 {
-    switch (std::os::write(1, "Hello from std!\n"[..])) {
+    switch (std::os::write(1, "Hello from std!\n")) {
         when .Ok(count) { return 0; }
         when .Err(error) { return error; }
     };

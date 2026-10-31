@@ -1,65 +1,41 @@
-// Fixed-block bump allocator with exhaustion handling.
-// Intended output (unverified; analysis and execution are unfinished):
-//   Pool: block_size=4, capacity=6
-//   Block 0: wrote 7
-//   Block 1: wrote 14
-//   Block 2: wrote 21
-//   Block 3: wrote 28
-//   Block 4: wrote 35
-//   Block 5: wrote 42
-//   Alloc 6 failed: pool exhausted
-//   Used: 6 / 6
+// Fixed-block bump pool backed by an allocated int32 slice.
+// Exhaustion returns an empty slice; defer releases the backing allocation.
+comp memory := std::memory;
+comp io := std::io;
+comp Pool := struct { blocks: int32[], used: usize };
 
-Pool: type = struct {
-    start: uint64,
-    block_size: uint64,
-    capacity: uint64,
-    used: uint64,
-};
-
-fn pool_create(block_size: uint64, capacity: uint64) Pool {
-    total: uint64 = block_size * capacity;
-    buf: *void = libc::malloc(total);
-    return Pool { start: buf as uint64, block_size: block_size, capacity: capacity, used: 0 as uint64 };
+fn pool_create(capacity: usize) Pool {
+    return Pool { blocks: memory::alloc(int32, capacity), used: 0 };
 }
 
-fn pool_alloc(pool: *Pool) *void {
-    if (pool*).used >= (pool*).capacity {
-        return null;
-    };
-    offset: uint64 = (pool*).used * (pool*).block_size;
-    addr: uint64 = (pool*).start + offset;
-    p: Pool = pool*;
-    p.used = p.used + 1;
-    pool[0] = p;
-    return addr as *void;
-}
-
-fn pool_destroy(pool: *Pool) void {
-    libc::free((pool*).start as *void);
+fn pool_alloc(pool: *Pool) int32[] {
+    if (pool*).used >= (pool*).blocks.len { return (pool*).blocks[0..0]; };
+    index := (pool*).used;
+    (pool*).used = index + 1;
+    return (pool*).blocks[index..index + 1];
 }
 
 fn main() int32 {
-    pool: Pool = pool_create(4 as uint64, 6 as uint64);
-    defer pool_destroy(pool&);
-
-    libc::printf("Pool: block_size=%d, capacity=%d\n",
-        pool.block_size as int32,
-        pool.capacity as int32);
-
-    i: int32 = 0;
+    pool := pool_create(6);
+    defer memory::free(int32, memory::slice_data(pool.blocks));
+    if pool.blocks.len != 6 { return 1; };
+    info: io::Arg[2] = [io::Arg.Unsigned(core::sizeof(int32) as uint64),
+        io::Arg.Unsigned(pool.blocks.len as uint64)];
+    io::printf("Pool: block_size={}, capacity={}\n", info[..]);
+    i := 0;
     while (i < 8) {
-        block: *void = pool_alloc(pool&);
-        if block == null {
-            libc::printf("Alloc %d failed: pool exhausted\n", i);
+        block := pool_alloc(pool&);
+        if block.len == 0 {
+            args: io::Arg[1] = [io::Arg.Signed(i as int64)];
+            io::printf("Alloc {} failed: pool exhausted\n", args[..]);
             break;
         };
-        val: *int32 = block as *int32;
-        val[0] = (i + 1) * 7;
-        libc::printf("Block %d: wrote %d\n", i, val*);
+        block[0] = (i + 1) * 7;
+        args: io::Arg[2] = [io::Arg.Signed(i as int64), io::Arg.Signed(block[0] as int64)];
+        io::printf("Block {}: wrote {}\n", args[..]);
         i += 1;
     };
-
-    libc::printf("Used: %d / %d\n", pool.used as int32, pool.capacity as int32);
+    used: io::Arg[2] = [io::Arg.Unsigned(pool.used as uint64), io::Arg.Unsigned(pool.blocks.len as uint64)];
+    io::printf("Used: {} / {}\n", used[..]);
     return 0;
 }
