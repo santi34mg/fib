@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Type-owned struct `comp` function members with explicit receiver types,
+  ordinary callback values and fixed helpers. Members add no instance storage
+  and cannot be initialized or replaced by instances; interface adapters remain
+  explicit.
 - `export-symbols --single-file PATH` / `--build-file PATH` exports deterministic
   JSON for unrestricted public top-level declarations, signatures and alias
   targets without requiring an executable entry or LLVM.

@@ -10,6 +10,15 @@ globals execute; value-returning `comp fn` execution remains scaffolding.
 Current source is
 [`analyzer.rs`](../../../../crates/fib-frontend/src/frontend/analyzer.rs) and `analyzer/`.
 
+Struct function members have private declaration IDs excluded from lexical/file
+lookup. `SemanticTypes::comp_members` maps nominal owner/name pairs to those IDs;
+stored fields retain independent contiguous indices. Signatures are prepared
+before member bodies, with explicit enclosing-type lookup for local type members.
+Selections require a type value, produce ordinary function values, and never
+infer or bind a receiver. Completion validation traverses member bodies and checks
+their owner/identity mappings. Flow checking and lowering use the shared borrowed
+`ast::members` traversal; no synthetic source functions or closure storage are used.
+
 Collecting type analysis shares immutable declaration recipes, function AST
 snapshots and source paths through `Arc` maps. Statement recovery checkpoints
 still copy mutable inference state and semantic types, restoring both on failure;

@@ -38,6 +38,13 @@ addresses, so both values still refer to the same pointee. Internal struct/value
 calls use the shared direct Fib fastcc ABI; this is not an external C struct ABI.
 LLVM target data determines unpacked struct layout and field offsets.
 
+Type-owned `comp name := fn(...) ...;` members have no field index or instance
+storage. Construction supplies only ordinary fields. Select a function with
+`Type.name` and pass any receiver explicitly, using `value&` for its address.
+Functions can also be stored in ordinary callback fields. See
+[the member rules](language-specification.md#values-initialization-and-mutability)
+and [the executable sample](../samples/comp_members.fib).
+
 ## Initialization and places
 
 Uninitialized local declarations allocate storage without initializing it.

@@ -33,6 +33,22 @@ See [Name resolution](../name-resolution.md).
 
 ## Named construction
 
+Struct bodies also parse type-owned function declarations:
+
+```fib
+comp Dog := struct {
+    volume: uint8,
+    comp bark := fn(self: const *Dog) uint8 { return self.volume; };
+};
+```
+
+Each `comp` function initializer needs its own semicolon. The initializer may
+use `comp fn` to record compile-time execution eligibility separately from member
+storage. Parameter types are explicit, including the receiver. Non-function
+member initializers and general anonymous function expressions are not currently
+parsed. Analysis separates these members from stored fields and requires type
+selection, for example `Dog.bark(dog&)`.
+
 ```fib
 point: Point = Point { x: 1, y: 2 };
 remote := other::Point { x: 3, y: 4 };

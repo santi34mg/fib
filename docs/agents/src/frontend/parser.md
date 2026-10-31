@@ -41,6 +41,11 @@ This is parsing only. It does not type-check or compile the function.
   references and calls remain ordinary expressions, with type/value discrimination
   left to semantic analysis. Legacy `type Name ...` declaration parsing is removed.
 - Qualified names use `file::name`; members use `value.field`; length is `.len`.
+- Structs accept `comp name := fn(self: const *Owner) ... { ... };` function
+  members alongside stored fields. Receivers need explicit parameter types;
+  the initializer may separately use `comp fn`. The AST retains member function
+  declarations separately from stored fields. General function expressions and
+  non-function `comp` member initializers remain unsupported by this parser.
 - Enum variants use `Name` or `Name: Type`, including explicit struct payload
   types and eligible type-valued calls. Legacy `Name { field: Type }` is rejected
   with migration guidance. Analysis normalizes unit variants; their construction
