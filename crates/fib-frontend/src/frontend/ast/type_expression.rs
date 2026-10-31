@@ -28,6 +28,11 @@ impl TypeExpression {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeExpressionKind {
+    /// A container with a byte sentinel at its logical end.
+    Sentinel {
+        inner: Box<TypeExpression>,
+        value: u8,
+    },
     /// A type-returning call, evaluated by the ordinary bounded type evaluator.
     Computed(Box<crate::frontend::ast::expression::Expression>),
     /// Readonly pointee/elements, independent of binding mutability.
@@ -55,7 +60,7 @@ pub enum TypeExpressionKind {
         element_type: Box<TypeExpression>,
         size: u64,
     },
-    /// A slice type `T[]` — a runtime `(ptr, len)` view over element type T.
+    /// A slice type `[]T` — a runtime `(ptr, len)` view over element type T.
     Slice {
         element_type: Box<TypeExpression>,
     },
@@ -64,6 +69,16 @@ pub enum TypeExpressionKind {
 impl fmt::Display for TypeExpressionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            TypeExpressionKind::Sentinel { inner, value } => match &inner.kind {
+                TypeExpressionKind::Pointer { pointed_type } => {
+                    write!(f, "[*:{value}]{pointed_type}")
+                }
+                TypeExpressionKind::Slice { element_type } => write!(f, "[:{value}]{element_type}"),
+                TypeExpressionKind::Array { element_type, size } => {
+                    write!(f, "[{size}:{value}]{element_type}")
+                }
+                _ => Err(fmt::Error),
+            },
             TypeExpressionKind::Computed(expression) => write!(f, "{:?}", expression.kind),
             TypeExpressionKind::Readonly(ty) => write!(f, "const {ty}"),
             TypeExpressionKind::Builtin(builtin_type) => f.write_str(builtin_type.name()),
@@ -96,24 +111,10 @@ impl fmt::Display for TypeExpressionKind {
                 write!(f, "enum {{ {:?} }}", variants)
             }
             TypeExpressionKind::Array { element_type, size } => {
-                if matches!(
-                    element_type.kind,
-                    TypeExpressionKind::Pointer { .. } | TypeExpressionKind::Readonly(_)
-                ) {
-                    write!(f, "({element_type})[{size}]")
-                } else {
-                    write!(f, "{element_type}[{size}]")
-                }
+                write!(f, "[{size}]{element_type}")
             }
             TypeExpressionKind::Slice { element_type } => {
-                if matches!(
-                    element_type.kind,
-                    TypeExpressionKind::Pointer { .. } | TypeExpressionKind::Readonly(_)
-                ) {
-                    write!(f, "({element_type})[]")
-                } else {
-                    write!(f, "{element_type}[]")
-                }
+                write!(f, "[]{element_type}")
             }
             TypeExpressionKind::QualifiedIdentifier(QualifiedIdentifier { segments, .. }) => {
                 if let Some((last, rest)) = segments.split_last() {

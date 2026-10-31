@@ -19,7 +19,7 @@ fn source(text: &str) -> (tempfile::TempDir, BuildPlan) {
 #[test]
 fn implicit_array_slices_lower_with_backing_storage() {
     let (_directory, plan) = source(
-        "values:int32[2] = [4,5];\n         global_view:int32[] = values;\n         comp S:type = struct { values:int32[2] };\n         fn change(s:int32[]) { s[0] = 9; }\n         fn make() int32[2] { return [6,7]; }\n         fn main() int32 {\n             a:int32[2] = [1,2]; change(a);\n             s:int32[] = a; s[1] = 8;\n             obj := S { values:[3,4] }; change(obj.values);\n             temp:int32[] = make(); literal:uint8[] = [1,2];\n             empty:uint8[] = []; ro:const int32[] = a;\n             return a[0] + a[1] + temp[0] + ro[0];\n         }",
+        "values:[2]int32 = [4,5];\n         global_view:[]int32 = values;\n         comp S:type = struct { values:[2]int32 };\n         fn change(s:[]int32) { s[0] = 9; }\n         fn make() [2]int32 { return [6,7]; }\n         fn main() int32 {\n             a:[2]int32 = [1,2]; change(a);\n             s:[]int32 = a; s[1] = 8;\n             obj := S { values:[3,4] }; change(obj.values);\n             temp:[]int32 = make(); literal:[]uint8 = [1,2];\n             empty:[]uint8 = []; ro:const []int32 = a;\n             return a[0] + a[1] + temp[0] + ro[0];\n         }",
     );
     let CompilationOutput::Ir(ir) = run_pipeline(&plan, PipelineGoal::Ir).unwrap() else {
         panic!("expected IR");
@@ -151,19 +151,19 @@ fn globals_require_constant_initializers_and_comp_value_calls_remain_explicit() 
             "runtime binding reads",
         ),
         (
-            "fn main() int32 { a: int32[2]; a[0] = 42; i := 0; return a[i]; }",
+            "fn main() int32 { a: [2]int32; a[0] = 42; i := 0; return a[i]; }",
             "uninitialized",
         ),
         (
-            "fn main() int32 { a: int32[2]; a[0] = 42; view := a[..1]; return view[0]; }",
+            "fn main() int32 { a: [2]int32; a[0] = 42; view := a[..1]; return view[0]; }",
             "uninitialized",
         ),
         (
-            "fn main() int32 { a: const int32[1] = [1]; i := 0; a[i] = 42; return 0; }",
+            "fn main() int32 { a: const [1]int32 = [1]; i := 0; a[i] = 42; return 0; }",
             "readonly",
         ),
         (
-            "comp S: type = struct { a: int32[1] }; fn main() int32 { const s := S { a: [1] }; s.a[0] = 42; return 0; }",
+            "comp S: type = struct { a: [1]int32 }; fn main() int32 { const s := S { a: [1] }; s.a[0] = 42; return 0; }",
             "immutable",
         ),
         (
@@ -548,7 +548,7 @@ fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
 fn indexed_struct_initializers_and_dead_memory_syntax_lower_before_artifacts() {
     for text in [
         "fn main() int32 { values := [1, 2]; index := 0; value := values[index]; return value; }",
-        "comp S: type = struct { a: int32[] }; fn main() int32 { s := S { a: [1, 2][..] }; return 0; }",
+        "comp S: type = struct { a: []int32 }; fn main() int32 { s := S { a: [1, 2][..] }; return 0; }",
         "comp S: type = struct { value: int32 }; fn main() int32 { values := [1, 2]; index := 0; s := S { value: values[index] }; return s.value; }",
         "fn main() int32 { while (false) { data := [1, 2][..]; }; return 0; }",
     ] {
@@ -606,14 +606,14 @@ fn enum_lowering_checks_unmatched_and_dead_arms() {
         "comp E: type = enum { A, B }; fn main() int32 { e := E.A; switch(e) { when .A {} when .B {} }; return 42; }",
         "comp E: type = enum {}; fn impossible(e: E) int32 { switch(e) {}; } fn main() int32 { return 42; }",
         "comp E: type = enum { Next: *E, End }; fn main() int32 { e := E.End; return 42; }",
-        "comp E: type = enum { A, Items: int32[] }; fn main() int32 { e := E.A; return 42; }",
+        "comp E: type = enum { A, Items: []int32 }; fn main() int32 { e := E.A; return 42; }",
     ] {
         let (_directory, plan) = source(text);
         let ir = crate::ir::lowering::lower(&run_frontend(&plan).unwrap()).unwrap();
         crate::ir::verify_ir(&ir).unwrap();
     }
     for text in [
-        "comp E: type = enum { A, Items: int32[] }; fn main() int32 { e := E.Items([1, 2][..]); return 42; }",
+        "comp E: type = enum { A, Items: []int32 }; fn main() int32 { e := E.Items([1, 2][..]); return 42; }",
         "comp E: type = enum { A, B }; fn main() int32 { switch(E.A) { when .A {} when .B { data := [1, 2][..]; } }; return 42; }",
         "comp E: type = enum { A }; fn main() int32 { x := 0; if false { switch(E.A) { when .A { defer { data := [1, 2][..]; }; } }; }; return 42; }",
     ] {

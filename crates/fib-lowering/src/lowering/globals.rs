@@ -81,14 +81,29 @@ pub(super) fn lower_data(
         },
         DataKind::Bool(b) => ConstantKind::Bool(b),
         DataKind::Null => ConstantKind::Null,
-        DataKind::Bytes(b) => ConstantKind::Bytes(b),
+        DataKind::Bytes(mut b) => {
+            if let Some(sentinel) = source.types.sentinel(value.ty)? {
+                b.push(sentinel);
+            }
+            ConstantKind::Bytes(b)
+        }
         DataKind::CString(b) => ConstantKind::CString(b),
-        DataKind::Aggregate(elements) => ConstantKind::Aggregate(
-            elements
+        DataKind::Aggregate(elements) => {
+            let mut elements = elements
                 .into_iter()
                 .map(|v| lower_data(source, ir, v, functions))
-                .collect::<anyhow::Result<_>>()?,
-        ),
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            if let Some(sentinel) = source.types.sentinel(value.ty)? {
+                elements.push(intern(
+                    ir,
+                    scalar_id(&BuiltinType::UInt8),
+                    ConstantKind::Integer {
+                        bits: u128::from(sentinel),
+                    },
+                ));
+            }
+            ConstantKind::Aggregate(elements)
+        }
         DataKind::Enum { variant, fields } => ConstantKind::Enum {
             variant,
             fields: fields

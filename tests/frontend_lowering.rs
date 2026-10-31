@@ -75,7 +75,7 @@ mod memory_intrinsics {
             "fn f() usize { return core::sizeof(int32); }",
             "fn f(T: type) usize { return core::sizeof(T); } fn g() usize { return f(int64); }",
             "comp S := struct { a: uint8, b: uint64 }; fn f() usize { comp size := core::sizeof; return size(S); }",
-            "fn f() usize { return core::sizeof(int32[3]); }",
+            "fn f() usize { return core::sizeof([3]int32); }",
         ] {
             let project = analyze(text).unwrap_or_else(|e| panic!("{text}: {e:#}"));
             validate_analysis(&project).unwrap();

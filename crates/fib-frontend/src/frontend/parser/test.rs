@@ -19,8 +19,8 @@ mod tests {
     use crate::frontend::tokens::{Literal, Operator, Token};
 
     #[test]
-    fn computed_type_annotations_and_postfix_containers_parse() {
-        let source = "fn f(K: type, x: *lib::Map(K, int64)) Result(K, void) { return x; } a: Map(int32, Result(int64, void))[];";
+    fn computed_type_annotations_and_prefix_containers_parse() {
+        let source = "fn f(K: type, x: *lib::Map(K, int64)) Result(K, void) { return x; } a: []Map(int32, Result(int64, void));";
         let ast = get_ast(source);
         let StatementKind::FunctionDeclaration(f) = &ast.statements[0].kind else {
             panic!()
@@ -47,6 +47,59 @@ mod tests {
                     .parse()
                     .is_err(),
                 "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn prefix_sentinel_types_compose_and_preserve_value_brackets() {
+        let ast = get_ast("fn f() { x := [1][0]; y := [1][..]; z := [[1]][0][0]; }");
+        let StatementKind::FunctionDeclaration(f) = &ast.statements[0].kind else {
+            panic!()
+        };
+        let StatementKind::VariableDeclaration(x) = &f.body.as_ref().unwrap().statements[0].kind
+        else {
+            panic!()
+        };
+        assert!(matches!(
+            x.expression.as_ref().unwrap().kind,
+            ExpressionKind::IndexAccess { .. }
+        ));
+        for ty in [
+            "const [*:0]uint8",
+            "const [5:0]uint8",
+            "const [:0]uint8",
+            "*[:0]uint8",
+            "[2]const [*:0]uint8",
+            "[][3]uint8",
+            "[0:255]uint8",
+        ] {
+            let ast = get_ast(&format!("fn f(x: {ty}) {{}}"));
+            let StatementKind::FunctionDeclaration(f) = &ast.statements[0].kind else {
+                panic!()
+            };
+            assert_eq!(f.signature.parameters[0].parameter_type.to_string(), ty);
+        }
+        let ast = get_ast(
+            "fn f() { a:[2]int32 = [1,2]; b := a[0]; c := a[0..1]; comp T := [3][]int32; }",
+        );
+        assert_eq!(ast.statements.len(), 1);
+        for ty in [
+            "[*:]uint8",
+            "[:256]uint8",
+            "[:x]uint8",
+            "[5:0",
+            "[*]uint8",
+            "[-1]uint8",
+            "uint8[]",
+            "uint8[5]",
+        ] {
+            let source = format!("fn f(x:{ty}) {{}}");
+            assert!(
+                Parser::with_source(Tokenizer::new(&source), Path::new("sentinel.fib"), &source)
+                    .parse()
+                    .is_err(),
+                "{ty}"
             );
         }
     }
@@ -125,14 +178,14 @@ mod tests {
             ("const a: *int32", true, false),
             ("a: const *int32", false, true),
             ("const a: const *int32", true, true),
-            ("a: int32[]", false, false),
-            ("const a: int32[]", true, false),
-            ("a: const int32[]", false, true),
-            ("const a: const int32[]", true, true),
-            ("a: int32[2]", false, false),
-            ("const a: int32[2]", true, false),
-            ("a: const int32[2]", false, true),
-            ("const a: const int32[2]", true, true),
+            ("a: []int32", false, false),
+            ("const a: []int32", true, false),
+            ("a: const []int32", false, true),
+            ("const a: const []int32", true, true),
+            ("a: [2]int32", false, false),
+            ("const a: [2]int32", true, false),
+            ("a: const [2]int32", false, true),
+            ("const a: const [2]int32", true, true),
         ] {
             let ast = get_ast(&format!("{spelling};"));
             let statements = module_statements(&ast);
@@ -150,9 +203,9 @@ mod tests {
         }
         for spelling in [
             "const *const *int32",
-            "*const int32[]",
-            "const (const int32[2])[3]",
-            "(const *int32)[]",
+            "*const []int32",
+            "const [3]const [2]int32",
+            "[]const *int32",
         ] {
             let source = format!("x: {spelling};");
             let mut parser =
@@ -163,7 +216,7 @@ mod tests {
             };
             assert_eq!(var.ty.as_ref().unwrap().to_string(), spelling);
         }
-        let ast = get_ast("comp P: type = const *int32; comp V: type = const int32[];");
+        let ast = get_ast("comp P: type = const *int32; comp V: type = const []int32;");
         assert_eq!(module_statements(&ast).len(), 2);
     }
 
@@ -1271,7 +1324,7 @@ mod tests {
 
     #[test]
     fn test_slice_type_expression() {
-        let ast = get_ast("fn f(x: int32[]) void {}");
+        let ast = get_ast("fn f(x: []int32) void {}");
         let stmt = ast.statements.first().expect("one statement");
         match stmt.kind {
             StatementKind::FunctionDeclaration(ref f) => {
@@ -1288,14 +1341,14 @@ mod tests {
 
     #[test]
     fn test_array_type_still_parses_with_size() {
-        let ast = get_ast("fn f(x: int32[3]) void {}");
+        let ast = get_ast("fn f(x: [3]int32) void {}");
         let stmt = ast.statements.first().expect("one statement");
         match stmt.kind {
             StatementKind::FunctionDeclaration(ref f) => {
                 let param_ty = &f.signature.parameters[0].parameter_type.kind;
                 assert!(
                     matches!(param_ty, TypeExpressionKind::Array { size: 3, .. }),
-                    "expected Array[3], found {:?}",
+                    "expected [3]Array, found {:?}",
                     param_ty
                 );
             }
@@ -1890,7 +1943,7 @@ mod tests {
     #[test]
     fn string_is_an_ordinary_type_name_and_byte_views_preserve_readonly() {
         assert_eq!(BuiltinType::from_name("string"), None);
-        let ast = get_ast("legacy: string; bytes: const uint8[];");
+        let ast = get_ast("legacy: string; bytes: const []uint8;");
         let statements = module_statements(&ast);
         let StatementKind::VariableDeclaration(legacy) = statements[0] else {
             panic!("expected variable declaration");
@@ -1999,7 +2052,7 @@ mod tests {
     #[test]
     fn direct_enum_payload_syntax_and_legacy_errors() {
         get_ast(
-            "comp E := enum { Empty, Unit: void, Record: struct { x: int32 }, Array: uint8[2], View: uint8[], Pointer: *int32, Callback: fn(int32) int32, Tuple: (int32, bool), Computed: factory(int32) };",
+            "comp E := enum { Empty, Unit: void, Record: struct { x: int32 }, Array: [2]uint8, View: []uint8, Pointer: *int32, Callback: fn(int32) int32, Tuple: (int32, bool), Computed: factory(int32) };",
         );
         for source in [
             "comp E := enum { Unit {} };",

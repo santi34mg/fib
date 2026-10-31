@@ -135,9 +135,9 @@ comp B: type = Marker(int64);
 fn consume(T:type) int32 { return 0; }
 fn main() int32 {
     return consume(int32)+consume(Alias)+consume(First)+consume(Second)
-        +consume(A)+consume(B)+consume(*int32)+consume(int32[])
-        +consume(const int32[])+consume(int32[2])+consume(int32[3])
-        +consume(*Alias)+consume(Alias[])+consume(Alias[2])
+        +consume(A)+consume(B)+consume(*int32)+consume([]int32)
+        +consume(const []int32)+consume([2]int32)+consume([3]int32)
+        +consume(*Alias)+consume([]Alias)+consume([2]Alias)
         +consume(Node)+consume(NodeAlias)+consume(*Node)+consume(*NodeAlias)
         +consume(Callback)+consume(CCallback);
 }

@@ -7,7 +7,7 @@ use std::{
 use crate::plan::{BuildPlan, FileId, FileName, PackageId, PackageSpec, SourceFile};
 use anyhow::Context;
 
-pub const DECLARATION_REVISION: u32 = 3;
+pub const DECLARATION_REVISION: u32 = 4;
 
 #[derive(Debug, Clone)]
 pub struct StandardLibrary {

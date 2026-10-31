@@ -106,6 +106,9 @@ pub(super) fn type_key(
         Ok(match types.get(ty)? {
             SemanticType::Builtin(b) => format!("B{b:?}"),
             SemanticType::Pointer(t) => format!("P{}", nested(*t, active)?),
+            SemanticType::Sentinel { inner, value } => {
+                format!("Z{value}_{}", nested(*inner, active)?)
+            }
             SemanticType::Readonly(t) => format!("Q{}", nested(*t, active)?),
             SemanticType::Slice(t) => format!("S{}", nested(*t, active)?),
             SemanticType::Array { element, length } => {

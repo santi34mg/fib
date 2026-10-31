@@ -1630,8 +1630,8 @@ mod name_resolution {
         type_ok!(builtin_has_no_name_to_resolve, "int32", 0);
         type_ok!(named_type, "T", 1);
         type_ok!(pointer_pointee, "*T", 1);
-        type_ok!(array_element, "T[4]", 1);
-        type_ok!(slice_element, "T[]", 1);
+        type_ok!(array_element, "[4]T", 1);
+        type_ok!(slice_element, "[]T", 1);
         type_ok!(tuple_elements, "(T, T)", 2);
         type_ok!(function_arguments_and_return, "fn(T, *T) -> T", 3);
         type_ok!(
@@ -1644,7 +1644,7 @@ mod name_resolution {
             "enum { Variant: T, Empty }",
             1
         );
-        type_ok!(nested_composite_type, "*(T, fn(T[]) -> *T)[3]", 3);
+        type_ok!(nested_composite_type, "*[3](T, fn([]T) -> *T)", 3);
 
         macro_rules! type_bad {
             ($name:ident, $source:literal) => {
@@ -1662,8 +1662,8 @@ mod name_resolution {
         }
         type_bad!(missing_named_type, "Missing");
         type_bad!(missing_pointer_pointee, "*Missing");
-        type_bad!(missing_array_element, "Missing[2]");
-        type_bad!(missing_slice_element, "Missing[]");
+        type_bad!(missing_array_element, "[2]Missing");
+        type_bad!(missing_slice_element, "[]Missing");
         type_bad!(missing_second_tuple_element, "(T, Missing)");
         type_bad!(missing_function_argument, "fn(T, Missing) -> T");
         type_bad!(missing_function_return, "fn(T) -> Missing");
@@ -2477,7 +2477,8 @@ mod name_resolution {
                         self.ty(ty);
                     }
                 }
-                TypeExpressionKind::Readonly(inner) => self.ty(inner),
+                TypeExpressionKind::Readonly(inner)
+                | TypeExpressionKind::Sentinel { inner, .. } => self.ty(inner),
                 TypeExpressionKind::Pointer { pointed_type } => self.ty(pointed_type),
                 TypeExpressionKind::Array { element_type, .. }
                 | TypeExpressionKind::Slice { element_type } => self.ty(element_type),
@@ -2918,7 +2919,7 @@ mod type_resolution {
     );
     ok!(
         recursive_slice,
-        "comp Node: type = struct { children: Node[] }; node: Node;"
+        "comp Node: type = struct { children: []Node }; node: Node;"
     );
     ok!(
         recursive_function_type,
@@ -2939,11 +2940,11 @@ mod type_resolution {
     ok!(recursive_calls, "fn f(x: int32) int32 { return f(x); }");
     ok!(
         tuple_results,
-        "fn pair() (int32, const uint8[1]) { return 1, \"x\"; } a, b := pair();"
+        "fn pair() (int32, const [1]uint8) { return 1, \"x\"; } a, b := pair();"
     );
     ok!(
         independent_multi_binding,
-        "const a: int8, b: const uint8[1] = 1, \"x\";"
+        "const a: int8, b: const [1]uint8 = 1, \"x\";"
     );
     ok!(
         numeric_casts,
@@ -2959,11 +2960,11 @@ mod type_resolution {
     );
     ok!(
         arrays_and_slices,
-        "items: int8[2] = [1, 2]; first := items[0]; view := items[..]; size := view.len;"
+        "items: [2]int8 = [1, 2]; first := items[0]; view := items[..]; size := view.len;"
     );
     ok!(
         empty_array_context,
-        "empty: int32[0] = []; view := empty[..];"
+        "empty: [0]int32 = []; view := empty[..];"
     );
     ok!(
         struct_construction,
@@ -2989,7 +2990,7 @@ mod type_resolution {
             comp E := enum {
                 Absent, NoValue: void, Empty: Empty, Nested: Nested,
                 Number: choose(int32), Pair: Pair, Inline: struct { value: bool },
-                Array: int32[0], Pointer: *Empty
+                Array: [0]int32, Pointer: *Empty
             };
             fn consume(value: void) void { return value; }
             fn f() {
@@ -3091,7 +3092,7 @@ mod type_resolution {
     );
     err!(
         zero_array_cycle,
-        "comp Node: type = struct { next: Node[0] };",
+        "comp Node: type = struct { next: [0]Node };",
         "cycle"
     );
     err!(
@@ -3169,7 +3170,7 @@ mod type_resolution {
         "comp S: type = struct { x: int32 }; s := S { other: 1 };",
         "member"
     );
-    err!(array_size, "items: int32[2] = [1];", "length");
+    err!(array_size, "items: [2]int32 = [1];", "length");
     err!(heterogeneous_array, "items := [1, true];", "incompatible");
     err!(index_bounds, "items := [1, 2]; x := items[2];", "bounds");
     err!(negative_index, "items := [1, 2]; x := items[-1];", "bounds");
@@ -3288,7 +3289,7 @@ mod type_resolution {
     );
     err!(
         array_to_slice_cast,
-        "a := [1]; view := a as int32[];",
+        "a := [1]; view := a as []int32;",
         "cast"
     );
     ok!(bool_numeric_cast, "x := true as int32; y := 1 as bool;");
@@ -3351,21 +3352,21 @@ mod type_resolution {
                 "comp E: type = enum { A, B }; fn f() { const x: E = E.A; x = E.B; }",
                 "comp S: type = struct { x: int32 }; fn f() { const s: S = S { x: 1 }; s.x = 2; }",
                 "comp S: type = struct { x: int32 }; comp O: type = struct { s: S }; fn f() { const o := O { s: S { x: 1 } }; o.s.x = 2; }",
-                "comp S: type = struct { a: int32[1] }; fn f() { const s := S { a: [1] }; s.a[0] = 2; }",
-                "comp S: type = struct { a: int32[1] }; fn f() { const s := S { a: [1] }; v := s.a[..]; v[0] = 2; }",
+                "comp S: type = struct { a: [1]int32 }; fn f() { const s := S { a: [1] }; s.a[0] = 2; }",
+                "comp S: type = struct { a: [1]int32 }; fn f() { const s := S { a: [1] }; v := s.a[..]; v[0] = 2; }",
                 "comp S: type = struct { x: int32 }; fn f() { const a := [S { x: 1 }]; a[0].x = 2; }",
                 "fn f() { const a := [[1]]; a[0][0] = 2; }",
                 "fn f() { const a, b := [1], [2]; a[0] = 3; }",
-                "const a: int32[1] = [1]; fn f() { a[0] = 2; }",
+                "const a: [1]int32 = [1]; fn f() { a[0] = 2; }",
                 "fn f(T: type, x: T) { const a := [x]; a[0] = x; }",
-                "fn change(T: type, x: T) { const a := x; a[0] = 2; } fn f() { change(int32[1], [1]); }",
+                "fn change(T: type, x: T) { const a := x; a[0] = 2; } fn f() { change([1]int32, [1]); }",
             ] {
                 bad(source, "immutable");
             }
             for source in [
                 "fn f() { const a := [1]; p: *int32 = a[0]&; }",
-                "comp S: type = struct { a: int32[1] }; fn f() { const s := S { a: [1] }; p: *int32 = s.a[0]&; }",
-                "fn f() { const a := [1]; v: int32[] = a[..]; }",
+                "comp S: type = struct { a: [1]int32 }; fn f() { const s := S { a: [1] }; p: *int32 = s.a[0]&; }",
+                "fn f() { const a := [1]; v: []int32 = a[..]; }",
             ] {
                 bad(source, "incompatible");
             }
@@ -3375,12 +3376,12 @@ mod type_resolution {
         fn const_binding_copies_and_indirections_remain_shallow() {
             for source in [
                 "fn f() { const i: int32 = 1; const x: float32 = 1.0; const b: bool = true; j := i + 1; y := x + 1.0; c := !b; }",
-                "comp S: type = struct { a: int32[1] }; fn f() { const s := S { a: [1] }; copy := s; copy.a[0] = 2; }",
-                "fn f() { const a := [1]; copy := a; copy[0] = 2; p: const *int32 = a[0]&; v: const int32[] = a[..]; x := v[0]; }",
-                "comp E: type = enum { Item: int32[1] }; fn f() { const e := E.Item([1]); switch (e) { when .Item(a) { a[0] = 2; } }; }",
-                "comp S: type = struct { p: *int32, v: int32[] }; fn f() { a := [1]; const s := S { p: a[0]&, v: a[..] }; (s.p*) = 2; s.v[0] = 3; }",
-                "fn id(T: type, value: T) T { const copy := value; return copy; } fn f() { a := id(int32[1], [1]); a[0] = 2; }",
-                "fn change(T: type, x: T) { const view := x; view[0] = 2; } fn f() { a := [1]; change(int32[], a[..]); }",
+                "comp S: type = struct { a: [1]int32 }; fn f() { const s := S { a: [1] }; copy := s; copy.a[0] = 2; }",
+                "fn f() { const a := [1]; copy := a; copy[0] = 2; p: const *int32 = a[0]&; v: const []int32 = a[..]; x := v[0]; }",
+                "comp E: type = enum { Item: [1]int32 }; fn f() { const e := E.Item([1]); switch (e) { when .Item(a) { a[0] = 2; } }; }",
+                "comp S: type = struct { p: *int32, v: []int32 }; fn f() { a := [1]; const s := S { p: a[0]&, v: a[..] }; (s.p*) = 2; s.v[0] = 3; }",
+                "fn id(T: type, value: T) T { const copy := value; return copy; } fn f() { a := id([1]int32, [1]); a[0] = 2; }",
+                "fn change(T: type, x: T) { const view := x; view[0] = 2; } fn f() { a := [1]; change([]int32, a[..]); }",
             ] {
                 pass(source);
             }
@@ -3388,13 +3389,13 @@ mod type_resolution {
 
         #[test]
         fn array_binding_and_element_matrix() {
-            pass("fn f() { a: int32[2] = [1, 2]; a[0] = 3; v := a[..]; v[0] = 4; }");
+            pass("fn f() { a: [2]int32 = [1, 2]; a[0] = 3; v := a[..]; v[0] = 4; }");
             for binding in ["", "const "] {
                 pass(&format!(
-                    "fn f() {{ {binding}a: const int32[2] = [1, 2]; v: const int32[] = a[..]; x := v[0]; n := a.len; }}"
+                    "fn f() {{ {binding}a: const [2]int32 = [1, 2]; v: const []int32 = a[..]; x := v[0]; n := a.len; }}"
                 ));
                 bad(
-                    &format!("fn f() {{ {binding}a: const int32[2] = [1, 2]; a[0] = 3; }}"),
+                    &format!("fn f() {{ {binding}a: const [2]int32 = [1, 2]; a[0] = 3; }}"),
                     "immutable",
                 );
             }
@@ -3403,31 +3404,31 @@ mod type_resolution {
                 "fn f() { const a := [1]; v := a[..]; v[0] = 2; }",
                 "immutable",
             );
-            pass("fn f() { a: const int32[1] = [1]; a = [2]; }");
+            pass("fn f() { a: const [1]int32 = [1]; a = [2]; }");
             bad(
-                "fn f() { const a: const int32[1] = [1]; a = [2]; }",
+                "fn f() { const a: const [1]int32 = [1]; a = [2]; }",
                 "immutable",
             );
-            bad("fn f() { const a: int32[1] = [1]; a = [2]; }", "immutable");
+            bad("fn f() { const a: [1]int32 = [1]; a = [2]; }", "immutable");
         }
 
         #[test]
         fn slice_binding_and_element_matrix() {
             for binding in ["", "const "] {
                 pass(&format!(
-                    "fn f() {{ a := [1]; {binding}v: int32[] = a[..]; v[0] = 2; }}"
+                    "fn f() {{ a := [1]; {binding}v: []int32 = a[..]; v[0] = 2; }}"
                 ));
                 pass(&format!(
-                    "fn f() {{ a: const int32[1] = [1]; {binding}v: const int32[] = a[..]; x := v[0]; n := v.len; }}"
+                    "fn f() {{ a: const [1]int32 = [1]; {binding}v: const []int32 = a[..]; x := v[0]; n := v.len; }}"
                 ));
                 bad(
                     &format!(
-                        "fn f() {{ a: const int32[1] = [1]; {binding}v: const int32[] = a[..]; v[0] = 2; }}"
+                        "fn f() {{ a: const [1]int32 = [1]; {binding}v: const []int32 = a[..]; v[0] = 2; }}"
                     ),
                     "immutable",
                 );
             }
-            pass("fn f() { a: const int32[1] = [1]; v := a[..]; v = a[..]; }");
+            pass("fn f() { a: const [1]int32 = [1]; v := a[..]; v = a[..]; }");
             bad(
                 "fn f() { a := [1]; const v := a[..]; v = a[..]; }",
                 "immutable",
@@ -3437,27 +3438,27 @@ mod type_resolution {
         #[test]
         fn readonly_paths_and_addressing() {
             pass("comp S: type = struct { x: int32 }; fn f(p: const *S) int32 { return (p*).x; }");
-            pass("fn f() { a: const int32[1] = [1]; p: const *int32 = a[0]&; x := p*; }");
+            pass("fn f() { a: const [1]int32 = [1]; p: const *int32 = a[0]&; x := p*; }");
             pass(
-                "fn f() { a: const int32[1] = [1]; v := a[..]; w: const int32[] = v[..]; x := w[0]; }",
+                "fn f() { a: const [1]int32 = [1]; v := a[..]; w: const []int32 = v[..]; x := w[0]; }",
             );
             for source in [
                 "comp S: type = struct { x: int32 }; fn f(p: const *S) { (p*).x = 2; }",
-                "fn f() { a: const int32[1] = [1]; v := a[..]; w := v[..]; w[0] = 2; }",
-                "fn f(p: const *int32[1]) { (p*)[0] = 2; }",
-                "fn f(p: const *int32[1]) { v := (p*)[..]; v[0] = 2; }",
-                "comp S: type = struct { a: int32[1] }; fn f(p: const *S) { (p*).a[0] = 2; }",
-                "comp S: type = struct { x: int32 }; fn f() { a: const S[1] = [S { x: 1 }]; a[0].x = 2; }",
-                "fn f() { a: const int32[1][1] = [[1]]; a[0][0] = 2; }",
+                "fn f() { a: const [1]int32 = [1]; v := a[..]; w := v[..]; w[0] = 2; }",
+                "fn f(p: const *[1]int32) { (p*)[0] = 2; }",
+                "fn f(p: const *[1]int32) { v := (p*)[..]; v[0] = 2; }",
+                "comp S: type = struct { a: [1]int32 }; fn f(p: const *S) { (p*).a[0] = 2; }",
+                "comp S: type = struct { x: int32 }; fn f() { a: const [1]S = [S { x: 1 }]; a[0].x = 2; }",
+                "fn f() { a: const [1][1]int32 = [[1]]; a[0][0] = 2; }",
             ] {
                 bad(source, "immutable");
             }
             bad(
-                "fn f() { a: const int32[1] = [1]; p: *int32 = a[0]&; }",
+                "fn f() { a: const [1]int32 = [1]; p: *int32 = a[0]&; }",
                 "incompatible",
             );
             bad(
-                "fn f(p: const *int32[1]) { v: int32[] = (p*)[..]; }",
+                "fn f(p: const *[1]int32) { v: []int32 = (p*)[..]; }",
                 "incompatible",
             );
         }
@@ -3466,10 +3467,10 @@ mod type_resolution {
         fn qualifications_are_layer_local() {
             // Readonly outer storage does not requalify a pointer/slice value it contains.
             pass("fn f(p: const **int32) { q := p*; (q*) = 2; }");
-            pass("fn f(p: const *int32[]) { v := p*; v[0] = 2; }");
+            pass("fn f(p: const *[]int32) { v := p*; v[0] = 2; }");
             bad("fn f(p: *const *int32) { q := p*; (q*) = 2; }", "immutable");
             bad(
-                "fn f(p: *const int32[]) { v := p*; v[0] = 2; }",
+                "fn f(p: *const []int32) { v := p*; v[0] = 2; }",
                 "immutable",
             );
             pass("fn f(p: const *const *int32) { q: const *int32 = p*; x := q*; }");
@@ -3479,8 +3480,8 @@ mod type_resolution {
         fn exact_compatibility_at_all_boundaries() {
             for source in [
                 "fn f(p: const *int32) { q: *int32 = p; }",
-                "fn f(p: const int32[]) { q: int32[] = p; }",
-                "fn f() { p: const int32[1] = [1]; q: int32[1] = p; }",
+                "fn f(p: const []int32) { q: []int32 = p; }",
+                "fn f() { p: const [1]int32 = [1]; q: [1]int32 = p; }",
                 "fn f(p: const *int32) *int32 { return p; }",
                 "fn take(p: *int32) {} fn f(p: const *int32) { take(p); }",
                 "fn f(p: *const *int32) { q: **int32 = p; }",
@@ -3488,34 +3489,34 @@ mod type_resolution {
                 bad(source, "incompatible");
             }
             pass("fn f(p: *int32) { q: const *int32 = p; }");
-            pass("fn f(p: int32[]) { q: const int32[] = p; }");
+            pass("fn f(p: []int32) { q: const []int32 = p; }");
             pass("fn f(p: *int32) { q: const *int32 = null; q = p; }");
         }
 
         #[test]
         fn arrays_implicitly_gain_shallow_readonly_qualification() {
-            pass("fn f() { a := [1]; b: const int32[1] = a; b = a; }");
+            pass("fn f() { a := [1]; b: const [1]int32 = a; b = a; }");
             pass(
-                "fn take(a: const int32[1]) {} fn give(a: int32[1]) const int32[1] { return a; } fn f() { a := [1]; take(a); b := give(a); }",
+                "fn take(a: const [1]int32) {} fn give(a: [1]int32) const [1]int32 { return a; } fn f() { a := [1]; take(a); b := give(a); }",
             );
             pass(
-                "comp A: type = const int32[1]; fn id(T: type, a: T) T { return a; } fn f() { a := [1]; b: A = id(A, a); }",
+                "comp A: type = const [1]int32; fn id(T: type, a: T) T { return a; } fn f() { a := [1]; b: A = id(A, a); }",
             );
-            pass("fn f() { a := [1]; b := a as const int32[1]; }");
+            pass("fn f() { a := [1]; b := a as const [1]int32; }");
             bad(
-                "fn f() { a := [1]; b: const int32[1] = a; b[0] = 2; }",
+                "fn f() { a := [1]; b: const [1]int32 = a; b[0] = 2; }",
                 "immutable",
             );
             bad(
-                "fn f(a: int32[2]) { b: const int32[1] = a; }",
+                "fn f(a: [2]int32) { b: const [1]int32 = a; }",
                 "incompatible",
             );
             bad(
-                "fn f(a: int32[1][1]) { b: (const int32[1])[1] = a; }",
+                "fn f(a: [1][1]int32) { b: [1]const [1]int32 = a; }",
                 "incompatible",
             );
             bad(
-                "fn f(a: *int32[1]) { b: *const int32[1] = a; }",
+                "fn f(a: *[1]int32) { b: *const [1]int32 = a; }",
                 "incompatible",
             );
         }
@@ -3526,8 +3527,8 @@ mod type_resolution {
                 "fn f(p: const *int32) { q := p as *int32; }",
                 "fn f(p: const *int32) { q := p as *void; }",
                 "fn f(p: *const *int32) { q := p as *void; }",
-                "fn f(p: const int32[]) { q := p as int32[]; }",
-                "fn f(p: const int32[1]) { q := p as int32[1]; }",
+                "fn f(p: const []int32) { q := p as []int32; }",
+                "fn f(p: const [1]int32) { q := p as [1]int32; }",
                 "comp S: type = struct { p: const *int32 }; fn f(p: *S) { q := p as *void; }",
             ] {
                 bad(source, "cast");
@@ -3545,30 +3546,30 @@ mod type_resolution {
                 "fn id(T: type, p: const *T) const *T { return p; } fn f() { const x := 1; p := id(int32, x&); y := p*; }",
             );
             pass(
-                "fn id(T: type, p: T) T { return p; } fn f(p: const int32[]) { q := id(const int32[], p); x := q[0]; }",
+                "fn id(T: type, p: T) T { return p; } fn f(p: const []int32) { q := id(const []int32, p); x := q[0]; }",
             );
             pass(
-                "comp fn View(T: type) type { return const T[]; } comp V: type = View(int32); fn f(v: V) const int32[] { return v; }",
+                "comp fn View(T: type) type { return const []T; } comp V: type = View(int32); fn f(v: V) const []int32 { return v; }",
             );
             bad(
                 "fn id(T: type, p: const *T) const *T { return p; } fn f() { const x := 1; p := id(int32, x&); (p*) = 2; }",
                 "immutable",
             );
-            bad("comp A: type = struct { a: const A[1] };", "cycle");
+            bad("comp A: type = struct { a: const [1]A };", "cycle");
         }
 
         #[test]
         fn qualification_does_not_bypass_initialization() {
             for source in [
-                "fn f() { a: const int32[1]; x := a[0]; }",
-                "fn f() { a: const int32[1]; v := a[..]; }",
-                "fn f() { a: const int32[1]; p := a[0]&; x := a[0]; }",
-                "fn f() { a: const int32[1]; const p := a&; x := a[0]; }",
+                "fn f() { a: const [1]int32; x := a[0]; }",
+                "fn f() { a: const [1]int32; v := a[..]; }",
+                "fn f() { a: const [1]int32; p := a[0]&; x := a[0]; }",
+                "fn f() { a: const [1]int32; const p := a&; x := a[0]; }",
             ] {
                 analysis_bad(source, "uninitialized");
             }
-            pass("fn f() { a: const int32[1]; a = [1]; x := a[0]; }");
-            pass("fn f() { const a: int32[1] = [1]; x := a[0]; }");
+            pass("fn f() { a: const [1]int32; a = [1]; x := a[0]; }");
+            pass("fn f() { const a: [1]int32 = [1]; x := a[0]; }");
         }
 
         #[test]
@@ -3576,9 +3577,9 @@ mod type_resolution {
             use crate::frontend::analysis_annotation::ValueCategory as C;
             for source in [
                 "p: const *int32; p*;",
-                "a: const int32[1] = [1]; a[0];",
+                "a: const [1]int32 = [1]; a[0];",
                 "const a := [1]; a[0];",
-                "comp S: type = struct { a: int32[1] }; const s := S { a: [1] }; s.a[0];",
+                "comp S: type = struct { a: [1]int32 }; const s := S { a: [1] }; s.a[0];",
                 "comp S: type = struct { x: int32 }; p: const *S; (p*).x;",
             ] {
                 let (mut a, types) = run(&format!("fn f() {{ {source} }}")).unwrap();
@@ -3609,7 +3610,7 @@ mod type_resolution {
             }
             for source in [
                 "const x := 1; x&;",
-                "a: const int32[1] = [1]; a[..];",
+                "a: const [1]int32 = [1]; a[..];",
                 "const a := [1]; a[..];",
                 "p: const *int32; p as const *int32;",
             ] {
@@ -3758,11 +3759,11 @@ mod type_resolution {
     ok!(shift_result_wrap, "x: int8 = 1 << 7;");
     ok!(
         zero_length_full_slice,
-        "items: int32[0] = []; x := items[..];"
+        "items: [0]int32 = []; x := items[..];"
     );
     err!(
         empty_inclusive_slice,
-        "items: int32[0] = []; x := items[0.=0];",
+        "items: [0]int32 = []; x := items[0.=0];",
         "bounds"
     );
     #[test]
@@ -4071,14 +4072,14 @@ mod type_resolution {
                 "x: int32; return stop() + x;",
                 "if stop() {};",
                 "while (stop()) {};",
-                "a: int32[1] = [stop()];",
-                "a: int32[1] = [1]; return a[stop()];",
-                "a: int32[1]; return a[stop()];",
+                "a: [1]int32 = [stop()];",
+                "a: [1]int32 = [1]; return a[stop()];",
+                "a: [1]int32; return a[stop()];",
                 "return stop() as int32;",
                 "[stop(), 1];",
                 "[1, stop()];",
-                "a: int32[1] = [1]; a[stop()..];",
-                "a: int32[1] = [1]; a[0..stop()];",
+                "a: [1]int32 = [1]; a[stop()..];",
+                "a: [1]int32 = [1]; a[0..stop()];",
                 "comp S: type = struct { x: int32 }; s: S = S { x: stop() };",
                 "x: int32; defer take(x, x); return stop();",
                 "x: int32; if true { x = stop(); } else { x = 1; }; return x;",
@@ -4192,11 +4193,11 @@ mod type_resolution {
             good("fn f(x: int32) int32 { return x % 2; }");
             let max = "(((1 as int128) << 126) - 1 + ((1 as int128) << 126))";
             bad(
-                &format!("fn f(a: int32[]) {{ a[0.={max}]; }}"),
+                &format!("fn f(a: []int32) {{ a[0.={max}]; }}"),
                 "inclusive slice bound overflows",
             );
-            good(&format!("fn f(a: int32[]) {{ a[0..{max}]; }}"));
-            good(&format!("fn f(a: int32[]) {{ a[0.=({max} - 1)]; }}"));
+            good(&format!("fn f(a: []int32) {{ a[0..{max}]; }}"));
+            good(&format!("fn f(a: []int32) {{ a[0.=({max} - 1)]; }}"));
         }
     }
 
@@ -4225,12 +4226,12 @@ mod type_resolution {
             "comp fn choose(wide: bool) type { if wide { return int64; } else { return int32; }; }
              comp fn identity(T: type) type { return T; }
              answer: choose(false) = 42;
-             comp Record := struct { value: choose(false), items: identity(int32)[2] };
+             comp Record := struct { value: choose(false), items: [2]identity(int32) };
              comp Event := enum { Value: choose(false), Empty };
              fn generic(T: type, value: identity(T)) identity(T) { return value; }
-             fn take(value: choose(false), p: *identity(int32), view: const identity(int32)[]) choose(false) {
+             fn take(value: choose(false), p: *identity(int32), view: const []identity(int32)) choose(false) {
                  local: choose(false) = value;
-                 array: identity(int32)[2] = [local, answer];
+                 array: [2]identity(int32) = [local, answer];
                  callback: fn(identity(int32)) identity(int32) = increment;
                  return generic(int32, callback(array[0]));
              }
@@ -4285,7 +4286,7 @@ mod type_resolution {
         );
         pass!(
             array_element_initialization,
-            "fn f() int32[2] { a: int32[2]; a[0] = 1; a[1] = 2; return a; }"
+            "fn f() [2]int32 { a: [2]int32; a[0] = 1; a[1] = 2; return a; }"
         );
         pass!(
             defer_block_reads_at_exit,
@@ -4420,7 +4421,7 @@ mod type_resolution {
         );
         fail!(
             partially_initialized_array,
-            "fn f() int32[2] { a: int32[2]; a[0] = 1; return a; }",
+            "fn f() [2]int32 { a: [2]int32; a[0] = 1; return a; }",
             "uninitialized"
         );
         fail!(
@@ -4439,7 +4440,7 @@ mod type_resolution {
         );
         pass!(
             specialized_array,
-            "fn identity(T: type, x: T[2]) T[2] { return x; } fn test() { a := identity(int8, [1, 2]); }"
+            "fn identity(T: type, x: [2]T) [2]T { return x; } fn test() { a := identity(int8, [1, 2]); }"
         );
         pass!(
             specialized_function,
@@ -4867,13 +4868,13 @@ mod type_resolution {
                 "fn get(T: type, x: T) int32 { return x.value; } a := get(int32, 1);",
                 "member",
             );
-            good("fn first(T: type, x: T) int32 { return x[0]; } a := first(int32[2], [1, 2]);");
+            good("fn first(T: type, x: T) int32 { return x[0]; } a := first([2]int32, [1, 2]);");
             bad(
                 "fn first(T: type, x: T) int32 { return x[0]; } a := first(int32, 1);",
                 "indexable",
             );
             bad(
-                "fn first(T: type, x: T) int32 { return x[2]; } a := first(int32[2], [1, 2]);",
+                "fn first(T: type, x: T) int32 { return x[2]; } a := first([2]int32, [1, 2]);",
                 "bounds",
             );
             bad(
@@ -5009,7 +5010,7 @@ mod type_resolution {
                 "unary",
             );
             bad(
-                "fn f(T: type, x: T[2]) T[2] { return x + x; }",
+                "fn f(T: type, x: [2]T) [2]T { return x + x; }",
                 "invalid binary",
             );
             bad(
@@ -5113,7 +5114,7 @@ mod type_resolution {
                 "comp fn choose(T: type, b: bool) type { if b { return *T; } else { return T; }; } comp fn forward(T: type, b: bool) type { comp R := choose(T, b); return R; } comp P := forward(int32, true); x := 1; p: P = x&;",
             );
             good(
-                "comp fn ptr(T: type) type { return *T; } comp fn wrap(T: type) type { comp P := ptr(T); return struct { values: P[2] }; } fn f(T: type, x: T) T { comp P := wrap(T); return x; } a := f(int32, 1);",
+                "comp fn ptr(T: type) type { return *T; } comp fn wrap(T: type) type { comp P := ptr(T); return struct { values: [2]P }; } fn f(T: type, x: T) T { comp P := wrap(T); return x; } a := f(int32, 1);",
             );
             good(
                 "comp fn ptr(T: type) type { return *T; } comp fn forward(T: type) type { return ptr(T); } comp P := forward(int32); x := 1; p: P = x&;",
@@ -5234,7 +5235,7 @@ mod generic_flow_regressions {
             "fn f() { a := 4294967296 as uint64; b := 0.1 as float32; c := (-128) as int8; }",
             "fn f() { a := true as int128; b := false as float16; c := 3.9 as bool; }",
             "fn f(p: *int32) const *int32 { q: const *int32 = p; return q; }",
-            "fn f(p: int32[]) const int32[] { return p; }",
+            "fn f(p: []int32) const []int32 { return p; }",
         ] {
             analyze(source);
         }
@@ -5258,7 +5259,7 @@ mod generic_flow_regressions {
     #[test]
     fn prelude_identifiers_type_brackets_and_pointer_warnings() {
         analyze(
-            "comp Meta:type = type; fn id(T:Meta, x:T) T { return x; } fn f() { x := id(int32,1); comp A:type = int32[2]; a:A = [1,2]; comp V:type = int32[]; }",
+            "comp Meta:type = type; fn id(T:Meta, x:T) T { return x; } fn f() { x := id(int32,1); comp A:type = [2]int32; a:A = [1,2]; comp V:type = []int32; }",
         );
         let project =
             analyze("comp S:type = struct { x:int32 }; fn f(p:*S) int32 { p.x = 42; return p.x; }");
@@ -5294,14 +5295,14 @@ mod generic_flow_regressions {
             );
         }
         reject(
-            "fn f() { const a:int32[2] = [1,2]; a = [3,4]; }",
+            "fn f() { const a:[2]int32 = [1,2]; a = [3,4]; }",
             "immutable",
         );
         analyze(
-            "fn f() { const a:int32[2] = [1,2]; x := a[0]; b:const int32[2] = [1,2]; b = [3,4]; }",
+            "fn f() { const a:[2]int32 = [1,2]; x := a[0]; b:const [2]int32 = [1,2]; b = [3,4]; }",
         );
         reject(
-            "fn f() { b:const int32[2] = [1,2]; b[0] = 3; }",
+            "fn f() { b:const [2]int32 = [1,2]; b[0] = 3; }",
             "immutable",
         );
     }
@@ -5309,15 +5310,15 @@ mod generic_flow_regressions {
     #[test]
     fn implicit_fixed_array_slice_contexts() {
         analyze(
-            "comp S:type = struct { values:int32[] };\n             fn consume(x:int32[]) {}\n             fn view(a:int32[2]) int32[] { return a; }\n             fn f() { a:int32[2] = [1,2]; s:int32[] = a; consume(a);\n                 s = a; s[0] = 3; r:const int32[] = a;\n                 b := S { values:a };\n                 small:uint8[] = [1,2]; empty:uint8[] = [];\n                 const c:int32[2] = [1,2]; ro:const int32[] = c; }",
+            "comp S:type = struct { values:[]int32 };\n             fn consume(x:[]int32) {}\n             fn view(a:[2]int32) []int32 { return a; }\n             fn f() { a:[2]int32 = [1,2]; s:[]int32 = a; consume(a);\n                 s = a; s[0] = 3; r:const []int32 = a;\n                 b := S { values:a };\n                 small:[]uint8 = [1,2]; empty:[]uint8 = [];\n                 const c:[2]int32 = [1,2]; ro:const []int32 = c; }",
         );
         for source in [
-            "fn f() { const a:int32[2] = [1,2]; s:int32[] = a; }",
-            "fn f() { a:const int32[2] = [1,2]; s:int32[] = a; }",
-            "fn f() { a:int32[2] = [1,2]; s:uint32[] = a; }",
-            "fn f() { a:int32[2] = [1,2]; s:int32[3] = a; }",
-            "fn f() { a:int32[2]; s:int32[] = a; }",
-            "fn f() { s:uint8[] = [256]; }",
+            "fn f() { const a:[2]int32 = [1,2]; s:[]int32 = a; }",
+            "fn f() { a:const [2]int32 = [1,2]; s:[]int32 = a; }",
+            "fn f() { a:[2]int32 = [1,2]; s:[]uint32 = a; }",
+            "fn f() { a:[2]int32 = [1,2]; s:[3]int32 = a; }",
+            "fn f() { a:[2]int32; s:[]int32 = a; }",
+            "fn f() { s:[]uint8 = [256]; }",
         ] {
             assert!(analyzer(source).analyze().is_err(), "{source}");
         }
@@ -5326,14 +5327,14 @@ mod generic_flow_regressions {
     #[test]
     fn string_literal_slice_context_and_byte_characters() {
         analyze(
-            r#"fn bytes(x:const uint8[]) const uint8[] { return "é"; }
-            fn f() { bytes(""); bytes("hello"); x:const uint8[] = "abc";
+            r#"fn bytes(x:const []uint8) const []uint8 { return "é"; }
+            fn f() { bytes(""); bytes("hello"); x:const []uint8 = "abc";
                 x = "def"; a := 'a'; b:uint8 = '\xFF'; c := a + b; }
-            fn fixed() const uint8[3] { return "abc"; }"#,
+            fn fixed() const [3]uint8 { return "abc"; }"#,
         );
-        reject(r#"fn f() { x:uint8[] = "abc"; }"#, "incompatible types");
+        reject(r#"fn f() { x:[]uint8 = "abc"; }"#, "incompatible types");
         reject(
-            r#"fn f() { x:const uint16[] = "abc"; }"#,
+            r#"fn f() { x:const []uint16 = "abc"; }"#,
             "incompatible types",
         );
         reject("fn f() { x := 'Ā'; }", "out of range for uint8");
@@ -5342,31 +5343,90 @@ mod generic_flow_regressions {
     }
 
     #[test]
+    fn sentinel_byte_types_preserve_termination_and_readonly_guarantees() {
+        analyze(
+            "fn identity(T:type, value:[:0]T) [:0]T { return value; } fn f() { a:[1:0]uint8 = [1]; s := identity(uint8, a); }",
+        );
+        analyze(
+            r#"
+            fn cstr(p:const [*:0]uint8) const *uint8 { return p; }
+            fn view(a:[3:0]uint8) [:0]uint8 { return a; }
+            fn bytes(s:const [:0]uint8) const []uint8 { return s; }
+            fn f() {
+                p := c"hello"; cstr(p);
+                a:[3:0]uint8 = [1,2,3]; a[0] = 4;
+                s:[:0]uint8 = a; tail:[:0]uint8 = s[1..];
+                ordinary:[]uint8 = s[..2];
+                text:const [3:0]uint8 = "abc";
+                literal:const [:0]uint8 = "hello";
+                empty:[0:0]uint8 = [];
+                other:[1:255]uint8 = [1];
+            }
+        "#,
+        );
+        for source in [
+            "fn f(p:const *uint8) { q:const [*:0]uint8 = p; }",
+            "fn f(p:const [*:1]uint8) { q:const [*:0]uint8 = p; }",
+            "fn f(p:const [*:0]uint8) { q:[*:0]uint8 = p; }",
+            "fn f(p:*const [*:0]uint8) { q:*const *uint8 = p; }",
+            "fn f(p:*const *uint8) { q:*const [*:0]uint8 = p; }",
+            "fn f(s:[:0]uint8) { q:[:1]uint8 = s; }",
+            "fn f(s:[]uint8) { q:[:0]uint8 = s; }",
+            "fn f(a:[3]uint8) { q:[:0]uint8 = a; }",
+            "fn f(a:[3:0]uint8) { q:[:0]uint8 = a[..2]; }",
+            "fn f() { const a:[1:0]uint8 = [1]; s:[:0]uint8 = a; }",
+        ] {
+            reject(source, "incompatible types");
+        }
+        reject(
+            "fn f(p:const *uint8) { q := p as const [*:0]uint8; }",
+            "unsupported cast",
+        );
+        reject(
+            "fn f(s:[]uint8) { q := s as [:0]uint8; }",
+            "unsupported cast",
+        );
+        reject(
+            "fn f() { p:const [*:0]uint8 = null; }",
+            "null requires a pointer context",
+        );
+        reject("fn f() { p:[1:0]int32 = [1]; }", "currently require uint8");
+        reject(
+            "fn f() { comp T := uint8[3]; }",
+            "array types use prefix brackets",
+        );
+        reject(
+            "fn f() { comp T := uint8[]; }",
+            "slice types use prefix brackets",
+        );
+    }
+
+    #[test]
     fn incompatible_types_use_source_names_and_preserve_readonly_context() {
         for (source, message) in [
             (
-                "fn f(p:uint16[]) { q:uint8[] = p; }",
-                "expected uint8[], found uint16[]",
+                "fn f(p:[]uint16) { q:[]uint8 = p; }",
+                "expected []uint8, found []uint16",
             ),
             (
-                "fn f(p:const uint16[]) { q:const uint8[] = p; }",
-                "expected const uint8[], found const uint16[]",
+                "fn f(p:const []uint16) { q:const []uint8 = p; }",
+                "expected const []uint8, found const []uint16",
             ),
             (
-                "fn f(p:uint16[]) { q:const uint8[] = p; }",
-                "expected const uint8[], found uint16[]",
+                "fn f(p:[]uint16) { q:const []uint8 = p; }",
+                "expected const []uint8, found []uint16",
             ),
             (
-                "fn f(p:const uint8[]) { q:uint8[] = p; }",
-                "expected uint8[], found const uint8[]",
+                "fn f(p:const []uint8) { q:[]uint8 = p; }",
+                "expected []uint8, found const []uint8",
             ),
             (
                 "fn f(p:*int32) { q:*uint8 = p; }",
                 "expected *uint8, found *int32",
             ),
             (
-                "fn f() { a:int32[2] = [1,2]; b:int32[3] = a; }",
-                "expected int32[3], found int32[2]",
+                "fn f() { a:[2]int32 = [1,2]; b:[3]int32 = a; }",
+                "expected [3]int32, found [2]int32",
             ),
             (
                 "fn f(p:int32) { q:usize = p; }",
@@ -5379,23 +5439,23 @@ mod generic_flow_regressions {
 
     #[test]
     fn slice_cast_diagnostics_explain_readonly_and_element_conversion() {
-        let source = "fn f(p:const uint16[]) { q := p as uint8[]; }";
+        let source = "fn f(p:const []uint16) { q := p as []uint8; }";
         reject(source, "cannot cast a readonly slice to a writable slice");
         reject(source, "cannot convert element types");
         reject(source, "Copy the elements into a writable buffer");
         reject(
-            "fn f(p:const uint8[]) { q := p as uint8[]; }",
+            "fn f(p:const []uint8) { q := p as []uint8; }",
             "remove `const` protection from the original storage",
         );
         for source in [
-            "fn f(p:const uint16[]) { q := p as const uint8[]; }",
-            "fn f(p:uint16[]) { q := p as uint8[]; }",
+            "fn f(p:const []uint16) { q := p as const []uint8; }",
+            "fn f(p:[]uint16) { q := p as []uint8; }",
         ] {
             reject(source, "slices with different element types");
         }
-        analyze("fn f(p:uint8[]) { q := p as const uint8[]; }");
-        analyze("fn f(p:const uint16[]) { q := p as const uint16[]; }");
-        reject("fn f(p:bool[]) { q := p as int32; }", "unsupported cast");
+        analyze("fn f(p:[]uint8) { q := p as const []uint8; }");
+        analyze("fn f(p:const []uint16) { q := p as const []uint16; }");
+        reject("fn f(p:[]bool) { q := p as int32; }", "unsupported cast");
     }
 
     #[test]
@@ -5446,10 +5506,10 @@ mod generic_flow_regressions {
     #[test]
     fn dependent_index_projections_can_initialize_the_concrete_value() {
         analyze(
-            "fn make(T: type) T { value: T; value[0] = 1; return value; } fn main() { value := make(int32[1]); }",
+            "fn make(T: type) T { value: T; value[0] = 1; return value; } fn main() { value := make([1]int32); }",
         );
         reject(
-            "fn make(T: type) T { value: T; value[0] = 1; return value; } fn main() { value := make(int32[2]); }",
+            "fn make(T: type) T { value: T; value[0] = 1; return value; } fn main() { value := make([2]int32); }",
             "uninitialized",
         );
     }
@@ -5711,8 +5771,8 @@ mod validation_regressions {
     fn returns_cannot_change_container_qualification() {
         for (from, to) in [
             ("const *int32", "*int32"),
-            ("const int32[]", "int32[]"),
-            ("const int32[1]", "int32[1]"),
+            ("const []int32", "[]int32"),
+            ("const [1]int32", "[1]int32"),
         ] {
             let source = format!("fn f(p: {from}, q: {to}) {to} {{ p; return q; }}");
             let mut project = analyze(&source);
@@ -5812,7 +5872,7 @@ mod validation_regressions {
         for source in [
             "fn f() bool { return true; }",
             "fn f() uint8 { return 'a'; }",
-            "fn f() const uint8[1] { return \"x\"; }",
+            "fn f() const [1]uint8 { return \"x\"; }",
             "fn f() *int32 { return null; }",
         ] {
             let mut project = analyze(source);
@@ -5829,7 +5889,7 @@ mod validation_regressions {
 
     #[test]
     fn array_return_elements_use_the_array_context() {
-        let mut project = analyze("fn f() int8[1] { return [1]; }");
+        let mut project = analyze("fn f() [1]int8 { return [1]; }");
         let int32 = project.types.builtin(B::Int32);
         let E::ArrayLiteral { elements } =
             &mut returns(function(&mut project, 0)).as_mut().unwrap()[0].kind
@@ -5849,7 +5909,7 @@ mod validation_regressions {
             "fn f(b: bool) int32 { if b { return 1; } else { return 2; }; }",
             "fn f(b: bool) int32 { while (b) { return 1; }; return 2; }",
             "fn f() float32 { return 1; }",
-            "fn f() int8[1] { return [-128]; }",
+            "fn f() [1]int8 { return [-128]; }",
             "fn f() *int32 { return null; }",
             "fn pair() (int32, bool) { return 1, true; } fn f() (int32, bool) { return pair(); }",
             "callconv \"C\" fn stop() never; fn f() int32 { return stop(); }",
@@ -5867,17 +5927,17 @@ mod validation_regressions {
     #[test]
     fn coherently_rewritten_cast_results_cannot_bypass_cast_legality() {
         for (from, to) in [
-            ("const int32[]", "int32[]"),
-            ("const int32[1]", "int32[1]"),
+            ("const []int32", "[]int32"),
+            ("const [1]int32", "[1]int32"),
             ("const *int32", "*int32"),
             ("*const *int32", "*void"),
-            ("*const int32[]", "*void"),
-            ("*const int32[1]", "*void"),
-            ("(const int32[], int32)[]", "(int32[], int32)[]"),
-            ("(const int32[], int32)", "(int32[], int32)"),
-            ("const int32[][1]", "int32[][1]"),
-            ("int32[]", "bool"),
-            ("int32[1]", "int32[2]"),
+            ("*const []int32", "*void"),
+            ("*const [1]int32", "*void"),
+            ("[](const []int32, int32)", "[]([]int32, int32)"),
+            ("(const []int32, int32)", "([]int32, int32)"),
+            ("const [1][]int32", "[1][]int32"),
+            ("[]int32", "bool"),
+            ("[1]int32", "[2]int32"),
             ("*int32", "int64"),
             ("int64", "*int32"),
         ] {
@@ -5921,8 +5981,8 @@ mod validation_regressions {
     #[test]
     fn legal_cast_matrix_remains_supported() {
         for source in [
-            "fn f(p: const int32[]) { q := p as const int32[]; }",
-            "fn f(p: const int32[1]) { q := p as const int32[1]; }",
+            "fn f(p: const []int32) { q := p as const []int32; }",
+            "fn f(p: const [1]int32) { q := p as const [1]int32; }",
             "fn f(p: const *int32) { q := p as const *void; r := q as const *int32; }",
             "fn f(p: *int32) { q := p as *void; r := q as *int32; }",
             "fn f(x: int32) { y := x as float64; z := y as int64; }",
@@ -6115,7 +6175,7 @@ mod collecting_diagnostics {
     #[test]
     fn independent_recursive_layout_errors_are_collected() {
         let report = collect(
-            "comp A := struct { a: A }; comp B := struct { b: B }; fn f() { a: A[1]; a; bad; }",
+            "comp A := struct { a: A }; comp B := struct { b: B }; fn f() { a: [1]A; a; bad; }",
         );
         assert_eq!(
             report

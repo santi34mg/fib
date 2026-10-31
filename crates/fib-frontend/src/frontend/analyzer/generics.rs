@@ -293,7 +293,7 @@ fn dependent(
     let children = match types.get(id)? {
         T::Parameter(id) => return Ok(substitutions.contains_key(id)),
         T::TypeResult { .. } | T::MemberResult { .. } | T::IndexResult { .. } => return Ok(true),
-        T::Readonly(t) | T::Pointer(t) | T::Slice(t) => vec![*t],
+        T::Sentinel { inner: t, .. } | T::Readonly(t) | T::Pointer(t) | T::Slice(t) => vec![*t],
         T::Array { element, .. } => vec![*element],
         T::Tuple(ts) => ts.clone(),
         T::Function(f) => f
@@ -410,6 +410,10 @@ fn substitute(
             owner: substitute(owner, substitutions, types, memo)?,
         },
         T::Readonly(t) => T::Readonly(substitute(t, substitutions, types, memo)?),
+        T::Sentinel { inner, value } => T::Sentinel {
+            inner: substitute(inner, substitutions, types, memo)?,
+            value,
+        },
         T::Pointer(t) => T::Pointer(substitute(t, substitutions, types, memo)?),
         T::Slice(t) => T::Slice(substitute(t, substitutions, types, memo)?),
         T::Array { element, length } => T::Array {
@@ -528,6 +532,10 @@ fn materialize(
             return Ok(super::value_typing::indexed(info, context.types)?.0);
         }
         T::Readonly(t) => T::Readonly(materialize(t, context, memo)?),
+        T::Sentinel { inner, value } => T::Sentinel {
+            inner: materialize(inner, context, memo)?,
+            value,
+        },
         T::Pointer(t) => T::Pointer(materialize(t, context, memo)?),
         T::Slice(t) => T::Slice(materialize(t, context, memo)?),
         T::Array { element, length } => T::Array {
@@ -687,6 +695,16 @@ pub(super) fn validate_instance(
                     ));
                 }
             }
+            (
+                T::Sentinel {
+                    inner: a,
+                    value: av,
+                },
+                T::Sentinel {
+                    inner: b,
+                    value: bv,
+                },
+            ) if av == bv => pending.push((*a, *b)),
             (T::Readonly(a), T::Readonly(b))
             | (T::Pointer(a), T::Pointer(b))
             | (T::Slice(a), T::Slice(b)) => pending.push((*a, *b)),

@@ -248,7 +248,7 @@ fn ty_expression(v: &mut impl Visitor, ty: &mut TypeExpression) -> Result {
                 ty_expression(v, ty)?;
             }
         }
-        T::Readonly(inner) => ty_expression(v, inner)?,
+        T::Readonly(inner) | T::Sentinel { inner, .. } => ty_expression(v, inner)?,
         T::Pointer { pointed_type } => ty_expression(v, pointed_type)?,
         T::Array { element_type, .. } | T::Slice { element_type } => {
             ty_expression(v, element_type)?

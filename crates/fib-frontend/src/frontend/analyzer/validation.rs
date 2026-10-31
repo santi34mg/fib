@@ -573,6 +573,9 @@ impl Validator<'_> {
                     self.name(name)?.and_then(|info| info.type_value) == Some(id)
                 }
                 (K::Readonly(inner), T::Readonly(t)) => self.ty(inner)? == *t,
+                (K::Sentinel { inner, value }, T::Sentinel { inner: t, value: v }) => {
+                    self.ty(inner)? == *t && value == v
+                }
                 (K::Pointer { pointed_type }, T::Pointer(t)) => self.ty(pointed_type)? == *t,
                 (K::Array { element_type, size }, T::Array { element, length }) => {
                     self.ty(element_type)? == *element && *size == *length
@@ -1056,19 +1059,8 @@ impl Validator<'_> {
                 }
                 E::IndexAccess { object, index } => {
                     let receiver = self.expression(object)?;
-                    if let Some(element) = receiver.type_value {
-                        let length_info = self.expression(index)?;
-                        if !matches!(self.types.get(length_info.ty)?, T::Builtin(B::UInt64)) {
-                            return Err(type_error("array type length annotation mismatch"));
-                        }
-                        let length = super::constant::integer_as_i128(index, self.types)?
-                            .and_then(|n| u64::try_from(n).ok());
-                        if info.category != C::Value
-                            || !matches!(info.type_value.and_then(|t| self.types.get(t).ok()), Some(T::Array { element: actual, length: n }) if *actual == element && Some(*n) == length)
-                        {
-                            return Err(type_error("array type construction annotation mismatch"));
-                        }
-                        return Ok(info);
+                    if receiver.type_value.is_some() {
+                        return Err(type_error("array types use prefix brackets: [N]T"));
                     }
                     self.expression(index)?;
                     if !super::value_typing::diverges(node, self.types) {
@@ -1083,19 +1075,11 @@ impl Validator<'_> {
                     object,
                     start,
                     end,
-                    inclusive,
+                    inclusive: _,
                 } => {
                     let receiver = self.expression(object)?;
-                    if let Some(element) = receiver.type_value {
-                        if start.is_some()
-                            || end.is_some()
-                            || *inclusive
-                            || info.category != C::Value
-                            || !matches!(info.type_value.and_then(|t| self.types.get(t).ok()), Some(T::Slice(actual)) if *actual == element)
-                        {
-                            return Err(type_error("slice type construction annotation mismatch"));
-                        }
-                        return Ok(info);
+                    if receiver.type_value.is_some() {
+                        return Err(type_error("slice types use prefix brackets: []T"));
                     }
                     for bound in start.iter().chain(end) {
                         self.expression(bound)?;
@@ -1111,6 +1095,14 @@ impl Validator<'_> {
                             || info.category != C::Value
                         {
                             return Err(type_error("slice mutability annotation mismatch"));
+                        }
+                        let sentinel = if end.is_none() {
+                            self.types.sentinel(receiver.ty)?
+                        } else {
+                            None
+                        };
+                        if self.types.sentinel(info.ty)? != sentinel {
+                            return Err(type_error("slice sentinel annotation mismatch"));
                         }
                     }
                 }
@@ -1158,13 +1150,15 @@ impl Validator<'_> {
                             _ => false,
                         },
                         Literal::CString(_) => {
-                            matches!(self.types.container(info.ty)?, (T::Pointer(element), true) if matches!(self.types.get(*element)?, T::Builtin(B::UInt8)))
+                            self.types.sentinel(info.ty)? == Some(0)
+                                && matches!(self.types.container(info.ty)?, (T::Pointer(element), true) if matches!(self.types.get(*element)?, T::Builtin(B::UInt8)))
                         }
                         Literal::Null => {
-                            matches!(
-                                self.types.container(info.ty)?.0,
-                                T::Pointer(_) | T::Function(_)
-                            )
+                            self.types.sentinel(info.ty)?.is_none()
+                                && matches!(
+                                    self.types.container(info.ty)?.0,
+                                    T::Pointer(_) | T::Function(_)
+                                )
                         }
                     };
                     if !valid || info.category != C::Value || info.type_value.is_some() {

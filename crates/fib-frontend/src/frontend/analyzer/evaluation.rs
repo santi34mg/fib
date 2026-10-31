@@ -405,6 +405,14 @@ impl TypeContext<'_> {
                     };
                     let element = *element;
                     let pointer = self.types.intern(T::Pointer(element));
+                    let pointer = if let Some(value) = self.types.sentinel(arguments[0].ty)? {
+                        self.types.intern(T::Sentinel {
+                            inner: pointer,
+                            value,
+                        })
+                    } else {
+                        pointer
+                    };
                     if readonly {
                         self.types.intern(T::Readonly(pointer));
                     }

@@ -447,6 +447,31 @@ impl TypeContext<'_> {
     ) -> anyhow::Result<TypeId> {
         // Revisit cached syntax to validate position-specific restrictions as well.
         let ty = match &mut node.kind {
+            K::Sentinel { inner, value } => {
+                let t = self.type_expression(inner, false, false)?;
+                let element = match self.types.get(t)? {
+                    T::Pointer(t) | T::Slice(t) => *t,
+                    T::Array { element, length } => {
+                        length
+                            .checked_add(1)
+                            .ok_or_else(|| type_error("sentinel array length overflow"))?;
+                        *element
+                    }
+                    _ => return Err(type_error("sentinel requires a pointer, slice or array")),
+                };
+                if !self.types.is_dependent(element)?
+                    && self.types.get(self.types.canonical(element)?)?
+                        != &T::Builtin(crate::frontend::tokens::builtin::BuiltinType::UInt8)
+                {
+                    return Err(type_error(
+                        "sentinel containers currently require uint8 elements",
+                    ));
+                }
+                self.types.intern(T::Sentinel {
+                    inner: t,
+                    value: *value,
+                })
+            }
             K::Computed(expression) => self
                 .expression(expression, None)?
                 .type_value
@@ -469,7 +494,7 @@ impl TypeContext<'_> {
                 let t = self.type_expression(inner, false, false)?;
                 if !matches!(
                     self.types.get(t)?,
-                    T::Pointer(_) | T::Slice(_) | T::Array { .. }
+                    T::Pointer(_) | T::Slice(_) | T::Array { .. } | T::Sentinel { .. }
                 ) {
                     return Err(type_error(
                         "const type qualifier requires a pointer, slice or array",
@@ -673,7 +698,7 @@ impl TypeContext<'_> {
                 let children: Vec<_> = match self.types.get(id)? {
                     T::Struct(fs) => fs.iter().map(|f| f.ty).collect(),
                     T::Enum(vs) => vs.iter().filter_map(|v| v.payload).collect(),
-                    T::Readonly(t) => vec![*t],
+                    T::Sentinel { inner: t, .. } | T::Readonly(t) => vec![*t],
                     T::Array { element, .. } => vec![*element],
                     T::Tuple(ts) => ts.clone(),
                     _ => vec![],

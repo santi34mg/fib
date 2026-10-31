@@ -31,6 +31,7 @@ where
             if !matches!(
                 inner.kind,
                 TypeExpressionKind::Pointer { .. }
+                    | TypeExpressionKind::Sentinel { .. }
                     | TypeExpressionKind::Slice { .. }
                     | TypeExpressionKind::Array { .. }
             ) {
@@ -46,6 +47,82 @@ where
             )));
         }
         let var_type: TypeExpression = match type_token.kind {
+            TokenKind::Punctuation(Punctuation::OpeningSquareBrace) => {
+                self.next();
+                let pointer = self
+                    .consume_if(|t| matches!(t.kind, TokenKind::Operator(Operator::Star)))
+                    .is_some();
+                let size = if matches!(
+                    self.peek().map(|t| t.kind),
+                    Some(TokenKind::Literal(Literal::Integer(_)))
+                ) {
+                    let token = self.next().unwrap();
+                    let TokenKind::Literal(Literal::Integer(n)) = token.kind else {
+                        unreachable!()
+                    };
+                    Some(num_traits::ToPrimitive::to_u64(&n).ok_or_else(|| {
+                        self.error("array size exceeds uint64", token.line, token.column)
+                    })?)
+                } else {
+                    None
+                };
+                let sentinel = if self
+                    .consume_if(|t| matches!(t.kind, TokenKind::Punctuation(Punctuation::Colon)))
+                    .is_some()
+                {
+                    let token = self.expect_next("expected byte sentinel")?;
+                    let TokenKind::Literal(Literal::Integer(n)) = token.kind else {
+                        return Err(self.error("expected byte sentinel", token.line, token.column));
+                    };
+                    Some(num_traits::ToPrimitive::to_u8(&n).ok_or_else(|| {
+                        self.error("sentinel must fit uint8", token.line, token.column)
+                    })?)
+                } else {
+                    None
+                };
+                if pointer && (sentinel.is_none() || size.is_some()) {
+                    return Err(self.error(
+                        "sequence pointer requires a sentinel",
+                        type_token.line,
+                        type_token.column,
+                    ));
+                }
+                self.expect_token(
+                    TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
+                    "expected ']' in array or slice type",
+                )?;
+                let element_type = Box::new(self.parse_type_expression()?.ok_or_else(|| {
+                    self.error(
+                        "expected element type after ']'",
+                        type_token.line,
+                        type_token.column,
+                    )
+                })?);
+                let inner = TypeExpression::at(
+                    if pointer {
+                        TypeExpressionKind::Pointer {
+                            pointed_type: element_type,
+                        }
+                    } else {
+                        match size {
+                            Some(size) => TypeExpressionKind::Array { element_type, size },
+                            None => TypeExpressionKind::Slice { element_type },
+                        }
+                    },
+                    span,
+                );
+                if let Some(value) = sentinel {
+                    TypeExpression::at(
+                        TypeExpressionKind::Sentinel {
+                            inner: Box::new(inner),
+                            value,
+                        },
+                        span,
+                    )
+                } else {
+                    inner
+                }
+            }
             TokenKind::Keyword(ref keyword) => {
                 self.next();
                 match keyword {
@@ -138,60 +215,6 @@ where
                 span,
             ))?;
             var_type = TypeExpression::at(TypeExpressionKind::Computed(Box::new(call)), span);
-        }
-        // Postfix array/slice type: `type[size]` or `type[]`.
-        while matches!(
-            self.peek(),
-            Some(Token {
-                kind: TokenKind::Punctuation(Punctuation::OpeningSquareBrace),
-                ..
-            })
-        ) {
-            self.next(); // consume '['
-            // `T[]` — a slice (runtime-length view).
-            var_type = if matches!(
-                self.peek(),
-                Some(Token {
-                    kind: TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
-                    ..
-                })
-            ) {
-                self.next(); // consume ']'
-                TypeExpression::at(
-                    TypeExpressionKind::Slice {
-                        element_type: Box::new(var_type),
-                    },
-                    span,
-                )
-            } else {
-                let size_token = self.expect_next("expected array size")?;
-                let size = if let TokenKind::Literal(Literal::Integer(n)) = size_token.kind {
-                    num_traits::ToPrimitive::to_u64(&n).ok_or_else(|| {
-                        self.error(
-                            "array size exceeds uint64",
-                            size_token.line,
-                            size_token.column,
-                        )
-                    })?
-                } else {
-                    return Err(self.error(
-                        "expected integer array size",
-                        size_token.line,
-                        size_token.column,
-                    ));
-                };
-                self.expect_token(
-                    TokenKind::Punctuation(Punctuation::ClosingSquareBrace),
-                    "expected ']' after array size",
-                )?;
-                TypeExpression::at(
-                    TypeExpressionKind::Array {
-                        element_type: Box::new(var_type),
-                        size,
-                    },
-                    span,
-                )
-            };
         }
         Ok(Some(var_type))
     }

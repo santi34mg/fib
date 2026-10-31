@@ -789,7 +789,12 @@ fn literal(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Cons
             start: None,
             end: None,
             ..
-        } if matches!(object.kind, E::Literal(Literal::String(_))) => {
+        } if matches!(object.kind, E::Literal(Literal::String(_)))
+            && source
+                .types
+                .sentinel(object.annotation.resolved.unwrap().ty)?
+                .is_none() =>
+        {
             let E::Literal(Literal::String(value)) = &object.kind else {
                 unreachable!()
             };
@@ -800,7 +805,16 @@ fn literal(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Option<Cons
         }
         E::Literal(Literal::String(value)) => Some(Constant {
             ty: source.expression_type(expr)?,
-            kind: ConstantKind::Bytes(value.as_bytes().to_vec()),
+            kind: ConstantKind::Bytes({
+                let mut bytes = value.as_bytes().to_vec();
+                if let Some(value) = source
+                    .types
+                    .sentinel(expr.annotation.resolved.unwrap().ty)?
+                {
+                    bytes.push(value);
+                }
+                bytes
+            }),
         }),
         _ => None,
     })
@@ -1283,10 +1297,22 @@ impl Lowerer<'_, '_, '_> {
             return Ok(Operand::Constant(ConstantId(index)));
         }
         if let E::ArrayLiteral { elements } = &expr.kind {
-            let elements = elements
+            let mut elements = elements
                 .iter()
                 .map(|e| self.value_expression(state, e))
                 .collect::<anyhow::Result<Vec<_>>>()?;
+            if let Some(value) = self
+                .source
+                .types
+                .sentinel(expr.annotation.resolved.unwrap().ty)?
+            {
+                elements.push(self.builder.constant(
+                    scalar_id(&BuiltinType::UInt8),
+                    ConstantKind::Integer {
+                        bits: u128::from(value),
+                    },
+                ));
+            }
             return self.instruction(
                 state,
                 InstructionKind::Aggregate { elements },
@@ -1757,9 +1783,30 @@ impl Lowerer<'_, '_, '_> {
                     if let Some(expr) = &variable.expression {
                         let value = self.value_expression(&mut state, expr)?;
                         self.initialize_binding(&mut state, variable, value, node.span)?;
+                    } else if let Some(BindingId::Local(id)) = variable.annotation.binding
+                        && let Some(&address) = self.slots.get(&id)
+                    {
+                        self.initialize_sentinels(
+                            &mut state,
+                            self.source.types.locals[&id],
+                            address,
+                        )?;
                     }
                 }
                 S::MultiVariableDeclaration { bindings, values } => {
+                    if values.is_empty() {
+                        for binding in bindings {
+                            if let Some(BindingId::Local(id)) = binding.annotation.binding
+                                && let Some(&address) = self.slots.get(&id)
+                            {
+                                self.initialize_sentinels(
+                                    &mut state,
+                                    self.source.types.locals[&id],
+                                    address,
+                                )?;
+                            }
+                        }
+                    }
                     let values = values
                         .iter()
                         .zip(bindings)

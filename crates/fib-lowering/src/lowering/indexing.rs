@@ -2,6 +2,152 @@
 use super::*;
 
 impl Lowerer<'_, '_, '_> {
+    /// Initialize only hidden sentinels; user elements remain uninitialized.
+    pub(super) fn initialize_sentinels(
+        &mut self,
+        state: &mut State,
+        semantic: SemanticId,
+        address: Operand,
+    ) -> anyhow::Result<()> {
+        let (container, _) = self.source.types.container(semantic)?;
+        match container.clone() {
+            SemanticType::Array { length, .. }
+                if self.source.types.sentinel(semantic)?.is_some() =>
+            {
+                let pointer_ty = self.source.pointer_type(scalar_id(&BuiltinType::UInt8))?;
+                let data = self.instruction(
+                    state,
+                    InstructionKind::ArrayData(Address(address)),
+                    pointer_ty,
+                )?;
+                let index =
+                    self.integer_constant(scalar_id(&BuiltinType::Usize), u128::from(length));
+                let end = self.instruction(
+                    state,
+                    InstructionKind::ElementAddress {
+                        base: Address(data),
+                        index,
+                    },
+                    pointer_ty,
+                )?;
+                let value = self.integer_constant(
+                    scalar_id(&BuiltinType::UInt8),
+                    u128::from(self.source.types.sentinel(semantic)?.unwrap()),
+                );
+                self.builder.append_instruction(
+                    state.block,
+                    InstructionKind::Store {
+                        address: Address(end),
+                        value,
+                    },
+                    &[],
+                )?;
+            }
+            SemanticType::Struct(fields) => {
+                for (index, field) in fields.into_iter().enumerate() {
+                    if !self.has_sentinel_storage(field.ty)? {
+                        continue;
+                    }
+                    let ty = self.source.value_type(field.ty, Span::new(1, 1))?;
+                    let field_address = self.instruction(
+                        state,
+                        InstructionKind::FieldAddress {
+                            base: Address(address),
+                            field: index,
+                        },
+                        self.source.pointer_type(ty)?,
+                    )?;
+                    self.initialize_sentinels(state, field.ty, field_address)?;
+                }
+            }
+            SemanticType::Array { element, length } if self.has_sentinel_storage(element)? => {
+                let ty = self.source.value_type(element, Span::new(1, 1))?;
+                let pointer_ty = self.source.pointer_type(ty)?;
+                let data = self.instruction(
+                    state,
+                    InstructionKind::ArrayData(Address(address)),
+                    pointer_ty,
+                )?;
+                // Keep IR size independent of the number of array elements.
+                let usize_ty = scalar_id(&BuiltinType::Usize);
+                let header = self.builder.create_block(&[usize_ty])?;
+                let body = self.builder.create_block(&[])?;
+                let exit = self.builder.create_block(&[])?;
+                let zero = self.integer_constant(usize_ty, 0);
+                self.builder.set_terminator(
+                    state.block,
+                    Terminator::Jump(Edge {
+                        target: header,
+                        args: vec![zero],
+                    }),
+                )?;
+                state.block = header;
+                let index = Operand::Value(self.builder.block_params(header)?[0]);
+                let length = self.integer_constant(usize_ty, u128::from(length));
+                let condition = self.compare(state, BinaryOp::Lt, index, length)?;
+                self.builder.set_terminator(
+                    header,
+                    Terminator::Branch {
+                        condition,
+                        then_edge: Edge {
+                            target: body,
+                            args: vec![],
+                        },
+                        else_edge: Edge {
+                            target: exit,
+                            args: vec![],
+                        },
+                    },
+                )?;
+                state.block = body;
+                let element_address = self.instruction(
+                    state,
+                    InstructionKind::ElementAddress {
+                        base: Address(data),
+                        index,
+                    },
+                    pointer_ty,
+                )?;
+                self.initialize_sentinels(state, element, element_address)?;
+                let one = self.integer_constant(usize_ty, 1);
+                let next = self.instruction(
+                    state,
+                    InstructionKind::Binary {
+                        op: BinaryOp::Add,
+                        lhs: index,
+                        rhs: one,
+                    },
+                    usize_ty,
+                )?;
+                self.builder.set_terminator(
+                    state.block,
+                    Terminator::Jump(Edge {
+                        target: header,
+                        args: vec![next],
+                    }),
+                )?;
+                state.block = exit;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn has_sentinel_storage(&self, semantic: SemanticId) -> anyhow::Result<bool> {
+        Ok(match self.source.types.container(semantic)?.0 {
+            SemanticType::Array { element, .. } => {
+                self.source.types.sentinel(semantic)?.is_some()
+                    || self.has_sentinel_storage(*element)?
+            }
+            SemanticType::Struct(fields) => fields
+                .iter()
+                .map(|f| self.has_sentinel_storage(f.ty))
+                .collect::<anyhow::Result<Vec<_>>>()?
+                .into_iter()
+                .any(|v| v),
+            _ => false,
+        })
+    }
     fn integer_constant(&mut self, ty: TypeId, bits: u128) -> Operand {
         self.builder.constant(ty, ConstantKind::Integer { bits })
     }

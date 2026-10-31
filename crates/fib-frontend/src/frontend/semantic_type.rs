@@ -15,6 +15,11 @@ pub struct TypeId(pub u32);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SemanticType {
+    /// Termination is part of semantic identity; slices/pointers retain their ABI.
+    Sentinel {
+        inner: TypeId,
+        value: u8,
+    },
     /// Internal reservation; never a successful semantic type.
     Pending,
     Builtin(BuiltinType),
@@ -239,9 +244,10 @@ impl SemanticTypes {
                 | SemanticType::TypeResult { .. }
                 | SemanticType::MemberResult { .. }
                 | SemanticType::IndexResult { .. } => return Ok(true),
-                SemanticType::Readonly(t) | SemanticType::Pointer(t) | SemanticType::Slice(t) => {
-                    stack.push(*t)
-                }
+                SemanticType::Sentinel { inner: t, .. }
+                | SemanticType::Readonly(t)
+                | SemanticType::Pointer(t)
+                | SemanticType::Slice(t) => stack.push(*t),
                 SemanticType::Array { element, .. } => stack.push(*element),
                 SemanticType::Tuple(ts) => stack.extend(ts),
                 SemanticType::Function(f) => {
@@ -284,6 +290,27 @@ impl SemanticTypes {
                 continue;
             }
             match self.get(id)? {
+                SemanticType::Sentinel { inner, .. } => {
+                    let element = match self.get(self.canonical(*inner)?)? {
+                        SemanticType::Pointer(t) | SemanticType::Slice(t) => *t,
+                        SemanticType::Array { element, length } => {
+                            length
+                                .checked_add(1)
+                                .ok_or_else(|| type_error("sentinel array length overflow"))?;
+                            *element
+                        }
+                        _ => return Err(type_error("sentinel requires a pointer, slice or array")),
+                    };
+                    if !self.is_dependent(element)?
+                        && self.get(self.canonical(element)?)?
+                            != &SemanticType::Builtin(BuiltinType::UInt8)
+                    {
+                        return Err(type_error(
+                            "sentinel containers currently require uint8 elements",
+                        ));
+                    }
+                    stack.push(*inner);
+                }
                 SemanticType::IntrinsicFunction if id != root => {
                     return Err(type_error("intrinsic is not a runtime value"));
                 }
@@ -291,6 +318,7 @@ impl SemanticTypes {
                     if !matches!(
                         self.get(self.canonical(*t)?)?,
                         SemanticType::Pointer(_)
+                            | SemanticType::Sentinel { .. }
                             | SemanticType::Array { .. }
                             | SemanticType::Slice(_)
                     ) {
@@ -334,7 +362,8 @@ impl SemanticTypes {
     pub fn container(&self, id: TypeId) -> anyhow::Result<(&SemanticType, bool)> {
         let id = self.canonical(id)?;
         match self.get(id)? {
-            SemanticType::Readonly(inner) => Ok((self.get(self.canonical(*inner)?)?, true)),
+            SemanticType::Readonly(inner) => Ok((self.container(*inner)?.0, true)),
+            SemanticType::Sentinel { inner, .. } => self.container(*inner),
             ty => Ok((ty, false)),
         }
     }
@@ -350,5 +379,13 @@ impl SemanticTypes {
                 .ok_or_else(|| type_error("incomplete declared type"))?;
         }
         Ok(id)
+    }
+
+    pub fn sentinel(&self, id: TypeId) -> anyhow::Result<Option<u8>> {
+        match self.get(self.canonical(id)?)? {
+            SemanticType::Readonly(inner) => self.sentinel(*inner),
+            SemanticType::Sentinel { value, .. } => Ok(Some(*value)),
+            _ => Ok(None),
+        }
     }
 }

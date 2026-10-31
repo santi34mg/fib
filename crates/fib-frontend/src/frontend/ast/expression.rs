@@ -62,7 +62,7 @@ pub enum ExpressionKind {
         object: Box<Expression>,
         index: Box<Expression>,
     },
-    /// Slice of an array or slice as `T[]`.
+    /// Slice of an array or slice as `[]T`.
     /// - `obj.[a..b]` → `[a, b)`, `obj.[a.=b]` → `[a, b]` (inclusive)
     /// - `obj.[a..]` → `[a, len)`, `obj.[..b]` → `[0, b)`,
     ///   `obj.[.=b]` → `[0, b]` (inclusive), `obj.[..]` → full range.

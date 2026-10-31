@@ -19,7 +19,9 @@ pub(super) fn register_runtime_types(
         }
         let result = match project.types.get(ty)? {
             SemanticType::Builtin(b) => *b == BuiltinType::Void || SCALARS[..16].contains(b),
-            SemanticType::Readonly(t) => supported(project, *t, seen)?,
+            SemanticType::Sentinel { inner: t, .. } | SemanticType::Readonly(t) => {
+                supported(project, *t, seen)?
+            }
             SemanticType::Pointer(t) => {
                 matches!(
                     project.types.get(*t)?,
@@ -90,6 +92,21 @@ pub(super) fn register_runtime_types(
             }
             SemanticType::Builtin(b) => scalar_id(b),
             SemanticType::Readonly(inner) => register(project, ir, map, *inner)?,
+            SemanticType::Sentinel { inner, .. } => {
+                if let SemanticType::Array { element, length } = project.types.get(*inner)? {
+                    let element = register(project, ir, map, *element)?;
+                    let id = TypeId(ir.types.len());
+                    ir.types.push(IrType::Array {
+                        element,
+                        len: length
+                            .checked_add(1)
+                            .ok_or_else(|| anyhow::anyhow!("sentinel array length overflow"))?,
+                    });
+                    id
+                } else {
+                    register(project, ir, map, *inner)?
+                }
+            }
             SemanticType::Pointer(inner) => {
                 let pointee = if matches!(
                     project.types.get(project.types.canonical(*inner)?)?,

@@ -92,6 +92,9 @@ where
     /// Postfix operators (calls, field access, ...) are handled by
     /// [`Parser::parse_postfix`].
     pub fn parse_primary(&mut self) -> anyhow::Result<Expression> {
+        // A bracket prefix followed by a type starts a type value; array values
+        // still end at their closing bracket. Indexing remains postfix.
+        let bracket_type = self.starts_bracket_type_value();
         if let Some(token) = self.peek()
             && (matches!(
                 token.kind,
@@ -103,7 +106,8 @@ where
                         | Keyword::Const
                         | Keyword::Comp
                 ) | TokenKind::Operator(Operator::Star)
-            ) || self.starts_tuple_type_value())
+            ) || bracket_type
+                || self.starts_tuple_type_value())
         {
             let ty = self
                 .parse_type_expression()?
@@ -187,5 +191,49 @@ where
             TokenKind::Unknown(c) => bail!("unknown character '{}'", c),
             _ => bail!("parse_atom: expected an atom, found {:?}", token.kind),
         }
+    }
+
+    fn starts_bracket_type_value(&mut self) -> bool {
+        let mut n = 1;
+        while matches!(
+            self.peek_n(n).map(|t| t.kind),
+            Some(TokenKind::Punctuation(Punctuation::OpeningSquareBrace))
+        ) {
+            n += 1;
+            while self.peek_n(n).is_some_and(|t| {
+                matches!(
+                    t.kind,
+                    TokenKind::Literal(_)
+                        | TokenKind::Operator(Operator::Star)
+                        | TokenKind::Punctuation(Punctuation::Colon)
+                )
+            }) {
+                n += 1;
+            }
+            if !matches!(
+                self.peek_n(n).map(|t| t.kind),
+                Some(TokenKind::Punctuation(Punctuation::ClosingSquareBrace))
+            ) {
+                return false;
+            }
+            n += 1;
+        }
+        n > 1
+            && self.peek_n(n).is_some_and(|t| {
+                matches!(
+                    t.kind,
+                    TokenKind::Identifier(_)
+                        | TokenKind::Keyword(
+                            Keyword::Const
+                                | Keyword::Struct
+                                | Keyword::Enum
+                                | Keyword::Function
+                                | Keyword::Comp
+                                | Keyword::Callconv
+                        )
+                        | TokenKind::Operator(Operator::Star)
+                        | TokenKind::Punctuation(Punctuation::OpeningParenthesis)
+                )
+            })
     }
 }

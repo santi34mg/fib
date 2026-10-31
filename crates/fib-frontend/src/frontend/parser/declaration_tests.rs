@@ -75,7 +75,7 @@ fn unified_types_are_binding_initializers() {
     for source in [
         "Value: type = struct { x: int32 };",
         "Value := enum { Ready };",
-        "Value: type = int32[4];",
+        "Value: type = [4]int32;",
         "Value: type = (int32, string);",
         "Value := (pkg::First, *Second);",
         "Value: type = (int32, string)[4];",

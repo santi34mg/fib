@@ -149,6 +149,9 @@ pub(super) fn is_pointer_cast(
     to: TypeId,
     types: &SemanticTypes,
 ) -> anyhow::Result<bool> {
+    if types.sentinel(to)?.is_some() && types.sentinel(to)? != types.sentinel(from)? {
+        return Ok(false);
+    }
     let (T::Pointer(a), ar) = types.container(from)? else {
         return Ok(false);
     };
@@ -175,7 +178,7 @@ pub(super) fn is_pointer_cast(
             return Ok(false);
         }
         let children = match types.get(root)? {
-            T::Readonly(_) => return Ok(true),
+            T::Readonly(_) | T::Sentinel { .. } => return Ok(true),
             T::Pointer(t) | T::Slice(t) => vec![*t],
             T::Array { element, .. } => vec![*element],
             T::Tuple(ts) => ts.clone(),
@@ -332,6 +335,14 @@ impl TypeContext<'_> {
                 self.prepare_index(info.ty)?;
                 let (element, _, category) = indexed(info, self.types)?;
                 let slice = self.types.intern(T::Slice(element));
+                let slice = if let Some(value) = self.types.sentinel(info.ty)? {
+                    self.types.intern(T::Sentinel {
+                        inner: slice,
+                        value,
+                    })
+                } else {
+                    slice
+                };
                 let slice = if category == ValueCategory::ReadonlyPlace {
                     self.types.intern(T::Readonly(slice))
                 } else {
@@ -387,6 +398,7 @@ impl TypeContext<'_> {
                 Literal::String(value) => {
                     let element = self.types.builtin(B::UInt8);
                     if let Some(expected) = expected
+                        && self.types.sentinel(expected)?.is_none()
                         && self.types.container(expected).is_ok_and(|(container, readonly)| readonly && matches!(container, T::Slice(inner) if self.types.canonical(*inner).ok() == Some(element)))
                     {
                         return Ok(self.value(expected));
@@ -395,15 +407,34 @@ impl TypeContext<'_> {
                         element,
                         length: value.len() as u64,
                     });
+                    let array = if let Some(value) = expected
+                        .map(|t| self.types.sentinel(t))
+                        .transpose()?
+                        .flatten()
+                    {
+                        self.types.intern(T::Sentinel {
+                            inner: array,
+                            value,
+                        })
+                    } else {
+                        array
+                    };
                     self.types.intern(T::Readonly(array))
                 }
                 Literal::CString(_) => {
                     let element = self.types.builtin(B::UInt8);
                     let pointer = self.types.intern(T::Pointer(element));
+                    let pointer = self.types.intern(T::Sentinel {
+                        inner: pointer,
+                        value: 0,
+                    });
                     self.types.intern(T::Readonly(pointer))
                 }
                 Literal::Null => expected
                     .filter(|t| {
+                        if self.types.sentinel(*t).ok().flatten().is_some() {
+                            return false;
+                        }
                         matches!(
                             self.types.container(*t),
                             Ok((T::Pointer(_) | T::Function(_), _))
@@ -765,6 +796,18 @@ impl TypeContext<'_> {
                     element,
                     length: elements.len() as u64,
                 });
+                let array = if let Some(value) = expected
+                    .map(|t| self.types.sentinel(t))
+                    .transpose()?
+                    .flatten()
+                {
+                    self.types.intern(T::Sentinel {
+                        inner: array,
+                        value,
+                    })
+                } else {
+                    array
+                };
                 if expected
                     .is_some_and(|t| self.types.container(t).is_ok_and(|(_, readonly)| readonly))
                 {
@@ -775,16 +818,8 @@ impl TypeContext<'_> {
             }
             E::IndexAccess { object, index } => {
                 let receiver = self.expression(object, None)?;
-                if let Some(element) = receiver.type_value {
-                    let length_type = self.types.builtin(B::UInt64);
-                    self.expression(index, Some(length_type))?;
-                    let length = super::constant::integer_as_i128(index, self.types)?
-                        .and_then(|n| u64::try_from(n).ok())
-                        .ok_or_else(|| {
-                            type_error("array type length must be a nonnegative integer constant")
-                        })?;
-                    let array = self.types.intern(T::Array { element, length });
-                    return Ok(self.metatype(array));
+                if receiver.type_value.is_some() {
+                    return Err(type_error("array types use prefix brackets: [N]T"));
                 }
                 self.prepare_index(receiver.ty)?;
                 let (element, length, category) = indexed(receiver, self.types)?;
@@ -802,12 +837,8 @@ impl TypeContext<'_> {
                 inclusive,
             } => {
                 let receiver = self.expression(object, None)?;
-                if let Some(element) = receiver.type_value {
-                    if start.is_some() || end.is_some() || *inclusive {
-                        return Err(type_error("slice type requires empty brackets"));
-                    }
-                    let slice = self.types.intern(T::Slice(element));
-                    return Ok(self.metatype(slice));
+                if receiver.type_value.is_some() {
+                    return Err(type_error("slice types use prefix brackets: []T"));
                 }
                 self.prepare_index(receiver.ty)?;
                 let (element, length, category) = indexed(receiver, self.types)?;
@@ -838,6 +869,16 @@ impl TypeContext<'_> {
                     return Err(type_error("slice bounds are reversed"));
                 }
                 let slice = self.types.intern(T::Slice(element));
+                let slice = if end.is_none()
+                    && let Some(value) = self.types.sentinel(receiver.ty)?
+                {
+                    self.types.intern(T::Sentinel {
+                        inner: slice,
+                        value,
+                    })
+                } else {
+                    slice
+                };
                 if category == ValueCategory::ReadonlyPlace {
                     self.types.intern(T::Readonly(slice))
                 } else {
@@ -1057,6 +1098,11 @@ pub(super) fn intrinsic_info(
                 return Err(type_error("slice_data requires a slice"));
             };
             let ty = find(T::Pointer(*element))?;
+            let ty = if let Some(value) = types.sentinel(slice.ty)? {
+                find(T::Sentinel { inner: ty, value })?
+            } else {
+                ty
+            };
             let ty = if readonly { find(T::Readonly(ty))? } else { ty };
             Ok(ExpressionInfo {
                 ty,
