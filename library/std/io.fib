@@ -6,6 +6,17 @@ pub comp Arg := enum {
     Boolean: bool
 };
 
+fn read(T: type) void {
+
+}
+
+pub comp fn Reader(T: type) type {
+
+    return struct {
+        read: fn(type, ) void,
+    };
+}
+
 pub comp PrintError := enum { InvalidFormat, ArgumentCount, Io: int32 };
 pub comp PrintResult := root::result::Result(usize, PrintError);
 
@@ -83,8 +94,8 @@ fn write_arg(fd: int32, argument: Arg) PrintResult {
             return write_integer(fd, value as uint64, false);
         }
         when .Boolean(value) {
-            if value { return write_all(fd, "true"[..]); };
-            return write_all(fd, "false"[..]);
+            if value { return write_all(fd, "true"); };
+            return write_all(fd, "false");
         }
     };
 }

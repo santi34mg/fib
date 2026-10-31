@@ -36,13 +36,18 @@
 // clobbers; no libc wrapper is involved. Other targets and execution in build
 // files are not supported. Prefer the typed wrappers below when available.
 
-comp Result := root::result::Result;
 // Type annotations name aliases; computed types are instantiated in comp bindings.
-pub comp CountResult := Result(usize, int32);
-pub comp IntResult := Result(int32, int32);
-pub comp MappingResult := Result(*uint8, int32);
+pub comp CountResult := root::result::Result(usize, int32);
+pub comp IntResult := root::result::Result(int32, int32);
+pub comp MappingResult := root::result::Result(*uint8, int32);
 pub comp Status := enum { Ok, Err: int32 };
 
+pub comp PROT_READ := 0x1;  // 1
+pub comp PROT_WRITE := 0x2; // 2
+
+pub comp MAP_PRIVATE := 0x02;   // 2
+pub comp MAP_ANONYMOUS := 0x20; // 32
+pub comp MAP_FAILED : int64 = -1;
 
 pub const stdout := 1;
 // TODO: i think its 2 but have to check
@@ -53,7 +58,7 @@ fn failed(value: int64) bool {
 }
 
 pub fn read(fd: int32, buffer: uint8[]) CountResult {
-    comp R := Result(usize, int32);
+    comp R := root::result::Result(usize, int32);
     value := root::os::syscall3(0, (fd as int64) as uint64,
         root::memory::slice_data(buffer), buffer.len as uint64);
     if failed(value) { return R.Err((-value) as int32); };
@@ -61,7 +66,7 @@ pub fn read(fd: int32, buffer: uint8[]) CountResult {
 }
 
 pub fn write(fd: int32, buffer: const uint8[]) CountResult {
-    comp R := Result(usize, int32);
+    comp R := root::result::Result(usize, int32);
     value := root::os::syscall3(1, (fd as int64) as uint64,
         root::memory::slice_data(buffer), buffer.len as uint64);
     if failed(value) { return R.Err((-value) as int32); };
@@ -75,7 +80,7 @@ pub fn close(fd: int32) Status {
 }
 
 pub fn getpid() IntResult {
-    comp R := Result(int32, int32);
+    comp R := root::result::Result(int32, int32);
     value := root::os::syscall0(39);
     if failed(value) { return R.Err((-value) as int32); };
     return R.Ok(value as int32);
@@ -83,7 +88,7 @@ pub fn getpid() IntResult {
 
 // Path must reference live NUL-terminated storage, e.g. c"/dev/null".
 pub fn openat(dirfd: int32, path: const *uint8, flags: int32, mode: uint32) IntResult {
-    comp R := Result(int32, int32);
+    comp R := root::result::Result(int32, int32);
     value := root::os::syscall4(257, (dirfd as int64) as uint64, path,
         (flags as int64) as uint64, mode as uint64);
     if failed(value) { return R.Err((-value) as int32); };
@@ -91,12 +96,13 @@ pub fn openat(dirfd: int32, path: const *uint8, flags: int32, mode: uint32) IntR
 }
 
 pub fn mmap(address: *uint8, length: usize, protection: int32, flags: int32, fd: int32, offset: int64) MappingResult {
-    comp R := Result(*uint8, int32);
     value := root::os::syscall6(9, address, length as uint64,
         (protection as int64) as uint64, (flags as int64) as uint64,
         (fd as int64) as uint64, offset as uint64);
-    if failed(value) { return R.Err((-value) as int32); };
-    return R.Ok(root::os_abi::pointer_from_word(uint8, value as uint64));
+    if value == MAP_FAILED {
+        return MappingResult.Err((-value) as int32);
+    };
+    return MappingResult.Ok(root::os_abi::pointer_from_word(uint8, value as uint64));
 }
 
 pub fn munmap(address: *uint8, length: usize) Status {

@@ -27,6 +27,52 @@
 // Empty slices may have null or non-null data; use .len to test for emptiness.
 // Example: pointer := std::memory::slice_data(bytes);
 
+comp IoError: type = enum {
+    NotEnoughMemory,
+    MapFailed,
+
+    NotImplemented,
+};
+
+comp Allocator: type = struct {
+    context: *void,
+    // fn alloc(context: *void, size: usize, align: usize) *uint8
+    alloc: fn(*void, usize, usize) root::result::Result(*uint8, IoError),
+    // fn free(context: *void, ptr: *void) void
+    free: fn(*void, *void) root::result::Result(void, IoError),
+};
+
+pub fn create_page_alloc() Allocator {
+    return Allocator {
+        context: null,
+        alloc: page_alloc,
+        free: page_free,
+    };
+}
+
+fn page_alloc(context: *void, size: usize, align: usize) root::result::Result(*uint8, IoError) {
+    // address is null to let OS choose address
+    switch (root::os::mmap(
+        null,
+        size,
+        root::os::PROT_READ | root::os::PROT_WRITE,
+        root::os::MAP_PRIVATE | root::os::MAP_ANONYMOUS,
+        -1,
+        0
+    )) {
+        when .Ok(ptr) {
+            return root::result::Result(*uint8, IoError).Ok(ptr);
+        }
+        when .Err(err) {
+            return root::result::Result(*uint8, IoError).Err(IoError.MapFailed);
+        }
+    };
+}
+fn page_free(context: *void, ptr: *void) root::result::Result(void, IoError) {
+
+    return root::result::Result(void, IoError).Err(IoError.NotImplemented);
+}
+
 // Fill every byte in destination. Empty slices do not access storage.
 pub fn memset(destination: uint8[], value: uint8) {
     i: usize = 0;
