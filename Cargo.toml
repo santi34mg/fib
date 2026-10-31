@@ -40,6 +40,11 @@ name = "fibc"
 path = "src/main.rs"
 test = false
 
+[[bin]]
+name = "fib-dist"
+path = "scripts/dist.rs"
+test = false
+
 [[bench]]
 name = "performance"
 harness = false
