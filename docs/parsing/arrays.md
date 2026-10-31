@@ -1,6 +1,6 @@
 # Arrays and slices
 
-Array and slice types use suffix syntax: `T[N]` and `T[]`.
+Array and slice types use prefix syntax: `[N]T` and `[]T`.
 The [chosen value/mutability rules](../language-specification.md#values-initialization-and-mutability)
 keep fixed arrays inline: binding const forbids whole-array replacement and
 element writes; type-level const permits replacement but forbids element writes. Type/index disambiguation
@@ -14,15 +14,19 @@ parser syntax; see the linked language specification.
 ## Types and literals
 
 ```fib
-items: int32[4] = [10, 20, 30, 40];
-view: int32[] = items[0..4];
+items: [4]int32 = [10, 20, 30, 40];
+view: []int32 = items[0..4];
 empty := [];
 ```
 
-`T[N]` records an element type and integer-literal size; `T[]` records a slice
+`[N]T` records an element type and integer-literal size; `[]T` records a slice
 type. The size cannot be an identifier or arithmetic expression. Array literals
 contain expressions in brackets; comma-separated elements and a trailing comma
 parse. Empty array literals also parse.
+
+Sentinel forms are `[N:S]T`, `[:S]T` and `[*:S]T`, with an integer-literal
+sentinel S in 0–255. Analysis currently requires uint8 elements. `*[:S]T`
+is a pointer to a slice descriptor, distinct from `[*:S]T`.
 
 ## Indexing and assignment
 
@@ -59,8 +63,7 @@ all := items[..];
 
 The AST stores optional bounds and an `inclusive` flag. Inclusive ranges require
 an end: `items[.=]` and `items[1.=]` are rejected. `..=` is not the inclusive
-separator. `items[]` is not a full-range expression (it is only valid as part of
-a slice **type**, `T[]`).
+separator. `items[]` also forms a full-range view; slice types use prefix `[]T`.
 
 ## Length member syntax
 
@@ -71,7 +74,7 @@ length := items.len;
 `.len` parses as ordinary member access. 
 
 The [language specification](../language-specification.md#declarations-generics-and-lexical-scope)
-defines suffix type syntax, implicit array-to-slice conversion and borrowing rules.
+defines prefix type syntax, implicit array-to-slice conversion and borrowing rules.
 
 Related follow-up is collected in this [GitHub issue #13](https://github.com/santi34mg/fib/issues/13).
 

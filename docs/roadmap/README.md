@@ -6,7 +6,7 @@ This roadmap describes reconstruction and future language work. Source and
 executable tests take precedence over historical release notes, samples, and
 checklists. See the [current implementation guide](../agents/README.md).
 The [language specification](../language-specification.md) defines the
-package/prelude, suffix-array, numeric, mutability and exhaustive-switch design;
+package/prelude, prefix-array, numeric, mutability and exhaustive-switch design;
 several rules require implementation changes beyond this baseline.
 
 | Area | Current implementation |
@@ -38,7 +38,7 @@ semantics are documented in the [implementation guide](../agents/README.md),
 
 The [specification](../language-specification.md) defines package-rooted file
 namespaces, scoped visibility, implicit-prelude type identifiers, metatype
-specialization, suffix arrays/slices, numeric behavior, mutability and exhaustive
+specialization, prefix arrays/slices, numeric behavior, mutability and exhaustive
 switches. Semantic specialization, caching and concrete body rechecking work;
 concrete rechecked instances also execute through verified IR and LLVM.
 

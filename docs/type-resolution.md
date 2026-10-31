@@ -157,7 +157,7 @@ casts are rejected. `null` requires pointer context. Numeric casts are explicit;
 aggregate, enum/integer and array/slice explicit casts are rejected.
 
 In an expected slice-type context, fixed arrays implicitly convert to full slices:
-`view: T[] = array;` and calls taking `T[]` do not require `array[..]`.
+`view: []T = array;` and calls taking `[]T` do not require `array[..]`.
 Declarations, assignments, arguments, returns and aggregate fields supply this
 context. Array literals receive the expected element type, including empty
 literals; existing typed elements must match without numeric widening. Readonly

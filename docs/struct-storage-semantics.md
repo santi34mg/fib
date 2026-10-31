@@ -79,12 +79,12 @@ Fixed arrays retain inline value semantics. Binding const prevents replacing the
 whole array and modifying its inline elements:
 
 ```fib
-const arr: int[3] = [0, 1, 2];
+const arr: [3]int = [0, 1, 2];
 arr[0] = 10;       // rejected: immutable inline storage
 arr = [1, 2, 3];   // rejected: immutable binding
 ```
 
-`arr: const int[3]` instead allows whole-array replacement in the same storage
+`arr: const [3]int` instead allows whole-array replacement in the same storage
 but forbids individual element writes. Slice binding const prevents replacing
 the view; element const separately prevents writes into its backing storage.
 Array/slice reads, indexed writes, element addresses and

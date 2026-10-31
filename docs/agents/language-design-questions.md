@@ -2,7 +2,7 @@
 
 The [language specification](../language-specification.md) defines file namespaces,
 package-rooted paths, `root`, source roots/discovery, scoped visibility, protected
-prelude type names, suffix arrays, lexical order, numeric/Boolean behavior,
+prelude type names, prefix arrays, lexical order, numeric/Boolean behavior,
 mutability and exhaustive switches. The independently specified semantic features now execute. Recursive discovery
 integration and ownership/lifetime enforcement still depend on open details; implementing
 the other settled choices is not a new language-design question. Compare the implementation guides before claiming

@@ -8,7 +8,7 @@ and [parsing reference](parsing/README.md).
 
 Character literals have type `uint8` and must fit in 0–255. There is no `char`
 primitive. String literals contain UTF-8 bytes and default to readonly fixed
-arrays; a context expecting `const uint8[]` implicitly takes a readonly slice
+arrays; a context expecting `const []uint8` implicitly takes a readonly slice
 of the literal's program-lifetime storage. This does not permit writable slices
 of string literal storage.
 
@@ -78,9 +78,42 @@ address references and typed relocation-only cycles are permitted. Computing a
 value through a `comp fn` is a separate capability from storing that value globally;
 current implementation limits are documented in the implementation guide.
 
-Array/slice type syntax is suffix-based: `T[N]` and `T[]`.
-In expression positions, semantic resolution of the subject must distinguish array-type construction from value indexing; primitive names
-receive no special lexical treatment.
+Array/slice types use prefix syntax: `[N]T` and `[]T`. Nested containers
+read from the outside inward: `[2][3]int32` is two arrays of three integers.
+Value indexing and slicing remain postfix: `a[i]`, `a[start..end]`.
+The former suffix type forms are rejected.
+
+### Sentinel byte containers and C strings
+
+`[N:S]uint8` stores N bytes followed by an extra sentinel byte S. Its `.len`
+is N and its storage size is N + 1. Initializers provide only the N ordinary
+elements; the compiler supplies the sentinel, including for partially initialized
+local storage. Ordinary indexing excludes the hidden sentinel. Copies, calls,
+returns and global initializers retain the extra byte.
+
+`[:S]uint8` is a pointer/length slice whose backing storage contains S at its
+length. `[*:S]uint8` is a sequence pointer with a termination guarantee and
+no stored length; `*[:S]uint8` instead points to a slice descriptor. Current
+support requires uint8 elements and integer-literal sentinels in 0–255.
+`const` qualifies these containers like ordinary containers.
+
+`c"hello"` has type `const [*:0]uint8` and program-lifetime NUL-terminated
+storage. Ordinary strings retain their existing array/slice behavior; a sentinel
+array or readonly sentinel-slice context requests extra terminated storage.
+Embedded zero bytes remain allowed and terminate a C consumer early.
+
+Sentinel arrays implicitly form sentinel or ordinary slices. Slicing with an
+omitted end preserves the sentinel; an explicit end discards the guarantee.
+`std::memory::slice_data` preserves a sentinel slice's guarantee in its pointer
+result. `slice_from_parts` returns an ordinary slice because an arbitrary supplied
+length does not establish termination. Outer-layer conversions may discard
+pointer/slice termination; assignment and casts cannot add it to ordinary
+pointers or slices. Nested element types must match exactly. Sentinel pointers
+reject null initializers.
+
+Sentinel pointers use the ordinary pointer C ABI. Foreign declarations promising
+sentinel returns are trusted to honor that contract. Termination typing does not
+add lifetime or ownership checking.
 
 Active enclosing locals and parameters cannot be shadowed. Locals may reuse
 file-level declaration names; sibling scopes may reuse names. Protected prelude
@@ -157,12 +190,12 @@ pointee/element-view mutability are independent and layer-local:
 | --- | --- | --- |
 | `const p: *T` | Forbidden | Allowed |
 | `p: const *T` | Allowed | Forbidden |
-| `const arr: T[N]` | Forbidden | Forbidden (inline storage) |
-| `arr: const T[N]` | Allowed | Forbidden |
+| `const arr: [N]T` | Forbidden | Forbidden (inline storage) |
+| `arr: const [N]T` | Allowed | Forbidden |
 
 Fixed arrays are inline values: whole-array assignment replaces the value in the
 same storage, not an address/reference. The same binding-versus-element separation
-applies to slices, whose elements live in separate storage: `const view: T[]`
+applies to slices, whose elements live in separate storage: `const view: []T`
 prevents replacing the view but permits writes through it. Copies of const
 bindings may be stored in mutable bindings; inline copies can then be modified
 independently. Slicing const inline storage produces a readonly view, and taking
@@ -173,8 +206,8 @@ slices retain shared storage. Reverse conversion and readonly-erasing casts are 
 Nested pointee/element types must match exactly; no unsafe deep qualifier change
 is implied.
 
-In an expected slice-type context, fixed arrays `T[N]` implicitly convert to
-`T[]`, equivalent to taking a full slice `array[..]`. This applies to declarations,
+In an expected slice-type context, fixed arrays `[N]T` implicitly convert to
+`[]T`, equivalent to taking a full slice `array[..]`. This applies to declarations,
 assignments, arguments, returns and aggregate fields. Writable arrays may also
 form readonly slices; readonly backing storage cannot form writable slices.
 Element types must otherwise match, with no implicit numeric conversion. Array

@@ -1,5 +1,20 @@
 # Tests and validation
 
+## Prefix containers and byte sentinels (2026-10-31)
+
+The workspace all-features and no-default-features test suites pass. Strict
+all-features/all-target Clippy, formatting and whitespace checks pass. Added
+parser and analyzer regressions cover prefix composition, unchanged literal
+indexing/slicing, readonly termination and forbidden guarantee-adding casts.
+`tests/programs/sentinels.fib` lowers with installed std and executes against C
+helpers, covering literals, global/local and partially initialized storage,
+nested arrays/structs, copies, generic specialization, empty strings and nonzero
+byte sentinels. The final sentinel-initialization loop and uninitialized
+multi-binding cases were rechecked with the targeted native acceptance tests.
+Sentinel support currently requires uint8 elements and sentinel literals 0–255;
+this does not implement arbitrary typed Zig sentinels or sentinel-asserting slice
+expressions. Existing array/slice bounds and lifetime limitations remain.
+
 ## Canonical cross-file linkage (2026-10-30)
 
 All 881 all-features tests and all 807 no-default-features tests pass across the

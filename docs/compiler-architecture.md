@@ -82,7 +82,7 @@ Current source uses bare bit-width types, `int`/`uint` aliases for 32-bit intege
 `x := 1;`, `const x := 1;`, `x: int32;`, and
 `fn f(x: int32) int32 { return x; }`. Loops use
 `while (condition) { ... };`; `while () { ... };` is unconditional. Type bindings
-require explicit `comp` during analysis. Array/slice types use suffix syntax,
+require explicit `comp` during analysis. Array/slice types use prefix syntax,
 value indexing/slicing uses brackets, and pointer operations are postfix.
 See the [parsing reference](parsing/README.md) for the verified grammar snapshot.
 

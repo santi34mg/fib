@@ -47,7 +47,9 @@ This is parsing only. It does not type-check or compile the function.
   is a bare member value, with no parentheses.
 - Index/slice syntax is `a[i]`, `a[start..end]`, with inclusive `.=` also parsed.
   Legacy `a.[i]`/`.@len` are not current syntax.
-- Pointer types use `*T`; `const *T`, `const T[]` and `const T[N]` record
+- Array/slice types use prefix `[N]T` and `[]T`; sentinel forms are `[N:S]T`,
+  `[:S]T` and `[*:S]T`. Analysis currently requires uint8 sentinel elements.
+- Pointer types use `*T`; `const *T`, `const []T` and `const [N]T` record
   layer-local element qualifiers independently of binding modifiers. Postfix
   `p*`/`x&` express dereference/address-of in supported delimiter contexts;
   projection assignment targets such as `p* = value` and `(p*).field = value`

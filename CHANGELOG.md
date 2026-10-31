@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Replace suffix array/slice types with `[N]T` and `[]T`, keeping value indexing and slicing unchanged. Add byte sentinel arrays `[N:S]uint8`, slices `[:S]uint8` and pointers `[*:S]uint8`; type C-string literals as `const [*:0]uint8`, preserve hidden sentinels through storage/copies/calls and require terminated `openat` paths. Installed sources now require compiler-declaration revision 4.
+
+- Complete builtin-removal library follow-up with `std::string::concat` and
+  `str_len`: caller-owned byte storage, checked capacity errors before writes,
+  borrowed results and executable coverage. Move `str_eq` from the implicit
+  prelude into `std::string` so all three helpers share one explicit module.
+
 - Complete canonical cross-file linkage with host-supplied persistent package identities,
   pinned Unicode namespace normalization and versioned function/global/generic symbols
   independent of build-local IDs, checkout paths and dependency aliases. Preserve C/entry
@@ -24,13 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Move tagged arguments, brace validation and integer rendering into `std::formatting`. Add allocation-free `format(destination, template, values)` for byte strings, validating capacity before writes, and shared callback-based `format_to`. Keep `std::io` formatting entry points and type aliases; exhaustive `PrintError` switches now require the added `BufferTooSmall` variant.
 
-- Allow implicit fixed-array `T[N]` to slice `T[]` conversion in expected-type contexts, borrowing original storage and preserving readonly permissions.
+- Allow implicit fixed-array `T[N]` to slice `[]T` conversion in expected-type contexts, borrowing original storage and preserving readonly permissions.
 
 - Add Linux x86-64 `std::random` with OS-backed byte filling, full-width uint64 values and unbiased bounded sampling, explicit errors and EINTR/short-read handling.
 
 - Allow implicit `T` to `const T` conversion for fixed arrays, alongside pointers and slices. Nested qualifiers remain unchanged and reverse conversions remain forbidden.
 
-- Remove the `char` primitive; character literals are `uint8` and reject values above 255. String literals implicitly form `const uint8[]` views in typed contexts, including function arguments, without `[..]`.
+- Remove the `char` primitive; character literals are `uint8` and reject values above 255. String literals implicitly form `const []uint8` views in typed contexts, including function arguments, without `[..]`.
 
 - Add LSP qualified-name completion for standard-library modules and accessible functions, types and values, including unfinished expressions and partial names.
 
@@ -55,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Use the source prelude's `str_eq` in the string sample; advance its full-width slice index so equal nonempty inputs terminate.
+- Use the source library's `std::string::str_eq` in the string sample; advance its full-width slice index so equal nonempty inputs terminate.
 - Preserve const binding protection when indexing inline arrays, including nested struct fields, element addresses and slice views. Const scalar, struct and enum bindings retain immutable value storage; pointer and slice indirections keep their type's permissions.
 - Make every top-level sample compile and execute with source std; replace obsolete libc calls, pointer indexing and string declarations, and add a discovery-based CLI execution sweep checking output and exit codes. Rename the keyword-named `defer.fib` to `deferred_blocks.fib`.
 
@@ -101,8 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scalar `while` loops, `break` and `continue` now lower through verified SSA and LLVM, carrying initialized locals across backedges and merging loop exits without storage. Nested loops, early returns and short-circuit conditions have IR and bounded executable coverage. Build-file interpretation explicitly rejects unsupported CFG before applying operations.
 - Complete fixed-width scalar lowering through verified SSA and LLVM: signed/unsigned 8–128-bit integers, float16/32/64/128 and bool support helpers, calls, locals, joins, arithmetic, comparisons, explicit numeric casts and short-circuit logic. Integer arithmetic wraps; invalid division, shifts and float-to-integer conversions trap. Exact integer/IEEE literal and constant evaluation replaces u64/f64 payload limits. Internal helpers use the limited scalar Fib fastcc ABI; numeric type changes require explicit casts. See `docs/scalar-semantics.md`.
 - Interpreted build files now finalize their host-owned state into a validated, deterministic `BuildPlan`: source and output paths are project-root-relative, sources receive ordered compiler IDs and stem-derived logical names, selected entries must exist, and duplicate names/paths, missing files, root escapes and source-overwriting outputs are rejected. `build --build-file` feeds the resulting plan into the normal binary pipeline.
-- Initial interpreted-build API foundation: synthetic-module semantic builtins (`build_api::add_source`, `build_api::set_entry`, `build_api::set_output`) have stable identities and typed `fn(const uint8[]) void` signatures; the shared lowering emits verified Fib declarations/calls with interpreter-owned byte constants, and the interpreter dispatches them by identity into `PlanBuilder` state. The intentionally narrow source subset currently requires one `build() int32`, direct builtin calls with explicitly sliced string literals (`"text"[..]`), and an integer return.
-- Independent pointee/element mutability with `const *T`, `const T[]` and `const T[N]`, including nested qualifiers, qualified address/view propagation and readonly-preserving casts.
+- Initial interpreted-build API foundation: synthetic-module semantic builtins (`build_api::add_source`, `build_api::set_entry`, `build_api::set_output`) have stable identities and typed `fn(const []uint8) void` signatures; the shared lowering emits verified Fib declarations/calls with interpreter-owned byte constants, and the interpreter dispatches them by identity into `PlanBuilder` state. The intentionally narrow source subset currently requires one `build() int32`, direct builtin calls with explicitly sliced string literals (`"text"[..]`), and an integer return.
+- Independent pointee/element mutability with `const *T`, `const []T` and `const T[N]`, including nested qualifiers, qualified address/view propagation and readonly-preserving casts.
 - Explicit `comp fn` declarations and function types gate bounded type computation independently of known function identity. Concrete generic instances own rechecked bodies/binding environments; deferred type computations retain argument dependencies. Dependent arithmetic/member/index operations are checked on specialization.
 - Directional `never` bottom coercion and divergence propagation, with normal completion forbidden for `never` functions. Independent annotation validation checks return contexts, literal kinds and cast legality.
 - Multi-block LLVM emission with PHIs, backedges, parallel-edge splitting and signed/unsigned comparisons. Single-file lowering now supports int32 helpers/direct calls, initialized int32/bool locals, assignments, nested if/else and early returns using SSA merges. Per-function ABI classification and a shared LLVM boundary adapter keep physical argument placement separate from logical IR; the C 32-bit scalar ABI remains supported; internal helpers now use the limited scalar Fib ABI described above. TDD coverage includes executable conditionals, hand-built CFGs, mixed test ABI dispatch and located subset diagnostics. Analyzed projects retain source paths for lowering errors.
@@ -156,7 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-10-14
 
 ### Added
-- Slice types (`T[]`), explicit array views and sub-slicing, inclusive and
+- Slice types (`[]T`), explicit array views and sub-slicing, inclusive and
   exclusive ranges, indexed reads and writes, and slice arguments and returns.
 - `@usize` and the `.@len` property for arrays and slices.
 - Compile-time diagnostics for constant out-of-bounds array indices and invalid

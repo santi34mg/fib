@@ -1,7 +1,7 @@
 # Types
 
 Primitive names are ordinary identifier tokens. Analysis resolves their
-[prelude declarations](../language-specification.md) and prevents lexical shadowing. Suffix array/slice syntax
+[prelude declarations](../language-specification.md) and prevents lexical shadowing. Prefix array/slice syntax
 is the language syntax.
 
 > **Verified parser behavior:** The names and composite forms below are recognized as type syntax.
@@ -25,7 +25,7 @@ Types do **not** use `@`. Numeric suffixes are widths in **bits**, not bytes.
 
 These spellings parse as ordinary names. Analysis protects the bare prelude names
 from lexical shadowing; fields and variants have separate member namespaces.
-In expression positions, analysis distinguishes type construction (`T[N]`, `T[]`)
+In expression positions, analysis distinguishes prefix type construction (`[N]T`, `[]T`)
 from indexing or slicing a runtime value.
 
 Old names such as `@int4`, `@void`, and `@uint8` are not current type syntax.
@@ -39,18 +39,20 @@ Node: type = struct { value: int32, next: *Node };
 comp Result: type = enum { Ok: int32, Empty };
 Pair: type = (int32, bool);
 Callback: type = fn(int32, int32) -> int32;
-Buffer: type = uint8[16];
-View: type = uint8[];
+Buffer: type = [16]uint8;
+View: type = []uint8;
 Address: type = *void;
 Remote: type = other::Thing;
 ```
 
-- `*T` is pointer syntax. `const *T`, `const T[]` and `const T[N]` qualify
+- `*T` is pointer syntax. `const *T`, `const []T` and `const [N]T` qualify
   one container's pointee/elements independently of binding `const`. Nested
   qualifiers parse; `const int32` is rejected as a meaningless type qualifier.
   No ownership/borrowing pointer kinds are parsed.
-- `T[N]` parses a fixed array; `N` must be an integer literal, not an expression.
-- `T[]` parses a slice.
+- `[N]T` parses a fixed array; `N` must be an integer literal, not an expression.
+- `[]T` parses a slice.
+- `[N:S]T`, `[:S]T` and `[*:S]T` parse sentinel containers; S is an integer
+  literal in 0–255. Analysis currently requires uint8 elements.
 - `(A, B)` parses a tuple type; `(A)` is just `A`, and `()` is rejected.
 - `fn(A, B) -> R` and `comp fn(A, B) -> R` are distinct function **type**
   syntax. Function **declarations** have no arrow; see [Functions](functions.md).
@@ -61,9 +63,11 @@ Remote: type = other::Thing;
   type-value arguments use normal expression parsing; analysis requires a
   type-valued result.
 
-The type parser loops over array/slice suffixes and recursively parses pointer
-pointees: `*int32[3]` is a pointer to an array. Parser representation does not
-imply native lowering for arrays or slices.
+The type parser recursively parses array, slice and pointer prefixes:
+`*[3]int32` is a pointer to an array, while `[3]*int32` is an array of pointers.
+`*[:0]uint8` points to a slice descriptor; `[*:0]uint8` is a terminated sequence
+pointer without a stored length. Arrays, slices and byte sentinel containers
+execute through native lowering.
 
 ## Named types and type values
 

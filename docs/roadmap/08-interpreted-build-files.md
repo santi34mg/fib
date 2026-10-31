@@ -70,7 +70,7 @@ they must never be treated as successful no-ops.
 
 The current build file provides `build() int32` and calls the synthetic
 `build_api` namespace with explicitly sliced string literals. Its text parameters
-have type `const uint8[]`; literals are readonly `uint8` arrays, and array-to-slice
+have type `const []uint8`; literals are readonly `uint8` arrays, and array-to-slice
 conversion is explicit:
 
 ```fib

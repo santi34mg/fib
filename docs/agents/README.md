@@ -17,7 +17,14 @@ and coalescing. Earlier suite records remain dated below.
 
 Character literals have type `uint8` (values above 255 are rejected); `char` is
 no longer a prelude type. String literals retain readonly fixed byte arrays by
-default and implicitly form `const uint8[]` in a matching expected-type context.
+default and implicitly form `const []uint8` in a matching expected-type context.
+
+Array/slice types use prefix brackets: `[N]T`, `[]T`. Byte sentinel forms
+`[N:S]uint8`, `[:S]uint8` and `[*:S]uint8` execute, with S in 0–255.
+`c"..."` has type `const [*:0]uint8`; ordinary pointers cannot acquire
+termination by assignment or casts. Sentinel arrays retain an extra byte through
+storage/copies/calls; full-tail slices and `slice_data` preserve termination.
+Value indexing/slicing syntax is unchanged. See the language specification.
 
 The source `std::formatting` module owns tagged-argument `{}` formatting,
 escaped braces, template validation and full-range 64-bit integer conversion.
@@ -39,8 +46,12 @@ pointers for release. Raw mmap errors use the full Linux negative-errno range.
 The source std memory module implements byte-slice `memset` and `memcpy` with
 checked loops. Copy accepts readonly sources and checks destination capacity
 before writing; callers must provide nonoverlapping regions.
-The source std prelude exports `str_eq` for byte-slice equality; the string sample
-uses that implicit alias rather than defining its own helper.
+`std::string::str_eq` provides byte-slice equality; the string sample uses
+qualified calls to the shared string module. The std prelude is currently empty.
+`std::string` supplies allocation-free concatenation into caller storage with
+capacity errors before writes and a borrowed prefix result; `str_len` wraps
+byte-slice `.len`. Native tests cover capacity failures, empty inputs and aliasing
+of the returned view. Sources must not overlap the concatenation destination.
 
 Working components are the tokenizer, parser, AST construction, lexical scope
 utilities, diagnostic rendering, and raw IR data/access/formatting utilities.

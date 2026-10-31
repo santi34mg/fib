@@ -96,7 +96,7 @@ alignment, mapping and release failures; no `NotImplemented` placeholder remains
 
 `std::formatting` owns tagged `Arg` values, template validation and rendering.
 `format(destination, template, values)` writes byte strings into caller-owned
-`uint8[]` storage after syntax/count/capacity checks; no allocation or NUL suffix.
+`[]uint8` storage after syntax/count/capacity checks; no allocation or NUL suffix.
 `format_to` shares rendering with synchronous writer callbacks. `std::io` retains
 literal output, write retries and thin `printf`/`fprintf` adapters; its formatting
 types alias `std::formatting`, including the `BufferTooSmall` error variant.
@@ -162,11 +162,15 @@ modifiers/types and a shared initializer list. Legacy `type Name ...` is removed
 Functions are ordinary identifiers; builtin functions and their `@` forms are removed.
 Ordinary metatype parameters and type-value arguments provide generic specialization. `comp fn f(T: type) type { return T; }` explicitly enables bounded type computation;
 its function type is `comp fn(type) -> type`. Variadics are removed.
+Array/slice types use prefix `[N]T` and `[]T`. Byte sentinel types
+`[N:S]uint8`, `[:S]uint8` and `[*:S]uint8` execute for S in 0–255;
+`c"..."` has type `const [*:0]uint8`. Full-tail slices and `slice_data`
+preserve termination. Value indexing and slicing syntax is unchanged.
 Value-returning `comp fn` declarations have normal type/flow checks, but calls
 requiring value computation report an explicit not-implemented error.
-Type-level `const *T`, `const T[]` and `const T[N]` qualify elements independently of binding
+Type-level `const *T`, `const []T` and `const [N]T` qualify elements independently of binding
 `const`; qualifiers are layer-local and compatibility does not discard them.
-Fixed arrays `T[N]` implicitly form full slices in expected `T[]` contexts,
+Fixed arrays `[N]T` implicitly form full slices in expected `[]T` contexts,
 including declarations, assignments, arguments, returns and aggregate fields.
 Conversion borrows backing storage without copying or extending its lifetime;
 readonly backing storage cannot form a writable slice. Array literals receive

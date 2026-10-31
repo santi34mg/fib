@@ -12,8 +12,9 @@ one type value and returns `usize`, measuring target allocation size in bytes
 size zero; void, never and metatypes are unsized and rejected. Generic type
 arguments are measured after specialization. LLVM resolves the size using the
 selected target; frontend constant evaluation does not yet support it in `comp`
-values, array lengths or global initializers. Compiler-declaration revision 3
-records this compiler contract; reinstall sources alongside the compiler.
+values, array lengths or global initializers. Compiler-declaration revision 4
+records prefix container syntax, sentinel byte types and the terminated `openat`
+path contract; reinstall sources alongside the compiler.
 
 Install the binaries and sources together:
 
@@ -77,7 +78,7 @@ fn main(args: std::process::Arguments, env: std::process::Environment) std::resu
 }
 ```
 
-`std::process::Bytes` is `const uint8[]`; `Arguments` is `Bytes[]` and
+`std::process::Bytes` is `const []uint8`; `Arguments` is `[]Bytes` and
 `Environment` aliases `std::map::Map(Bytes, Bytes)`. Arguments include the executable name at
 index zero when provided by the host. Empty arguments are preserved. Argument
 and environment strings borrow process-lifetime bytes, exclude terminating NULs,
@@ -89,7 +90,7 @@ key wins. Startup allocation failure exits with status 1.
 `init(K, V, equal)` creates an empty map with an equality function of type
 `fn(K, K) bool`. Keys match according to that function; callers should supply an
 equivalence relation. `bytes_equal` supplies bytewise, case-sensitive equality for
-`const uint8[]` keys and is used by the environment map.
+`const []uint8` keys and is used by the environment map.
 `insert(K, V, map&, key, value)` inserts or replaces and returns false on allocation
 failure without changing the map. `get(K, V, map, key)` returns `Result(V, void)`;
 an absent key differs from a present empty value. `map.len` counts distinct keys.
@@ -140,9 +141,9 @@ full default Unicode case folding, then NFC; declaration names remain case-sensi
 See the [canonical linkage contract](roadmap/00-cross-module-linkage.md) for table versions
 and persistent installed-package identities.
 
-`std::prelude` selects implicit aliases through its public declarations. It exports
-`str_eq(const uint8[], const uint8[]) bool` for byte-slice equality, including empty
-slices. Selected exports preserve canonical identities and obey ordinary
+`std::prelude` selects implicit aliases through its public declarations. It is
+currently empty; string helpers require qualification through `std::string`.
+Selected exports preserve canonical identities and obey ordinary
 alias/lexical rules, including errors for collisions with explicit file bindings.
 The compiler's primitive prelude remains protected independently.
 
@@ -157,7 +158,7 @@ validity nor view lifetime is guaranteed by these operations.
 and the shared allocation-free renderer. Its base byte-string API is:
 
 ```fib
-std::formatting::format(destination: uint8[], template: const uint8[], values: const Arg[])
+std::formatting::format(destination: []uint8, template: const []uint8, values: const []Arg)
 ```
 
 It returns `FormatResult = Result(usize, Error)`, with the byte count on success.
@@ -172,8 +173,8 @@ empty, including null-backed, destination.
 ```fib
 comp formatting := std::formatting;
 fn main() int32 {
-    buffer: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
-    values: formatting::Arg[1] = [formatting::Arg.Unsigned(42)];
+    buffer: [8]uint8 = [0, 0, 0, 0, 0, 0, 0, 0];
+    values: [1]formatting::Arg = [formatting::Arg.Unsigned(42)];
     switch (formatting::format(buffer, "id={}", values)) {
         when .Ok(count) {
             switch (std::io::print(buffer[..count])) {
@@ -186,23 +187,23 @@ fn main() int32 {
 }
 ```
 
-`format_to(T, context: *T, writer: fn(*T, const uint8[]) FormatResult,
-template: const uint8[], values: const Arg[])` renders to a custom sink. The
+`format_to(T, context: *T, writer: fn(*T, const []uint8) FormatResult,
+template: const []uint8, values: const []Arg)` renders to a custom sink. The
 writer must synchronously consume each complete borrowed chunk and return its
 length or an error; it must not retain the slice. Syntax/count errors never call
 the writer, while writer errors can leave partial output. `Error.Io(errno)` is
 available for I/O sinks. `format` uses the same renderer with a capacity-checking
 buffer sink; it neither allocates nor performs I/O.
 
-`std::io::print(bytes: const uint8[])` writes literal bytes to stdout.
-`printf(format: const uint8[], values: const Arg[])` formats to stdout;
-`fprintf(fd: int32, format: const uint8[], values: const Arg[])` selects a
+`std::io::print(bytes: const []uint8)` writes literal bytes to stdout.
+`printf(format: const []uint8, values: const []Arg)` formats to stdout;
+`fprintf(fd: int32, format: const []uint8, values: const []Arg)` selects a
 descriptor. All return `PrintResult = Result(usize, PrintError)`, with the number
 of bytes written on success. `io::Arg`, `io::PrintError` and `io::PrintResult`
 remain aliases of `formatting::Arg`, `formatting::Error` and
 `formatting::FormatResult`. Exhaustive switches on the former `PrintError` must
 now include `BufferTooSmall`, though the built-in I/O sink does not produce it.
-`Arg` variants are `Bytes: const uint8[]`,
+`Arg` variants are `Bytes: const []uint8`,
 `Signed: int64`, `Unsigned: uint64` and `Boolean: bool`. Arguments are passed in
 an explicitly typed array, which implicitly converts to the expected slice type;
 explicit slicing also remains valid, as in the [formatting sample](../samples/formatting.fib).
@@ -214,7 +215,7 @@ argument counts are validated before output; errors are `InvalidFormat` or
 error variant. Width, precision, type specifiers and floating-point formatting
 are not implemented. Integer formatting includes the full int64/uint64 range.
 
-`write_all(fd: int32, bytes: const uint8[])` retries interrupted and short writes;
+`write_all(fd: int32, bytes: const []uint8)` retries interrupted and short writes;
 empty writes make no syscall. Other errors return `PrintError.Io(errno)`, with
 positive errno; a zero-progress write reports EIO (5). I/O errors can leave
 partial output. `printf` and `fprintf` delegate to `formatting::format_to` with
@@ -227,7 +228,7 @@ for integers and performs no allocation. Calls are not atomic across segments.
 with flags zero, waiting for kernel RNG initialization. There is no predictable
 fallback, userspace seed, shared generator state or allocation.
 
-- `fill(buffer: uint8[]) Status` fills the complete buffer, retrying EINTR and
+- `fill(buffer: []uint8) Status` fills the complete buffer, retrying EINTR and
   short reads. Empty slices succeed without a syscall. Errors may leave partial
   contents; zero progress reports EIO (5).
 - `uint64_value() Uint64Result` returns a uniformly random full-width `uint64`.
@@ -306,8 +307,8 @@ the unchanged break on failure, rather than a negative errno. See
 
 ## Allocation
 
-`std::memory::memset(destination: uint8[], value: uint8)` fills every destination
-byte. `std::memory::memcpy(destination: uint8[], source: const uint8[])` copies
+`std::memory::memset(destination: []uint8, value: uint8)` fills every destination
+byte. `std::memory::memcpy(destination: []uint8, source: const []uint8)` copies
 all source bytes into the destination prefix, leaving the tail unchanged. Both
 return void. Pass subslices to select a byte count. Copying requires nonoverlapping
 regions and traps before writing if the destination is shorter than the source.
@@ -359,9 +360,21 @@ fn main() int32 {
 }
 ```
 
+### Byte-string helpers
+
+`std::string::concat(destination: []uint8, a: const []uint8, b: const []uint8)`
+returns `std::string::ConcatResult` (`Result([]uint8, std::string::Error)`).
+Capacity checks precede all writes and avoid length overflow; `BufferTooSmall`
+leaves destination unchanged. Success returns its written prefix, preserves the
+tail and adds no NUL. Sources must not overlap destination. No allocation occurs;
+the result borrows destination without extending its lifetime.
+`std::string::str_len(const []uint8) usize` wraps `.len`. Lengths count bytes,
+with no encoding assumption. `std::string::str_eq(const []uint8, const []uint8) bool`
+compares byte contents, including empty slices.
+
 ### Typed heap allocator
 
-`std::memory::alloc(T, n: usize)` returns a writable `T[]` of length `n`.
+`std::memory::alloc(T, n: usize)` returns a writable `[]T` of length `n`.
 Zero count, overflow or allocation failure returns an empty slice. Storage is
 uninitialized: write elements before reading them. Zero-sized types receive a
 live allocation for nonzero counts. Blocks have 16-byte alignment for the

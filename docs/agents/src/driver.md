@@ -64,7 +64,7 @@ linking invokes host `cc`, preserving stderr on failure. Object output needs LLV
 lowering route. It configures the compiler-provided synthetic
 `build_api::{add_source, set_entry, set_output}` module on the ordinary analyzer, validates
 one `build() int32` entry, and invokes the same lowering used by normal source. Builtins retain semantic `DeclId` identities through a
-`FunctionId -> BuiltinFunction` IR table. Build API text parameters are `const uint8[]`;
+`FunctionId -> BuiltinFunction` IR table. Build API text parameters are `const []uint8`;
 string literals are readonly byte arrays and implicitly form readonly slices in
 that context; explicit `"text"[..]` remains valid. These literal slices become
 interpreter-only byte values. General fixed-array-to-slice coercion uses the same
