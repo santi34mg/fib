@@ -33,6 +33,13 @@ and deferred computations with arguments/dependencies. Readonly container layers
 and explicit compile-time function eligibility participate in type identity.
 `never` coerces only from a top-level found bottom type; composite compatibility
 remains invariant.
+Pointers, slices and fixed arrays implicitly gain an outer readonly qualifier;
+nested qualifiers must still match exactly and readonly removal is rejected.
+Binding `const` protects nested struct fields and inline array elements through
+their place categories, without changing value type identity. Array indexing
+inherits immutable as well as readonly storage permissions; slicing such storage
+produces a readonly view. Pointer and slice indirections retain their own type's
+permissions, and inline value copies into mutable bindings remain writable.
 The supported scalar/struct/enum/pointer/control-flow lowering translates frontend identities into
 owned SSA IDs/types and never falls back to direct AST emission. General source
 lowering remains unfinished.

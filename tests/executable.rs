@@ -77,12 +77,12 @@ fn object_goal_emits_linkable_object_and_source_is_protected() {
 }
 
 #[test]
-fn unsupported_source_exits_unsuccessfully_without_binary() {
+fn out_of_range_character_exits_unsuccessfully_without_binary() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("main.fib");
     std::fs::write(
         &source,
-        "fn main() int32 { defer { x := 'a'; }; return 42; }",
+        "fn main() int32 { defer { x := 'Ā'; }; return 42; }",
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_fibc"))
@@ -95,7 +95,7 @@ fn unsupported_source_exits_unsuccessfully_without_binary() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("out of range for uint8"));
     assert!(!source.with_extension("").exists());
 }
 
@@ -185,11 +185,20 @@ fn scalar_program(text: &str) -> std::process::ExitStatus {
 }
 
 #[test]
+fn print_accepts_string_literals_without_slicing() {
+    assert_eq!(scalar_program("fn main() int32 { switch (std::io::print(\"\")) { when .Ok { return '*' as int32; } when .Err { return 1; } }; }").code(), Some(42));
+}
+
+#[test]
 fn checked_array_and_slice_operations_execute() {
     for text in [
+        include_str!("programs/readonly_array_conversion.fib"),
+        include_str!("../samples/const_bindings.fib"),
+        "fn pick(s:const uint8[]) int32 { return s[0] as int32; } fn main() int32 { return pick(\"*\"); }",
+        "s:const uint8[] = \"*\"; fn bytes() const uint8[] { return \"*\"; } fn main() int32 { x:const uint8[] = \"é\"; if x.len != 2 { return 1; }; x = bytes(); if x[0] != '*' { return 2; }; return s[0] as int32; }",
         include_str!("../samples/indexed_globals.fib"),
         "fn main() int32 { a := [1, 2, 3]; i := 1; a[i] = 42; return a[i]; }",
-        "fn main() int32 { const a := [1, 2]; i := 0; a[i] = 42; return a[i]; }",
+        "fn main() int32 { const a := [42, 2]; i := 0; return a[i]; }",
         "fn main() int32 { a := [1, 2, 3]; s := a[1..]; s[0] = 42; return a[1]; }",
         "fn main() int32 { a := [1, 2, 3]; s := a[..]; t := s[1.=1]; t[0] = 42; if t.len != 1 { return 1; }; return a[1]; }",
         "fn main() int32 { a := [42]; s := a[1..1]; t := a[..0]; if s.len == 0 && t.len == 0 { return a[0]; }; return 1; }",
@@ -1058,7 +1067,7 @@ fn defer_blocks_execute_on_lexical_exits() {
         assert_eq!(bounded_program(text).code(), Some(42), "{text}");
     }
     assert_eq!(
-        bounded_program(include_str!("../samples/defer.fib")).code(),
+        bounded_program(include_str!("../samples/deferred_blocks.fib")).code(),
         Some(42)
     );
 }

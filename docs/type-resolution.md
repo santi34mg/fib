@@ -139,10 +139,14 @@ values and same-typed pointers; aggregates and functions are rejected.
 Assignments require mutable places. Binding mutability and element mutability
 are independent: `const p: *T` fixes the binding but permits pointee writes;
 `p: const *T` permits rebinding but forbids pointee writes. The same distinction
-applies to `const T[]` and `const T[N]`. Binding `const` alone does not make array
-elements readonly. Type qualifiers apply to one container layer, not a deep
+applies to slice views. Binding `const` protects all inline storage, including
+nested struct fields and fixed-array elements. Slices and pointers still grant
+the access specified by their types; copying inline values into mutable bindings
+permits independent modification. Type-level `const` is limited to pointers,
+slices and arrays; scalar, struct and enum bindings use `const name: Type`.
+Type qualifiers apply to one container layer, not a deep
 freeze. Access, slicing and addressing preserve permissions; compatibility is
-directional for shallow pointer/slice readonly views; nested qualifiers must match
+directional for shallow pointer/slice/array readonly conversions; nested qualifiers must match
 exactly and casts cannot erase readonly qualifiers. Fields
 inherit the selected storage category. Raw-pointer checks promise no lifetime
 or ownership safety.

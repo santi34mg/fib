@@ -3259,9 +3259,10 @@ mod type_resolution {
         "comp A: type = struct { x: int32 }; fn f() { const a: A = A { x: 1 }; a.x = 2; }",
         "immutable"
     );
-    ok!(
-        const_binding_mutable_array_elements,
-        "fn f() { const a := [1]; a[0] = 2; }"
+    err!(
+        const_binding_immutable_array_elements,
+        "fn f() { const a := [1]; a[0] = 2; }",
+        "immutable"
     );
     ok!(constant_float_infinity, "x: float16 = 65504.0 + 65504.0;");
     err!(negative_float_cast_range, "x := -300.0 as int8;", "range");
@@ -3342,11 +3343,53 @@ mod type_resolution {
         }
 
         #[test]
+        fn const_bindings_protect_all_inline_storage() {
+            for source in [
+                "fn f() { const x: int32 = 1; x = 2; }",
+                "fn f() { const x: float32 = 1.0; x = 2.0; }",
+                "fn f() { const x: bool = true; x = false; }",
+                "comp E: type = enum { A, B }; fn f() { const x: E = E.A; x = E.B; }",
+                "comp S: type = struct { x: int32 }; fn f() { const s: S = S { x: 1 }; s.x = 2; }",
+                "comp S: type = struct { x: int32 }; comp O: type = struct { s: S }; fn f() { const o := O { s: S { x: 1 } }; o.s.x = 2; }",
+                "comp S: type = struct { a: int32[1] }; fn f() { const s := S { a: [1] }; s.a[0] = 2; }",
+                "comp S: type = struct { a: int32[1] }; fn f() { const s := S { a: [1] }; v := s.a[..]; v[0] = 2; }",
+                "comp S: type = struct { x: int32 }; fn f() { const a := [S { x: 1 }]; a[0].x = 2; }",
+                "fn f() { const a := [[1]]; a[0][0] = 2; }",
+                "fn f() { const a, b := [1], [2]; a[0] = 3; }",
+                "const a: int32[1] = [1]; fn f() { a[0] = 2; }",
+                "fn f(T: type, x: T) { const a := [x]; a[0] = x; }",
+                "fn change(T: type, x: T) { const a := x; a[0] = 2; } fn f() { change(int32[1], [1]); }",
+            ] {
+                bad(source, "immutable");
+            }
+            for source in [
+                "fn f() { const a := [1]; p: *int32 = a[0]&; }",
+                "comp S: type = struct { a: int32[1] }; fn f() { const s := S { a: [1] }; p: *int32 = s.a[0]&; }",
+                "fn f() { const a := [1]; v: int32[] = a[..]; }",
+            ] {
+                bad(source, "incompatible");
+            }
+        }
+
+        #[test]
+        fn const_binding_copies_and_indirections_remain_shallow() {
+            for source in [
+                "fn f() { const i: int32 = 1; const x: float32 = 1.0; const b: bool = true; j := i + 1; y := x + 1.0; c := !b; }",
+                "comp S: type = struct { a: int32[1] }; fn f() { const s := S { a: [1] }; copy := s; copy.a[0] = 2; }",
+                "fn f() { const a := [1]; copy := a; copy[0] = 2; p: const *int32 = a[0]&; v: const int32[] = a[..]; x := v[0]; }",
+                "comp E: type = enum { Item: int32[1] }; fn f() { const e := E.Item([1]); switch (e) { when .Item(a) { a[0] = 2; } }; }",
+                "comp S: type = struct { p: *int32, v: int32[] }; fn f() { a := [1]; const s := S { p: a[0]&, v: a[..] }; (s.p*) = 2; s.v[0] = 3; }",
+                "fn id(T: type, value: T) T { const copy := value; return copy; } fn f() { a := id(int32[1], [1]); a[0] = 2; }",
+                "fn change(T: type, x: T) { const view := x; view[0] = 2; } fn f() { a := [1]; change(int32[], a[..]); }",
+            ] {
+                pass(source);
+            }
+        }
+
+        #[test]
         fn array_binding_and_element_matrix() {
+            pass("fn f() { a: int32[2] = [1, 2]; a[0] = 3; v := a[..]; v[0] = 4; }");
             for binding in ["", "const "] {
-                pass(&format!(
-                    "fn f() {{ {binding}a: int32[2] = [1, 2]; a[0] = 3; v := a[..]; v[0] = 4; }}"
-                ));
                 pass(&format!(
                     "fn f() {{ {binding}a: const int32[2] = [1, 2]; v: const int32[] = a[..]; x := v[0]; n := a.len; }}"
                 ));
@@ -3355,6 +3398,11 @@ mod type_resolution {
                     "immutable",
                 );
             }
+            bad("fn f() { const a := [1]; a[0] = 2; }", "immutable");
+            bad(
+                "fn f() { const a := [1]; v := a[..]; v[0] = 2; }",
+                "immutable",
+            );
             pass("fn f() { a: const int32[1] = [1]; a = [2]; }");
             bad(
                 "fn f() { const a: const int32[1] = [1]; a = [2]; }",
@@ -3433,7 +3481,6 @@ mod type_resolution {
                 "fn f(p: const *int32) { q: *int32 = p; }",
                 "fn f(p: const int32[]) { q: int32[] = p; }",
                 "fn f() { p: const int32[1] = [1]; q: int32[1] = p; }",
-                "fn f() { p: int32[1] = [1]; q: const int32[1] = p; }",
                 "fn f(p: const *int32) *int32 { return p; }",
                 "fn take(p: *int32) {} fn f(p: const *int32) { take(p); }",
                 "fn f(p: *const *int32) { q: **int32 = p; }",
@@ -3443,6 +3490,34 @@ mod type_resolution {
             pass("fn f(p: *int32) { q: const *int32 = p; }");
             pass("fn f(p: int32[]) { q: const int32[] = p; }");
             pass("fn f(p: *int32) { q: const *int32 = null; q = p; }");
+        }
+
+        #[test]
+        fn arrays_implicitly_gain_shallow_readonly_qualification() {
+            pass("fn f() { a := [1]; b: const int32[1] = a; b = a; }");
+            pass(
+                "fn take(a: const int32[1]) {} fn give(a: int32[1]) const int32[1] { return a; } fn f() { a := [1]; take(a); b := give(a); }",
+            );
+            pass(
+                "comp A: type = const int32[1]; fn id(T: type, a: T) T { return a; } fn f() { a := [1]; b: A = id(A, a); }",
+            );
+            pass("fn f() { a := [1]; b := a as const int32[1]; }");
+            bad(
+                "fn f() { a := [1]; b: const int32[1] = a; b[0] = 2; }",
+                "immutable",
+            );
+            bad(
+                "fn f(a: int32[2]) { b: const int32[1] = a; }",
+                "incompatible",
+            );
+            bad(
+                "fn f(a: int32[1][1]) { b: (const int32[1])[1] = a; }",
+                "incompatible",
+            );
+            bad(
+                "fn f(a: *int32[1]) { b: *const int32[1] = a; }",
+                "incompatible",
+            );
         }
 
         #[test]
@@ -3493,7 +3568,7 @@ mod type_resolution {
                 analysis_bad(source, "uninitialized");
             }
             pass("fn f() { a: const int32[1]; a = [1]; x := a[0]; }");
-            pass("fn f() { const a: int32[1] = [1]; a[0] = 2; x := a[0]; }");
+            pass("fn f() { const a: int32[1] = [1]; x := a[0]; }");
         }
 
         #[test]
@@ -3502,6 +3577,8 @@ mod type_resolution {
             for source in [
                 "p: const *int32; p*;",
                 "a: const int32[1] = [1]; a[0];",
+                "const a := [1]; a[0];",
+                "comp S: type = struct { a: int32[1] }; const s := S { a: [1] }; s.a[0];",
                 "comp S: type = struct { x: int32 }; p: const *S; (p*).x;",
             ] {
                 let (mut a, types) = run(&format!("fn f() {{ {source} }}")).unwrap();
@@ -3533,6 +3610,7 @@ mod type_resolution {
             for source in [
                 "const x := 1; x&;",
                 "a: const int32[1] = [1]; a[..];",
+                "const a := [1]; a[..];",
                 "p: const *int32; p as const *int32;",
             ] {
                 let (mut a, types) = run(&format!("fn f() {{ {source} }}")).unwrap();
@@ -5220,7 +5298,7 @@ mod generic_flow_regressions {
             "immutable",
         );
         analyze(
-            "fn f() { const a:int32[2] = [1,2]; a[0] = 3; b:const int32[2] = [1,2]; b = [3,4]; }",
+            "fn f() { const a:int32[2] = [1,2]; x := a[0]; b:const int32[2] = [1,2]; b = [3,4]; }",
         );
         reject(
             "fn f() { b:const int32[2] = [1,2]; b[0] = 3; }",
@@ -5229,19 +5307,37 @@ mod generic_flow_regressions {
     }
 
     #[test]
+    fn string_literal_slice_context_and_byte_characters() {
+        analyze(
+            r#"fn bytes(x:const uint8[]) const uint8[] { return "é"; }
+            fn f() { bytes(""); bytes("hello"); x:const uint8[] = "abc";
+                x = "def"; a := 'a'; b:uint8 = '\xFF'; c := a + b; }
+            fn fixed() const uint8[3] { return "abc"; }"#,
+        );
+        reject(r#"fn f() { x:uint8[] = "abc"; }"#, "incompatible types");
+        reject(
+            r#"fn f() { x:const uint16[] = "abc"; }"#,
+            "incompatible types",
+        );
+        reject("fn f() { x := 'Ā'; }", "out of range for uint8");
+        assert!(analyzer("fn f(x:char) {}").analyze().is_err());
+        analyze("comp char := uint8; fn f(x:char) uint8 { return x; }");
+    }
+
+    #[test]
     fn incompatible_types_use_source_names_and_preserve_readonly_context() {
         for (source, message) in [
             (
-                "fn f(p:char[]) { q:uint8[] = p; }",
-                "expected uint8[], found char[]",
+                "fn f(p:uint16[]) { q:uint8[] = p; }",
+                "expected uint8[], found uint16[]",
             ),
             (
-                "fn f(p:const char[]) { q:const uint8[] = p; }",
-                "expected const uint8[], found const char[]",
+                "fn f(p:const uint16[]) { q:const uint8[] = p; }",
+                "expected const uint8[], found const uint16[]",
             ),
             (
-                "fn f(p:char[]) { q:const uint8[] = p; }",
-                "expected const uint8[], found char[]",
+                "fn f(p:uint16[]) { q:const uint8[] = p; }",
+                "expected const uint8[], found uint16[]",
             ),
             (
                 "fn f(p:const uint8[]) { q:uint8[] = p; }",
@@ -5266,7 +5362,7 @@ mod generic_flow_regressions {
 
     #[test]
     fn slice_cast_diagnostics_explain_readonly_and_element_conversion() {
-        let source = "fn f(p:const char[]) { q := p as uint8[]; }";
+        let source = "fn f(p:const uint16[]) { q := p as uint8[]; }";
         reject(source, "cannot cast a readonly slice to a writable slice");
         reject(source, "cannot convert element types");
         reject(source, "Copy the elements into a writable buffer");
@@ -5275,13 +5371,13 @@ mod generic_flow_regressions {
             "remove `const` protection from the original storage",
         );
         for source in [
-            "fn f(p:const char[]) { q := p as const uint8[]; }",
-            "fn f(p:char[]) { q := p as uint8[]; }",
+            "fn f(p:const uint16[]) { q := p as const uint8[]; }",
+            "fn f(p:uint16[]) { q := p as uint8[]; }",
         ] {
             reject(source, "slices with different element types");
         }
         analyze("fn f(p:uint8[]) { q := p as const uint8[]; }");
-        analyze("fn f(p:const char[]) { q := p as const char[]; }");
+        analyze("fn f(p:const uint16[]) { q := p as const uint16[]; }");
         reject("fn f(p:bool[]) { q := p as int32; }", "unsupported cast");
     }
 
@@ -5698,7 +5794,7 @@ mod validation_regressions {
         }
         for source in [
             "fn f() bool { return true; }",
-            "fn f() char { return 'a'; }",
+            "fn f() uint8 { return 'a'; }",
             "fn f() const uint8[1] { return \"x\"; }",
             "fn f() *int32 { return null; }",
         ] {

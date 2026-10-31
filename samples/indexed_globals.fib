@@ -1,5 +1,5 @@
-// File-level storage has compile-time initial data; const only freezes binding replacement.
-const table: int32[3] = [10, 20, 0];
+// File-level storage has compile-time initial data; this table is writable.
+table: int32[3] = [10, 20, 0];
 tail := table[1..];
 total := 0;
 

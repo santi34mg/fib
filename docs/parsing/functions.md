@@ -42,8 +42,8 @@ The multi-binding declaration preserves a single call initializer.
 ## Bodyless and external declarations
 
 ```fib
-fn declared(x: *char) bool;
-extern fn puts(text: *char) int32;
+fn declared(x: *uint8) bool;
+extern fn puts(text: *uint8) int32;
 extern fn malloc(size: usize) *void;
 extern fn free(ptr: *void) void;
 ```

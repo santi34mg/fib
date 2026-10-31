@@ -6,6 +6,12 @@ and [parsing reference](parsing/README.md).
 
 ## Names, packages and source discovery
 
+Character literals have type `uint8` and must fit in 0–255. There is no `char`
+primitive. String literals contain UTF-8 bytes and default to readonly fixed
+arrays; a context expecting `const uint8[]` implicitly takes a readonly slice
+of the literal's program-lifetime storage. This does not permit writable slices
+or implicit conversion of array variables.
+
 - Every file is a declaration namespace. Directories organize paths and
   visibility regions; they do not contain source declarations of their own.
 - Every package has an explicit source root. Fully qualified paths have the form
@@ -138,20 +144,29 @@ There is no implicit zeroing. Loops that may run zero times do not establish
 initialization after the loop. Assignment evaluates the RHS first, then evaluates
 the destination once, then writes.
 
-Binding and pointee/element mutability are independent and layer-local:
+Binding `const` makes the binding's own storage immutable, including nested
+struct fields and inline array elements. It applies to every value type, including
+integers, floats, bools and enums: write `const x: int32`, not `x: const int32`.
+It does not freeze storage reached through pointer or slice values. Binding and
+pointee/element-view mutability are independent and layer-local:
 
 | Form | Binding/whole-value replacement | Pointee/element writes |
 | --- | --- | --- |
 | `const p: *T` | Forbidden | Allowed |
 | `p: const *T` | Allowed | Forbidden |
-| `const arr: T[N]` | Forbidden | Allowed |
+| `const arr: T[N]` | Forbidden | Forbidden (inline storage) |
 | `arr: const T[N]` | Allowed | Forbidden |
 
 Fixed arrays are inline values: whole-array assignment replaces the value in the
 same storage, not an address/reference. The same binding-versus-element separation
-applies to slices. Qualifiers do not deeply freeze nested pointers/containers.
-Writable pointers and slices implicitly convert to readonly views of the same
-underlying type; reverse conversion and readonly-erasing casts are forbidden.
+applies to slices, whose elements live in separate storage: `const view: T[]`
+prevents replacing the view but permits writes through it. Copies of const
+bindings may be stored in mutable bindings; inline copies can then be modified
+independently. Slicing const inline storage produces a readonly view, and taking
+its address produces a readonly pointer. Qualifiers do not deeply freeze nested pointers/containers.
+Writable pointers, slices and fixed arrays implicitly convert to the readonly form
+of the same underlying type. Fixed arrays copy their inline values; pointers and
+slices retain shared storage. Reverse conversion and readonly-erasing casts are forbidden.
 Nested pointee/element types must match exactly; no unsafe deep qualifier change
 is implied. This rule does not introduce an array-to-slice conversion.
 

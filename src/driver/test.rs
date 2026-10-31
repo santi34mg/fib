@@ -144,6 +144,14 @@ fn globals_require_constant_initializers_and_comp_value_calls_remain_explicit() 
             "fn main() int32 { a: const int32[1] = [1]; i := 0; a[i] = 42; return 0; }",
             "readonly",
         ),
+        (
+            "comp S: type = struct { a: int32[1] }; fn main() int32 { const s := S { a: [1] }; s.a[0] = 42; return 0; }",
+            "immutable",
+        ),
+        (
+            "fn main() int32 { const a := [1]; view := a[..]; view[0] = 42; return 0; }",
+            "readonly",
+        ),
     ] {
         let (_directory, plan) = source(text);
         let error = run_pipeline(&plan, PipelineGoal::Check).unwrap_err();
@@ -248,8 +256,7 @@ fn helpers_conditionals_and_mutable_locals_lower_to_verified_ssa() {
 }
 
 #[test]
-fn scalar_subset_rejections_are_located_backend_diagnostics_even_in_dead_code() {
-    use crate::diagnostics::{CompilerError, ErrorKind};
+fn character_literals_lower_in_live_and_dead_control_flow() {
     for text in [
         "fn main() int32 { if false { x := 'a'; }; return 42; }",
         "fn main() int32 { while (false) { x := 'a'; }; return 42; }",
@@ -259,17 +266,7 @@ fn scalar_subset_rejections_are_located_backend_diagnostics_even_in_dead_code() 
     ] {
         let (_directory, plan) = source(text);
         let project = run_frontend(&plan).unwrap();
-        let error = crate::ir::lowering::lower(&project)
-            .unwrap_err()
-            .downcast::<CompilerError>()
-            .unwrap();
-        assert_eq!(error.kind, ErrorKind::Backend, "{text}");
-        assert!(error.span.is_some(), "{text}");
-        assert_eq!(
-            error.filename.as_deref(),
-            Some(plan.files[0].path.as_path()),
-            "{text}"
-        );
+        crate::ir::lowering::lower(&project).unwrap();
     }
 }
 
@@ -615,7 +612,7 @@ fn enum_lowering_checks_unmatched_and_dead_arms() {
 #[test]
 fn defer_blocks_lower_to_verified_ir() {
     for text in [
-        include_str!("../../samples/defer.fib"),
+        include_str!("../../samples/deferred_blocks.fib"),
         "fn f(p: *int32, b: bool) { defer { p* = (p*) + 1; }; if b { defer p* = (p*) + 40; return; }; defer p* = (p*) + 2; } fn main() int32 { x := 0; f(x&, true); return x + 1; }",
         "fn main() int32 { x := 0; i := 0; while (i < 4) { defer x = x + 1; i = i + 1; if i < 3 { continue; }; break; }; return x; }",
     ] {

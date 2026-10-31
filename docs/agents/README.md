@@ -15,6 +15,10 @@ and coalescing. Earlier suite records remain dated below.
 
 ## Actual status
 
+Character literals have type `uint8` (values above 255 are rejected); `char` is
+no longer a prelude type. String literals retain readonly fixed byte arrays by
+default and implicitly form `const uint8[]` in a matching expected-type context.
+
 The source std I/O module implements literal output and tagged-argument `{}`
 formatting, with escaped braces, format validation before writes, full-range
 64-bit integer conversion and write loops handling short writes and EINTR.
@@ -22,6 +26,8 @@ formatting, with escaped braces, format validation before writes, full-range
 The source std memory module implements byte-slice `memset` and `memcpy` with
 checked loops. Copy accepts readonly sources and checks destination capacity
 before writing; callers must provide nonoverlapping regions.
+The source std prelude exports `str_eq` for byte-slice equality; the string sample
+uses that implicit alias rather than defining its own helper.
 
 Working components are the tokenizer, parser, AST construction, lexical scope
 utilities, diagnostic rendering, and raw IR data/access/formatting utilities.
@@ -31,8 +37,11 @@ lookup now execute and validate their annotations. Explicit metatype
 specialization now rechecks concrete bodies, retaining symbolic template checks.
 Bounded type computation requires explicit `comp fn` eligibility. Metatype
 parameters and type values provide generic specialization. Independent binding/element mutability, `never` bottom coercion, definite initialization and
-structured control-flow checks run; see [typing](../type-resolution.md). Variadics
-are removed. Numeric literals use arbitrary-precision integer magnitudes and direct decimal-to-IEEE
+structured control-flow checks run; see [typing](../type-resolution.md).
+Binding `const` protects struct fields and nested inline array elements; slices
+and addresses of that storage preserve readonly access. Scalar, struct and enum
+bindings use `const name: Type`; type-level qualifiers remain container-only.
+Variadics are removed. Numeric literals use arbitrary-precision integer magnitudes and direct decimal-to-IEEE
 rounding; constant evaluation implements fixed-width wrapping and exact IEEE
 operations. Compilation of explicitly planned files supports fixed-width signed/unsigned integers
 through 128 bits, float16/32/64/128 and bool through locals, arithmetic,

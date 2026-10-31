@@ -874,14 +874,8 @@ impl Validator<'_> {
                                 super::value_typing::is_integral_type(ty)
                             } else if matches!(b.operator, O::DoubleEquals | O::Different) {
                                 super::value_typing::numeric(ty)
-                                    || matches!(
-                                        ty,
-                                        T::Builtin(B::Boolean | B::Char | B::String | B::Void)
-                                    )
+                                    || matches!(ty, T::Builtin(B::Boolean | B::String | B::Void))
                                     || matches!(self.types.container(operand)?, (T::Pointer(_), _))
-                            } else if comparison {
-                                super::value_typing::numeric(ty)
-                                    || matches!(ty, T::Builtin(B::Char))
                             } else {
                                 super::value_typing::numeric(ty)
                             };
@@ -1150,10 +1144,19 @@ impl Validator<'_> {
                             T::Builtin(B::Float16 | B::Float32 | B::Float64 | B::Float128)
                         ),
                         Literal::Boolean(_) => matches!(ty, T::Builtin(B::Boolean)),
-                        Literal::Character(_) => matches!(ty, T::Builtin(B::Char)),
-                        Literal::String(value) => {
-                            matches!(self.types.container(info.ty)?, (T::Array { element, length }, true) if *length == value.len() as u64 && matches!(self.types.get(*element)?, T::Builtin(B::UInt8)))
+                        Literal::Character(value) => {
+                            u32::from(*value) <= 255 && matches!(ty, T::Builtin(B::UInt8))
                         }
+                        Literal::String(value) => match self.types.container(info.ty)? {
+                            (T::Array { element, length }, true) => {
+                                *length == value.len() as u64
+                                    && matches!(self.types.get(*element)?, T::Builtin(B::UInt8))
+                            }
+                            (T::Slice(element), true) => {
+                                matches!(self.types.get(*element)?, T::Builtin(B::UInt8))
+                            }
+                            _ => false,
+                        },
                         Literal::CString(_) => {
                             matches!(self.types.container(info.ty)?, (T::Pointer(element), true) if matches!(self.types.get(*element)?, T::Builtin(B::UInt8)))
                         }

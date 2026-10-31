@@ -79,13 +79,11 @@ fn check_literal(literal: &Literal, ty: &T, negative: bool) -> anyhow::Result<()
 /// Determines the value category produced by indexing an array or slice, along
 /// with the element type and (for arrays) its known length.
 ///
-/// A binding's constness is intentionally ignored: a mutable binding may hold
-/// an array whose elements can be changed, and a const binding does not make
-/// those elements readonly. Instead, readonly is inherited from the access
-/// path. For inline arrays, indexing through a readonly place yields a
-/// readonly place for the element. Slices are different: readonly on the slice
+/// Inline array elements belong to the binding's storage: indexing through an
+/// immutable or readonly place yields a readonly place for the element, including
+/// arrays nested in struct fields. Slices are different: readonly on the slice
 /// value itself does not qualify the slice's element view, so indexing a slice
-/// yields a mutable place unless the slice type or access path is readonly.
+/// yields a mutable place unless the slice type qualifies its elements.
 /// Value-category arrays remain values when indexed; other writable elements
 /// are mutable places.
 pub(super) fn indexed(
@@ -97,7 +95,10 @@ pub(super) fn indexed(
         T::Array { element, length } => (
             *element,
             Some(*length),
-            receiver.category == ValueCategory::ReadonlyPlace,
+            matches!(
+                receiver.category,
+                ValueCategory::ImmutablePlace | ValueCategory::ReadonlyPlace
+            ),
         ),
         T::Slice(element) => (*element, None, false),
         T::Parameter(_) | T::TypeResult { .. } | T::MemberResult { .. } | T::IndexResult { .. } => {
@@ -352,9 +353,19 @@ impl TypeContext<'_> {
                     ty
                 }
                 Literal::Boolean(_) => self.types.builtin(B::Boolean),
-                Literal::Character(_) => self.types.builtin(B::Char),
+                Literal::Character(value) => {
+                    if u32::from(*value) > 255 {
+                        return Err(type_error("character literal is out of range for uint8"));
+                    }
+                    self.types.builtin(B::UInt8)
+                }
                 Literal::String(value) => {
                     let element = self.types.builtin(B::UInt8);
+                    if let Some(expected) = expected
+                        && self.types.container(expected).is_ok_and(|(container, readonly)| readonly && matches!(container, T::Slice(inner) if self.types.canonical(*inner).ok() == Some(element)))
+                    {
+                        return Ok(self.value(expected));
+                    }
                     let array = self.types.intern(T::Array {
                         element,
                         length: value.len() as u64,
@@ -548,13 +559,8 @@ impl TypeContext<'_> {
                                 is_integral_type(ty)
                             } else if matches!(b.operator, O::DoubleEquals | O::Different) {
                                 numeric(ty)
-                                    || matches!(
-                                        ty,
-                                        T::Builtin(B::Char | B::Boolean | B::String | B::Void)
-                                    )
+                                    || matches!(ty, T::Builtin(B::Boolean | B::String | B::Void))
                                     || matches!(self.types.container(operand)?, (T::Pointer(_), _))
-                            } else if comparison {
-                                numeric(ty) || matches!(ty, T::Builtin(B::Char))
                             } else {
                                 numeric(ty)
                             };
@@ -595,7 +601,7 @@ impl TypeContext<'_> {
                     }
                     O::LogicalAnd | O::LogicalOr if matches!(lt, T::Builtin(B::Boolean)) => left.ty,
                     O::GreaterThan | O::GreaterEqual | O::LesserThan | O::LesserEqual
-                        if numeric(lt) || matches!(lt, T::Builtin(B::Char)) =>
+                        if numeric(lt) =>
                     {
                         self.types.builtin(B::Boolean)
                     }
@@ -603,8 +609,7 @@ impl TypeContext<'_> {
                         if numeric(lt)
                             || matches!(
                                 lt,
-                                T::Builtin(B::Boolean | B::Char | B::String | B::Void)
-                                    | T::Pointer(_)
+                                T::Builtin(B::Boolean | B::String | B::Void) | T::Pointer(_)
                             )
                             || matches!(self.types.container(operand)?, (T::Pointer(_), _)) =>
                     {

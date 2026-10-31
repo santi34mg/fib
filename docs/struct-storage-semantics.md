@@ -65,24 +65,29 @@ location, including on each loop iteration. Address-taken values are always read
 from storage, so writes through aliases are visible to later direct reads.
 
 Binding `const` and pointee `const` remain independent. Whole-binding/field writes
-to an immutable struct are rejected. A `const` pointer binding can still mutate
+to an immutable struct are rejected.
+Arrays nested in immutable structs also reject element writes, and slices or
+addresses of their inline storage retain readonly access. Copying a const struct
+into a mutable binding permits modifying the copy's inline fields and arrays.
+A `const` pointer binding can still mutate
 its writable pointee; `const *T` prevents mutation through that pointer. The
 unchecked intrinsic preserves these permissions.
 
 ## Confirmed array and readonly-view policy
 
 Fixed arrays retain inline value semantics. Binding const prevents replacing the
-whole array, while element const separately prevents element writes:
+whole array and modifying its inline elements:
 
 ```fib
 const arr: int[3] = [0, 1, 2];
-arr[0] = 10;       // allowed: writable elements
+arr[0] = 10;       // rejected: immutable inline storage
 arr = [1, 2, 3];   // rejected: immutable binding
 ```
 
 `arr: const int[3]` instead allows whole-array replacement in the same storage
-but forbids individual element writes. Slices use the same independent binding
-and element permissions. Array/slice reads, indexed writes, element addresses and
+but forbids individual element writes. Slice binding const prevents replacing
+the view; element const separately prevents writes into its backing storage.
+Array/slice reads, indexed writes, element addresses and
 slicing lower with explicit bounds guards. Slices retain the original backing
 storage, and array temporaries requiring addresses use function-owned slots.
 

@@ -139,8 +139,9 @@ environment. Package/file segments fold ASCII case and normalize hyphens to
 underscores; declaration names remain case-sensitive. Unicode normalization
 remains unspecified; non-ASCII code points are currently preserved.
 
-`std::prelude` selects implicit aliases through its public declarations. It is
-initially empty. Selected exports preserve canonical identities and obey ordinary
+`std::prelude` selects implicit aliases through its public declarations. It exports
+`str_eq(const uint8[], const uint8[]) bool` for byte-slice equality, including empty
+slices. Selected exports preserve canonical identities and obey ordinary
 alias/lexical rules, including errors for collisions with explicit file bindings.
 The compiler's primitive prelude remains protected independently.
 

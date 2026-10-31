@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Allow implicit `T` to `const T` conversion for fixed arrays, alongside pointers and slices. Nested qualifiers remain unchanged and reverse conversions remain forbidden.
+
+- Remove the `char` primitive; character literals are `uint8` and reject values above 255. String literals implicitly form `const uint8[]` views in typed contexts, including function arguments, without `[..]`.
+
 - Add LSP qualified-name completion for standard-library modules and accessible functions, types and values, including unfinished expressions and partial names.
 
 - Allow `main` to return void or `std::result::Result` with unit/int32 success and accept an argument slice and environment map. Add source `std::process` startup adaptation and generic `std::map::Map(K, V)` maps with supplied equality, lookup, insertion/replacement, growth and cleanup. The environment map specializes byte-string keys and values.
@@ -29,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replace the shell installer with the Rust `fib-install` tool, retaining `--prefix` and `--debug`, discovering executable paths from Cargo build messages, and replacing installed files atomically.
 
 ### Fixed
+
+- Use the source prelude's `str_eq` in the string sample; advance its full-width slice index so equal nonempty inputs terminate.
+- Preserve const binding protection when indexing inline arrays, including nested struct fields, element addresses and slice views. Const scalar, struct and enum bindings retain immutable value storage; pointer and slice indirections keep their type's permissions.
+- Make every top-level sample compile and execute with source std; replace obsolete libc calls, pointer indexing and string declarations, and add a discovery-based CLI execution sweep checking output and exit codes. Rename the keyword-named `defer.fib` to `deferred_blocks.fib`.
 
 - Show readable types and readonly qualifiers in type mismatch diagnostics instead of internal type IDs.
 - Explain readonly removal and element-type conversion failures in slice-cast diagnostics, with guidance to copy into a new buffer.

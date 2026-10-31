@@ -5,7 +5,7 @@
 
 ## Current baseline versus history
 
-The tokenizer/parser retain `string` and string/character literals. String
+The tokenizer/parser retain `string` and string/uint8acter literals. String
 helpers are ordinary identifiers, not builtin calls. Semantic literal typing
 exists, and literal strings reach the
 narrow build API as interpreter-owned bytes. General runtime string allocation,
@@ -18,15 +18,15 @@ verified current runtime behavior. `c"..."` is not implemented C-string syntax.
 
 | Proposed form | Intended meaning | Decisions still required |
 | --- | --- | --- |
-| `"hola"` | Fixed byte/character array, e.g. `char[4]` | Encoding, length unit, mutability and storage lifetime |
-| `c"hola"` | NUL-terminated storage addressed as `*char` | Embedded NUL, encoding, FFI ownership and escapes |
-| `char[]` | Borrowed view | Lifetime, mutation, target-width length/layout |
+| `"hola"` | Fixed byte/uint8acter array, e.g. `uint8[4]` | Encoding, length unit, mutability and storage lifetime |
+| `c"hola"` | NUL-terminated storage addressed as `*uint8` | Embedded NUL, encoding, FFI ownership and escapes |
+| `uint8[]` | Borrowed view | Lifetime, mutation, target-width length/layout |
 | Metatype-based owning buffer | Owning generic buffer | Allocation failure, destruction and explicit C conversion |
 
 The literal representations, view ownership and buffer API in the table remain
 proposals; array/slice types use suffix syntax. Generic library types use
 metatype parameters and type
-computation. Do not promise that `char` has a working i8 runtime representation or that Unicode escapes fit one
+computation. Do not promise that `uint8` has a working i8 runtime representation or that Unicode escapes fit one
 byte without an explicit encoding policy. Do not hard-code `{ptr, i64}` or
 aggregate sizes: target layout and ABI work are prerequisites.
 

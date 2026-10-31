@@ -437,6 +437,6 @@ impl ProjectSymbols {
 pub(crate) const PRELUDE_FILE: FileId = FileId(u32::MAX);
 pub(crate) const PRELUDE_NAMES: &[&str] = &[
     "type", "void", "int", "uint", "int8", "int16", "int32", "int64", "int128", "uint8", "uint16",
-    "uint32", "uint64", "uint128", "float16", "float32", "float64", "float128", "bool", "char",
-    "never", "usize",
+    "uint32", "uint64", "uint128", "float16", "float32", "float64", "float128", "bool", "never",
+    "usize",
 ];

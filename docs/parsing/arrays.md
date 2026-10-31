@@ -2,8 +2,8 @@
 
 Array and slice types use suffix syntax: `T[N]` and `T[]`.
 The [chosen value/mutability rules](../language-specification.md#values-initialization-and-mutability)
-keep fixed arrays inline: binding const forbids whole-array replacement, while
-element const independently forbids element writes. Type/index disambiguation
+keep fixed arrays inline: binding const forbids whole-array replacement and
+element writes; type-level const permits replacement but forbids element writes. Type/index disambiguation
 is implemented. Native fixed-array literals, storage, copies, assignment, calls
 and `.len` work; runtime indexing/slicing remains deferred.
 

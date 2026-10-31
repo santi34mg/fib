@@ -1,51 +1,38 @@
-# Samples: parser regression coverage
+# Samples: compilation and execution coverage
 
-[`example-project/`](../../../example-project/README.md) is the runnable current-
-capabilities project. Its two source files cover scalars/control flow plus
-structs/pointers, enums/switches, generics, fixed arrays and multi-binding locals.
-Driver tests verify both planned files, the entry/output and source IR without
-LLVM; executable acceptance builds it through the CLI and checks exit 0.
+Every top-level [`samples/*.fib`](../../../samples) example builds and executes
+with the current compiler and matching source std on Linux x86-64. See the
+[sample guide](../../../samples/README.md) for commands, topics and exit policies.
 
-[`samples/`](../../../samples) contains `.fib` examples for output, arithmetic,
-arrays/slices, enums, pointers, aggregates, and generic-related syntax. They use
-bare bit-width types, direct indexing/slicing, `.len`, and current postfix pointer
-syntax. Obsolete import declarations are removed; qualified `libc::` calls remain.
-
-`frontend::parser::test::tests::samples_parse_with_current_frontend` automatically
-discovers every top-level `.fib` file, parses it using the real tokenizer and
-`Parser::with_source`, and rejects parse errors or empty ASTs. Run it with:
+`tests/samples.rs` discovers all top-level samples and compiles each through the
+CLI with `--sysroot library`, preserving filenames in temporary directories. It
+asserts exit status and exact stdout/stderr, with a ten-second execution timeout.
+Each new sample must have an explicit expectation. The process-entry case supplies
+`FIB_EXIT=42`; the recursive Fibonacci benchmark defaults to a bounded limit of 20.
 
 ```sh
-cargo test --no-default-features samples_parse_with_current_frontend
+LLVM_SYS_211_PREFIX=/usr/lib/llvm/21 cargo test --offline --test samples
+cargo test --offline --no-default-features samples_parse_with_current_frontend
 ```
 
-The discovery sweep is parser-only coverage. `builtin_scalars.fib` and
-`scalar_loops.fib`, `struct_storage.fib`, `defer.fib`, `enum_runtime.fib` and
-`enum_payloads.fib` additionally have LLVM compile/link/run coverage in
-`tests/executable.rs`, returning 42. Build
-them with `fibc build --single-file PATH`. Other samples'
-output comments remain intended/unverified. Historical positional-file and `-I`
-commands remain unsupported.
+The parser discovery test remains syntax-only coverage and works without LLVM.
+Existing driver and executable tests additionally cover individual samples and
+their IR contracts. `deferred_blocks.fib` replaces the keyword-named `defer.fib`,
+which could parse in isolation but failed CLI file-namespace validation.
 
-`indexed_globals.fib` has separate no-std executable coverage for embedded global
-data, slice mutation and checked indexing, returning 42.
+Samples now use source std output with tagged formatting arguments, slice-based
+sorting/allocation, explicit `comp` type bindings, and byte-slice string helpers.
+`multiple_returns.fib` uses a struct return and multi-binding locals because native
+tuple lowering remains unsupported. `memory.fib` names its std alias `mem` to avoid
+self-namespace shadowing. The `specification_runtime` pointer-access warning is
+intentional; `sizeof` checks the current target layout.
+`const_bindings` demonstrates immutable scalar/struct/enum bindings and independent
+mutable inline copies. `indexed_globals` uses writable global array storage.
 
-See the [sample guide](../../../samples/README.md) for dependency and semantic
-limitations. In particular, a future build plan must supply a `libc` file, the
-historical standard-library bindings have been removed,
-and parsed enum member calls now receive payload-constructor type checks when
-passed through the type resolver; the sample sweep itself only parses them. Preserve
-example operations when migrating syntax; do not remove behavior just to parse.
+[`example-project/`](../../../example-project/README.md) separately exercises a
+build file, entry/output selection, generics, arrays, structs and enums. Its CLI
+execution is covered by `tests/executable.rs`.
 
-For new syntax, retain positive/malformed in-memory parser tests as well as sample
-discovery. When analysis/lowering works, add semantic and executable regression
-coverage with explicit output/failure policies. The scalar and loop samples are covered as executable regressions.
-
-`specification_runtime.fib` has executable acceptance coverage and exits 42. It
-combines ordinary prelude types, generic arrays, bool casts, warned pointer field
-access and exhaustive switches. Its warning is intentional.
-
-`syscalls.fib` is a native std output example using a typed write result. Build
-with an installed sysroot or `--sysroot library`; Linux x86-64 is the current
-implementation. `tests/programs/standard_library.fib` exercises raw syscall
-register arities, typed errors, buffer I/O, mmap mutation and explicit cleanup.
+Preserve example operations when migrating syntax. Add positive and malformed
+parser tests for grammar changes, and update execution expectations when intended
+sample behavior changes. Do not treat parser success as runtime conformance.

@@ -1853,7 +1853,6 @@ mod tests {
             ("float64", BuiltinType::Float64),
             ("float128", BuiltinType::Float128),
             ("void", BuiltinType::Void),
-            ("char", BuiltinType::Char),
             ("bool", BuiltinType::Boolean),
             ("type", BuiltinType::MetaType),
             ("never", BuiltinType::Never),
@@ -2055,7 +2054,7 @@ mod tests {
                 1,
             ),
             (
-                "fn declared(x: *char) bool;",
+                "fn declared(x: *uint8) bool;",
                 false,
                 false,
                 BuiltinType::Boolean,

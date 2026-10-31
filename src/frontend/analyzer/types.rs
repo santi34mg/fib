@@ -80,12 +80,12 @@ pub fn check_assignable(
     ) {
         return Ok(());
     }
-    // Only the outer pointer/slice layer may gain readonly permission.
+    // Only the outer container layer may gain readonly permission.
     let comparison_expected = if let T::Readonly(inner) = types.get(types.canonical(expected)?)?
         && !matches!(types.get(types.canonical(found)?)?, T::Readonly(_))
         && matches!(
             types.get(types.canonical(*inner)?)?,
-            T::Pointer(_) | T::Slice(_)
+            T::Pointer(_) | T::Slice(_) | T::Array { .. }
         ) {
         *inner
     } else {

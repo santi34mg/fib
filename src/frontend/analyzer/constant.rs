@@ -31,6 +31,15 @@ pub(crate) fn evaluate_numeric(
         return Ok(None);
     };
     Ok(match &e.kind {
+        E::Literal(Literal::Character(value)) => {
+            if u32::from(*value) > 255 {
+                return Err(type_error("character literal is out of range for uint8"));
+            }
+            Some(NumericValue {
+                ty,
+                bits: u128::from(u32::from(*value)),
+            })
+        }
         E::Literal(literal @ (Literal::Integer(_) | Literal::Float(_))) => {
             Some(NumericValue::literal(literal, ty, false)?)
         }

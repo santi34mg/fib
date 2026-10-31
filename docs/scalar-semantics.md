@@ -84,7 +84,7 @@ This is not an external C interoperability contract or the full production Fib
 ABI. Target legalization may use compiler-runtime helpers supplied by host cc.
 
 The build-file interpreter retains its narrow literal byte-string API subset.
-Char, runtime globals and runtime indexing/slices remain unsupported by native
-lowering. Target-width usize, fixed-array values, concrete generic instances,
+Character literals are `uint8`; values above 255 are rejected. Runtime globals,
+checked indexing/slices, target-width usize, fixed-array values, concrete generic instances,
 structs, enums, typed pointers and stack storage are supported; see [struct/storage semantics](struct-storage-semantics.md) and
 [enum semantics](enum-semantics.md).

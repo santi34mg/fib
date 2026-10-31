@@ -17,7 +17,6 @@ Types do **not** use `@`. Numeric suffixes are widths in **bits**, not bytes.
 | `int`, `uint` | Aliases for `int32`, `uint32` |
 | `float16`, `float32`, `float64`, `float128` | Floating-point types |
 | `bool` | Boolean type |
-| `char` | Character type |
 | `string` | String type |
 | `void` | No-value type; default function return type |
 | `never` | Never type |
