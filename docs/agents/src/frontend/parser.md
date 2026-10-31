@@ -7,7 +7,7 @@ visibility, installed std sources and Linux x86-64 syscalls execute. Recursive s
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
 globals execute; value-returning `comp fn` execution remains scaffolding.
 
-[`Parser`](../../../../src/frontend/parser.rs) consumes a token iterator and
+[`Parser`](../../../../crates/fib-frontend/src/frontend/parser.rs) consumes a token iterator and
 returns `anyhow::Result<Ast>` from `parse()`. For in-memory tests:
 
 ```rust
@@ -79,5 +79,5 @@ resolves condition/body brace ambiguity.
 
 No recovery pass exists. List/EOF handling and optional separators vary by parser;
 do not infer a strict grammar from successful happy-path tests. Tests are in
-`src/frontend/parser/test.rs`; add accepted and rejected cases with every syntax
+`crates/fib-frontend/src/frontend/parser/test.rs`; add accepted and rejected cases with every syntax
 change. No semantic claims follow from the returned AST.

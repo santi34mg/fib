@@ -1,13 +1,12 @@
-pub mod backend;
-pub mod builtins;
+//! Compiler facade and executable pipeline orchestration.
+pub use fib_backend as backend;
+pub use fib_frontend::{builtins, diagnostics, frontend, standard_library};
 pub mod cli;
-pub mod diagnostics;
 pub mod driver;
-pub mod frontend;
-pub mod ir;
+pub mod ir {
+    pub use fib_ir::*;
+    pub use fib_lowering::lowering;
+}
 pub mod ir_interpreter;
-pub(crate) mod numeric;
 pub mod plan;
-pub mod standard_library;
-
 pub use diagnostics::CompilerError;

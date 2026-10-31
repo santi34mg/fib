@@ -4,9 +4,8 @@ use anyhow::Context;
 
 use crate::driver::compiler_output::CompilationOutput;
 use crate::frontend::analyzer::AnalyzedProject;
-use crate::frontend::ast::Ast;
 use crate::ir::Ir;
-use crate::plan::{BuildPlan, FileId};
+use crate::plan::BuildPlan;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineGoal {
@@ -27,12 +26,7 @@ impl Display for PipelineGoal {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct CompilationUnit {
-    /// ID of the source file that generated this unit
-    pub source_file_id: FileId,
-    pub ast: Ast,
-}
+pub use fib_frontend::CompilationUnit;
 
 /// Compile only the files explicitly enumerated and named by the plan.
 pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<CompilationOutput> {

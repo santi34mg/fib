@@ -8,12 +8,24 @@ discovery and general runtime indexing/slices remain deferred.
 
 ## Cargo and toolchain
 
-[`Cargo.toml`](../../Cargo.toml) defines one Rust 2024 package, `fibc` 0.1.1,
-with library and binary. Default feature `llvm` enables optional Inkwell 0.8
+[`Cargo.toml`](../../Cargo.toml) defines a Rust 2024 workspace with `fibc` 0.1.1
+as its facade, CLI and driver package. Internal packages separate builtin
+identities, frontend analysis, owned SSA, lowering and LLVM emission; see the
+[crate map](../../crates/README.md). Default members include every package, so
+root check/test/Clippy commands cover their unit tests. Default feature `llvm` enables optional Inkwell 0.8
 (`llvm21-1`); default dependency builds therefore require LLVM 21. The backend
 emits scalar/struct/enum/pointer LLVM objects. No-default-features builds avoid LLVM.
-Dependencies also include anyhow, serde, toml, clap, regex, walkdir, petgraph,
-either, indextree, and tempfile; do not remove them based on old usage inventories.
+Dependencies also include anyhow, num-bigint, num-traits, rustc_apfloat, serde,
+serde_json, toml, clap, walkdir, and tempfile. Unused direct dependencies on regex,
+petgraph, either and indextree were removed after checking current Rust sources.
+
+Development and test builds use line-table debug info to reduce code generation
+and linking costs while retaining source locations in backtraces. For debugger
+variable inspection, use `CARGO_PROFILE_DEV_DEBUG=2` (or
+`CARGO_PROFILE_TEST_DEBUG=2` for tests). Release and benchmark profiles are unchanged.
+The compiler and installer binaries have no unit tests and skip empty test
+harnesses; Cargo still builds them for integration tests. The LSP unit tests remain enabled.
+See [Rust build measurements](../rust-build-performance.md) for scope and reproduction.
 
 [`rust-toolchain.toml`](../../rust-toolchain.toml) pins 1.98.0 with rustfmt/clippy;
 its comments define the pin as MSRV policy. Bump deliberately with CI, not by drift.
@@ -40,9 +52,14 @@ file. Default discovery, `run` and `test` remain unfinished.
 Useful focused commands: `cargo test --no-default-features frontend::parser`,
 `cargo test --no-default-features frontend::tokenizer`, and
 `cargo test --no-default-features name_resolution::phase_01_files`. All analyzer
-tests and helpers live in `src/frontend/analyzer/test.rs`, with six inline
+tests and helpers live in `crates/fib-frontend/src/frontend/analyzer/test.rs`, with six inline
 `name_resolution` phases. These filters select Rust unit tests, not Fib program
 compilation.
+
+For faster isolated work, use `cargo test -p fib-frontend`, `cargo test -p fib-ir`,
+or `cargo test -p fib-backend --features llvm`. Frontend/IR package tests require
+no LLVM installation. `cargo test -p fibc` only selects the facade package;
+use root `cargo test` or `cargo test --workspace` for the complete suite.
 
 ## Assets
 

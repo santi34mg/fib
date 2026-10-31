@@ -1,6 +1,6 @@
 # Diagnostics and source locations
 
-[`diagnostics.rs`](../../../src/diagnostics.rs) implements `ErrorKind`,
+[`diagnostics.rs`](../../../crates/fib-frontend/src/diagnostics.rs) implements `ErrorKind`,
 `Span`, `CompilerError`, rendering, and `source_line_at`. `Span` is a 1-based
 start line/column, not a byte range. `CompilerError` holds optional filename,
 source line, span, and hint. Parser-error conversion preserves source context;

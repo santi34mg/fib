@@ -29,6 +29,10 @@ See [standard-library setup and contracts](docs/standard-library.md), including
 
 ## Contributing
 
+The Rust compiler is a [Cargo workspace](crates/README.md). Root `cargo test`
+selects every compiler crate; `cargo test -p fib-frontend` and
+`cargo test -p fib-ir` run individual stages without LLVM.
+
 Contributions, suggestions, and bug reports are welcome. See
 [CONTRIBUTING](CONTRIBUTING) for development and PR guidance.
 

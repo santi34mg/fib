@@ -1,4 +1,5 @@
 use super::*;
+use crate::plan::FileId;
 
 fn source(text: &str) -> (tempfile::TempDir, BuildPlan) {
     let directory = tempfile::tempdir().unwrap();
@@ -223,7 +224,7 @@ fn unsupported_programs_and_invalid_analysis_fail_before_artifacts() {
     }
     let (_directory, plan) = source("fn main() int32 { return 42; }");
     let mut project = run_frontend(&plan).unwrap();
-    project.types.complete = false;
+    project.types = crate::frontend::semantic_type::SemanticTypes::default();
     assert!(crate::ir::lowering::lower(&project).is_err());
 }
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Share immutable declaration recipes, function source snapshots and diagnostic paths across collecting type-analysis checkpoints, avoiding repeated whole-program AST copies while retaining mutable inference rollback.
+
+- Allocate IR verifier predecessor/dominator tables once per verification instead of once per function, retaining ownership, dominance and enum payload checks.
+
+- Split the Rust compiler into workspace crates for builtin identities, frontend analysis, SSA IR, lowering and LLVM emission. Keep the `fibc` facade and root workspace validation commands; stage-specific tests can now reuse unchanged crates without compiling unrelated stages.
+
+- Speed up Rust development/test builds with line-table debug info, fewer unused dependencies and no empty compiler/installer test harnesses. Run the LLVM test suite once with all features in CI and the local hook, removing the equivalent default-feature run.
+
 - Complete `std::memory::create_page_alloc()` with aligned mmap allocation, checked size arithmetic, per-allocation mapping metadata and munmap release. Expose `Allocator`/`AllocError`, replace `NotImplemented` with alignment/release errors, and recognize all raw Linux errno returns in `std::os::mmap`.
 
 - Move tagged arguments, brace validation and integer rendering into `std::formatting`. Add allocation-free `format(destination, template, values)` for byte strings, validating capacity before writes, and shared callback-based `format_to`. Keep `std::io` formatting entry points and type aliases; exhaustive `PrintError` switches now require the added `BufferTooSmall` variant.

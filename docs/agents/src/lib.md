@@ -1,8 +1,10 @@
 # Library facade
 
-[`src/lib.rs`](../../../src/lib.rs) publicly exposes `backend`, `build_plan`,
-`builder_object`, `cli`, `diagnostics`, `driver`, `frontend`, `ir`, and
-`ir_interpreter`, and re-exports only `diagnostics::CompilerError`.
+[`src/lib.rs`](../../../src/lib.rs) keeps the `fibc` facade: `backend`, `builtins`,
+`cli`, `diagnostics`, `driver`, `frontend`, `ir`, `plan`, `standard_library` and
+`ir_interpreter`, plus `diagnostics::CompilerError`. Compiler stages are re-exported
+from [workspace crates](../../../crates/README.md). `ir::lowering` re-exports
+`fib-lowering`; the `fib-ir` package itself has no frontend or LLVM dependency.
 
 There are no `compile_project`, `check_project`, `CompilationOptions`,
 `CompileOutput`, `DriverError`, or `EmitKind` APIs. Use direct tokenizer/parser

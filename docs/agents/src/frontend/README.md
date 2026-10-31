@@ -7,7 +7,7 @@ visibility, installed std sources and Linux x86-64 syscalls execute. Recursive s
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
 globals execute; value-returning `comp fn` execution remains scaffolding.
 
-Active modules are [`tokenizer.rs`](../../../../src/frontend/tokenizer.rs),
+Active modules are [`tokenizer.rs`](../../../../crates/fib-frontend/src/frontend/tokenizer.rs),
 `tokens/`, `parser.rs` plus `parser/`, `ast.rs` plus `ast/`, and
 `analyzer.rs` plus `analyzer/`. There is no `lexer`, `analyze`, or `typed_ast`
 source module in this checkout.
@@ -22,7 +22,7 @@ Semantic types, expressions and owner-based members are resolved and validated o
 the original AST; see [type resolution](../../../type-resolution.md). Explicit metatype
 specialization, bounded type-return evaluation, definite initialization and
 structured flow checks run through `Analyzer::analyze`. All analyzer tests/helpers are in
-[`analyzer/test.rs`](../../../../src/frontend/analyzer/test.rs), including six
+[`analyzer/test.rs`](../../../../crates/fib-frontend/src/frontend/analyzer/test.rs), including six
 passing inline phases under `name_resolution`; see [validation](../../tests/README.md).
 
 - [Tokenizer](tokenizer.md)

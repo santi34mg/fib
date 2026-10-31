@@ -8,7 +8,7 @@ discovery remains deferred. Checked runtime indexing/slicing and constant-initia
 globals execute; value-returning `comp fn` execution remains scaffolding.
 
 Current implementation is
-[`tokenizer.rs`](../../../../src/frontend/tokenizer.rs) and its per-concern
+[`tokenizer.rs`](../../../../crates/fib-frontend/src/frontend/tokenizer.rs) and its per-concern
 `tokenizer/` modules; token definitions live in `tokens/`.
 
 `Tokenizer::new(&str)` implements `Iterator<Item = Token>`. It traverses UTF-8
@@ -31,7 +31,7 @@ inferred binding syntax and requires `;` on type-valued bindings too. Modifier
 flags are preserved for analysis. The name pass enforces visibility and static
 alias rules; arbitrary compile-time evaluation remains unfinished.
 
-Tests live in `src/frontend/tokenizer/test.rs`. Add exact kinds, literal values,
+Tests live in `crates/fib-frontend/src/frontend/tokenizer/test.rs`. Add exact kinds, literal values,
 positions, and malformed-input cases. Verify escape/backslash, NUL, Unicode and
 numeric malformed-input behavior before making broader lexical guarantees.
 Integer tokens retain arbitrary-precision magnitudes; floating tokens retain

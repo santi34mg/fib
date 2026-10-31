@@ -1,5 +1,15 @@
 # Tests and validation
 
+## Workspace crate split (2026-10-30)
+
+All 870 LLVM-enabled tests and all 798 no-default-features tests pass across
+workspace packages and root integration tests. Strict all-target Clippy passes
+in both configurations, as do formatting and whitespace checks. The frontend's
+isolated 707-test suite also passes with `cargo test -p fib-frontend`.
+Default workspace members include every compiler package; use `--workspace` for
+explicit full validation. See [crate ownership](../../../crates/README.md) and
+[warm rebuild measurements](../../rust-build-performance.md).
+
 ## Function-pointer fixture repair (2026-10-29)
 
 All eight previously failing function-pointer executable tests now pass after
@@ -110,7 +120,7 @@ demonstrations, including cross-file calls and aggregate/generic behavior.
 - `frontend/parser/test.rs`: AST shapes, precedence, current syntax and diagnostics.
   `samples_parse_with_current_frontend` discovers and parses every top-level
   `samples/*.fib` file; this is not semantic or runtime sample coverage.
-- [`frontend/analyzer/test.rs`](../../../src/frontend/analyzer/test.rs): lexical
+- [`frontend/analyzer/test.rs`](../../../crates/fib-frontend/src/frontend/analyzer/test.rs): lexical
   scope/identity utilities, six inline `name_resolution` specification phases,
   and `type_resolution` acceptance/annotation-corruption cases. All
   analyzer tests and helpers live in this one file. The six phases pass for the
@@ -129,7 +139,7 @@ demonstrations, including cross-file calls and aggregate/generic behavior.
 ## Phased name-resolution specification
 
 The six phases are inline modules under
-`frontend::analyzer::test::name_resolution` in `src/frontend/analyzer/test.rs`.
+`frontend::analyzer::test::name_resolution` in `crates/fib-frontend/src/frontend/analyzer/test.rs`.
 Their fixtures and inspection helpers are in the same file; there is no separate
 `analyzer/name_resolution/` directory.
 

@@ -7,14 +7,14 @@ visibility, installed std sources and Linux x86-64 syscalls execute. Recursive s
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
 globals execute; value-returning `comp fn` execution remains scaffolding.
 
-[`ast.rs`](../../../../src/frontend/ast.rs) defines `Ast { statements }`.
+[`ast.rs`](../../../../crates/fib-frontend/src/frontend/ast.rs) defines `Ast { statements }`.
 `ast/` splits expressions, statements, functions/signatures/parameters, types,
 patterns, fields, enum variants, qualified names and switch syntax. Actual
 spellings include `structl_field.rs`, `ExprAcess`, and `BinaryExpresison`; do not
 invent corrected source paths in tooling.
 
 Analysis enriches this original tree in place; it does not manufacture a second
-typed AST. [`analysis_annotation.rs`](../../../../src/frontend/analysis_annotation.rs)
+typed AST. [`analysis_annotation.rs`](../../../../crates/fib-frontend/src/frontend/analysis_annotation.rs)
 defines pending name, binding, type, expression and member slots. Parsing leaves
 all applicable resolution slots `None`; pending never means successfully unknown.
 Names/qualified paths retain spelling, and expressions/statements/type expressions

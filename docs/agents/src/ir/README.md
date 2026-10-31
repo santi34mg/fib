@@ -7,12 +7,16 @@ visibility, installed std sources and Linux x86-64 syscalls execute. Recursive s
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
 globals execute.
 
-See the [IR implementation contract](../../../../src/ir/README.md).
+See the [IR implementation contract](../../../../crates/fib-ir/src/ir/README.md).
 
 `Ir` owns stable indexed arenas; raw public records and display do not certify
 validity. `FunctionBuilder` transactionally allocates blocks, values and slots,
 requires termination and verifies before publishing. Failed/dropped builders leave
 input unchanged.
+
+`verify_ir` allocates program-indexed predecessor/dominator workspace once per
+verification, releasing each function's CFG sets after its checks. It retains
+whole-program ownership checks and function-level dominance/active-variant proofs.
 
 `verify_ir` checks Bool/fixed-width integer/IEEE float SSA plus interpreter-owned
 byte constants: Constant/direct Call/arithmetic/comparison/unary/numeric Cast

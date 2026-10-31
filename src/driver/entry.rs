@@ -21,15 +21,12 @@ fn std_declaration(
     module: &str,
     name: &str,
 ) -> Option<crate::frontend::identifier::DeclId> {
-    let package = plan.standard_library.loaded.as_ref()?.package;
-    let file = project
-        .symbols
-        .package_files
-        .get(&(package, module.into()))?;
+    let package = plan.standard_library.package()?;
+    let file = project.symbols.package_file(package, module)?;
     project
         .symbols
         .namespaces
-        .get(file)?
+        .get(&file)?
         .names
         .get(name)
         .copied()

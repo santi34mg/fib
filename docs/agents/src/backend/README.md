@@ -7,7 +7,7 @@ visibility, installed std sources and Linux x86-64 syscalls execute. Recursive s
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
 globals execute.
 
-See the [backend implementation contract](../../../../src/backend/README.md).
+See the [backend implementation contract](../../../../crates/fib-backend/src/backend/README.md).
 
 Private std typed pointer/word conversions now emit verified `ptrtoint`/`inttoptr`
 operations for the Linux x86-64 source allocator. Allocation itself remains Fib

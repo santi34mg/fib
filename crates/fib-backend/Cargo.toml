@@ -1,0 +1,18 @@
+[package]
+name = "fib-backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+llvm = ["dep:inkwell", "dep:num-bigint", "dep:rustc_apfloat"]
+
+[dependencies]
+fib-ir.workspace = true
+inkwell = { workspace = true, optional = true }
+num-bigint = { workspace = true, optional = true }
+rustc_apfloat = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true

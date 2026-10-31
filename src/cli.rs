@@ -49,10 +49,9 @@ pub fn exec_command(command: Command, _env_vars: env::VarsOs) -> anyhow::Result<
             let standard_library = if no_std {
                 crate::standard_library::StandardLibrary::disabled()
             } else {
-                crate::standard_library::StandardLibrary {
-                    sysroot,
-                    ..Default::default()
-                }
+                let mut library = crate::standard_library::StandardLibrary::default();
+                library.sysroot = sysroot;
+                library
             };
             let mut plan = match (single_file, build_file) {
                 (Some(path), None) => crate::plan::BuildPlan::single_file(&path)?,

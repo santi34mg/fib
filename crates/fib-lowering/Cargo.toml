@@ -1,0 +1,14 @@
+[package]
+name = "fib-lowering"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+fib-frontend.workspace = true
+fib-ir.workspace = true
+anyhow.workspace = true

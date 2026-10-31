@@ -8,7 +8,12 @@ discovery remains deferred. Checked runtime indexing/slicing and constant-initia
 globals execute; value-returning `comp fn` execution remains scaffolding.
 
 Current source is
-[`analyzer.rs`](../../../../src/frontend/analyzer.rs) and `analyzer/`.
+[`analyzer.rs`](../../../../crates/fib-frontend/src/frontend/analyzer.rs) and `analyzer/`.
+
+Collecting type analysis shares immutable declaration recipes, function AST
+snapshots and source paths through `Arc` maps. Statement recovery checkpoints
+still copy mutable inference state and semantic types, restoring both on failure;
+sharing source snapshots does not reuse mutable annotations between analyses.
 
 Rejected slice casts distinguish readonly removal from incompatible element
 types and explain that converting elements requires copying into a new buffer.
@@ -102,7 +107,7 @@ and owning file paths, without fabricating source lines.
 ## Tests and remaining boundary
 
 All analyzer tests/helpers remain in
-[`analyzer/test.rs`](../../../../src/frontend/analyzer/test.rs), with six inline
+[`analyzer/test.rs`](../../../../crates/fib-frontend/src/frontend/analyzer/test.rs), with six inline
 name-resolution phases. They pass for registration, locals, references, aliases,
 type names, and traversal; [validation](../../tests/README.md) records commands.
 Name completion does not imply semantic type validity, legal initialization,
