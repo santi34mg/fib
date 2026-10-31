@@ -24,3 +24,7 @@ target
 out/
 /dist/
 *.ll
+
+# Instrumented Rust coverage profiles
+*.profraw
+*.profdata

@@ -201,6 +201,8 @@ Slices borrow original storage without extending its lifetime. Dynamic array rea
 and slicing require initialized backing arrays; bounds guards precede offset casts.
 ## Map
 
+- [Frontend genetic fuzzer](../../crates/fib-fuzz/README.md): character/token
+  populations, isolated workers and stable source coverage; excludes native code execution.
 - [Repository and commands](repository.md)
 - [Source ownership](src/README.md)
 - [Tokenizer, parser, AST, and analysis](src/frontend/README.md)
