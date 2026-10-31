@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, HashMap};
 
 mod globals;
 mod indexing;
+mod linkage;
 mod runtime_types;
 mod storage;
 use runtime_types::register_runtime_types;
@@ -309,10 +310,7 @@ pub fn lower_with_entry(project: &AnalyzedProject, entry_name: &str) -> anyhow::
                 let ty = source.value_type(project.types.declarations[&id], node.span)?;
                 globals.insert(id, GlobalId(ir.globals.len()));
                 ir.globals.push(Global {
-                    name: format!(
-                        "fib.global.{}.{}.{}",
-                        id.file_id.0, id.index, binding.identifier
-                    ),
+                    name: linkage::symbol(project, "global", id)?,
                     ty,
                     // Binding const does not freeze array/slice elements. Keep
                     // storage writable; source analysis enforces permissions.
@@ -418,16 +416,10 @@ pub fn lower_with_entry(project: &AnalyzedProject, entry_name: &str) -> anyhow::
             ir.functions.push(Function {
                 identifier: if entry && entry_name != "build" {
                     "main".into()
-                } else if entry
-                    || function.is_extern
-                    || (project.units.len() == 1 && entry_name == "main")
-                {
+                } else if entry || function.is_extern {
                     signature.identifier.clone()
                 } else {
-                    format!(
-                        "fib.{}.{}.{}",
-                        declaration.file_id.0, declaration.index, signature.identifier
-                    )
+                    linkage::symbol(project, "function", declaration)?
                 },
                 signature: lowered_signature,
                 linkage: if entry || function.is_extern {
@@ -483,18 +475,7 @@ pub fn lower_with_entry(project: &AnalyzedProject, entry_name: &str) -> anyhow::
         let id = FunctionId(ir.functions.len());
         functions.insert(FunctionKey::Instance(instance.key.clone()), id);
         ir.functions.push(Function {
-            identifier: format!(
-                "fib.generic.{}.{}.{}",
-                instance.key.template.file_id.0,
-                instance.key.template.index,
-                instance
-                    .key
-                    .arguments
-                    .iter()
-                    .map(|t| t.0.to_string())
-                    .collect::<Vec<_>>()
-                    .join(".")
-            ),
+            identifier: linkage::instance(project, &instance.key)?,
             signature: Signature {
                 calling_convention: CallingConvention::Fib,
                 ..source.signature(instance.key.template, Span::new(1, 1))?

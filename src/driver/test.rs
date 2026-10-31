@@ -196,7 +196,7 @@ fn global_initializers_are_embedded_data_without_startup_code() {
         &crate::backend::lowering::llvm_lower::host_target().unwrap(),
     )
     .unwrap();
-    assert!(llvm.ir_text().contains("fib.global."));
+    assert!(llvm.ir_text().contains("fib.v1.global."));
     assert!(llvm.ir_text().contains("getelementptr"));
     assert!(!llvm.ir_text().contains("llvm.global_ctors"));
     assert!(
@@ -513,8 +513,7 @@ fn checked_and_unchecked_places_have_distinct_null_guard_ir() {
             .functions
             .iter()
             .find(|f| {
-                f.identifier == "read"
-                    || (f.identifier.starts_with("fib.0.") && f.identifier.ends_with(".read"))
+                f.identifier.starts_with("fib.v1.function.") && f.identifier.ends_with("4_read")
             })
             .unwrap();
         let crate::ir::FunctionBody::Definition { blocks, .. } = &read.body else {

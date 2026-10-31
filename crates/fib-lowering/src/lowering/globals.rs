@@ -129,11 +129,15 @@ fn lower_address(
             (source.globals[&id], source.value_type(ty, Span::new(1, 1))?)
         }
         DataTarget::Anonymous { file, span, value } => {
+            let identity = linkage::type_key(source.project, value.ty, &mut Vec::new())?;
             let initializer = lower_data(source, ir, *value, functions)?;
             let ty = ir.constants[initializer.0].ty;
             let name = format!(
-                "fib.literal.{}.{}.{}.{}",
-                file.0, span.line, span.column, ty.0
+                "fib.v1.literal.{}.{}.{}.{}",
+                linkage::module(source.project, file)?,
+                span.line,
+                span.column,
+                identity
             );
             if let Some(index) = ir.globals.iter().position(|g| g.name == name) {
                 let global = &ir.globals[index];
