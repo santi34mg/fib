@@ -47,9 +47,16 @@ pub struct AnalyzedProject {
     pub source_paths: HashMap<FileId, std::path::PathBuf>,
 }
 
+/// Scope snapshots at name sites, retained only by collecting analysis.
+pub(crate) type LexicalCompletions = HashMap<
+    (FileId, Span),
+    std::collections::BTreeMap<String, crate::frontend::identifier::ResolvedName>,
+>;
+
 /// Partial semantic information for tooling; not a lowering input.
 #[derive(Debug)]
 pub struct AnalysisReport {
+    pub(crate) lexical_completions: LexicalCompletions,
     /// Files whose syntax or source was unavailable; their namespaces are blocked.
     pub unavailable_files: HashSet<FileId>,
     pub errors: Vec<CompilerError>,
@@ -380,6 +387,7 @@ impl Analyzer {
         self.units
             .retain(|u| !unavailable.contains(&u.source_file_id));
         AnalysisReport {
+            lexical_completions: recovery.lexical(),
             unavailable_files: unavailable,
             errors,
             warnings,
