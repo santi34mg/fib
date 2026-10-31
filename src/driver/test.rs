@@ -16,6 +16,23 @@ fn source(text: &str) -> (tempfile::TempDir, BuildPlan) {
 }
 
 #[test]
+fn implicit_array_slices_lower_with_backing_storage() {
+    let (_directory, plan) = source(
+        "values:int32[2] = [4,5];\n         global_view:int32[] = values;\n         comp S:type = struct { values:int32[2] };\n         fn change(s:int32[]) { s[0] = 9; }\n         fn make() int32[2] { return [6,7]; }\n         fn main() int32 {\n             a:int32[2] = [1,2]; change(a);\n             s:int32[] = a; s[1] = 8;\n             obj := S { values:[3,4] }; change(obj.values);\n             temp:int32[] = make(); literal:uint8[] = [1,2];\n             empty:uint8[] = []; ro:const int32[] = a;\n             return a[0] + a[1] + temp[0] + ro[0];\n         }",
+    );
+    let CompilationOutput::Ir(ir) = run_pipeline(&plan, PipelineGoal::Ir).unwrap() else {
+        panic!("expected IR");
+    };
+    crate::ir::verify_ir(&ir).unwrap();
+    #[cfg(feature = "llvm")]
+    {
+        run_pipeline(&plan, PipelineGoal::Binary).unwrap();
+        let status = std::process::Command::new(&plan.output).status().unwrap();
+        assert_eq!(status.code(), Some(32));
+    }
+}
+
+#[test]
 fn void_main_without_std_uses_a_separate_c_wrapper() {
     let (_directory, plan) = source("fn main() {}");
     let CompilationOutput::Ir(ir) = run_pipeline(&plan, PipelineGoal::Ir).unwrap() else {

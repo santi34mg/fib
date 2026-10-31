@@ -154,7 +154,20 @@ or ownership safety.
 Pointers support dereference, same-type equality and explicit `*T` ↔ `*void` casts.
 Pointer indexing/slicing/arithmetic/ordering, other pointer casts and pointer/integer
 casts are rejected. `null` requires pointer context. Numeric casts are explicit;
-aggregate, enum/integer and array/slice conversions are rejected.
+aggregate, enum/integer and array/slice explicit casts are rejected.
+
+In an expected slice-type context, fixed arrays implicitly convert to full slices:
+`view: T[] = array;` and calls taking `T[]` do not require `array[..]`.
+Declarations, assignments, arguments, returns and aggregate fields supply this
+context. Array literals receive the expected element type, including empty
+literals; existing typed elements must match without numeric widening. Readonly
+array storage can only form readonly slices; writable storage can form either.
+The expression resolver represents this conversion as an ordinary full slice
+before compatibility checking, annotation validation, initialization checking and
+lowering. `check_assignable` itself does not treat array and slice types as equal.
+Views borrow backing storage without copying elements or extending its lifetime;
+returning a view of a local or temporary remains unsafe. Lifetime checking is
+not implemented.
 
 Ordinary, forward, recursive and indirect calls check callee type, argument count,
 argument types and result type. Returns check the containing signature and result
@@ -173,9 +186,9 @@ lists are removed. Omitted payloads, void, empty structs and recursively unit-on
 structs normalize to value variants after specialization. Calls on these variants
 are rejected, and optional switch bindings have type void. Other bindings receive
 the declared payload type directly.
-Arrays are homogeneous and context checks lengths; empty arrays require context.
+Arrays are homogeneous and fixed-array context checks lengths; empty arrays require context.
 Indices and slice bounds must be integers. Known array bounds, reversed ranges and
-invalid inclusive bounds are diagnosed; dynamic bounds checks are not emitted.
+invalid inclusive bounds are diagnosed; lowering emits dynamic bounds checks.
 Pattern payload bindings are typed and scoped to their arms; conditions are bool.
 Expression inference currently rejects nesting beyond 256 recursive expression
 calls with a diagnostic, rather than promising unbounded analysis resources.

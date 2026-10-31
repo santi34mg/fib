@@ -10,7 +10,7 @@ Character literals have type `uint8` and must fit in 0–255. There is no `char`
 primitive. String literals contain UTF-8 bytes and default to readonly fixed
 arrays; a context expecting `const uint8[]` implicitly takes a readonly slice
 of the literal's program-lifetime storage. This does not permit writable slices
-or implicit conversion of array variables.
+of string literal storage.
 
 - Every file is a declaration namespace. Directories organize paths and
   visibility regions; they do not contain source declarations of their own.
@@ -168,7 +168,15 @@ Writable pointers, slices and fixed arrays implicitly convert to the readonly fo
 of the same underlying type. Fixed arrays copy their inline values; pointers and
 slices retain shared storage. Reverse conversion and readonly-erasing casts are forbidden.
 Nested pointee/element types must match exactly; no unsafe deep qualifier change
-is implied. This rule does not introduce an array-to-slice conversion.
+is implied.
+
+In an expected slice-type context, fixed arrays `T[N]` implicitly convert to
+`T[]`, equivalent to taking a full slice `array[..]`. This applies to declarations,
+assignments, arguments, returns and aggregate fields. Writable arrays may also
+form readonly slices; readonly backing storage cannot form writable slices.
+Element types must otherwise match, with no implicit numeric conversion. Array
+literals receive the expected slice's element type. Conversion borrows backing
+storage without copying elements or extending its lifetime.
 
 Indexing arrays and slices requires an integer index in `[0, length)`. Slices
 `a[start..end]` use an exclusive end and require

@@ -323,6 +323,31 @@ impl TypeContext<'_> {
             info = self.value(never);
         }
         if let Some(expected) = expected {
+            if info.type_value.is_none()
+                && matches!(self.types.container(info.ty)?.0, T::Array { .. })
+                && matches!(self.types.container(expected)?.0, T::Slice(_))
+            {
+                // Use the ordinary full-slice representation so all later passes
+                // retain the backing place (or materialize an array temporary).
+                self.prepare_index(info.ty)?;
+                let (element, _, category) = indexed(info, self.types)?;
+                let slice = self.types.intern(T::Slice(element));
+                let slice = if category == ValueCategory::ReadonlyPlace {
+                    self.types.intern(T::Readonly(slice))
+                } else {
+                    slice
+                };
+                check_assignable(expected, slice, self.types)
+                    .map_err(|e| self.diagnostic(e, Some(expr.span), self.file))?;
+                let object = Box::new(expr.clone());
+                expr.kind = E::SliceLiteral {
+                    object,
+                    start: None,
+                    end: None,
+                    inclusive: false,
+                };
+                info = self.value(slice);
+            }
             check_assignable(expected, info.ty, self.types)
                 .map_err(|e| self.diagnostic(e, Some(expr.span), self.file))?;
         }
@@ -706,6 +731,7 @@ impl TypeContext<'_> {
             E::ArrayLiteral { elements } => {
                 let contextual = expected.and_then(|t| match self.types.container(t) {
                     Ok((T::Array { element, length }, _)) => Some((*element, *length)),
+                    Ok((T::Slice(element), _)) => Some((*element, elements.len() as u64)),
                     _ => None,
                 });
                 if let Some((_, length)) = contextual

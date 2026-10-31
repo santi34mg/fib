@@ -5307,6 +5307,23 @@ mod generic_flow_regressions {
     }
 
     #[test]
+    fn implicit_fixed_array_slice_contexts() {
+        analyze(
+            "comp S:type = struct { values:int32[] };\n             fn consume(x:int32[]) {}\n             fn view(a:int32[2]) int32[] { return a; }\n             fn f() { a:int32[2] = [1,2]; s:int32[] = a; consume(a);\n                 s = a; s[0] = 3; r:const int32[] = a;\n                 b := S { values:a };\n                 small:uint8[] = [1,2]; empty:uint8[] = [];\n                 const c:int32[2] = [1,2]; ro:const int32[] = c; }",
+        );
+        for source in [
+            "fn f() { const a:int32[2] = [1,2]; s:int32[] = a; }",
+            "fn f() { a:const int32[2] = [1,2]; s:int32[] = a; }",
+            "fn f() { a:int32[2] = [1,2]; s:uint32[] = a; }",
+            "fn f() { a:int32[2] = [1,2]; s:int32[3] = a; }",
+            "fn f() { a:int32[2]; s:int32[] = a; }",
+            "fn f() { s:uint8[] = [256]; }",
+        ] {
+            assert!(analyzer(source).analyze().is_err(), "{source}");
+        }
+    }
+
+    #[test]
     fn string_literal_slice_context_and_byte_characters() {
         analyze(
             r#"fn bytes(x:const uint8[]) const uint8[] { return "é"; }

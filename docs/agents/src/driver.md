@@ -64,8 +64,11 @@ lowering route. It configures the compiler-provided synthetic
 `build_api::{add_source, set_entry, set_output}` module on the ordinary analyzer, validates
 one `build() int32` entry, and invokes the same lowering used by normal source. Builtins retain semantic `DeclId` identities through a
 `FunctionId -> BuiltinFunction` IR table. Build API text parameters are `const uint8[]`;
-string literals are readonly byte arrays and must be explicitly sliced (`"text"[..]`).
-These literal slices become interpreter-only byte values.
+string literals are readonly byte arrays and implicitly form readonly slices in
+that context; explicit `"text"[..]` remains valid. These literal slices become
+interpreter-only byte values. General fixed-array-to-slice coercion uses the same
+full-slice AST representation as explicit slicing; it does not broaden the narrow
+build-file interpreter's supported operations.
 Unsupported build-file syntax fails explicitly and this IR is not sent to LLVM.
 
 `BuildPlan::single_file` canonicalizes a source path, derives its namespace from

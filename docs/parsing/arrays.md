@@ -5,7 +5,9 @@ The [chosen value/mutability rules](../language-specification.md#values-initiali
 keep fixed arrays inline: binding const forbids whole-array replacement and
 element writes; type-level const permits replacement but forbids element writes. Type/index disambiguation
 is implemented. Native fixed-array literals, storage, copies, assignment, calls
-and `.len` work; runtime indexing/slicing remains deferred.
+and `.len` work, as do checked runtime indexing and slicing. Implicit fixed-array
+to slice conversion in expected-type contexts is semantic behavior, not additional
+parser syntax; see the linked language specification.
 
 > **Verified parser behavior:** Array/slice types, literals, indexing, and range syntax parse.
 
@@ -69,7 +71,7 @@ length := items.len;
 `.len` parses as ordinary member access. 
 
 The [language specification](../language-specification.md#declarations-generics-and-lexical-scope)
-defines suffix type syntax; runtime representations remain roadmap work.
+defines suffix type syntax, implicit array-to-slice conversion and borrowing rules.
 
 Related follow-up is collected in this [GitHub issue #13](https://github.com/santi34mg/fib/issues/13).
 

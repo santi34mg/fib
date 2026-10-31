@@ -35,6 +35,12 @@ and explicit compile-time function eligibility participate in type identity.
 remains invariant.
 Pointers, slices and fixed arrays implicitly gain an outer readonly qualifier;
 nested qualifiers must still match exactly and readonly removal is rejected.
+In expected slice-type contexts, the expression resolver rewrites fixed-array
+values to ordinary full-slice expressions before checking compatibility. This
+preserves backing places, initialization checks and readonly permissions, and
+reuses existing slice lowering. Array literals receive the expected slice element
+type. `check_assignable` remains a type comparison, not an array-to-slice coercion.
+Implicit views do not copy elements or extend backing-storage lifetime.
 Binding `const` protects nested struct fields and inline array elements through
 their place categories, without changing value type identity. Array indexing
 inherits immutable as well as readonly storage permissions; slicing such storage
