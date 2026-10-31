@@ -1,9 +1,114 @@
 # Compiler and LSP performance
 
-This is a measurement report and a list of optimization candidates, not an
-implementation change. Benchmarks live in `benches/performance.rs` and use only
+The original 2026-10-29 investigation below records measurements and optimization
+candidates before implementation changes. Follow-up changes and measurements
+are recorded separately. Benchmarks live in `benches/performance.rs` and use only
 existing public compiler APIs plus the real `fib-lsp` stdio protocol. No compiler
-or LSP implementation was modified for this investigation.
+or LSP implementation was modified for the original investigation.
+
+## Follow-up: shared analysis snapshots and verifier workspace (2026-10-30)
+
+Two optimizations now implement parts of candidates 1 and 2 below:
+
+- `TypeState` shares immutable declaration recipes, function AST snapshots and
+  diagnostic paths through `Arc<HashMap<...>>`. Recovery still copies/restores
+  mutable inference state and `SemanticTypes`; generic evaluation still clones
+  individual source functions before annotating them.
+- `verify_ir` allocates its program-indexed predecessor and dominator tables once
+  per call. Each function's CFG contents are released after its checks. All
+  whole-program ownership, dominance and active-enum-variant checks remain.
+  Function builders still clone and verify their whole staged IR.
+
+The following are new local comparisons against the workspace checkout directly
+before these two changes, rather than the older October 29 baseline. Both builds
+use optimized no-default-feature binaries and the same fixtures/source std
+(10 files, 31,721 bytes). The baseline benchmark executable was preserved before
+rebuilding. Runs were sequential, with 10 samples and three warmups per case;
+no compiler builds or test jobs ran during these recorded measurements. CPU
+affinity/frequency were not fixed, and this is one local comparison, not a
+statistical significance claim. The existing method/timing boundaries apply.
+
+Medians in milliseconds:
+
+| Helpers | Std | Collecting before | After | Lowering before | After | Verify before | After |
+| ---: | :---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | off | 0.978 | 0.217 | 0.361 | 0.313 | 0.021 | 0.019 |
+| 10 | on | 189.542 | 50.968 | 44.133 | 40.339 | 1.600 | 1.393 |
+| 100 | off | 72.322 | 2.571 | 18.890 | 13.738 | 0.320 | 0.169 |
+| 100 | on | 451.445 | 69.478 | 95.223 | 72.095 | 2.298 | 1.566 |
+| 500 | off | 2405.565 | 25.813 | 890.844 | 312.937 | 4.319 | 0.834 |
+| 500 | on | 3241.190 | 168.199 | 1222.937 | 445.939 | 7.876 | 2.291 |
+
+At 500 helpers, collecting analysis improved about 93x without std and 19x with
+std. Lowering improved about 2.85x and 2.74x respectively, even though its
+whole-program builder transactions remain. Collecting analysis and lowering
+still grow faster than source size; mutable checkpoint copying and repeated
+builder work remain candidates. These runs do not establish end-to-end CLI or
+LSP latency improvements.
+
+Raw CSV: [collecting before](benchmarks/2026-10-30-collecting-before.csv),
+[IR before](benchmarks/2026-10-30-ir-before.csv),
+[both changes after](benchmarks/2026-10-30-shared-state-after.csv).
+Reproduce the selected cases on each implementation with:
+
+```sh
+FIB_BENCH_SAMPLES=10 FIB_BENCH_FILTER=analyze_collecting,lower_including_validation,verify_ir cargo bench --offline --no-default-features --bench performance
+```
+
+Validation after both changes: 798 no-default-feature tests, 870 LLVM-enabled
+tests, strict all-target Clippy in both configurations, formatting and whitespace
+checks passed. Existing tests cover collecting-error recovery, failed generic
+instance rollback, ownership/dominance rejection, enum proofs and transactional
+builder failure. Benchmark fixtures also completed successfully.
+
+## LSP follow-up (2026-10-30)
+
+The current release server was rebuilt and measured over real stdio with 30
+samples plus three warmups per case. All diagnostic/completion fixture assertions
+passed. No builds or test jobs ran concurrently with these measurements. Raw
+results include min, p50, p95 and mean in [the stdio CSV](benchmarks/2026-10-30-lsp.csv).
+
+Times below are milliseconds, shown as **p50 / p95**:
+
+| Open standalone documents | Edit to diagnostics | Edit to completion | 10 edits to completion | Cached completion | Cached semantic tokens |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 57.248 / 59.870 | 47.535 / 50.248 | 49.554 / 96.825 | 0.036 / 0.106 | 0.023 / 0.031 |
+| 5 | 285.987 / 289.909 | 277.260 / 283.481 | 551.881 / 566.245 | 0.025 / 0.048 | 0.018 / 0.095 |
+| 20 | 1169.295 / 1276.812 | 1168.093 / 1179.495 | 2317.710 / 2348.177 | 0.030 / 0.127 | 0.021 / 0.073 |
+
+Initialization was 1.195 ms p50 / 1.492 ms p95. The separate five-file explicit
+project measured 178.050 ms p50 / 179.283 ms p95 for edit-to-diagnostics. That
+project has fewer total functions than the standalone cases and includes build
+planning; it is not a controlled grouping comparison.
+
+Compared with the October 29 historical results, median edit-to-diagnostics
+latency is about 40–41% lower across all three standalone document counts.
+Twenty-document edit-to-completion fell from 1968 to 1168 ms; its ten-edit burst
+fell from 3920 to 2318 ms. These are historical observations, not an isolated
+before/after test of snapshot sharing: source std grew from 8 files / 23,461
+bytes to 10 files / 31,721 bytes and the checkout includes other changes. CPU
+frequency/affinity were not fixed. The one-document burst median is near one
+analysis duration but its p95 approaches two; do not assume every burst is
+coalesced into one job.
+
+Repeated standalone analysis remains the main visible bottleneck: twenty open
+documents cost about 20x the single-document diagnostic latency, while cached
+completion stays below 0.04 ms median. The results support investigating shared
+unchanged inputs and cancellation of obsolete work next. They do not imply
+equivalent cached-completion latency on much larger source files.
+
+The [direct service probes](benchmarks/2026-10-30-lsp-service.csv), run separately
+with 30 samples, confirm that distinction. Dividing each batch median by its
+request count gives 0.000316 ms/request for the tiny unfinished expression,
+0.024209 ms after 10 helpers, 0.240347 ms after 100 helpers and 1.216833 ms after
+500 helpers. These exclude stdio and reanalysis; the tiny case batches 1,000
+requests and the others batch 100.
+
+```sh
+cargo build --offline --release --no-default-features --bin fib-lsp
+FIB_BENCH_SAMPLES=30 FIB_BENCH_FILTER=lsp_stdio cargo bench --offline --no-default-features --bench performance
+FIB_BENCH_SAMPLES=30 FIB_BENCH_FILTER=lsp_service cargo bench --offline --no-default-features --bench performance
+```
 
 ## Reproduce
 
@@ -219,12 +324,12 @@ collecting analysis was about 184× slower than strict analysis. This directly
 affects the editor's analysis path.
 
 **Source evidence:** `TypeContext::statement_collecting` in
-[`statement_typing.rs`](../src/frontend/analyzer/statement_typing.rs) clones both
+[`statement_typing.rs`](../crates/fib-frontend/src/frontend/analyzer/statement_typing.rs) clones both
 `TypeState` and `SemanticTypes` before checking each statement when recovery is
 enabled, including successful statements and nested blocks. `TypeState` contains
 declaration recipes and all function AST snapshots. Declaration collection also
 clones the current statement and accumulated namespace for rollback in
-[`analyzer.rs`](../src/frontend/analyzer.rs).
+[`analyzer.rs`](../crates/fib-frontend/src/frontend/analyzer.rs).
 
 **Candidate:** Keep immutable recipes/function snapshots shared and use small
 transaction logs or checkpoints for the state that a statement can mutate.
@@ -246,12 +351,12 @@ and the separation between collecting reports and strict lowering inputs.
 from 0.606 to 3.285 ms. At 500 helpers, lowering accounts for almost all the
 883.068 ms frontend-to-IR time, so revalidation alone cannot explain it.
 
-**Source evidence:** [`FunctionBuilder::new`](../src/ir/builder.rs) clones the
+**Source evidence:** [`FunctionBuilder::new`](../crates/fib-ir/src/ir/builder.rs) clones the
 entire accumulated `Ir` for each function. `finish` verifies the whole working
-IR and commits it. [`lower_with_entry`](../src/ir/lowering.rs) uses this builder
+IR and commits it. [`lower_with_entry`](../crates/fib-lowering/src/lowering.rs) uses this builder
 per function and verifies the whole IR again at the end. The verifier allocates
 a predecessor vector sized to all program blocks for each defined function in
-[`verify_ir`](../src/ir/verify.rs). Repeating growing-program work at each function
+[`verify_ir`](../crates/fib-ir/src/ir/verify.rs). Repeating growing-program work at each function
 creates substantial superlinear work even for small, independent function bodies.
 The isolated final verification probe also grew superlinearly (0.309 → 4.275 ms
 for 100 → 500 helpers). It is therefore worth measuring verifier workspace
@@ -297,7 +402,7 @@ source caching is a smaller initial step than reusing mutable semantic state.
 **Source evidence:** Strict analysis calls `validate_analysis`, and lowering
 calls it again; validation clones analyzed ASTs before checking annotations.
 LLVM `emit_llvm` calls `verify_input`, then `emit_classified` calls it again in
-[`llvm_lower.rs`](../src/backend/lowering/llvm_lower.rs). `LlvmArtifact` stores
+[`llvm_lower.rs`](../crates/fib-backend/src/backend/lowering/llvm_lower.rs). `LlvmArtifact` stores
 textual LLVM IR; `write_object` creates a context, reparses/verifies that text,
 and creates another target machine. Target-machine creation initializes targets.
 The CLI also clones parsed units before initial analysis and reanalyzes when a
@@ -317,7 +422,7 @@ to 1.591 ms after 500 helpers, without transport or reanalysis. This supports
 investigating the per-request source/token scan even though it is much smaller
 than the multi-second analysis delays in the many-open-document cases.
 
-**Source evidence:** [`apply_report`](../src/frontend/tooling.rs) constructs
+**Source evidence:** [`apply_report`](../crates/fib-frontend/src/frontend/tooling.rs) constructs
 namespace paths, completion items, and sorted tables independently for each
 document, including std documents. `complete` constructs a `SourceIndex` and
 scans token ranges on every request to exclude comments/literals; the final
@@ -335,7 +440,7 @@ requests following edits wait for the full current analysis generation.
 24.573 ms, object generation from 0.892 to 20.143 ms, and the full CLI build
 from 28.989 to 96.093 ms, even though the generated application never calls std.
 
-**Source evidence:** [`lower_with_entry`](../src/ir/lowering.rs) traverses all
+**Source evidence:** [`lower_with_entry`](../crates/fib-lowering/src/lowering.rs) traverses all
 analyzed units and lowers ordinary non-generic function bodies, including
 unreferenced std functions. Source std is loaded before analysis by design.
 

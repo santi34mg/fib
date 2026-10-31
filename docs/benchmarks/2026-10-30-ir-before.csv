@@ -1,0 +1,13 @@
+benchmark,samples,min_ms,p50_ms,p95_ms,mean_ms
+compiler/10/no_std/lower_including_validation,10,0.314390,0.361007,0.701847,0.425004
+compiler/10/no_std/verify_ir,10,0.020439,0.020598,0.020920,0.020674
+compiler/10/std/lower_including_validation,10,43.684867,44.133068,44.535653,44.162885
+compiler/10/std/verify_ir,10,1.590633,1.599891,1.678279,1.607273
+compiler/100/no_std/lower_including_validation,10,18.793595,18.889765,19.178898,18.964280
+compiler/100/no_std/verify_ir,10,0.312997,0.319729,0.328326,0.320325
+compiler/100/std/lower_including_validation,10,94.248237,95.223476,96.184610,95.281254
+compiler/100/std/verify_ir,10,2.279557,2.297890,2.370647,2.311284
+compiler/500/no_std/lower_including_validation,10,881.240371,890.843617,896.625462,889.870966
+compiler/500/no_std/verify_ir,10,4.298593,4.319433,4.344970,4.319687
+compiler/500/std/lower_including_validation,10,1217.986634,1222.936779,1245.682928,1226.716569
+compiler/500/std/verify_ir,10,7.814530,7.876305,7.915960,7.870886
