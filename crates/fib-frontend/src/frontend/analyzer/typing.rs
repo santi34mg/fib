@@ -572,11 +572,18 @@ impl TypeContext<'_> {
         Ok(ty)
     }
     fn aggregate_site(&mut self, span: Span) -> TypeId {
-        *self
+        let id = *self
             .state
             .sites
             .entry((self.file, span))
-            .or_insert_with(|| self.types.intern(T::Pending))
+            .or_insert_with(|| self.types.intern(T::Pending));
+        self.types.nominal_sites.insert(id, (self.file, span));
+        let mut arguments: Vec<_> = self.state.specialization.iter().collect();
+        arguments.sort_by_key(|(binding, _)| binding.0);
+        self.types
+            .nominal_arguments
+            .insert(id, arguments.into_iter().map(|(_, ty)| *ty).collect());
+        id
     }
     fn field_definitions(
         &mut self,

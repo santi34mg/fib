@@ -1,4 +1,6 @@
+use caseless::Caseless;
 use std::collections::{HashMap, HashSet};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::diagnostics::{CompilerError, ErrorKind, Span};
 use crate::plan::{BuildPlan, FileId, FileName, PackageId};
@@ -40,6 +42,8 @@ pub struct Namespace {
 
 #[derive(Debug, Clone, Default)]
 pub struct ProjectSymbols {
+    /// Persistent package identity and normalized module path, computed once.
+    pub linkage_modules: HashMap<FileId, (String, String)>,
     pub compiler_declarations: HashMap<DeclId, crate::builtins::BuiltinFunction>,
     pub(crate) package_files: HashMap<(PackageId, String), FileId>,
     pub(crate) dependencies: HashMap<PackageId, HashMap<String, PackageId>>,
@@ -55,14 +59,19 @@ pub(crate) fn name_error(message: impl Into<String>) -> anyhow::Error {
 }
 
 pub(crate) fn normalize_segment(name: &str) -> anyhow::Result<String> {
-    let normalized = name.replace('-', "_").to_ascii_lowercase();
+    let normalized: String = name
+        .replace('-', "_")
+        .nfc()
+        .default_case_fold()
+        .nfc()
+        .collect();
     if normalized.is_empty()
         || !normalized.chars().enumerate().all(|(index, c)| {
             c == '_'
                 || if index == 0 {
                     c.is_alphabetic()
                 } else {
-                    c.is_alphanumeric()
+                    c.is_alphanumeric() || unicode_normalization::char::is_combining_mark(c)
                 }
         })
         || matches!(
@@ -115,6 +124,7 @@ impl ProjectSymbols {
         let mut package_files = HashMap::new();
         let mut namespace_spellings = HashMap::new();
         let mut dependencies = HashMap::new();
+        let mut linkage_modules = HashMap::new();
         for package in &plan.packages {
             let mut names = HashMap::new();
             for (name, target) in &package.dependencies {
@@ -134,6 +144,7 @@ impl ProjectSymbols {
             }
             if plan.packages.is_empty() {
                 let name = normalize_path(&file.name.0)?;
+                linkage_modules.insert(file.id, ("local:application".into(), name.clone()));
                 if files_by_name.insert(FileName(name), file.id).is_some() {
                     return Err(name_error(format!("duplicate file name '{}'", file.name.0)));
                 }
@@ -150,8 +161,13 @@ impl ProjectSymbols {
                     .with_extension("");
                 let path = relative
                     .components()
-                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
+                    .map(|c| {
+                        c.as_os_str()
+                            .to_str()
+                            .map(str::to_owned)
+                            .ok_or_else(|| name_error("module paths must be UTF-8"))
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?
                     .join("::");
                 let segments: Vec<_> = path.split("::").collect();
                 for count in 1..=segments.len() {
@@ -164,6 +180,13 @@ impl ProjectSymbols {
                     }
                 }
                 let path = normalize_path(&path)?;
+                let identity = &plan
+                    .packages
+                    .iter()
+                    .find(|p| p.id == package)
+                    .unwrap()
+                    .identity;
+                linkage_modules.insert(file.id, (identity.clone(), path.clone()));
                 if package_files.insert((package, path), file.id).is_some() {
                     return Err(name_error("duplicate normalized file path"));
                 }
@@ -181,6 +204,7 @@ impl ProjectSymbols {
             }
         }
         let mut symbols = Self {
+            linkage_modules,
             files_by_name,
             namespaces: HashMap::new(),
             regions,
@@ -260,7 +284,9 @@ impl ProjectSymbols {
     }
 
     pub(crate) fn reserved_package_root(&self, from: FileId, name: &str) -> bool {
-        let name = name.to_ascii_lowercase();
+        let Ok(name) = normalize_segment(name) else {
+            return false;
+        };
         self.regions.get(&from).is_some_and(|r| {
             self.dependencies
                 .get(&r.package)
@@ -273,7 +299,7 @@ impl ProjectSymbols {
             return true;
         }
         self.files_by_name.iter().any(|(file, id)| {
-            file.0.split("::").next() == Some(name.to_ascii_lowercase().as_str())
+            file.0.split("::").next() == normalize_segment(name).ok().as_deref()
                 && self.regions.get(id).is_none_or(|region| {
                     self.regions
                         .get(&from)
@@ -336,7 +362,7 @@ impl ProjectSymbols {
         if let Some(region) = self.regions.get(&from)
             && let Some(dependencies) = self.dependencies.get(&region.package)
         {
-            let first = segments.first()?.to_ascii_lowercase();
+            let first = normalize_segment(segments.first()?).ok()?;
             let (package, offset) = if first == "root" {
                 (region.package, 1)
             } else if let Some(package) = dependencies.get(&first) {
@@ -447,3 +473,31 @@ pub(crate) const PRELUDE_NAMES: &[&str] = &[
     "uint32", "uint64", "uint128", "float16", "float32", "float64", "float128", "bool", "never",
     "usize",
 ];
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::normalize_segment;
+
+    #[test]
+    fn full_unicode_folding_preserves_canonical_equivalence_and_combining_marks() {
+        for (first, second) in [
+            ("Straße", "STRASSE"),
+            ("Cafe\u{301}", "CAFÉ"),
+            ("Σ", "ς"),
+            ("A-B", "a_b"),
+        ] {
+            assert_eq!(
+                normalize_segment(first).unwrap(),
+                normalize_segment(second).unwrap()
+            );
+        }
+        assert_eq!(normalize_segment("İ").unwrap(), "i\u{307}");
+        assert_ne!(
+            normalize_segment("İ").unwrap(),
+            normalize_segment("i").unwrap()
+        );
+        for invalid in ["", "bad name", "ſtruct", "\u{301}start"] {
+            assert!(normalize_segment(invalid).is_err(), "{invalid}");
+        }
+    }
+}

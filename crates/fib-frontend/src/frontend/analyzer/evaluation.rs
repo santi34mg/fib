@@ -8,7 +8,7 @@ use crate::frontend::{
         statement::{Statement, StatementKind as S},
     },
     identifier::{DeclId, Entity, ResolvedName},
-    semantic_type::{TypeId, type_error},
+    semantic_type::{SemanticType as T, TypeId, type_error},
     tokens::{Literal, Operator as O},
 };
 use std::collections::HashMap;
@@ -187,6 +187,7 @@ impl TypeContext<'_> {
             .collect::<HashMap<_, _>>();
         // Evaluation owns nominal definition sites separately from the symbolic body.
         let saved_sites = std::mem::take(&mut self.state.sites);
+        let first_new_type = self.types.types.len();
         let saved_locals = self.types.locals.clone();
         let saved_bindings = self
             .types
@@ -244,6 +245,14 @@ impl TypeContext<'_> {
         self.types.type_values.retain(|id, _| !temporary(id));
         self.types.type_values.extend(saved_values);
         if let Ok(ty) = &result {
+            if ty.0 as usize >= first_new_type
+                && matches!(self.types.get(*ty)?, T::Struct(_) | T::Enum(_))
+            {
+                self.types
+                    .nominal_computations
+                    .entry(*ty)
+                    .or_insert_with(|| key.clone());
+            }
             self.types.computation_results.insert(key, *ty);
         }
         result

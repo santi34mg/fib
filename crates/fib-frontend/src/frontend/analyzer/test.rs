@@ -5996,12 +5996,14 @@ mod package_visibility {
                 packages: vec![
                     PackageSpec {
                         id: PackageId(0),
+                        identity: "local:application".into(),
                         source_root: "/app/src".into(),
                         dependencies: Default::default(),
                         files: vec![FileId(0), FileId(1), FileId(2)],
                     },
                     PackageSpec {
                         id: PackageId(1),
+                        identity: "test:dependency@1".into(),
                         source_root: "/dep/src".into(),
                         dependencies: [("App".into(), PackageId(0))].into(),
                         files: vec![FileId(3)],

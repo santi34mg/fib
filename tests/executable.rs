@@ -1019,6 +1019,7 @@ fn multiple_files_preserve_entry_and_declaration_identities() {
     });
     plan.packages = vec![PackageSpec {
         id: PackageId(42),
+        identity: "test:application@1".into(),
         source_root: directory.path().to_owned(),
         dependencies: Default::default(),
         files: vec![FileId(0), FileId(1)],

@@ -369,7 +369,17 @@ fn substitute(
     // Reserve nominal identities before traversing pointer-recursive fields.
     let reservation = if matches!(original, T::Struct(_) | T::Enum(_)) {
         let owner = types.intern(T::Pending);
+        if let Some(site) = types.nominal_sites.get(&id).copied() {
+            types.nominal_sites.insert(owner, site);
+        }
         memo.insert(id, owner);
+        if let Some(arguments) = types.nominal_arguments.get(&id).cloned() {
+            let arguments = arguments
+                .into_iter()
+                .map(|t| substitute(t, substitutions, types, memo))
+                .collect::<anyhow::Result<_>>()?;
+            types.nominal_arguments.insert(owner, arguments);
+        }
         Some(owner)
     } else {
         None
@@ -465,7 +475,17 @@ fn materialize(
     let original = context.types.get(id)?.clone();
     let reservation = if matches!(original, T::Struct(_) | T::Enum(_)) {
         let owner = context.types.intern(T::Pending);
+        if let Some(site) = context.types.nominal_sites.get(&id).copied() {
+            context.types.nominal_sites.insert(owner, site);
+        }
         memo.insert(id, owner);
+        if let Some(arguments) = context.types.nominal_arguments.get(&id).cloned() {
+            let arguments = arguments
+                .into_iter()
+                .map(|t| materialize(t, context, memo))
+                .collect::<anyhow::Result<_>>()?;
+            context.types.nominal_arguments.insert(owner, arguments);
+        }
         Some(owner)
     } else {
         None

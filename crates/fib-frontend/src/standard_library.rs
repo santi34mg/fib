@@ -153,6 +153,7 @@ impl BuildPlan {
             }
             plan.packages.push(PackageSpec {
                 id: PackageId(0),
+                identity: "local:application".into(),
                 source_root: root,
                 dependencies: BTreeMap::new(),
                 files: plan.files.iter().map(|f| f.id).collect(),
@@ -249,6 +250,10 @@ impl BuildPlan {
         required("process")?;
         plan.packages.push(PackageSpec {
             id: package,
+            identity: format!(
+                "fib:std@{}:decl{}",
+                manifest.compiler_version, manifest.declaration_revision
+            ),
             source_root: root,
             dependencies: BTreeMap::new(),
             files: files.values().copied().collect(),

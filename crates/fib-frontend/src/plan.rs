@@ -31,6 +31,10 @@ pub struct PackageId(pub u32);
 #[derive(Debug, Clone)]
 pub struct PackageSpec {
     pub id: PackageId,
+    /// Persistent acquisition identity, including version/revision (for example
+    /// `registry:example.org/math@1.2.0`). Hosts must reuse it for diamond edges.
+    /// Never derive this from a checkout path or a dependency alias.
+    pub identity: String,
     pub source_root: PathBuf,
     pub dependencies: std::collections::BTreeMap<String, PackageId>,
     pub files: Vec<FileId>,
@@ -90,8 +94,15 @@ impl BuildPlan {
                 .collect());
         }
         let mut packages = HashSet::new();
+        let mut identities = HashSet::new();
         for package in &self.packages {
             anyhow::ensure!(packages.insert(package.id), "duplicate package identity");
+            anyhow::ensure!(
+                !package.identity.is_empty()
+                    && !package.identity.chars().any(char::is_control)
+                    && identities.insert(&package.identity),
+                "invalid or duplicate persistent package identity"
+            );
             anyhow::ensure!(
                 package.source_root.is_absolute(),
                 "package source root must be absolute"
@@ -197,6 +208,7 @@ mod package_metadata_tests {
             }],
             packages: vec![PackageSpec {
                 id: PackageId(7),
+                identity: "local:application".into(),
                 source_root: "/app/src".into(),
                 dependencies: Default::default(),
                 files: vec![FileId(0)],

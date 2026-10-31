@@ -277,18 +277,21 @@ mod package_lookup {
                 packages: vec![
                     PackageSpec {
                         id: PackageId(1),
+                        identity: "test:app@1".into(),
                         source_root: "/app/src".into(),
                         dependencies: [("Math-Dep".into(), PackageId(7))].into(),
                         files: vec![FileId(0), FileId(1)],
                     },
                     PackageSpec {
                         id: PackageId(7),
+                        identity: "test:math@1".into(),
                         source_root: "/dep/src".into(),
                         dependencies: [("Utils".into(), PackageId(9))].into(),
                         files: vec![FileId(2)],
                     },
                     PackageSpec {
                         id: PackageId(9),
+                        identity: "test:utils@1".into(),
                         source_root: "/util/src".into(),
                         dependencies: Default::default(),
                         files: vec![FileId(3)],
