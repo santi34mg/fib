@@ -4,11 +4,12 @@ The [language specification](../language-specification.md) is implemented for pr
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute.
 
 ## Cargo and toolchain
 
-[`Cargo.toml`](../../Cargo.toml) defines a Rust 2024 workspace with `fibc` 0.1.1
+[`Cargo.toml`](../../Cargo.toml) defines a Rust 2024 workspace with `fibc` 0.2.0
 as its facade, CLI and driver package. Internal packages separate builtin
 identities, frontend analysis, owned SSA, lowering and LLVM emission; see the
 [crate map](../../crates/README.md). Default members include every package, so

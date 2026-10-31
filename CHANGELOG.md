@@ -7,158 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Replace suffix array/slice types with `[N]T` and `[]T`, keeping value indexing and slicing unchanged. Add byte sentinel arrays `[N:S]uint8`, slices `[:S]uint8` and pointers `[*:S]uint8`; type C-string literals as `const [*:0]uint8`, preserve hidden sentinels through storage/copies/calls and require terminated `openat` paths. Installed sources now require compiler-declaration revision 4.
-
-- Complete builtin-removal library follow-up with `std::string::concat` and
-  `str_len`: caller-owned byte storage, checked capacity errors before writes,
-  borrowed results and executable coverage. Move `str_eq` from the implicit
-  prelude into `std::string` so all three helpers share one explicit module.
-
-- Complete canonical cross-file linkage with host-supplied persistent package identities,
-  pinned Unicode namespace normalization and versioned function/global/generic symbols
-  independent of build-local IDs, checkout paths and dependency aliases. Preserve C/entry
-  symbols and reject collisions; verify diamond calls and native linkage with executable tests.
-
-- Share immutable declaration recipes, function source snapshots and diagnostic paths across collecting type-analysis checkpoints, avoiding repeated whole-program AST copies while retaining mutable inference rollback.
-
-- Allocate IR verifier predecessor/dominator tables once per verification instead of once per function, retaining ownership, dominance and enum payload checks.
-
-- Split the Rust compiler into workspace crates for builtin identities, frontend analysis, SSA IR, lowering and LLVM emission. Keep the `fibc` facade and root workspace validation commands; stage-specific tests can now reuse unchanged crates without compiling unrelated stages.
-
-- Speed up Rust development/test builds with line-table debug info, fewer unused dependencies and no empty compiler/installer test harnesses. Run the LLVM test suite once with all features in CI and the local hook, removing the equivalent default-feature run.
-
-- Complete `std::memory::create_page_alloc()` with aligned mmap allocation, checked size arithmetic, per-allocation mapping metadata and munmap release. Expose `Allocator`/`AllocError`, replace `NotImplemented` with alignment/release errors, and recognize all raw Linux errno returns in `std::os::mmap`.
-
-- Move tagged arguments, brace validation and integer rendering into `std::formatting`. Add allocation-free `format(destination, template, values)` for byte strings, validating capacity before writes, and shared callback-based `format_to`. Keep `std::io` formatting entry points and type aliases; exhaustive `PrintError` switches now require the added `BufferTooSmall` variant.
-
-- Allow implicit fixed-array `T[N]` to slice `[]T` conversion in expected-type contexts, borrowing original storage and preserving readonly permissions.
-
-- Add Linux x86-64 `std::random` with OS-backed byte filling, full-width uint64 values and unbiased bounded sampling, explicit errors and EINTR/short-read handling.
-
-- Allow implicit `T` to `const T` conversion for fixed arrays, alongside pointers and slices. Nested qualifiers remain unchanged and reverse conversions remain forbidden.
-
-- Remove the `char` primitive; character literals are `uint8` and reject values above 255. String literals implicitly form `const []uint8` views in typed contexts, including function arguments, without `[..]`.
-
-- Add LSP qualified-name completion for standard-library modules and accessible functions, types and values, including unfinished expressions and partial names.
-
-- Allow `main` to return void or `std::result::Result` with unit/int32 success and accept an argument slice and environment map. Add source `std::process` startup adaptation and generic `std::map::Map(K, V)` maps with supplied equality, lookup, insertion/replacement, growth and cleanup. The environment map specializes byte-string keys and values.
-- Accept computed type annotations such as `Map(K, V)` in signatures and declarations, preserving nominal computed-type identities during generic specialization.
-
-- Implement `std::io::print`, `printf`, `fprintf` and `write_all` with tagged arguments, brace formatting, full-range integer conversion, format validation and explicit I/O errors.
-
-- Add source-level `std::memory::memset` and `memcpy` for byte slices, including readonly copy sources and destination capacity checks before writes.
-
-- Add `core::sizeof(T)`, returning target allocation size in bytes as `usize`, including aggregate padding. Supports concrete generic type arguments; rejects values and unsized types. Available without std, exclusively in the compiler-owned `core` namespace.
-- Implement Linux x86-64 `std::os::sbrk(int64)` and the source-level `std::memory::alloc(T, n)`/`free(T, ptr)` allocator, with aligned storage, overflow checks, first-fit reuse, splitting and adjacent-block coalescing. Allocation failure returns an empty slice. Compiler declaration revision is now 3 for private typed pointer/word conversions.
-
-- Checked runtime indexing, indexed assignment, element addresses and slicing for fixed arrays and slices, including signed/wide bounds checks and initialization validation.
-- File-level runtime storage with explicit constant initial data, aggregate/enum relocations, global addresses and slice views. Ordinary initializer calls and runtime binding reads are rejected; no `static` modifier or startup initializer is needed.
-- Value-returning `comp fn` definitions now have typed scaffolding; calls requiring their execution report an explicit not-implemented diagnostic. Existing bounded type-returning computation is preserved.
-
-### Changed
-
-- Enum variants carry one direct payload type with `Name: Type`; struct payloads require an explicit struct type and one struct argument. Omitted, void, empty-struct and recursively unit-only struct payloads share bare-value construction and optional void switch bindings. Removed legacy field-list variants and calls on unit variants. Standard Result and OS status bindings now expose their payload values directly.
-- Replace the shell installer with the Rust `fib-install` tool, retaining `--prefix` and `--debug`, discovering executable paths from Cargo build messages, and replacing installed files atomically.
-
-### Fixed
-
-- Use the source library's `std::string::str_eq` in the string sample; advance its full-width slice index so equal nonempty inputs terminate.
-- Preserve const binding protection when indexing inline arrays, including nested struct fields, element addresses and slice views. Const scalar, struct and enum bindings retain immutable value storage; pointer and slice indirections keep their type's permissions.
-- Make every top-level sample compile and execute with source std; replace obsolete libc calls, pointer indexing and string declarations, and add a discovery-based CLI execution sweep checking output and exit codes. Rename the keyword-named `defer.fib` to `deferred_blocks.fib`.
-
-- Show readable types and readonly qualifiers in type mismatch diagnostics instead of internal type IDs.
-- Explain readonly removal and element-type conversion failures in slice-cast diagnostics, with guidance to copy into a new buffer.
-- Build-file interpretation tolerates unused runtime-library globals while rejecting global accesses before applying builder operations.
-
-- Analyze directly opened std files in their owning source package, preserving `root` lookup, intrinsic identities and unsaved sibling edits instead of duplicating them as application files.
-- Bound simultaneously active generic specializations to 16 so runaway expansion reports a diagnostic on the default debug-test stack instead of overflowing it. Cached instances and recursion at the same concrete signature remain supported.
-- Reject inconsistent C ABI boundary plans and invalid C parameter type IDs without panicking.
+## [0.2.0] - 2026-10-31
 
 ### Added
 
-- Installed, version-matched Fib std sources with `--sysroot`/`--no-std`, CLI/LSP/build-plan integration, package-rooted dependency lookup, ASCII namespace normalization, and shared source/intrinsic module registration. `std::prelude` supports explicit exports and initially exports nothing.
-- Reusable `std::result::Result(T, E)` and Linux x86-64 `std::os` raw syscall0–6 plus typed read/write/close/getpid/openat/mmap/munmap wrappers. Verified syscall IR emits side-effecting LLVM assembly with register and memory clobbers, with no native shim.
-- `std::memory` replaces automatic `memory::` access. Slice-data/from-parts intrinsics and slice lengths lower to native IR; call results can be discarded while retaining effects, including explicit cleanup in defer blocks.
-
-- Executable defer statements and `defer { ... };` blocks, with lexical local scope and reverse-order cleanup on normal completion, return, break and continue. Return expressions evaluate before cleanup.
-
-### Language server
-
-- Replace the standalone JavaScript highlighter with a native `fib-lsp` Rust binary using the compiler frontend, with semantic tokens, collecting analyzer diagnostics/warnings, unsaved source overlays and `build.fib` project planning. Update editor launchers to use the native executable; install with `cargo install --path . --no-default-features --bin fib-lsp`.
-
-
-### Removed
-
-- Removed unused backend phase-planning APIs, legacy builtin tokens and byte-width lookup, the unproduced qualified-access AST variant, and the experimental standard-library tree. Active primitive types and LLVM emission remain supported. Renamed frontend implementation guides to match current modules and updated references.
-
-### Added
-
-- Specification execution support: ordinary protected prelude type identifiers;
-  direct same-family literal cast context; numeric/bool conversions; shallow
-  readonly views; one-layer checked pointer field access with warnings; exhaustive
-  enum switches; multi-file calls and concrete generic specialization; fixed-array
-  value storage/copies/calls/lengths and multi-binding locals. Explicit package
-  metadata and scoped visibility support file, subtree and package access with
-  identity-preserving re-exports. Discovery/package-path integration and runtime
-  indexing/slices remain deferred.
-
-- Executable enums: payloadless and payload constructors, scoped payload copies, switches, storage/pointers and internal helper calls now lower through verified SSA and LLVM. Target-derived tag-plus-union layouts, enum constants, active-variant extraction checks, switch PHIs/backedges and a runnable `enum_runtime.fib` sample have structural and executable coverage. See `docs/enum-semantics.md`.
-- Native structs and typed raw-pointer storage: construction/copies, nested fields, partial initialization, address-taking, alias mutation and direct internal struct/pointer calls. Ordinary dereference traps on null; the compiler-provided `memory::unchecked_deref(pointer)` returns a typed place without that guard. Memory IR verification, LLVM aggregates/stack operations, and semantic/structural/executable regressions accompany a runnable struct sample.
-- A runnable `example-project` demonstrates current scalar types, casts, bit operations, recursion, conditionals and loops with an interpreted build file, self-checking exit statuses and frontend/IR plus CLI executable coverage.
-- Scalar `while` loops, `break` and `continue` now lower through verified SSA and LLVM, carrying initialized locals across backedges and merging loop exits without storage. Nested loops, early returns and short-circuit conditions have IR and bounded executable coverage. Build-file interpretation explicitly rejects unsupported CFG before applying operations.
-- Complete fixed-width scalar lowering through verified SSA and LLVM: signed/unsigned 8–128-bit integers, float16/32/64/128 and bool support helpers, calls, locals, joins, arithmetic, comparisons, explicit numeric casts and short-circuit logic. Integer arithmetic wraps; invalid division, shifts and float-to-integer conversions trap. Exact integer/IEEE literal and constant evaluation replaces u64/f64 payload limits. Internal helpers use the limited scalar Fib fastcc ABI; numeric type changes require explicit casts. See `docs/scalar-semantics.md`.
-- Interpreted build files now finalize their host-owned state into a validated, deterministic `BuildPlan`: source and output paths are project-root-relative, sources receive ordered compiler IDs and stem-derived logical names, selected entries must exist, and duplicate names/paths, missing files, root escapes and source-overwriting outputs are rejected. `build --build-file` feeds the resulting plan into the normal binary pipeline.
-- Initial interpreted-build API foundation: synthetic-module semantic builtins (`build_api::add_source`, `build_api::set_entry`, `build_api::set_output`) have stable identities and typed `fn(const []uint8) void` signatures; the shared lowering emits verified Fib declarations/calls with interpreter-owned byte constants, and the interpreter dispatches them by identity into `PlanBuilder` state. The intentionally narrow source subset currently requires one `build() int32`, direct builtin calls with explicitly sliced string literals (`"text"[..]`), and an integer return.
-- Independent pointee/element mutability with `const *T`, `const []T` and `const T[N]`, including nested qualifiers, qualified address/view propagation and readonly-preserving casts.
-- Explicit `comp fn` declarations and function types gate bounded type computation independently of known function identity. Concrete generic instances own rechecked bodies/binding environments; deferred type computations retain argument dependencies. Dependent arithmetic/member/index operations are checked on specialization.
-- Directional `never` bottom coercion and divergence propagation, with normal completion forbidden for `never` functions. Independent annotation validation checks return contexts, literal kinds and cast legality.
-- Multi-block LLVM emission with PHIs, backedges, parallel-edge splitting and signed/unsigned comparisons. Single-file lowering now supports int32 helpers/direct calls, initialized int32/bool locals, assignments, nested if/else and early returns using SSA merges. Per-function ABI classification and a shared LLVM boundary adapter keep physical argument placement separate from logical IR; the C 32-bit scalar ABI remains supported; internal helpers now use the limited scalar Fib ABI described above. TDD coverage includes executable conditionals, hand-built CFGs, mixed test ABI dispatch and located subset diagnostics. Analyzed projects retain source paths for lowering errors.
-- First executable single-file compiler milestone: `fibc build --single-file PATH` analyzes a lone `main() int32` returning an integer literal, constructs and verifies owned SSA, emits verified LLVM 21 and a PIC object, and links with host `cc`. Transactional IR construction and scalar ownership/signature/dominance verification reject invalid or unsupported input. Acceptance tests compile/link/run exit codes 0, 42 and 127; general lowering, representations and ABI/CFG planning remain unfinished.
-- Semantic type resolution on the original AST: contextual inference, canonical composite types, nominal struct/enum identities, recursive-type size checks, operators/casts/places, ordinary calls/returns, aggregates, slices, pattern payloads and owner-based members. `Analyzer::resolve_types` returns semantic tables; `validate_type_annotations` rejects incomplete or inconsistent annotations independently of full analysis.
-- Explicit metatype signature specialization and caching, bounded type-return evaluation with known type/bool arguments, definite initialization, return-path validation, enum-switch flow and reverse-order scope-exit defer checks. `Analyzer::analyze` now returns a validated project. All six former pending acceptance cases and added positive/negative completion regressions pass in the unfiltered no-default-features suite.
-- Working name resolution through the existing staged analyzer API: annotated declarations, parameters/locals, qualified build-plan paths, visibility, canonical compile-time aliases, cycle diagnostics, and name-slot completion. Six independently runnable specification phases cover identities, traversal, declaration order, source preservation, and error cleanup. Initialization and structured control-flow validation now run separately from name/type resolution.
-- A local Zed extension in `lsp/editors/zed` registers `.fib` files without a Tree-sitter grammar and launches the existing JS highlighting server via `fib-lsp` on PATH or a configurable binary override; setup documents semantic-token opt-in and Rust/Wasm requirements.
-- Backend-independent SSA `Ir` contracts with explicit function ownership, block parameters and edge arguments, typed values, memory operations, and fallible builder/verifier sketches.
-- In-place AST analysis annotations, semantic type and resolver-context contracts, plus an LLVM adapter phase plan covering verification, target layout, ABI classification, and SSA edge translation. Lowering, IR verification, and code generation remain unfinished.
-- Parser and architecture-contract regression tests; deleted integration tests remain deleted.
-- An automatic parser regression test discovers every top-level `samples/*.fib` file; it does not perform semantic analysis or execution.
-- Documented file namespaces, `comp` aliases, visibility, lexical lookup, and planned plain function-pointer semantics; ordinary function-pointer calls now have type checks; complete analysis now adds initialization/flow checks.
-- An unfinished `BuilderObject` build-file pipeline with build stages; compilation and interpretation of build files, object emission, and linking are not yet implemented end-to-end.
-- Split tokenizer and token shapes used by the current parser and its tests; there is no separate production lexer module.
-- Current parser and AST support bare bit-width builtin type names, per-binding types and `const` in multi-variable declarations, and qualified identifier syntax. Import declarations are not implemented; name resolution uses explicitly named build-plan files and aliases.
-- Lexical scope utilities and declaration-identity contracts; semantic completion now includes initialization/flow validation.
-- Preserved the unfinished symbol-table and IR rewrite sources from `refactor/modules-and-generic-functions`; the IR interpreter is now exported but remains unimplemented.
+- Reconstructed native compilation through analyzed source, verified owned SSA,
+  LLVM 21, PIC objects and host `cc` linking. Explicit single-file and narrow
+  interpreted build-file routes work; default discovery, `run` and `test` remain pending.
+- Fixed-width signed/unsigned 8–128-bit integers, float16/32/64/128 and bool:
+  arithmetic, bitwise operations, shifts, numeric/bool casts, comparisons,
+  short-circuit logic, helpers, recursion, branches, loops and break/continue.
+  Integer arithmetic wraps; invalid division, shifts and float-to-integer casts trap.
+- Structs, partial initialization, typed pointers, null-checked dereferences,
+  unchecked memory places, direct enum payloads/switches, fixed-array values,
+  checked indexing/slicing and constant-initialized global storage with relocations.
+- Function values and indirect calls, including mutable callbacks in struct fields.
+  Linux x86-64 System V `callconv "C"` supports scalar/pointer and nonempty-struct
+  boundaries, register coercions and indirect struct arguments/results. Native
+  linking accepts `--c-source`, `-l`/`--link-lib` and `-L`/`--library-path`.
+- Concrete generic specialization with body rechecking, computed type annotations,
+  bounded `comp fn` type computation, initialization/flow validation, exhaustive
+  enum switches and reverse-order lexical defer on normal exits/return/break/continue.
+  Value-returning `comp fn` evaluation remains explicit scaffolding.
+- Package-rooted lookup, scoped visibility, identity-preserving aliases, protected
+  primitive prelude names and canonical cross-file linkage with persistent package
+  identities, pinned Unicode normalization and versioned symbols.
+- Installed version-matched source std with `--sysroot`/`--no-std`, reusable Result,
+  Linux x86-64 syscalls, process arguments/environment and generic maps. Main accepts
+  optional argument/environment parameters and void/int32 or supported Result returns.
+- Source std typed sbrk allocation/free, aligned mmap page allocation/release,
+  checked byte `memset`/`memcpy`, target-derived runtime `core::sizeof(T)`, OS randomness,
+  tagged formatting to buffers/writer callbacks, reliable output and explicit string
+  equality/length/concatenation helpers. Buffer formatting adds no NUL suffix.
+- Native compiler-backed LSP with collecting diagnostics, semantic tokens, unsaved
+  overlays, UTF-16 positions, build-file planning and accessible qualified-name completion.
+- Rust installer for compiler/LSP binaries and std sources; compiler/LSP benchmark
+  tooling with recorded measurements. Automatic top-level sample compile/run coverage
+  checks output and exit statuses, alongside frontend, IR, native and std regressions.
+- Experimental `fibc-fib` token/arena/command scaffolding and `std::io::Reader(T)`
+  scaffolding. Neither is a working compiler/input abstraction; the Fib compiler
+  experiment is outside the sample sweep and still needs API migration.
 
 ### Changed
-- Expanded the runnable example project to two source files with struct/pointer,
-  enum/switch, generic, fixed-array and multi-binding demonstrations, checked by
-  the frontend/IR and executable acceptance tests.
-- Documented the language specification: package-rooted file namespaces/source discovery and scoped visibility; protected implicit-prelude type identifiers; retained suffix arrays; contextual direct-literal casts and explicit numeric/bool conversion; independent array mutability, readonly views, warned one-layer pointer field access and exhaustive enum switches. Compiler implementation status is documented separately.
-- Refreshed roadmap and implementation documentation for executable enums, explicit interpreted build files and current test coverage. Consolidated generic and array rules into the language specification and removed superseded proposal pages.
-- Moved analyzed-source-to-IR lowering from the driver into one `ir::lowering::lower` entry point. Build files and normal sources now use the same analyzer and lowering; `build_api` is configured as a synthetic module, while the driver only validates the entry contract and selects LLVM or interpretation.
-- **Breaking:** removed variadic syntax, AST/semantic/IR signature flags and historical variadic libc declarations (fixed-signature C shims are required; old std callers remain unmigrated). Type-return evaluation now requires explicit `comp fn`; ordinary runtime functions are not evaluable merely because their declaration is known. Binding `const` is independent of array-element mutability; use a qualified array type for readonly elements.
-- **Breaking:** removed builtin functions and builtin-call AST/token variants. `concat`, `str_len` and `str_eq` are ordinary identifiers; their `@` spellings are rejected. Standard-library implementations are future work; the historical `@concat` wrapper is retired and samples/editor highlighting use ordinary calls.
-- Type bindings now require explicit `comp` during analysis, including local inline types and type aliases. Local aliases follow declaration order and cannot reuse build-plan file names or their roots. Local compile-time type identities remain private to lexical lookup. Collection and name resolution reject invalid stage ordering and repeated attempts; name errors carry structured source locations.
-- LSP semantic highlighting recognizes `pub` and `comp` as declaration keywords, including per-binding modifiers in multi-variable declarations.
-- **Breaking:** unified declarations use `[pub] [const | comp] name (: Type = | :=) expression;`. Type definitions and aliases now use `Name: type = ...;` with a required semicolon and parse as variable bindings with arbitrary expression initializers (`TypeValue` for explicit type syntax; ordinary expressions for names and calls, with semantic discrimination later); the legacy `type Name ...` parser route is removed. Each multi-binding retains independent modifiers and types, with the final `:=` introducing the shared initializer list. Typed declarations without initializers remain supported for compatibility. Parser tests, samples, and parsing/agent references follow the new syntax; arbitrary compile-time evaluation remains unfinished.
-- Builtin numeric type variants and canonical source names use bit widths (`Int32`, `int32`); bare `int` and `uint` denote 32-bit types. The current parser rejects legacy `@`-prefixed types.
-- The current parser uses restricted postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of legacy dotted access forms.
-- Aligned language references, roadmap baselines, repository instructions, and agent guides with the implemented syntax and explicit unfinished compiler boundaries.
-- Moved verified syntax observations into `docs/parsing/`, separate from language-design proposals. Filed analysis gaps as GitHub issues; `docs/agents/issues/README.md` links to them without duplicating report bodies.
-- Replaced the legacy driver, CLI, and library entry points with the unfinished build-file pipeline from `refactor/modules-and-generic-functions`. `build`, `run`, and `test` do not work yet; the `AnalyzedProject → Ir` pipeline is represented by architecture sketches, not executable passes.
-- Replaced obsolete typed-AST/flat-IR lowering bodies with coherent SSA and backend API sketches; no direct AST-to-LLVM fallback or compatibility `IrProgram` is retained.
+
+- **Breaking:** prefix container types `[N]T`/`[]T` replace suffix forms. Byte sentinel
+  arrays `[N:S]uint8`, slices `[:S]uint8` and pointers `[*:S]uint8` preserve termination;
+  `c"..."` has type `const [*:0]uint8`. `openat` requires a terminated path.
+- **Breaking:** unified bindings require explicit `comp` for types. Primitive types
+  are ordinary protected identifiers; `char` is removed and character literals use uint8.
+  Binding constness and layer-local element/pointee constness are independent.
+- **Breaking:** enum variants carry one direct payload type; recursively unit-only
+  payloads use bare variant values. Named-field payload shorthand is removed.
+- **Breaking:** remove `@` builtins/types, variadics, legacy type declarations and
+  `extern` (use `callconv "C"`). `std::memory` replaces automatic `memory::` access;
+  string helpers live explicitly in `std::string`. Fixed-signature shims handle C varargs.
+- Arrays implicitly borrow as full slices in expected-type contexts, preserving
+  readonly backing storage; string literals can form readonly byte slices.
+- Split compiler stages into workspace crates, retaining the root facade/driver.
+  Share immutable collecting-analysis data, reuse verifier graph tables, reduce
+  development debug-info costs and avoid duplicate LLVM validation runs.
+- Replace the historical flat-IR/typed-AST pipeline and experimental std with the
+  current analyzer, transactional SSA, shared lowering and installed source std.
+  Compiler-declaration revision is now 4. Historical positional/check/emit/release
+  CLI flags are absent; runtime checks are not disabled by a release flag.
 
 ### Fixed
-- Parse `void` type values through the ordinary type-expression path so calls consume their arguments correctly.
-- Reject known-zero remainder divisors independently of the dividend and diagnose inclusive slice-bound normalization overflow without panicking. Failed recursive specialization groups discard newly cached dependents; template-dependent flow obligations are checked on concrete instances.
-- Compile-time alias dependencies use an iterative stack, preserving canonical identities and cycle diagnostics while resolving the 8,000-alias regression on a 2 MiB stack.
-- Migrated all 15 sample programs to current syntax while preserving their operations and numeric widths; output remains intended/unverified. Fibonacci benchmark results now use `int64` so `fib(50)` fits, and linked-list cleanup is registered after constructing the list.
-- Aligned LSP highlighting with the current tokenizer/parser: bare bit-width types, `const` bindings, `.len`, declaration contexts, and decimal-prefixed floats; removed legacy `var`/`import` keyword and `@`-type highlighting.
-- Migrated parser identifier handling to string-based `Identifier` tokens and qualified identifier expressions; type declarations consume the metatype builtin, and member accesses consistently use `accessed_identifier`.
-- Driver pipeline/lowering sketches now return explicit not-implemented errors instead of panicking.
 
-### Fixed
-- The tokenizer now rejects an unescaped quote in a character literal, so `'''` (and the bare forms `''` and `'''''`) no longer parse as a valid character literal; a literal quote must be written as an escape (`'\''`).
+- Render readable types/readonly qualifiers and explain invalid slice conversions.
+- Preserve const protection through nested inline arrays, field access, addresses
+  and borrowed views; check bounds before narrowing indices or writing destinations.
+- Preserve package/intrinsic identities and unsaved sibling overlays when editing std.
+- Bound active generic expansion, clean failed specialization caches and resolve long
+  alias chains iteratively; reject malformed ABI plans without panicking.
+- Preserve existing outputs on linker failure and reject source-overwriting outputs.
+- Repair current-syntax callback fixtures and migrate all top-level samples to source std.
+- Reject malformed character quotes, known-zero remainders and overflowing inclusive
+  slice bounds; parse void type arguments through the ordinary type-expression path.
 
 ## [0.1.1] - 2026-10-14
 
@@ -273,6 +197,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropped the self-hosted compiler effort (`compiler.fib`, 518 lines) to
   focus on the Rust/LLVM compiler.
 
-[Unreleased]: https://github.com/santi34mg/fib/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/santi34mg/fib/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/santi34mg/fib/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/santi34mg/fib/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/santi34mg/fib/releases/tag/v0.1.0

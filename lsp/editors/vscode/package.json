@@ -2,7 +2,7 @@
   "name": "fib-lsp-vscode",
   "displayName": "Fib Language Support",
   "description": "Compiler-backed highlighting and diagnostics for Fib",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "engines": {

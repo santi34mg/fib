@@ -1,5 +1,29 @@
 # Tests and validation
 
+## 0.2.0 release preparation (2026-10-31)
+
+Workspace packages and Cargo.lock, the installed std manifest and VS Code package
+metadata now identify 0.2.0. The compiler-declaration revision remains 4. Release
+notes describe migration requirements and the remaining implementation boundaries;
+the separate Zed extension retains its independent version.
+
+Validation passed after the version changes:
+
+- `cargo fmt --check` and `git diff --check`.
+- Offline locked no-default-features check and full workspace tests.
+- Offline locked all-features workspace tests with LLVM 21, including native
+  acceptance, all top-level samples and source std execution.
+- Offline locked strict all-target Clippy in both feature configurations.
+- VS Code launcher tests (`node --test` in `lsp/editors/vscode`): two passed.
+- The Rust installer built optimized compiler/LSP binaries and installed matching
+  sources into a temporary prefix. Installed sources/manifest matched the checkout.
+  From outside the checkout, with `FIB_SYSROOT` unset and no `--sysroot` argument,
+  the installed compiler discovered std 0.2.0, compiled a copied hello-world sample
+  and produced the expected output with exit status zero.
+
+These are local validation results, not a claim that remote CI or publication has
+completed. No tag, GitHub release or binary upload was created during preparation.
+
 ## Prefix containers and byte sentinels (2026-10-31)
 
 The workspace all-features and no-default-features test suites pass. Strict

@@ -1,3 +1,3 @@
-compiler_version = "0.1.1"
+compiler_version = "0.2.0"
 declaration_revision = 4
 sources = ["formatting.fib", "io.fib", "map.fib", "memory.fib", "os.fib", "os_abi.fib", "prelude.fib", "process.fib", "random.fib", "result.fib", "string.fib"]

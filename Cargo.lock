@@ -165,7 +165,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fib-backend"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "fib-ir",
  "inkwell",
@@ -176,11 +176,11 @@ dependencies = [
 
 [[package]]
 name = "fib-builtins"
-version = "0.1.1"
+version = "0.2.0"
 
 [[package]]
 name = "fib-frontend"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "caseless",
@@ -196,14 +196,14 @@ dependencies = [
 
 [[package]]
 name = "fib-ir"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "fib-builtins",
 ]
 
 [[package]]
 name = "fib-lowering"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "fib-frontend",
@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "fibc"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
