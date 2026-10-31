@@ -1,7 +1,0 @@
-// Build evaluation currently supports explicitly sliced literals for these operations.
-fn build() int32 {
-    build_api::add_source("main.fib"[..]);
-    build_api::set_entry("main"[..]);
-    build_api::set_output("demo"[..]);
-    return 0;
-}
