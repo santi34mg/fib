@@ -28,6 +28,24 @@ pub enum Command {
         library_paths: Vec<PathBuf>,
     },
 
+    /// Export unrestricted public top-level symbols as JSON on stdout.
+    #[command(name = "export-symbols")]
+    ExportSymbols {
+        #[arg(
+            long,
+            value_name = "PATH",
+            required_unless_present = "build_file",
+            conflicts_with = "build_file"
+        )]
+        single_file: Option<PathBuf>,
+        #[arg(long, value_name = "PATH", required_unless_present = "single_file")]
+        build_file: Option<PathBuf>,
+        #[arg(long, value_name = "PATH", conflicts_with = "no_std")]
+        sysroot: Option<PathBuf>,
+        #[arg(long)]
+        no_std: bool,
+    },
+
     #[command(name = "run")]
     Run,
 
@@ -37,6 +55,34 @@ pub enum Command {
 
 pub fn exec_command(command: Command, _env_vars: env::VarsOs) -> anyhow::Result<()> {
     match command {
+        Command::ExportSymbols {
+            single_file,
+            build_file,
+            sysroot,
+            no_std,
+        } => {
+            let mut standard_library = if no_std {
+                crate::standard_library::StandardLibrary::disabled()
+            } else {
+                crate::standard_library::StandardLibrary::default()
+            };
+            standard_library.sysroot = sysroot;
+            let mut plan = match (single_file, build_file) {
+                (Some(path), None) => crate::plan::BuildPlan::single_file(&path)?,
+                (None, Some(path)) => PlanBuilder::from(path)
+                    .with_standard_library(standard_library.clone())
+                    .compile_and_interpret_build_file()?,
+                _ => anyhow::bail!("provide exactly one of --single-file or --build-file"),
+            };
+            plan.standard_library = standard_library;
+            let project = crate::driver::run_frontend(&plan)?;
+            let document = crate::symbol_export::public_symbols(&project)?;
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            serde_json::to_writer_pretty(&mut stdout, &document)?;
+            writeln!(stdout)?;
+            Ok(())
+        }
         Command::Build {
             single_file,
             build_file,

@@ -141,8 +141,8 @@ pub fn run_pipeline(plan: &BuildPlan, goal: PipelineGoal) -> anyhow::Result<Comp
     Ok(CompilationOutput::Binary(output))
 }
 
-#[cfg(test)]
-fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
+/// Prepare and strictly analyze a project without requiring an executable entry.
+pub fn run_frontend(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
     let prepared = plan.prepare()?;
     let plan = &prepared;
     analyze_units(plan, parse_files(plan)?)
