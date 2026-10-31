@@ -26,6 +26,10 @@ variable inspection, use `CARGO_PROFILE_DEV_DEBUG=2` (or
 `CARGO_PROFILE_TEST_DEBUG=2` for tests). Release and benchmark profiles are unchanged.
 The compiler and installer binaries have no unit tests and skip empty test
 harnesses; Cargo still builds them for integration tests. The LSP unit tests remain enabled.
+The `fib-dist` Rust tool builds a relocatable Linux x86-64 archive via the installer,
+tests it after extraction, and emits a SHA-256 checksum. Release publication uploads
+that bundle; packaging PRs/manual runs produce Actions artifacts. See the
+[release handoff](../releases/0.2.0.md#release-handoff) for commands and requirements.
 See [Rust build measurements](../rust-build-performance.md) for scope and reproduction.
 
 [`rust-toolchain.toml`](../../rust-toolchain.toml) pins 1.98.0 with rustfmt/clippy;

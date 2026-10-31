@@ -20,6 +20,10 @@ exhaustive switches.
 
 ## Installation
 
+Published releases include a Linux x86-64 binary bundle with `fibc`, `fib-lsp`
+and matching std sources, alongside GitHub's full source archives. See the
+[release notes](docs/releases/0.2.0.md#install-and-try) for extraction and requirements.
+
 Install compiler binaries and matching standard-library sources together:
 
 ```sh

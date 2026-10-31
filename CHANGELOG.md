@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust installer for compiler/LSP binaries and std sources; compiler/LSP benchmark
   tooling with recorded measurements. Automatic top-level sample compile/run coverage
   checks output and exit statuses, alongside frontend, IR, native and std regressions.
+- Rust release packaging for Linux x86-64 binaries and matching std, with SHA-256
+  checksums and extracted-archive smoke tests. Publishing a GitHub release builds
+  and attaches the bundle; manual/PR workflow runs produce Actions artifacts only.
 - Experimental `fibc-fib` token/arena/command scaffolding and `std::io::Reader(T)`
   scaffolding. Neither is a working compiler/input abstraction; the Fib compiler
   experiment is outside the sample sweep and still needs API migration.

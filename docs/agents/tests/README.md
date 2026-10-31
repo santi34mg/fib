@@ -1,5 +1,21 @@
 # Tests and validation
 
+## Release archive packaging (2026-10-31)
+
+`fib-dist` built `fib-0.2.0-linux-x86_64.tar.gz` and its SHA-256 checksum using
+optimized installed binaries. The archive contains `fibc`, `fib-lsp`, all manifest
+std sources, the matching sysroot manifest, license/changelog and runtime dependency
+information. Its automatic extraction test compiled hello-world outside the checkout
+with no sysroot override, checked exact output/exit status, and launched LSP help.
+External checksum verification passed. Wrong-tag and existing-output invocations
+failed explicitly before rebuilding or overwriting artifacts.
+
+Both full workspace test configurations passed, including native/std/sample execution.
+Formatting, whitespace, all-target checks, strict Clippy in both feature configurations
+and dependency policy checks passed. The release workflow uses read-only build jobs
+and a write-enabled upload job only for published releases; PR/manual builds retain
+Actions artifacts. GitHub-hosted execution and release upload remain unverified locally.
+
 ## 0.2.0 release preparation (2026-10-31)
 
 Workspace packages and Cargo.lock, the installed std manifest and VS Code package
