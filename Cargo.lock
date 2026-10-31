@@ -195,6 +195,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fib-fuzz"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fib-frontend",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "fib-ir"
 version = "0.2.0"
 dependencies = [
