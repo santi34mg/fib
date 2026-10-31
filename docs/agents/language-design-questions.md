@@ -10,9 +10,6 @@ support; the current compiler predates several decisions.
 
 Remaining questions include:
 
-- How will package acquisition/version identity and canonical linkage distinguish
-  dependencies independently of local dependency names and checkout paths?
-- What Unicode folding/normalization defines case-insensitive package/file names?
 - What exact source-discovery API shape, compiler namespace spelling and warning
   controls will expose the decided behavior?
 - How will the existing `build() int32` and synthetic build API evolve to opaque

@@ -27,7 +27,10 @@ of string literal storage.
   fields, variants, aliases and local bindings remain case-sensitive. Hyphens in
   package/directory/file segments become underscores; spaces and language keywords
   are invalid. Collisions after normalization, including case-only differences
-  and file/directory conflicts, are compile-time errors.
+  and file/directory conflicts, are compile-time errors. Namespace normalization
+  applies hyphen replacement, NFC, full default Unicode case folding and NFC;
+  table versions and persistent package identity follow the
+  [canonical linkage contract](roadmap/00-cross-module-linkage.md).
 - A build-API operation recursively discovers `.fib` files beneath a requested
   directory within the source root. It skips symlinks, excludes the active build
   file and supports explicit exclusions; hidden, test and build directories are

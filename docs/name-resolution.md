@@ -36,7 +36,8 @@ project-unique `LocalId`s. Alias uses carry the canonical target's identity.
 Unqualified lookup checks lexical bindings, current-file declarations, then
 registered file names. Qualified lookup selects `root` or a declared dependency
 in the requesting package's environment, then finds its package-relative file
-path. File prefixes are normalized for ASCII case and hyphens, while declarations
+path. File prefixes are normalized with NFC, full default Unicode case folding,
+NFC again and hyphen-to-underscore replacement, while declarations
 remain case-sensitive. Flat plans retain their longest-prefix compatibility path. A canonical file
 path bypasses a same-spelled runtime local. Only files, including aliases to files,
 can be intermediate namespaces; variables, functions, and types can be final targets.

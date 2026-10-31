@@ -162,7 +162,9 @@ names cannot be shadowed, and explicit namespace aliases can shorten paths.
 `BuildPlan::packages` represents package IDs, source roots, dependency maps and
 file membership for host-created plans. The build API does not expose that metadata
 yet; current finalization still uses file-stem names and rejects duplicate source selections. It must be extended rather than claiming discovery already
-works. Unicode folding and package acquisition/version identity remain open.
+works. Unicode folding and host-supplied persistent acquisition/version identities
+are implemented by the [canonical linkage contract](00-cross-module-linkage.md);
+the build API still needs to expose package registration and acquisition.
 See [language specification](../language-specification.md) for scoped visibility and exports.
 
 ## Interpretation and capabilities

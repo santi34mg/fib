@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Complete canonical cross-file linkage with host-supplied persistent package identities,
+  pinned Unicode namespace normalization and versioned function/global/generic symbols
+  independent of build-local IDs, checkout paths and dependency aliases. Preserve C/entry
+  symbols and reject collisions; verify diamond calls and native linkage with executable tests.
+
 - Share immutable declaration recipes, function source snapshots and diagnostic paths across collecting type-analysis checkpoints, avoiding repeated whole-program AST copies while retaining mutable inference rollback.
 
 - Allocate IR verifier predecessor/dominator tables once per verification instead of once per function, retaining ownership, dominance and enum payload checks.

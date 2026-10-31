@@ -1,5 +1,17 @@
 # Tests and validation
 
+## Canonical cross-file linkage (2026-10-30)
+
+All 881 all-features tests and all 807 no-default-features tests pass across the
+workspace. Strict all-target Clippy passes in both configurations; formatting and
+whitespace checks also pass. `tests/linkage.rs` adds eight all-features acceptance
+tests (six without LLVM), including relocated/renumbered/reordered plans, aliases
+and dependency diamonds, coexisting package versions, Unicode normalization and
+collisions, canonical generic/nominal/recursive/callback type identities, generic
+local nominal types, foreign/entry collisions and native C linkage. The frontend
+normalization regression also covers combining marks introduced by case folding.
+See the [completed linkage contract](../../roadmap/00-cross-module-linkage.md).
+
 ## Workspace crate split (2026-10-30)
 
 All 870 LLVM-enabled tests and all 798 no-default-features tests pass across

@@ -135,9 +135,10 @@ comp Result := std::result::Result;
 
 `std` is protected as a dependency root. `root` denotes the current package,
 including from within std. Each package resolves dependency names in its own
-environment. Package/file segments fold ASCII case and normalize hyphens to
-underscores; declaration names remain case-sensitive. Unicode normalization
-remains unspecified; non-ASCII code points are currently preserved.
+environment. Package/file segments normalize hyphens to underscores and use NFC,
+full default Unicode case folding, then NFC; declaration names remain case-sensitive.
+See the [canonical linkage contract](roadmap/00-cross-module-linkage.md) for table versions
+and persistent installed-package identities.
 
 `std::prelude` selects implicit aliases through its public declarations. It exports
 `str_eq(const uint8[], const uint8[]) bool` for byte-slice equality, including empty

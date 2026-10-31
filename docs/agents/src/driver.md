@@ -48,7 +48,8 @@ conditions are reevaluated on every iteration, including short-circuit condition
 Absent/known-true conditions have no condition-false exit; exit blocks are created
 only when reachable. Known-false bodies are prevalidated without emitting blocks.
 Known bool conditions use the same evaluator as frontend flow checking. Helpers have deterministic identity-based
-linker names, internal linkage and the limited direct Fib fastcc convention
+linker names under the versioned [canonical linkage contract](../../roadmap/00-cross-module-linkage.md),
+internal linkage and the limited direct Fib fastcc convention
 (scalars, structs, enums and pointers); physical ABI
 argument placement belongs exclusively to the backend.
 

@@ -51,7 +51,9 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   warned one-layer pointer field access and exhaustive enum switches are enforced.
   `BuildPlan::packages` records explicit package IDs/source roots/dependency maps;
   scoped visibility uses package/directory regions. Package-rooted lookup resolves
-  `root` and dependency environments with ASCII case/hyphen normalization. Recursive
+  `root` and dependency environments with Unicode case/hyphen normalization. Persistent
+  package identities and versioned canonical linkage names exclude build-local IDs;
+  see [linkage contracts](docs/roadmap/00-cross-module-linkage.md). Recursive
   recursive discovery and ownership/lifetime checking remain deferred.
 - `BuildPlan::single_file` loads a named file and chooses an executable beside it.
   Build files have an initial `build_api` semantic namespace and a narrow verified-IR

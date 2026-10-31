@@ -28,7 +28,7 @@ semantics are documented in the [implementation guide](../agents/README.md),
 
 | # | Proposal | Remaining work |
 | --- | --- | --- |
-| 00 | [Package paths and canonical linkage](00-cross-module-linkage.md) | Unicode namespace normalization, package acquisition/version identity and stable public symbol encoding |
+| 00 | [Package paths and canonical linkage](00-cross-module-linkage.md) | Complete: persistent package identities, Unicode normalization and versioned canonical symbols |
 | 05 | [String representation redesign](05-remove-string.md) | Literal/FFI/ownership policy and ordinary standard-library string APIs |
 | 06 | [Function overloading](06-function-overloading.md) | Overload selection, return-type policy and canonical overload identity |
 | 07 | [Interfaces and constraints](07-interfaces.md) | Constraint syntax, conformance identity and specialization checking |
@@ -49,8 +49,8 @@ concrete rechecked instances also execute through verified IR and LLVM.
 - [x] Resolve all type names as ordinary identifiers through a protected implicit
       prelude; preserve unified bindings and metatype specialization.
 - [x] Implement package/source-root identities, `root` paths and namespace aliases;
-      normalize ASCII case/hyphens for package/directory/file segments, reject collisions,
-      and retain case-sensitive declaration/local names. Unicode normalization remains open.
+      normalize Unicode case/hyphens for package/directory/file segments, reject collisions,
+      and retain case-sensitive declaration/local names. Canonical linkage uses persistent package identities.
 - [x] Add `pub(dir)` and `pub(root)`, preserving file-private/default and public
       access; permit explicit re-exports of accessible restricted targets.
 - [x] Give direct same-family literal cast operands destination context; implement

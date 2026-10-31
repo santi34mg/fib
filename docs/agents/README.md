@@ -149,10 +149,12 @@ public aliases preserve target identity without exposing the original path.
 Existing single-file/flat-plan callers use the compatibility adapter.
 
 Package-qualified lookup uses each source package's dependency environment and
-package-relative file paths, with ASCII case/hyphen normalization and collision
+package-relative file paths, with Unicode case/hyphen normalization and collision
 checks. Flat-plan callers retain their compatibility path. Installed std is added
 before parsing; see [standard library](../standard-library.md).
-Still deferred: Unicode namespace normalization, public package/discovery build-API
+Canonical linkage uses persistent package identities and versioned type/declaration keys;
+see [linkage contracts](../roadmap/00-cross-module-linkage.md).
+Still deferred: public package/discovery build-API
 signatures and discovery/deduplication integration, ownership/lifetime enforcement,
 and broader compiler namespace spelling.
 General build interpretation, value-returning compile-time function execution and broader ABI remain

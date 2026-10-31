@@ -58,6 +58,8 @@ SSA values and PHIs remain independent of physical argument positions. A
 mixed-convention test uses a test-only reversed-argument policy for internal Fib
 functions; the test permutation is separate from production scalar fastcc classification.
 Source helpers select Fib convention in lowering and retain internal linkage;
+their versioned canonical names encode persistent package/module/declaration
+identities and concrete type arguments, never file or type table indices.
 Legacy main/build entries select C. Extended main signatures use a generated
 source wrapper with C `main(int32, **uint8, **uint8) int32`; source main uses the
 ordinary internal Fib convention. The driver and source std handle process
