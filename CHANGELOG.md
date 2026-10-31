@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Parse indexed compound assignments for all five arithmetic operators, retaining
+  one target and RHS in the AST. Analysis and execution remain unsupported.
+
 ## [0.2.0] - 2026-10-31
 
 ### Added

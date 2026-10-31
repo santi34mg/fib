@@ -46,6 +46,11 @@ This is parsing only. It does not type-check or compile the function.
   with migration guidance. Analysis normalizes unit variants; their construction
   is a bare member value, with no parentheses.
 - Index/slice syntax is `a[i]`, `a[start..end]`, with inclusive `.=` also parsed.
+  Indexed compound assignments (`+=`, `-=`, `*=`, `/=`, `%=`) retain a single
+  target, arithmetic operator and RHS in `IndexedCompoundAssignment`, including
+  nested indices and calls. Analysis explicitly rejects this pending operation;
+  simple-name compounds retain their existing desugaring. Other compound target
+  forms remain rejected.
   Legacy `a.[i]`/`.@len` are not current syntax.
 - Array/slice types use prefix `[N]T` and `[]T`; sentinel forms are `[N:S]T`,
   `[:S]T` and `[*:S]T`. Analysis currently requires uint8 sentinel elements.
