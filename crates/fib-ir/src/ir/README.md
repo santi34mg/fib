@@ -62,12 +62,14 @@ loads and stores. `Display` remains a diagnostic dump marked unverified.
 The broader records describe future support, not executable guarantees:
 general tuples and nonnumeric casts remain unfinished.
 Fixed-array values and numeric/bool casts are verified and lowered. Bytes are interpreter-only.
-Unit/never/character/string runtime representation, indirect calls and broader
-source lowering remain unfinished. Concrete generic instances lower from their
+Unit values use empty aggregates, characters use uint8 and strings use readonly
+byte containers. `FunctionAddress` and `CallIndirect` preserve callable signatures
+and conventions through verification and emission. Broader source lowering
+remains unfinished. Concrete generic instances lower from their
 rechecked bodies and binding facts; symbolic templates are never emitted.
 
 `ir::lowering::lower` lowers fixed-width integer/float/bool and struct/enum/pointer
-helpers and direct calls,
+helpers and direct/indirect calls,
 initialized locals, assignment, arithmetic, bitwise/shifts, explicit numeric casts,
 short-circuit booleans, comparisons, conditionals, while loops, break/continue and returns.
 Defer statements and blocks execute in reverse registration order on lexical

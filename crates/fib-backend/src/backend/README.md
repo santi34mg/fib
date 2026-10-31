@@ -19,11 +19,15 @@ pointee type, including nested readonly qualifiers.
 
 ## Executable subset
 
-The C entry ABI supports 32-bit integer parameters/results and void returns.
+`callconv "C"` uses the Linux x86-64 System V ABI for supported integer/bool,
+float32/64, pointer/function-pointer and nonempty struct types. Struct classification
+supports register coercions and indirect arguments/results; array parameters
+require explicit pointers. Unsupported types and targets are rejected.
 Internal Fib helpers support direct Bool, fixed-width integers, IEEE floats,
 structs, enums and typed pointers as parameters/results, or void, using LLVM fastcc.
 This limited direct convention is
-not the full production Fib ABI or a general external C interoperability contract.
+not the full production Fib ABI. Function values preserve their calling convention;
+function addresses and indirect calls execute, including callbacks in structs.
 Definitions support multiple blocks, entry arguments, block parameters/PHIs,
 Constant/direct Call/arithmetic/comparison/unary/numeric Cast instructions,
 aggregate construction/extract/insert, stack/field addresses, loads/stores, and
@@ -47,9 +51,9 @@ selected by each `Signature::calling_convention`; there is no compilation-wide
 ABI switch or alternative emission entry point. `abi::classify_abis` dispatches
 per signature and creates a `FunctionAbi` indexed by `FunctionId`. Classification
 receives resolved target triple/layout and logical IR types, and works without
-LLVM. Descriptions currently represent direct scalar parameter placement and a
-direct/void result. Structs use direct LLVM aggregate arguments/results; physical
-coercions and hidden results remain deferred.
+LLVM. Fib uses direct parameter/result placement, including LLVM aggregates.
+C classification additionally describes register coercions, indirect arguments
+and hidden results for the supported struct boundary.
 
 A function's ABI governs every call to that function and every return from it.
 `llvm_abi` translates descriptions into declarations, incoming argument decoding,
@@ -68,9 +72,9 @@ Neither convention silently falls back to another.
 
 Enums use target-derived tag-plus-union layout, verified active-payload extraction and direct internal fastcc boundaries; see [enum semantics](../../../../docs/enum-semantics.md). Switch successor occurrences have separate LLVM predecessors for PHIs.
 
-Broader C ABI widths, varargs, multiple results and unsupported instruction/
-type families still return errors. General Fib ABI policy and source ABI syntax
-remain future work.
+Broader C ABI types/targets, multiple results and unsupported instruction/
+type families still return errors. General Fib ABI policy remains future work;
+source `callconv "C"` declarations and callable types are implemented.
 
 `TargetSpec` explicitly requests a triple, CPU and features. Only `generic` CPU
 with default features is supported; other CPU/features fail instead of being
@@ -192,8 +196,8 @@ declaration, definition and call, including ABI-required attributes.
 Variadic signatures are removed from Fib and its IR. External C variadic APIs
 require separately supplied fixed-signature C shims, not guessed tail promotion
 or a variadic LLVM declaration. Reject unsupported conventions/aggregate cases
-explicitly. The present IR has direct calls by `FunctionId`, not an indirect-call
-instruction; do not invent one or a runtime helper as a side effect of emission.
+explicitly. The present IR has direct calls by `FunctionId` as well as `FunctionAddress` and `CallIndirect`; indirect calls use
+the callable signature's ABI plan rather than inventing a runtime helper.
 
 ## 4. Predeclarations and identity maps
 

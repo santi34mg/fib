@@ -4,7 +4,8 @@ The [language specification](language-specification.md) is implemented for prelu
 warned pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
-discovery and general runtime indexing/slices remain deferred.
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute.
 
 Reviewed against the current checkout on 2026-10-24. This document describes the
 working pipeline and its extension boundaries. Detailed implementation references
@@ -183,9 +184,10 @@ functions need no artificial return or unreachable block.
 Fixed-array values, multi-binding locals and concrete generic instances lower.
 Lexical defer statements and blocks lower in reverse order on scope exit, including
 return, break and continue. Return values are evaluated before cleanup.
-Runtime globals, runtime indexing/slices/tuples, indirect calls and
-multiple-result source functions remain unsupported by lowering. Analysis may accept these constructs;
-that does not make them executable.
+Constant-initialized runtime globals, checked array/slice indexing and slicing,
+function addresses and indirect calls execute. General tuples and multiple-result
+source functions remain unsupported by lowering. Value-returning `comp fn`
+evaluation remains explicit scaffolding.
 
 ### Checked and unchecked places
 
@@ -251,11 +253,12 @@ ABI, predeclares functions, emits scalar/struct/enum/memory CFGs and verifies th
 are supported. The driver requests the host target.
 
 ABI classification is per signature. One shared description governs declarations,
-incoming parameters, calls and returns. The C subset supports 32-bit integer
-parameters/results and void; internal Fib helpers use direct scalar, struct, enum and
-pointer LLVM fastcc arguments/results. Full production Fib ABI, broader external
-C interoperability, other aggregate families, varargs
-and callbacks remain unfinished.
+incoming parameters, calls and returns, including indirect calls. The Linux x86-64
+System V C subset supports integer/bool, float32/64, pointers/function pointers
+and nonempty structs, with register coercions and indirect struct boundaries.
+Internal Fib helpers use direct scalar, struct, enum and pointer LLVM fastcc
+arguments/results. Full production Fib ABI and broader external C types/targets
+remain unfinished. Variadics are removed; use fixed-signature C shims.
 
 Emission allocates entry first, precreates non-entry PHIs, traverses reverse
 postorder and patches incoming operands after definitions exist. Parallel branch
@@ -284,7 +287,7 @@ linker failures preserve existing output and report stderr.
 Without the default `llvm` feature, frontend/IR and ABI classification remain
 available; host-target selection, LLVM emission and object output fail explicitly.
 Broader layout, optimization and cross-linker
-orchestration remain future work. See the [backend contract](../src/backend/README.md).
+orchestration remain future work. See the [backend contract](../crates/fib-backend/src/backend/README.md).
 
 ## Interpreted build files
 
@@ -308,7 +311,7 @@ source IDs in declaration order, derives logical names from file stems, validate
 the selected entry and output, and rejects duplicate paths/names, escaping paths,
 missing sources, and source/build-file overwrites. Output parent directories must
 already exist. The resulting plan enters the normal multi-file program pipeline. Package-rooted
-lookup/discovery integration remains deferred.
+lookup is implemented for explicit packages; recursive discovery integration remains deferred.
 
 Build-file execution uses neither LLVM nor native artifact loading. The versioned
 opaque build API and broader interpreter capabilities are extended through this
@@ -323,10 +326,10 @@ malformed graphs; backend tests cover ABI classification and emitted CFGs.
 `tests/executable.rs` compiles, links and runs scalar/control-flow programs,
 including all numeric widths, guarded failures and bounded loop cases.
 
-The parser sample sweep parses every top-level sample. `builtin_scalars.fib`,
-`scalar_loops.fib` and `struct_storage.fib` additionally have executable acceptance
-coverage. The current-capabilities example project is also built and executed.
-Other samples and the experimental standard library are not automatically compiled or run.
+The parser sample sweep parses every top-level sample. `tests/samples.rs` also
+discovers, compiles and executes every top-level sample with output/exit checks.
+The current-capabilities example project and installed std modules have additional
+executable coverage. `fibc-fib` is an unvalidated compiler scaffold outside that sweep.
 
 The struct/storage milestone passed 700 no-default-feature library tests,
 708 LLVM-enabled library tests and 21 executable acceptance tests, plus formatting, check and

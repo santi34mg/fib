@@ -2,7 +2,7 @@
 
 The confirmed [pointer rules](../struct-storage-semantics.md) add shallow
 writable-to-readonly pointer/slice views and `pointer.field` shorthand with exactly
-one implicit dereference and a warning. Both are implemented; slice execution remains deferred. The shorthand
+one implicit dereference and a warning. Both are implemented; checked slice execution also works. The shorthand
 preserves readonly permissions and ordinary null checks.
 
 > **Verified parser behavior:** Raw pointer types, null literals, restricted postfix address/deref expressions, and casts parse.
@@ -60,8 +60,8 @@ checks element permissions; parsing does not imply storage lowering support.
 ## Casts and external allocation declarations
 
 ```fib
-extern fn malloc(size: usize) *void;
-extern fn free(ptr: *void) void;
+callconv "C" fn malloc(size: usize) *void;
+callconv "C" fn free(ptr: *void) void;
 buffer := malloc(16);
 node := buffer as *Node;
 address := node as usize;

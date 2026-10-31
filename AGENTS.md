@@ -65,10 +65,10 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   ownership, signatures, reachability and dominance. Enum operations, constants and switches validate payload signatures, tags and active-variant extraction proofs. Structs, enums, typed pointers,
   stack-slot ownership and aggregate/memory operations are verified. Global storage,
   address relocations and constant slice projections are also verified.
-- LLVM 21 emits multi-block SSA with PHIs/backedges, the C 32-bit integer/void entry ABI and internal direct scalar/struct/enum/pointer Fib fastcc ABI.
+- LLVM 21 emits multi-block SSA with PHIs/backedges, Linux x86-64 System V C scalar/pointer/nonempty-struct boundaries and internal direct scalar/struct/enum/pointer Fib fastcc ABI. Function addresses and indirect calls execute, including callbacks in structs.
   ABI classification is per signature; one shared description controls a function
   and calls to it. `emit_llvm(ir, target)` remains the sole public entry point.
-  Full production Fib ABI, external C interoperability and broader representations
+  Full production Fib ABI, broader external C types/targets and representations
   remain unfinished.
 - `build --single-file PATH` compiles the scalar/control-flow subset through LLVM,
   object and host `cc` linking. The narrow `build --build-file PATH` route also works; default discovery, `run` and `test` error explicitly.

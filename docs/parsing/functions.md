@@ -43,14 +43,14 @@ The multi-binding declaration preserves a single call initializer.
 
 ```fib
 fn declared(x: *uint8) bool;
-extern fn puts(text: *uint8) int32;
-extern fn malloc(size: usize) *void;
-extern fn free(ptr: *void) void;
+callconv "C" fn puts(text: const [*:0]uint8) int32;
+callconv "C" fn malloc(size: usize) *void;
+callconv "C" fn free(ptr: *void) void;
 ```
 
-A semicolon records a bodyless signature. `extern` sets a declaration flag.
-The parser also tolerates an external signature without `;` in some positions;
-use explicit semicolons for clear examples.
+A semicolon records a bodyless signature. `callconv "C"` selects the C calling
+convention on declarations and function types. The removed `extern` spelling
+produces a diagnostic directing callers to `callconv "C"`.
 
 ## Compile-time declarations and removed variadics
 
@@ -74,14 +74,14 @@ fn identity(T: type, value: T) T {
 value := identity(int32, 42);
 ```
 
-These forms parse; they do **not** implement generic specialization. The parser
-records ordinary parameters and a builtin type value argument; the signature's
-`generic_parameters` field remains empty. See [Generics](generics.md).
+The parser records ordinary parameters and type-value arguments. Semantic analysis
+specializes concrete instances and rechecks their bodies; those instances execute
+through lowering and LLVM. See [Generics](generics.md).
 
 ## Function types and call expressions
 
 ```fib
-Callback: type = fn(int32) int32;
+comp Callback: type = fn(int32) int32;
 callback: fn(int32) int32;
 callback(42);
 ```

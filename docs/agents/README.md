@@ -72,7 +72,13 @@ through 128 bits, float16/32/64/128 and bool through locals, arithmetic,
 bitwise/shifts, explicit casts, short-circuit logic, helpers/calls, conditionals,
 while loops, break/continue and returns. Typed numeric values require explicit
 conversions. Native helpers use a limited direct Fib fastcc ABI; main keeps the
-C int32 entry contract. Extended main signatures use an analyzed source wrapper:
+C int32 entry contract. Linux x86-64 System V `callconv "C"` also supports
+integer/bool, float32/64, pointer/function-pointer and nonempty-struct boundaries,
+including register coercions and indirect struct arguments/results. Function
+addresses and indirect calls execute, including callbacks stored in structs.
+Native linking accepts C sources, libraries and search paths through
+`--c-source`, `-l`/`--link-lib` and `-L`/`--library-path`.
+Extended main signatures use an analyzed source wrapper:
 optional `std::process::Arguments` and `Environment` parameters, with void/int32
 or unit/int32-success `std::result::Result` returns. Source `std::map` implements
 generic `Map(K, V)` with supplied equality, specialized to byte strings for the
@@ -122,6 +128,13 @@ unit switch bindings have type void. Declared payload metadata is retained for
 generic substitution and annotation proofs, while shared normalization determines
 constructor, binding and storage behavior. Runtime unit values use empty aggregates
 without changing resultless void returns or opaque `*void`.
+
+## Experimental scaffolding
+
+The separate `fibc-fib` experiment contains token/arena/command scaffolding and
+is not a working compiler or validated bootstrap path. `std::io::Reader(T)` is
+also scaffolding; supported input currently uses `std::os::read`. See the
+[experiment status](../../fibc-fib/README.md) and [std guide](../standard-library.md).
 
 ## Language server
 
