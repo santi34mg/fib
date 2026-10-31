@@ -99,7 +99,7 @@ pub fn mmap(address: *uint8, length: usize, protection: int32, flags: int32, fd:
     value := root::os::syscall6(9, address, length as uint64,
         (protection as int64) as uint64, (flags as int64) as uint64,
         (fd as int64) as uint64, offset as uint64);
-    if value == MAP_FAILED {
+    if failed(value) {
         return MappingResult.Err((-value) as int32);
     };
     return MappingResult.Ok(root::os_abi::pointer_from_word(uint8, value as uint64));

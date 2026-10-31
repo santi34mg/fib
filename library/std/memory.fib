@@ -27,21 +27,23 @@
 // Empty slices may have null or non-null data; use .len to test for emptiness.
 // Example: pointer := std::memory::slice_data(bytes);
 
-comp IoError: type = enum {
+pub comp AllocError: type = enum {
     NotEnoughMemory,
     MapFailed,
-
-    NotImplemented,
+    InvalidAlignment,
+    UnmapFailed,
 };
 
-comp Allocator: type = struct {
+pub comp Allocator: type = struct {
     context: *void,
-    // fn alloc(context: *void, size: usize, align: usize) *uint8
-    alloc: fn(*void, usize, usize) root::result::Result(*uint8, IoError),
-    // fn free(context: *void, ptr: *void) void
-    free: fn(*void, *void) root::result::Result(void, IoError),
+    // Allocate uninitialized storage; alignment must be a positive power of two.
+    alloc: fn(*void, usize, usize) root::result::Result(*uint8, AllocError),
+    // Free only the original live pointer returned by this allocator, or null.
+    free: fn(*void, *void) root::result::Result(void, AllocError),
 };
 
+// Stateless Linux mmap allocator; context is ignored. Zero size and size/padding
+// overflow return NotEnoughMemory. Unknown pointers and double frees are invalid.
 pub fn create_page_alloc() Allocator {
     return Allocator {
         context: null,
@@ -50,27 +52,63 @@ pub fn create_page_alloc() Allocator {
     };
 }
 
-fn page_alloc(context: *void, size: usize, align: usize) root::result::Result(*uint8, IoError) {
-    // address is null to let OS choose address
+// An explicit struct, rather than a byte slice, makes the mapping metadata's intent clear.
+// Pointer and usize fields give this header 8-byte alignment on Linux x86-64.
+comp PageHeader: type = struct {
+    base: *uint8,
+    length: usize,
+};
+
+fn page_alloc(context: *void, size: usize, align: usize) root::result::Result(*uint8, AllocError) {
+    comp R := root::result::Result(*uint8, AllocError);
+    if align == 0 { return R.Err(AllocError.InvalidAlignment); };
+    if (align & (align - 1)) != 0 { return R.Err(AllocError.InvalidAlignment); };
+    if size == 0 { return R.Err(AllocError.NotEnoughMemory); };
+    alignment := align;
+    if alignment < 8 { alignment = 8; };
+    header := core::sizeof(PageHeader);
+    limit: usize = 18446744073709551615;
+    padding := alignment - 1;
+    if header > limit - padding { return R.Err(AllocError.NotEnoughMemory); };
+    overhead := header + padding;
+    if size > limit - overhead { return R.Err(AllocError.NotEnoughMemory); };
+    length := size + overhead;
     switch (root::os::mmap(
         null,
-        size,
+        length,
         root::os::PROT_READ | root::os::PROT_WRITE,
         root::os::MAP_PRIVATE | root::os::MAP_ANONYMOUS,
         -1,
         0
     )) {
         when .Ok(ptr) {
-            return root::result::Result(*uint8, IoError).Ok(ptr);
+            // A successful mapping contains length bytes, so these addresses
+            // cannot wrap. Round within the reserved worst-case padding.
+            start := root::os_abi::pointer_to_word(ptr) + (header as uint64);
+            extra := ((alignment as uint64) - start % (alignment as uint64)) % (alignment as uint64);
+            aligned := start + extra;
+            metadata := root::os_abi::pointer_from_word(PageHeader, aligned - (header as uint64));
+            metadata* = PageHeader { base: ptr, length: length };
+            return R.Ok(root::os_abi::pointer_from_word(uint8, aligned));
         }
         when .Err(err) {
-            return root::result::Result(*uint8, IoError).Err(IoError.MapFailed);
+            if err == 12 { return R.Err(AllocError.NotEnoughMemory); };
+            return R.Err(AllocError.MapFailed);
         }
     };
 }
-fn page_free(context: *void, ptr: *void) root::result::Result(void, IoError) {
 
-    return root::result::Result(void, IoError).Err(IoError.NotImplemented);
+fn page_free(context: *void, ptr: *void) root::result::Result(void, AllocError) {
+    comp R := root::result::Result(void, AllocError);
+    if ptr == null { return R.Ok; };
+    metadata := root::os_abi::pointer_from_word(PageHeader,
+        root::os_abi::pointer_to_word(ptr) - (core::sizeof(PageHeader) as uint64));
+    // Copy before unmapping; do not mutate the header, including on failure.
+    mapping := metadata*;
+    switch (root::os::munmap(mapping.base, mapping.length)) {
+        when .Ok { return R.Ok; }
+        when .Err(err) { return R.Err(AllocError.UnmapFailed); }
+    };
 }
 
 // Fill every byte in destination. Empty slices do not access storage.
