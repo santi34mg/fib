@@ -368,6 +368,7 @@ fn formatting_sources_analyze_and_lower() {
         include_str!("../samples/hello_world.fib"),
         include_str!("../samples/formatting.fib"),
         include_str!("programs/formatting.fib"),
+        include_str!("programs/formatting_buffer.fib"),
     ] {
         let (_directory, plan) = input(source);
         fibc::ir::verify_ir(&fibc::ir::lowering::lower(&analyze(&plan).unwrap()).unwrap()).unwrap();
@@ -392,6 +393,11 @@ fn formatting_executes_with_exact_bytes_counts_and_errors() {
             include_str!("programs/formatting.fib"),
             &b"-9223372036854775808|9223372036854775807|0|0|false||{raw}\0\n"[..],
             &b"{stderr}"[..],
+        ),
+        (
+            include_str!("programs/formatting_buffer.fib"),
+            &b""[..],
+            &b""[..],
         ),
     ] {
         let (_directory, plan) = input(source);
@@ -421,6 +427,7 @@ fn formatting_write_all_retries_interruptions_and_short_writes() {
                         when .Io(errno) { if errno != 5 { return 4; }; }
                         when .InvalidFormat { return 5; }
                         when .ArgumentCount { return 6; }
+                        when .BufferTooSmall { return 11; }
                     };
                 }
             };
@@ -432,6 +439,7 @@ fn formatting_write_all_retries_interruptions_and_short_writes() {
                         when .Io(errno) { if errno != 28 { return 8; }; }
                         when .InvalidFormat { return 9; }
                         when .ArgumentCount { return 10; }
+                        when .BufferTooSmall { return 12; }
                     };
                 }
             };
@@ -447,7 +455,16 @@ fn formatting_write_all_retries_interruptions_and_short_writes() {
     )
     .unwrap();
     for name in [
-        "memory", "os", "os_abi", "prelude", "result", "io", "map", "process",
+        "memory",
+        "os",
+        "os_abi",
+        "prelude",
+        "result",
+        "io",
+        "map",
+        "process",
+        "formatting",
+        "random",
     ] {
         std::fs::copy(
             sysroot().join(format!("std/{name}.fib")),
@@ -563,16 +580,26 @@ fn loading_std_preserves_flat_plan_names_and_existing_source_ids() {
 
 #[test]
 fn directly_opened_std_modules_keep_their_package_and_document_identity() {
-    for name in [
-        "os", "memory", "result", "os_abi", "prelude", "io", "map", "process",
-    ] {
+    let modules = [
+        "os",
+        "memory",
+        "result",
+        "os_abi",
+        "prelude",
+        "io",
+        "map",
+        "process",
+        "formatting",
+        "random",
+    ];
+    for name in modules {
         let path = sysroot().join(format!("std/{name}.fib"));
         // The owning source tree takes precedence over the server's installation.
         let plan = tooling::standalone_plan(&path)
             .with_standard_library(StandardLibrary::at("/missing/installed/sysroot"));
         let prepared = plan.prepare().unwrap();
         assert_eq!(prepared.entry, plan.entry);
-        assert_eq!(prepared.files.len(), 8);
+        assert_eq!(prepared.files.len(), modules.len());
         assert_eq!(prepared.packages.len(), 1);
         assert_eq!(prepared.files.iter().filter(|f| f.path == path).count(), 1);
         assert!(prepared.packages[0].files.contains(&plan.entry));
@@ -772,7 +799,16 @@ fn prelude_exports_are_ordinary_aliases_and_collisions_are_errors() {
     )
     .unwrap();
     for name in [
-        "memory", "os", "os_abi", "prelude", "result", "io", "map", "process",
+        "memory",
+        "os",
+        "os_abi",
+        "prelude",
+        "result",
+        "io",
+        "map",
+        "process",
+        "formatting",
+        "random",
     ] {
         std::fs::copy(
             sysroot().join(format!("std/{name}.fib")),
@@ -1008,6 +1044,144 @@ fn file_backed_mapping_and_short_reads_preserve_kernel_results() {
     .replace("FILE", file.to_str().unwrap());
     std::fs::write(&plan.files[0].path, source).unwrap();
     plan.standard_library = StandardLibrary::at(sysroot());
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+    let output = std::process::Command::new(&plan.output).output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+// Enumerate the installed tree so new std modules participate in mocked sysroots.
+fn page_allocator_sysroot(source: &Path, destination: &Path) {
+    std::fs::create_dir_all(destination).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            page_allocator_sysroot(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+fn page_allocator_input(source: &str) -> (tempfile::TempDir, BuildPlan) {
+    let (directory, mut plan) = input(source);
+    let installed = directory.path().join("sysroot");
+    page_allocator_sysroot(&sysroot(), &installed);
+    let path = installed.join("std/os.fib");
+    let mut os = std::fs::read_to_string(&path).unwrap();
+    os.push_str(r#"
+        pub fn test_address(pointer: *uint8) uint64 {
+            return root::os_abi::pointer_to_word(pointer);
+        }
+        pub fn test_alignment(pointer: *uint8, alignment: usize) bool {
+            return test_address(pointer) % (alignment as uint64) == 0;
+        }
+        pub fn test_unmapped(address: uint64, size: usize) bool {
+            page := address - address % 4096;
+            last := (address + (size as uint64) - 1) / 4096 * 4096;
+            vector: uint8[1] = [0];
+            while (page <= last) {
+                if root::os::syscall3(27, page, 4096, root::memory::slice_data(vector[..])) != -12 { return false; };
+                page = page + 4096;
+            };
+            return true;
+        }
+    "#);
+    std::fs::write(path, os).unwrap();
+    plan.standard_library = StandardLibrary::at(installed);
+    (directory, plan)
+}
+
+#[test]
+fn page_allocator_analyzes_and_lowers() {
+    let (_directory, plan) = page_allocator_input(include_str!("programs/page_allocator.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Ir).unwrap();
+}
+
+#[test]
+#[cfg(feature = "llvm")]
+fn page_allocator_executes_and_unmaps() {
+    let (_directory, plan) = page_allocator_input(include_str!("programs/page_allocator.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+    let output = std::process::Command::new(&plan.output).output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test]
+#[cfg(feature = "llvm")]
+fn page_allocator_scripted_mapping_and_unmapping_failures() {
+    let (directory, plan) = page_allocator_input(
+        r#"
+        comp m := std::memory;
+        fn main() int32 {
+            a := m::create_page_alloc();
+            if !rejected(a, 0, 8, m::AllocError.NotEnoughMemory) { return 1; };
+            if !rejected(a, 1, 3, m::AllocError.InvalidAlignment) { return 2; };
+            if !rejected(a, 18446744073709551615, 8, m::AllocError.NotEnoughMemory) { return 3; };
+            if std::os::test_calls() != 0 { return 4; };
+            std::os::test_mode(12);
+            if !rejected(a, 1, 8, m::AllocError.NotEnoughMemory) { return 5; };
+            std::os::test_mode(22);
+            if !rejected(a, 1, 8, m::AllocError.MapFailed) { return 6; };
+            std::os::test_mode(0);
+            switch (a.alloc(a.context, 8193, 65536)) {
+                when .Err(e) { return 7; }
+                when .Ok(p) {
+                    std::os::test_mode(1);
+                    switch (a.free(a.context, p as *void)) {
+                        when .Ok { return 8; }
+                        when .Err(e) { if error_code(e) != 4 { return 9; }; }
+                    };
+                    p* = 73;
+                    std::os::test_mode(0);
+                    address := std::os::test_address(p);
+                    switch (a.free(a.context, p as *void)) {
+                        when .Err(e) { return 10; }
+                        when .Ok {}
+                    };
+                    if !std::os::test_unmapped(address, 8193) { return 11; };
+                }
+            };
+            std::os::test_mode(1);
+            switch (a.free(a.context, null)) {
+                when .Err(e) { return 12; }
+                when .Ok {}
+            };
+            return 0;
+        }
+    "#,
+    );
+    let main = directory.path().join("main.fib");
+    let helpers = include_str!("programs/page_allocator.fib")
+        .split("fn exercise(")
+        .next()
+        .unwrap();
+    std::fs::write(
+        &main,
+        format!("{helpers}\n{}", std::fs::read_to_string(&main).unwrap()),
+    )
+    .unwrap();
+    let path = directory.path().join("sysroot/std/os.fib");
+    let mut os = std::fs::read_to_string(&path).unwrap();
+    os = os
+        .replace("pub fn mmap(", "fn real_mmap(")
+        .replace("pub fn munmap(", "fn real_munmap(");
+    os.push_str(r#"
+        mode: int32 = 0;
+        calls: usize = 0;
+        pub fn test_mode(value: int32) { mode = value; }
+        pub fn test_calls() usize { return calls; }
+        pub fn mmap(address: *uint8, length: usize, protection: int32, flags: int32, fd: int32, offset: int64) MappingResult {
+            calls = calls + 1;
+            if mode != 0 { return MappingResult.Err(mode); };
+            return real_mmap(address, length, protection, flags, fd, offset);
+        }
+        pub fn munmap(address: *uint8, length: usize) Status {
+            if mode != 0 { return Status.Err(22); };
+            return real_munmap(address, length);
+        }
+    "#);
+    std::fs::write(path, os).unwrap();
     fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
     let output = std::process::Command::new(&plan.output).output().unwrap();
     assert_eq!(output.status.code(), Some(0), "{output:?}");

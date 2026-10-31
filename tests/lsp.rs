@@ -202,7 +202,16 @@ fn editing_std_uses_its_own_manifest_and_unsaved_sibling_sources() {
     )
     .unwrap();
     for name in [
-        "os", "memory", "result", "os_abi", "prelude", "io", "map", "process",
+        "os",
+        "memory",
+        "result",
+        "os_abi",
+        "prelude",
+        "io",
+        "map",
+        "process",
+        "formatting",
+        "random",
     ] {
         std::fs::copy(
             repository.join(format!("std/{name}.fib")),
