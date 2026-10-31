@@ -1,8 +1,8 @@
-// Generic insertion sort over int32[8].
+// Generic insertion sort over [8]int32.
 // Expected output:
 //   [ 1  2  3  5  6  7  8  10 ]
 
-fn insertion_sort(T: type, arr: T[]) void {
+fn insertion_sort(T: type, arr: []T) void {
     i := 0;
     while (i < arr.len as int32) {
         j := i;
@@ -18,11 +18,11 @@ fn insertion_sort(T: type, arr: T[]) void {
     };
 }
 
-fn print_arr(arr: const int32[]) void {
+fn print_arr(arr: const []int32) void {
     std::io::print("[");
     i := 0;
     while (i < arr.len as int32) {
-        args: std::io::Arg[1] = [std::io::Arg.Signed(arr[i] as int64)];
+        args: [1]std::io::Arg = [std::io::Arg.Signed(arr[i] as int64)];
         std::io::printf(" {} ", args[..]);
         i += 1;
     };
@@ -30,7 +30,7 @@ fn print_arr(arr: const int32[]) void {
 }
 
 fn main() int32 {
-    arr: int32[8] = [3, 8, 5, 10, 2, 1, 6, 7];
+    arr: [8]int32 = [3, 8, 5, 10, 2, 1, 6, 7];
 
     insertion_sort(int32, arr[..]);
 

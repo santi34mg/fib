@@ -17,13 +17,13 @@
 
 comp io := std::io;
 
-fn print_three(format: const uint8[], a: uint64, b: uint64, result: uint64) void {
-    args: io::Arg[3] = [io::Arg.Unsigned(a), io::Arg.Unsigned(b), io::Arg.Unsigned(result)];
+fn print_three(format: const []uint8, a: uint64, b: uint64, result: uint64) void {
+    args: [3]io::Arg = [io::Arg.Unsigned(a), io::Arg.Unsigned(b), io::Arg.Unsigned(result)];
     io::printf(format, args[..]);
 }
 
-fn print_shift(format: const uint8[], value: uint64, result: uint64) void {
-    args: io::Arg[2] = [io::Arg.Unsigned(value), io::Arg.Unsigned(result)];
+fn print_shift(format: const []uint8, value: uint64, result: uint64) void {
+    args: [2]io::Arg = [io::Arg.Unsigned(value), io::Arg.Unsigned(result)];
     io::printf(format, args[..]);
 }
 

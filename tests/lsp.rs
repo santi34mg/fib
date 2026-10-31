@@ -212,6 +212,7 @@ fn editing_std_uses_its_own_manifest_and_unsaved_sibling_sources() {
         "process",
         "formatting",
         "random",
+        "string",
     ] {
         std::fs::copy(
             repository.join(format!("std/{name}.fib")),

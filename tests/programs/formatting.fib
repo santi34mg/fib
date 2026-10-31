@@ -1,7 +1,7 @@
 comp io := std::io;
 
-fn invalid(format: const uint8[], count_error: bool) bool {
-    empty: io::Arg[0] = [];
+fn invalid(format: const []uint8, count_error: bool) bool {
+    empty: [0]io::Arg = [];
     switch (io::printf(format, empty[..])) {
         when .Ok(count) { return false; }
         when .Err(error) {
@@ -19,7 +19,7 @@ fn main() int32 {
     if !invalid("prefix {"[..], false) || !invalid("prefix }"[..], false) ||
         !invalid("prefix {x}"[..], false) || !invalid("prefix }{"[..], false) ||
         !invalid("{}"[..], true) || !invalid("{{}"[..], false) { return 1; };
-    extra: io::Arg[1] = [io::Arg.Boolean(true)];
+    extra: [1]io::Arg = [io::Arg.Boolean(true)];
     switch (io::printf("prefix"[..], extra[..])) {
         when .Ok(count) { return 2; }
         when .Err(error) {
@@ -48,7 +48,7 @@ fn main() int32 {
         when .Err(error) { return 9; }
         when .Ok(count) { if count != 0 { return 10; }; }
     };
-    args: io::Arg[7] = [
+    args: [7]io::Arg = [
         io::Arg.Signed(-9223372036854775808),
         io::Arg.Signed(9223372036854775807),
         io::Arg.Signed(0),
@@ -61,7 +61,7 @@ fn main() int32 {
         when .Err(error) { return 11; }
         when .Ok(count) { if count != 59 { return 12; }; }
     };
-    none: io::Arg[0] = [];
+    none: [0]io::Arg = [];
     switch (io::fprintf(2, "{{stderr}}"[..], none[..])) {
         when .Err(error) { return 13; }
         when .Ok(count) { if count != 8 { return 14; }; }

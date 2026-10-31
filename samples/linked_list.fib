@@ -34,7 +34,7 @@ fn print_list(head: *Node) void {
         if cur == null {
             break;
         };
-        args: std::io::Arg[1] = [std::io::Arg.Signed((cur*).data as int64)];
+        args: [1]std::io::Arg = [std::io::Arg.Signed((cur*).data as int64)];
         std::io::printf("{} -> ", args[..]);
         cur = (cur*).next;
     };
@@ -63,7 +63,7 @@ fn main() int32 {
 
     std::io::print("List:   ");
     print_list(head);
-    args: std::io::Arg[1] = [std::io::Arg.Signed(list_length(head) as int64)];
+    args: [1]std::io::Arg = [std::io::Arg.Signed(list_length(head) as int64)];
     std::io::printf("Length: {}\n", args[..]);
 
     return 0;

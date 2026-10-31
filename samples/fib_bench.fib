@@ -14,7 +14,7 @@ fn main() int32 {
     i: int32 = 0;
     while (i <= 20) {
         result: int64 = fib(i);
-        args: std::io::Arg[2] = [std::io::Arg.Signed(i as int64), std::io::Arg.Signed(result)];
+        args: [2]std::io::Arg = [std::io::Arg.Signed(i as int64), std::io::Arg.Signed(result)];
         std::io::printf("fib({}) = {}\n", args[..]);
         i += 1;
     };

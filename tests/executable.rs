@@ -32,12 +32,12 @@ fn main() int32 {
         when .Ok(value) { if value != 0 { return 4; }; }
         when .Err { return 5; }
     };
-    bytes: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
+    bytes: [8]uint8 = [0, 0, 0, 0, 0, 0, 0, 0];
     switch (std::random::fill(bytes[..])) {
         when .Ok {}
         when .Err { return 6; }
     };
-    bounds: uint64[4] = [2, 10, 9223372036854775809, 18446744073709551615];
+    bounds: [4]uint64 = [2, 10, 9223372036854775809, 18446744073709551615];
     i: usize = 0;
     while (i < bounds.len) {
         n := 0;
@@ -252,8 +252,8 @@ fn checked_array_and_slice_operations_execute() {
     for text in [
         include_str!("programs/readonly_array_conversion.fib"),
         include_str!("../samples/const_bindings.fib"),
-        "fn pick(s:const uint8[]) int32 { return s[0] as int32; } fn main() int32 { return pick(\"*\"); }",
-        "s:const uint8[] = \"*\"; fn bytes() const uint8[] { return \"*\"; } fn main() int32 { x:const uint8[] = \"é\"; if x.len != 2 { return 1; }; x = bytes(); if x[0] != '*' { return 2; }; return s[0] as int32; }",
+        "fn pick(s:const []uint8) int32 { return s[0] as int32; } fn main() int32 { return pick(\"*\"); }",
+        "s:const []uint8 = \"*\"; fn bytes() const []uint8 { return \"*\"; } fn main() int32 { x:const []uint8 = \"é\"; if x.len != 2 { return 1; }; x = bytes(); if x[0] != '*' { return 2; }; return s[0] as int32; }",
         include_str!("../samples/indexed_globals.fib"),
         "fn main() int32 { a := [1, 2, 3]; i := 1; a[i] = 42; return a[i]; }",
         "fn main() int32 { const a := [42, 2]; i := 0; return a[i]; }",
@@ -261,14 +261,14 @@ fn checked_array_and_slice_operations_execute() {
         "fn main() int32 { a := [1, 2, 3]; s := a[..]; t := s[1.=1]; t[0] = 42; if t.len != 1 { return 1; }; return a[1]; }",
         "fn main() int32 { a := [42]; s := a[1..1]; t := a[..0]; if s.len == 0 && t.len == 0 { return a[0]; }; return 1; }",
         "fn main() int32 { a := [42]; i: uint128 = 0; return a[i]; }",
-        "fn make() int32[2] { return [1, 42]; } fn main() int32 { i := 1; return make()[i]; }",
-        "fn make() int32[2] { return [1, 42]; } fn main() int32 { s := make()[..]; return s[1]; }",
+        "fn make() [2]int32 { return [1, 42]; } fn main() int32 { i := 1; return make()[i]; }",
+        "fn make() [2]int32 { return [1, 42]; } fn main() int32 { s := make()[..]; return s[1]; }",
         "fn main() int32 { a := [[1, 2], [3, 4]]; i := 1; a[i][0] = 42; return a[1][0]; }",
         "comp P := struct { x: int32 }; fn main() int32 { a := [P { x: 1 }]; i := 0; a[i].x = 42; return a[0].x; }",
         "fn main() int32 { a := [1]; i := 0; p := a[i]&; p* = 42; return a[0]; }",
-        "fn pick(a: int32[], i: int32) int32 { return a[i]; } fn main() int32 { a := [1, 42]; return pick(a[..], 1); }",
-        "fn main() int32 { a: int32[0] = []; s := a[..]; if s.len == 0 { return 42; }; return 1; }",
-        "fn main() int32 { a: int32[2]; a[0] = 1; a[1] = 42; i := 1; return a[i]; }",
+        "fn pick(a: []int32, i: int32) int32 { return a[i]; } fn main() int32 { a := [1, 42]; return pick(a[..], 1); }",
+        "fn main() int32 { a: [0]int32 = []; s := a[..]; if s.len == 0 { return 42; }; return 1; }",
+        "fn main() int32 { a: [2]int32; a[0] = 1; a[1] = 42; i := 1; return a[i]; }",
         "fn main() int32 { s := \"*\"[..]; return s[0] as int32; }",
         "fn main() int32 { a := [1, 2]; b := a; b[0] = 42; if a[0] != 1 { return 1; }; return b[0]; }",
         "fn main() int32 { p: *int32 = null; s := std::memory::slice_from_parts(p, 0); empty := s[..]; if empty.len == 0 { return 42; }; return 1; }",
@@ -284,7 +284,7 @@ fn checked_index_and_slice_failures_trap() {
         "fn main() int32 { a := [1]; i := 1; return a[i]; }",
         "fn main() int32 { a := [1]; i: uint128 = 18446744073709551616; return a[i]; }",
         "fn main() int32 { a := [1]; i: int128 = -18446744073709551616; return a[i]; }",
-        "fn main() int32 { a: int32[0] = []; i := 0; a[i] = 42; return 1; }",
+        "fn main() int32 { a: [0]int32 = []; i := 0; a[i] = 42; return 1; }",
         "fn main() int32 { a := [1]; s := a[..]; i := 1; return s[i]; }",
         "fn main() int32 { a := [1]; i := -1; s := a[i..]; return s.len as int32; }",
         "fn main() int32 { a := [1]; i := 2; s := a[..i]; return s.len as int32; }",
@@ -337,7 +337,7 @@ fn indexed_assignment_and_slice_bounds_evaluate_once_in_order() {
         trace := 0;
         table := [1, 2];
         fn rhs() int32 { trace = trace * 10 + 1; return 42; }
-        fn receiver() int32[] { trace = trace * 10 + 2; return table[..]; }
+        fn receiver() []int32 { trace = trace * 10 + 2; return table[..]; }
         fn index() int32 { trace = trace * 10 + 3; return 1; }
         fn start() int32 { trace = trace * 10 + 4; return 0; }
         fn end() int32 { trace = trace * 10 + 5; return 2; }
@@ -964,15 +964,15 @@ fn specification_conversions_views_and_generic_instances_execute() {
         "fn id(T:type, x:T) T { return x; } fn main() int32 { a := id(int32, 20); b := id(int64, 22); return id(int32, a+(b as int32)); }",
         "comp S:type = struct { x:int32 }; fn id(T:type, x:T) T { return x; } fn main() int32 { s := id(S, S { x:42 }); return s.x; }",
         "fn sum(T:type, x:T) T { if(x == 0) { return 0; }; return x+sum(T,x-1); } fn main() int32 { return sum(int32, 6)+21; }",
-        "fn make(p:*int32) int32[2] { (p*) = 40; return [1,2]; } fn id(T:type, x:T) T { return x; } fn main() int32 { n := 0; a := id(int32[2], make(n&)); b := a; b = [3,4]; return n+(b.len as int32); }",
-        "comp A:type = int32[0]; fn empty() A { return []; } fn main() int32 { const a := empty(); return (a.len as int32)+42; }",
-        "comp E:type = enum { A: int32[2] }; fn id(e:E) E { return e; } fn main() int32 { e := id(E.A([1,2])); switch(e) { when .A(x) { return (x.len as int32)+40; } }; }",
+        "fn make(p:*int32) [2]int32 { (p*) = 40; return [1,2]; } fn id(T:type, x:T) T { return x; } fn main() int32 { n := 0; a := id([2]int32, make(n&)); b := a; b = [3,4]; return n+(b.len as int32); }",
+        "comp A:type = [0]int32; fn empty() A { return []; } fn main() int32 { const a := empty(); return (a.len as int32)+42; }",
+        "comp E:type = enum { A: [2]int32 }; fn id(e:E) E { return e; } fn main() int32 { e := id(E.A([1,2])); switch(e) { when .A(x) { return (x.len as int32)+40; } }; }",
         "fn set(p:*int32, n:int32) int32 { (p*) = n; return n; } fn main() int32 { outer := 0; const a:int32, b:int32 = set(outer&,20), set(outer&,22); return a+b; }",
         "comp S:type = struct { x:int32 }; fn lhs(p:*int32,s:*S) *S { (p*) = (p*)*10+2; return s; } fn rhs(p:*int32) int32 { (p*) = (p*)*10+1; return 42; } fn main() int32 { trace := 0; s := S { x:0 }; lhs(trace&,s&).x = rhs(trace&); if(trace != 12) { return 1; }; return s.x; }",
         "fn accumulate(T:type,n:T) T { x:T = 0; i:T = 0; while(i<n) { x = x+i; i = i+1; }; return x; } fn main() int32 { return (accumulate(int64,7) as int32)+21; }",
         "comp S:type = struct { x:int32 }; fn field(T:type, value:T) int32 { return value.x; } fn main() int32 { s := S { x:21 }; return field(S,s)+field(*S,s&); }",
         include_str!("../samples/specification_runtime.fib"),
-        "fn size(p:*int32[2]) int32 { return p.len as int32; } fn main() int32 { a := [1,2]; return size(a&)+40; }",
+        "fn size(p:*[2]int32) int32 { return p.len as int32; } fn main() int32 { a := [1,2]; return size(a&)+40; }",
     ] {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("main.fib");
@@ -1168,7 +1168,7 @@ fn function_pointer_struct_fields_construct_and_execute() {
         (
             r#"
             comp Callback: type = fn(int32, int32) int32;
-            comp S: type = struct { name: const uint8[], multiplier: int32, callback: Callback };
+            comp S: type = struct { name: const []uint8, multiplier: int32, callback: Callback };
             fn multiply(x: int32, y: int32) int32 { return x * y; }
             fn main() int32 {
                 s := S { name: "test"[..], multiplier: 5, callback: multiply };
@@ -1243,7 +1243,7 @@ fn function_pointer_callback_in_struct_with_multiple_fields() {
             y: int32,
             z: uint,
             callback: Callback,
-            name: const uint8[]
+            name: const []uint8
         };
         fn square(x: int32) int32 { return x * x; }
         fn main() int32 {
@@ -1334,7 +1334,7 @@ fn function_pointer_in_struct_with_array_fields() {
         comp S: type = struct {
             value: int32,
             callback: Callback,
-            counts: uint[5]
+            counts: [5]uint
         };
         fn increment(x: int32) int32 { return x + 1; }
 

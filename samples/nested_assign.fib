@@ -13,7 +13,7 @@ comp Outer: type = struct {
 fn main() int32 {
     o: Outer = Outer { inner: Inner { value: 0 } };
     o.inner.value = 42;
-    args: std::io::Arg[1] = [std::io::Arg.Unsigned(o.inner.value)];
+    args: [1]std::io::Arg = [std::io::Arg.Unsigned(o.inner.value)];
     std::io::printf("got {}\n", args[..]);
     return 0;
 }

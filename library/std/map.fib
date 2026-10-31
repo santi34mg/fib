@@ -1,7 +1,7 @@
 // Generic maps with caller-supplied equality and linear lookup.
 // Copies share storage: treat each map as one owner and call deinit once.
 pub comp fn Map(K: type, V: type) type {
-    return struct { keys: K[], values: V[], len: usize, equal: fn(K, K) bool };
+    return struct { keys: []K, values: []V, len: usize, equal: fn(K, K) bool };
 }
 
 pub fn init(K: type, V: type, equal: fn(K, K) bool) Map(K, V) {
@@ -12,7 +12,7 @@ pub fn init(K: type, V: type, equal: fn(K, K) bool) Map(K, V) {
     };
 }
 
-pub fn bytes_equal(a: const uint8[], b: const uint8[]) bool {
+pub fn bytes_equal(a: const []uint8, b: const []uint8) bool {
     if a.len != b.len { return false; };
     i: usize = 0;
     while (i < a.len) {

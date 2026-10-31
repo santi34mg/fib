@@ -11,7 +11,7 @@ fn read(counter: const *Counter) int32 {
 
 fn main() int32 {
     counter := Counter { value: 40 };
-    values := identity(int32[2], [10, 20]);
+    values := identity([2]int32, [10, 20]);
     enabled := read(counter&) as bool;
     result := Result.Ready(read(counter&) + (values.len as int32));
     switch (result) {

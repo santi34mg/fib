@@ -11,8 +11,8 @@
 // not allocate, copy the pointee, or extend its lifetime. *void is not supported.
 // Example: std::memory::unchecked_deref(pointer) = value;
 //
-// pub fn slice_from_parts(pointer: *T, length: usize) T[]
-// pub fn slice_from_parts(pointer: const *T, length: usize) const T[]
+// pub fn slice_from_parts(pointer: *T, length: usize) []T
+// pub fn slice_from_parts(pointer: const *T, length: usize) const []T
 // Construct a view with length elements (not bytes), preserving readonly access.
 // No allocation, copy, pointer dereference or backing-storage validation occurs.
 // The caller maintains the storage's lifetime and sufficient capacity; later
@@ -20,12 +20,16 @@
 // void. A typed null pointer with length zero creates an empty slice:
 // empty := std::memory::slice_from_parts(null as *uint8, 0);
 //
-// pub fn slice_data(slice: T[]) *T
-// pub fn slice_data(slice: const T[]) const *T
+// pub fn slice_data(slice: []T) *T
+// pub fn slice_data(slice: const []T) const *T
 // Return the backing pointer, preserving readonly access, without dereferencing
 // it or changing the slice. The pointer borrows the same storage and lifetime.
 // Empty slices may have null or non-null data; use .len to test for emptiness.
 // Example: pointer := std::memory::slice_data(bytes);
+// Sentinel slices preserve their terminator in the pointer result:
+// slice_data(view: const [:0]uint8) returns const [*:0]uint8.
+// slice_from_parts always produces an ordinary slice; arbitrary lengths do
+// not establish a sentinel at the new endpoint.
 
 pub comp AllocError: type = enum {
     NotEnoughMemory,
@@ -112,7 +116,7 @@ fn page_free(context: *void, ptr: *void) root::result::Result(void, AllocError) 
 }
 
 // Fill every byte in destination. Empty slices do not access storage.
-pub fn memset(destination: uint8[], value: uint8) {
+pub fn memset(destination: []uint8, value: uint8) {
     i: usize = 0;
     while (i < destination.len) {
         destination[i] = value;
@@ -122,7 +126,7 @@ pub fn memset(destination: uint8[], value: uint8) {
 
 // Copy source bytes into destination's prefix; the remaining bytes are unchanged.
 // A short destination traps before any write. The regions must not overlap.
-pub fn memcpy(destination: uint8[], source: const uint8[]) {
+pub fn memcpy(destination: []uint8, source: const []uint8) {
     target := destination[..source.len];
     i: usize = 0;
     while (i < source.len) {
@@ -209,7 +213,7 @@ fn split(block: *Block, size: usize) {
 // Returns an empty slice for zero count, size overflow or exhaustion.
 // Storage is uninitialized. Supported Linux x86-64 types fit 16-byte alignment.
 // Zero-sized elements still receive a live allocation.
-pub fn alloc(T: type, n: usize) T[] {
+pub fn alloc(T: type, n: usize) []T {
     empty: *T = null;
     if n == 0 { return root::memory::slice_from_parts(empty, 0); };
     element := core::sizeof(T);

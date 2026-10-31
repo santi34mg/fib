@@ -57,7 +57,7 @@ fn failed(value: int64) bool {
     return value < 0 && value >= -4095;
 }
 
-pub fn read(fd: int32, buffer: uint8[]) CountResult {
+pub fn read(fd: int32, buffer: []uint8) CountResult {
     comp R := root::result::Result(usize, int32);
     value := root::os::syscall3(0, (fd as int64) as uint64,
         root::memory::slice_data(buffer), buffer.len as uint64);
@@ -65,7 +65,7 @@ pub fn read(fd: int32, buffer: uint8[]) CountResult {
     return R.Ok(value as usize);
 }
 
-pub fn write(fd: int32, buffer: const uint8[]) CountResult {
+pub fn write(fd: int32, buffer: const []uint8) CountResult {
     comp R := root::result::Result(usize, int32);
     value := root::os::syscall3(1, (fd as int64) as uint64,
         root::memory::slice_data(buffer), buffer.len as uint64);
@@ -87,7 +87,7 @@ pub fn getpid() IntResult {
 }
 
 // Path must reference live NUL-terminated storage, e.g. c"/dev/null".
-pub fn openat(dirfd: int32, path: const *uint8, flags: int32, mode: uint32) IntResult {
+pub fn openat(dirfd: int32, path: const [*:0]uint8, flags: int32, mode: uint32) IntResult {
     comp R := root::result::Result(int32, int32);
     value := root::os::syscall4(257, (dirfd as int64) as uint64, path,
         (flags as int64) as uint64, mode as uint64);

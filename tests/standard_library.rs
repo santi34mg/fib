@@ -24,9 +24,73 @@ fn input(source: &str) -> (tempfile::TempDir, BuildPlan) {
     (directory, plan)
 }
 
+#[test]
+fn sentinel_arrays_and_cstrings_lower_with_installed_std() {
+    let (_directory, plan) = input(include_str!("programs/sentinels.fib"));
+    let project = analyze(&plan).unwrap();
+    let ir = fibc::ir::lowering::lower(&project).unwrap();
+    assert!(
+        ir.types
+            .iter()
+            .any(|t| matches!(t, fibc::ir::IrType::Array { len: 4, .. }))
+    );
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn sentinel_storage_and_c_boundary_execute() {
+    use fibc::driver::{PipelineGoal, run_pipeline};
+    let (directory, mut plan) = input(include_str!("programs/sentinels.fib"));
+    let native = directory.path().join("sentinels.c");
+    std::fs::write(
+        &native,
+        r#"
+        int check_cstring(const unsigned char *p) {
+            return p && p[0] == 'a' && p[1] == 'b' && p[2] == 'c' && p[3] == 0;
+        }
+        int check_empty(const unsigned char *p) { return p && p[0] == 0; }
+        int check_other(const unsigned char *p) { return p && p[0] == 7 && p[1] == 255; }
+    "#,
+    )
+    .unwrap();
+    plan.native.sources.push(native);
+    run_pipeline(&plan, PipelineGoal::Binary).unwrap();
+    assert_eq!(
+        std::process::Command::new(&plan.output)
+            .status()
+            .unwrap()
+            .code(),
+        Some(42)
+    );
+}
+
 fn analyze(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
     let prepared = plan.prepare()?;
     Analyzer::new(prepared.clone(), parse_files(&prepared)?)?.analyze()
+}
+
+#[test]
+fn string_helpers_analyze_and_lower() {
+    let (_directory, plan) = input(include_str!("programs/string_helpers.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Ir).unwrap();
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn string_helpers_execute() {
+    for (source, expected) in [
+        (include_str!("programs/string_helpers.fib"), ""),
+        (
+            include_str!("../samples/string_functions.fib"),
+            "Hello, fib!",
+        ),
+    ] {
+        let (_directory, plan) = input(source);
+        fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+        let output = std::process::Command::new(&plan.output).output().unwrap();
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(output.stdout, expected.as_bytes());
+    }
 }
 
 #[test]
@@ -257,10 +321,10 @@ fn process_entries_execute_with_arguments_environment_and_result_status() {
 fn environment_vectors_split_once_replace_duplicates_and_skip_malformed_entries() {
     let source = r#"
         fn main() int32 {
-            first: uint8[4] = [75, 61, 49, 0];
-            malformed: uint8[2] = [88, 0];
-            replacement: uint8[6] = [75, 61, 50, 61, 255, 0];
-            empty: uint8[3] = [69, 61, 0];
+            first: [4]uint8 = [75, 61, 49, 0];
+            malformed: [2]uint8 = [88, 0];
+            replacement: [6]uint8 = [75, 61, 50, 61, 255, 0];
+            empty: [3]uint8 = [69, 61, 0];
             vector := [first[0]&, malformed[0]&, replacement[0]&, empty[0]&, null as *uint8];
             env := std::process::environment(vector[0]&);
             defer std::map::deinit(std::process::Bytes, std::process::Bytes, env&);
@@ -334,7 +398,7 @@ fn memory_byte_operations_accept_writable_destinations_and_readonly_sources() {
     for source in [
         "fn main() { std::memory::memset(\"hi\"[..], 0); }",
         "fn main() { std::memory::memcpy(\"hi\"[..], \"ok\"[..]); }",
-        "fn main() { a: uint16[1] = [0]; std::memory::memset(a[..], 0); }",
+        "fn main() { a: [1]uint16 = [0]; std::memory::memset(a[..], 0); }",
     ] {
         let (_directory, plan) = input(source);
         let error = analyze(&plan).unwrap_err();
@@ -351,7 +415,7 @@ fn memory_byte_operations_execute_and_trap_for_short_destinations() {
     for (source, expected) in [
         (include_str!("../samples/memory.fib"), Some(42)),
         (
-            "fn main() int32 { a: uint8[1] = [0]; std::memory::memcpy(a[..], \"hi\"[..]); return 1; }",
+            "fn main() int32 { a: [1]uint8 = [0]; std::memory::memcpy(a[..], \"hi\"[..]); return 1; }",
             None,
         ),
     ] {
@@ -465,6 +529,7 @@ fn formatting_write_all_retries_interruptions_and_short_writes() {
         "process",
         "formatting",
         "random",
+        "string",
     ] {
         std::fs::copy(
             sysroot().join(format!("std/{name}.fib")),
@@ -485,7 +550,7 @@ fn formatting_write_all_retries_interruptions_and_short_writes() {
         sent: usize = 0;
         pub fn test_reset(mode: int32) { test_mode = mode; calls = 0; sent = 0; }
         pub fn test_calls() usize { return calls; }
-        pub fn write(fd: int32, buffer: const uint8[]) CountResult {
+        pub fn write(fd: int32, buffer: const []uint8) CountResult {
             calls = calls + 1;
             if test_mode == 1 { return CountResult.Ok(0); };
             if test_mode == 2 { return CountResult.Err(28); };
@@ -591,6 +656,7 @@ fn directly_opened_std_modules_keep_their_package_and_document_identity() {
         "process",
         "formatting",
         "random",
+        "string",
     ];
     for name in modules {
         let path = sysroot().join(format!("std/{name}.fib"));
@@ -809,6 +875,7 @@ fn prelude_exports_are_ordinary_aliases_and_collisions_are_errors() {
         "process",
         "formatting",
         "random",
+        "string",
     ] {
         std::fs::copy(
             sysroot().join(format!("std/{name}.fib")),
@@ -902,13 +969,13 @@ fn allocator_and_sbrk_execute_against_installed_sources() {
         r#"
         fn main() int32 {
             // Reject multiplication beyond the signed sbrk limit before asking Linux.
-            huge := std::memory::alloc(uint64[1073741824], 4294967295);
+            huge := std::memory::alloc([1073741824]uint64, 4294967295);
             if huge.len != 0 { return 1; };
             live := std::memory::alloc(uint8, 16);
             if live.len != 16 { return 4; };
             live[0] = 42;
             // setrlimit(RLIMIT_DATA, {0, 0}) makes brk growth fail deterministically.
-            limits: uint64[2] = [0, 0];
+            limits: [2]uint64 = [0, 0];
             if std::os::syscall2(160, 2, limits&) != 0 { return 2; };
             failed := std::memory::alloc(uint8, 32);
             if failed.len != 0 { return 3; };
@@ -1081,7 +1148,7 @@ fn page_allocator_input(source: &str) -> (tempfile::TempDir, BuildPlan) {
         pub fn test_unmapped(address: uint64, size: usize) bool {
             page := address - address % 4096;
             last := (address + (size as uint64) - 1) / 4096 * 4096;
-            vector: uint8[1] = [0];
+            vector: [1]uint8 = [0];
             while (page <= last) {
                 if root::os::syscall3(27, page, 4096, root::memory::slice_data(vector[..])) != -12 { return false; };
                 page = page + 4096;

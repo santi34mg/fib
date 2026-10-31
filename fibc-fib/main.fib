@@ -13,15 +13,15 @@ comp TokenKind: type = enum {
     Operator: TokenOperator,
     Unknown: uint8,
     Comment,
-    Error: const uint8[],
+    Error: const []uint8,
 };
 comp TokenLiteral: type = enum {
     Integer: uint64,
-    Float: const uint8[],
+    Float: const []uint8,
     Boolean: bool,
     Character: uint8,
-    String: const uint8[],
-    CString: const uint8[],
+    String: const []uint8,
+    CString: const []uint8,
     Null,
 };
 comp TokenKeyword: type = enum {
@@ -100,7 +100,7 @@ comp TokenOperator: type = enum {
 
 comp fn Arena(T: type) type {
     return struct {
-        data: T[],
+        data: []T,
     };
 }
 

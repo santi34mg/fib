@@ -13,11 +13,11 @@ comp Token: type = enum {
 fn describe(t: Token) void {
     switch (t) {
         when .Integer(i) {
-            args: std::io::Arg[1] = [std::io::Arg.Unsigned(i as uint64)];
+            args: [1]std::io::Arg = [std::io::Arg.Unsigned(i as uint64)];
             std::io::printf("int={}\n", args[..]);
         }
         when .Boolean(b) {
-            args: std::io::Arg[1] = [std::io::Arg.Unsigned(b as uint64)];
+            args: [1]std::io::Arg = [std::io::Arg.Unsigned(b as uint64)];
             std::io::printf("bool={}\n", args[..]);
         }
         when .EOF { std::io::print("eof\n"); }

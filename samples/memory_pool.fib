@@ -2,13 +2,13 @@
 // Exhaustion returns an empty slice; defer releases the backing allocation.
 comp memory := std::memory;
 comp io := std::io;
-comp Pool := struct { blocks: int32[], used: usize };
+comp Pool := struct { blocks: []int32, used: usize };
 
 fn pool_create(capacity: usize) Pool {
     return Pool { blocks: memory::alloc(int32, capacity), used: 0 };
 }
 
-fn pool_alloc(pool: *Pool) int32[] {
+fn pool_alloc(pool: *Pool) []int32 {
     if (pool*).used >= (pool*).blocks.len { return (pool*).blocks[0..0]; };
     index := (pool*).used;
     (pool*).used = index + 1;
@@ -19,23 +19,23 @@ fn main() int32 {
     pool := pool_create(6);
     defer memory::free(int32, memory::slice_data(pool.blocks));
     if pool.blocks.len != 6 { return 1; };
-    info: io::Arg[2] = [io::Arg.Unsigned(core::sizeof(int32) as uint64),
+    info: [2]io::Arg = [io::Arg.Unsigned(core::sizeof(int32) as uint64),
         io::Arg.Unsigned(pool.blocks.len as uint64)];
     io::printf("Pool: block_size={}, capacity={}\n", info[..]);
     i := 0;
     while (i < 8) {
         block := pool_alloc(pool&);
         if block.len == 0 {
-            args: io::Arg[1] = [io::Arg.Signed(i as int64)];
+            args: [1]io::Arg = [io::Arg.Signed(i as int64)];
             io::printf("Alloc {} failed: pool exhausted\n", args[..]);
             break;
         };
         block[0] = (i + 1) * 7;
-        args: io::Arg[2] = [io::Arg.Signed(i as int64), io::Arg.Signed(block[0] as int64)];
+        args: [2]io::Arg = [io::Arg.Signed(i as int64), io::Arg.Signed(block[0] as int64)];
         io::printf("Block {}: wrote {}\n", args[..]);
         i += 1;
     };
-    used: io::Arg[2] = [io::Arg.Unsigned(pool.used as uint64), io::Arg.Unsigned(pool.blocks.len as uint64)];
+    used: [2]io::Arg = [io::Arg.Unsigned(pool.used as uint64), io::Arg.Unsigned(pool.blocks.len as uint64)];
     io::printf("Used: {} / {}\n", used[..]);
     return 0;
 }

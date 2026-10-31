@@ -1,0 +1,50 @@
+callconv "C" fn check_cstring(p: const [*:0]uint8) int32;
+callconv "C" fn check_empty(p: const [*:0]uint8) int32;
+callconv "C" fn check_other(p: const [*:255]uint8) int32;
+
+global: [3:0]uint8 = [97, 98, 99];
+text: const [3:0]uint8 = "abc";
+global_view: const [:0]uint8 = "abc";
+
+fn copy(value: [3:0]uint8) [3:0]uint8 { return value; }
+fn identity(T: type, value: T) T { return value; }
+
+fn main() int32 {
+    if check_cstring(c"abc") != 1 { return 1; };
+    if check_empty(c"") != 1 { return 2; };
+    data: [3:0]uint8 = [97, 98, 99];
+    if data.len != 3 || core::sizeof([3:0]uint8) != 4 { return 3; };
+    view: [:0]uint8 = data;
+    if view.len != 3 { return 4; };
+    if check_cstring(std::memory::slice_data(view)) != 1 { return 5; };
+    copied := copy(data);
+    if check_cstring(std::memory::slice_data(copied[..])) != 1 { return 6; };
+    if check_cstring(std::memory::slice_data(global[..])) != 1 { return 7; };
+    if check_cstring(std::memory::slice_data(text[..])) != 1 { return 8; };
+    literal: const [:0]uint8 = "abc";
+    if check_cstring(std::memory::slice_data(literal)) != 1 { return 9; };
+    empty: [0:0]uint8 = [];
+    if empty.len != 0 || check_empty(std::memory::slice_data(empty[..])) != 1 { return 10; };
+    other: [1:255]uint8 = [7];
+    if check_other(std::memory::slice_data(other[..])) != 1 { return 11; };
+    partial: [3:0]uint8;
+    partial[0] = 97; partial[1] = 98; partial[2] = 99;
+    if check_cstring(std::memory::slice_data(partial[..])) != 1 { return 12; };
+    comp Record := struct { bytes: [3:0]uint8 };
+    record: Record;
+    record.bytes[0] = 97; record.bytes[1] = 98; record.bytes[2] = 99;
+    if check_cstring(std::memory::slice_data(record.bytes[..])) != 1 { return 13; };
+    if check_cstring(std::memory::slice_data(global_view)) != 1 { return 14; };
+    nested: [2][3:0]uint8;
+    nested[0][0] = 97; nested[0][1] = 98; nested[0][2] = 99;
+    nested[1][0] = 97; nested[1][1] = 98; nested[1][2] = 99;
+    if check_cstring(std::memory::slice_data(nested[1][..])) != 1 { return 15; };
+    empty_uninitialized: [0:0]uint8;
+    if check_empty(std::memory::slice_data(empty_uninitialized[..])) != 1 { return 16; };
+    specialized := identity([3:0]uint8, data);
+    if check_cstring(std::memory::slice_data(specialized[..])) != 1 { return 17; };
+    first: [0:0]uint8, second: [0:0]uint8;
+    if check_empty(std::memory::slice_data(first[..])) != 1 { return 18; };
+    if check_empty(std::memory::slice_data(second[..])) != 1 { return 19; };
+    return 42;
+}

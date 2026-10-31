@@ -5,7 +5,7 @@ pub comp Uint64Result := root::result::Result(uint64, Error);
 
 // Fill the entire slice, retrying interruptions and short reads. An error may
 // leave a partially filled buffer. Empty slices do not issue a syscall.
-pub fn fill(buffer: uint8[]) Status {
+pub fn fill(buffer: []uint8) Status {
     filled: usize = 0;
     while (filled < buffer.len) {
         remaining := buffer[filled..];
@@ -24,7 +24,7 @@ pub fn fill(buffer: uint8[]) Status {
 
 // Decode bytes explicitly so the numeric API does not depend on host byte order.
 pub fn random_uint64() Uint64Result {
-    bytes: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
+    bytes: [8]uint8 = [0, 0, 0, 0, 0, 0, 0, 0];
     switch (fill(bytes)) {
         when .Err(error) { return Uint64Result.Err(error); }
         when .Ok {}

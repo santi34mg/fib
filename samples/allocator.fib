@@ -1,7 +1,7 @@
 comp memory := std::memory;
 comp Pair := struct { first: uint64, second: uint64 };
 comp Empty := struct {};
-comp View := struct { bytes: const uint8[] };
+comp View := struct { bytes: const []uint8 };
 
 fn main() int32 {
     numbers := memory::alloc(int32, 8);

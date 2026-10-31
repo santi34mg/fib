@@ -1,9 +1,9 @@
-// Slices (`T[]`) borrow array storage with checked indexing.
+// Slices (`[]T`) borrow array storage with checked indexing.
 // Expected output:
 //   len=4 sum=100 s0=10
 //   after s1=99 arr1=99
 
-fn sum(s: int32[]) int32 {
+fn sum(s: []int32) int32 {
     total: int32 = 0;
     i: int32 = 0;
     while (i < s.len as int32) {
@@ -14,13 +14,13 @@ fn sum(s: int32[]) int32 {
 }
 
 fn main() int32 {
-    arr: int32[4] = [10, 20, 30, 40];
-    s: int32[] = arr[0..4];
-    before: std::io::Arg[3] = [std::io::Arg.Unsigned(s.len as uint64),
+    arr: [4]int32 = [10, 20, 30, 40];
+    s: []int32 = arr[0..4];
+    before: [3]std::io::Arg = [std::io::Arg.Unsigned(s.len as uint64),
         std::io::Arg.Signed(sum(s) as int64), std::io::Arg.Signed(s[0] as int64)];
     std::io::printf("len={} sum={} s0={}\n", before[..]);
     s[1] = 99;
-    after: std::io::Arg[2] = [std::io::Arg.Signed(s[1] as int64), std::io::Arg.Signed(arr[1] as int64)];
+    after: [2]std::io::Arg = [std::io::Arg.Signed(s[1] as int64), std::io::Arg.Signed(arr[1] as int64)];
     std::io::printf("after s1={} arr1={}\n", after[..]);
     return 0;
 }

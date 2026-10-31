@@ -7,10 +7,10 @@ fn size(T: type) usize { return core::sizeof(T); }
 fn main() int32 {
     if core::sizeof(bool) != 1 || core::sizeof(int32) != 4 || core::sizeof(float64) != 8 { return 1; };
     if core::sizeof(usize) != core::sizeof(*void) { return 2; };
-    if core::sizeof(Padded) != 16 || core::sizeof(Padded[3]) != 48 { return 3; };
+    if core::sizeof(Padded) != 16 || core::sizeof([3]Padded) != 48 { return 3; };
     if core::sizeof(Choice) != 16 { return 4; };
-    if core::sizeof(int32[]) != 2 * core::sizeof(usize) { return 5; };
-    if core::sizeof(Empty) != 0 || core::sizeof(int32[0]) != 0 { return 6; };
+    if core::sizeof([]int32) != 2 * core::sizeof(usize) { return 5; };
+    if core::sizeof(Empty) != 0 || core::sizeof([0]int32) != 0 { return 6; };
     if size(uint16) != 2 { return 7; };
     return 42;
 }

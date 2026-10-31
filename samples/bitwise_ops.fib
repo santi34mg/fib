@@ -15,8 +15,8 @@
 
 comp io := std::io;
 
-fn print_number(format: const uint8[], value: uint32) void {
-    args: io::Arg[1] = [io::Arg.Unsigned(value as uint64)];
+fn print_number(format: const []uint8, value: uint32) void {
+    args: [1]io::Arg = [io::Arg.Unsigned(value as uint64)];
     io::printf(format, args[..]);
 }
 

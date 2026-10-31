@@ -53,7 +53,7 @@ fn identity(T: type, value: T) T { return value; }
 
 // Returning an array and recording a side effect makes call execution visible
 // without indexing array elements, which is not supported at runtime yet.
-fn make_values(calls: *int32) int32[2] {
+fn make_values(calls: *int32) [2]int32 {
     (calls*) = (calls*) + 1;
     return [10, 20];
 }
@@ -65,9 +65,9 @@ fn record(trace: *int32, digit: int32) int32 {
 
 pub(root) fn generics_and_arrays() bool {
     calls := 0;
-    values := identity(int32[2], make_values(calls&));
+    values := identity([2]int32, make_values(calls&));
     copy := values;
-    copy = identity(int32[2], [30, 40]);
+    copy = identity([2]int32, [30, 40]);
     scalar := identity(int32, 40);
     wide := identity(int64, 42);
 

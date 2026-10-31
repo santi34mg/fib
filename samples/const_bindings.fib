@@ -1,7 +1,7 @@
-comp Record: type = struct { items: int32[2] };
+comp Record: type = struct { items: [2]int32 };
 comp Choice: type = enum { Value: Record };
 
-fn first(items: const int32[]) int32 {
+fn first(items: const []int32) int32 {
     return items[0];
 }
 

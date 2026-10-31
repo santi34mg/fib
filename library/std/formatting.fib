@@ -1,6 +1,6 @@
 // Borrowed tagged arguments and allocation-free byte formatting.
 pub comp Arg := enum {
-    Bytes: const uint8[],
+    Bytes: const []uint8,
     Signed: int64,
     Unsigned: uint64,
     Boolean: bool
@@ -9,7 +9,7 @@ pub comp Error := enum { InvalidFormat, ArgumentCount, BufferTooSmall, Io: int32
 pub comp FormatResult := root::result::Result(usize, Error);
 
 // Validate the entire template before invoking a writer.
-fn validate(template: const uint8[], count: usize) FormatResult {
+fn validate(template: const []uint8, count: usize) FormatResult {
     i: usize = 0;
     arguments: usize = 0;
     while (i < template.len) {
@@ -31,8 +31,8 @@ fn validate(template: const uint8[], count: usize) FormatResult {
     return FormatResult.Ok(arguments);
 }
 
-fn write_integer(T: type, context: *T, writer: fn(*T, const uint8[]) FormatResult, magnitude: uint64, negative: bool) FormatResult {
-    buffer: uint8[21] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+fn write_integer(T: type, context: *T, writer: fn(*T, const []uint8) FormatResult, magnitude: uint64, negative: bool) FormatResult {
+    buffer: [21]uint8 = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
     position: usize = 21;
     remaining := magnitude;
     while (true) {
@@ -48,7 +48,7 @@ fn write_integer(T: type, context: *T, writer: fn(*T, const uint8[]) FormatResul
     return writer(context, buffer[position..]);
 }
 
-fn write_arg(T: type, context: *T, writer: fn(*T, const uint8[]) FormatResult, argument: Arg) FormatResult {
+fn write_arg(T: type, context: *T, writer: fn(*T, const []uint8) FormatResult, argument: Arg) FormatResult {
     switch (argument) {
         when .Bytes(bytes) { return writer(context, bytes); }
         when .Unsigned(value) { return write_integer(T, context, writer, value, false); }
@@ -68,7 +68,7 @@ fn write_arg(T: type, context: *T, writer: fn(*T, const uint8[]) FormatResult, a
 // type specifiers or floating-point conversion. The writer must consume the full
 // borrowed chunk synchronously and return its length, or Err. Errors can leave
 // partial sink output, but invalid syntax/counts never invoke the writer.
-pub fn format_to(T: type, context: *T, writer: fn(*T, const uint8[]) FormatResult, template: const uint8[], values: const Arg[]) FormatResult {
+pub fn format_to(T: type, context: *T, writer: fn(*T, const []uint8) FormatResult, template: const []uint8, values: const []Arg) FormatResult {
     switch (validate(template, values.len)) {
         when .Err(error) { return FormatResult.Err(error); }
         when .Ok(count) {}
@@ -102,8 +102,8 @@ pub fn format_to(T: type, context: *T, writer: fn(*T, const uint8[]) FormatResul
     return FormatResult.Ok(written);
 }
 
-comp Buffer := struct { destination: uint8[], position: usize, writing: bool };
-fn buffer_write(context: *Buffer, bytes: const uint8[]) FormatResult {
+comp Buffer := struct { destination: []uint8, position: usize, writing: bool };
+fn buffer_write(context: *Buffer, bytes: const []uint8) FormatResult {
     if bytes.len > (context*).destination.len - (context*).position {
         return FormatResult.Err(Error.BufferTooSmall);
     };
@@ -121,7 +121,7 @@ fn buffer_write(context: *Buffer, bytes: const uint8[]) FormatResult {
 // Validate syntax, count and capacity before modifying destination. No NUL is
 // appended; the untouched tail remains unchanged. Template and byte arguments
 // must not overlap destination, and must remain unchanged throughout this call.
-pub fn format(destination: uint8[], template: const uint8[], values: const Arg[]) FormatResult {
+pub fn format(destination: []uint8, template: const []uint8, values: const []Arg) FormatResult {
     buffer := Buffer { destination: destination, position: 0, writing: false };
     switch (format_to(Buffer, buffer&, buffer_write, template, values)) {
         when .Err(error) { return FormatResult.Err(error); }

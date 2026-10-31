@@ -1,5 +1,5 @@
-pub comp Bytes := const uint8[];
-pub comp Arguments := Bytes[];
+pub comp Bytes := const []uint8;
+pub comp Arguments := []Bytes;
 pub comp Environment := root::map::Map(Bytes, Bytes);
 
 fn failed() {

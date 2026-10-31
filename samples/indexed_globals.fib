@@ -1,9 +1,9 @@
 // File-level storage has compile-time initial data; this table is writable.
-table: int32[3] = [10, 20, 0];
+table: [3]int32 = [10, 20, 0];
 tail := table[1..];
 total := 0;
 
-fn fill(items: int32[]) {
+fn fill(items: []int32) {
     items[1] = 12;
 }
 

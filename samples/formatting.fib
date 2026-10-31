@@ -1,7 +1,7 @@
 comp io := std::io;
 
 fn main() int32 {
-    args: std::formatting::Arg[4] = [
+    args: [4]std::formatting::Arg = [
         std::formatting::Arg.Bytes("Alice"),
         std::formatting::Arg.Signed(-42),
         std::formatting::Arg.Unsigned(18446744073709551615),
