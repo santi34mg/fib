@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `export-symbols --single-file PATH` / `--build-file PATH` exports deterministic
+  JSON for unrestricted public top-level declarations, signatures and alias
+  targets without requiring an executable entry or LLVM.
+
 ## [0.2.0] - 2026-10-31
 
 ### Added

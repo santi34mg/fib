@@ -9,4 +9,5 @@ pub mod ir {
 }
 pub mod ir_interpreter;
 pub mod plan;
+pub mod symbol_export;
 pub use diagnostics::CompilerError;
