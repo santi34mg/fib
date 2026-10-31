@@ -1,0 +1,55 @@
+// Byte-oriented output; formatting is shared with the buffer formatter.
+pub comp Arg := root::formatting::Arg;
+
+fn read(T: type) void {
+
+}
+
+pub comp fn Reader(T: type) type {
+
+    return struct {
+        read: fn(type, ) void,
+    };
+}
+
+pub comp PrintError := root::formatting::Error;
+pub comp PrintResult := root::formatting::FormatResult;
+
+// Write every byte, retrying EINTR and short writes. Empty slices make no syscall.
+// Errors may leave partial output; zero progress reports EIO (5).
+pub fn write_all(fd: int32, bytes: const []uint8) PrintResult {
+    written: usize = 0;
+    while (written < bytes.len) {
+        switch (root::os::write(fd, bytes[written..])) {
+            when .Err(error) {
+                if error != 4 { return PrintResult.Err(PrintError.Io(error)); };
+            }
+            when .Ok(count) {
+                if count == 0 { return PrintResult.Err(PrintError.Io(5)); };
+                written = written + count;
+            }
+        };
+    };
+    return PrintResult.Ok(written);
+}
+
+// Write literal bytes to stdout; braces have no special meaning.
+pub fn print(bytes: const []uint8) PrintResult {
+    return write_all(root::os::stdout, bytes);
+}
+
+fn write_chunk(fd: *int32, bytes: const []uint8) PrintResult {
+    return write_all(fd*, bytes);
+}
+
+// Shared formatting validates syntax/counts before output. I/O errors may leave
+// partial output; write_all handles EINTR and short writes without allocation.
+pub fn fprintf(fd: int32, format: const []uint8, values: const []Arg) PrintResult {
+    descriptor := fd;
+    return root::formatting::format_to(int32, descriptor&, write_chunk, format, values);
+}
+
+// Format to stdout. See fprintf for syntax and error behavior.
+pub fn printf(format: const []uint8, values: const []Arg) PrintResult {
+    return fprintf(root::os::stdout, format, values);
+}

@@ -1,17 +1,16 @@
-// Generic insertion sort over @int4[8].
+// Generic insertion sort over [8]int32.
 // Expected output:
 //   [ 1  2  3  5  6  7  8  10 ]
-import std::libc
 
-fn insertion_sort(T: type, arr: *T, len: @int4) @void {
+fn insertion_sort(T: type, arr: []T) void {
     i := 0;
-    while (i < len) {
+    while (i < arr.len as int32) {
         j := i;
         while (j > 0) {
-            if arr.[j] < arr.[j - 1] {
-                t: T = arr.[j];
-                arr.[j] = arr.[j - 1];
-                arr.[j - 1] = t;
+            if arr[j] < arr[j - 1] {
+                t: T = arr[j];
+                arr[j] = arr[j - 1];
+                arr[j - 1] = t;
             };
             j -= 1;
         };
@@ -19,22 +18,23 @@ fn insertion_sort(T: type, arr: *T, len: @int4) @void {
     };
 }
 
-fn print_arr(T: type, arr: *T, len: @int4) @void {
-    libc::printf("[");
+fn print_arr(arr: const []int32) void {
+    std::io::print("[");
     i := 0;
-    while (i < len) {
-        libc::printf(" %d ", arr.[i]);
+    while (i < arr.len as int32) {
+        args: [1]std::io::Arg = [std::io::Arg.Signed(arr[i] as int64)];
+        std::io::printf(" {} ", args[..]);
         i += 1;
     };
-    libc::printf("]\n");
+    std::io::print("]\n");
 }
 
-fn main() @int4 {
-    arr: @int4[8] = [3, 8, 5, 10, 2, 1, 6, 7];
+fn main() int32 {
+    arr: [8]int32 = [3, 8, 5, 10, 2, 1, 6, 7];
 
-    insertion_sort(@int4, arr.& as *@int4, 8);
+    insertion_sort(int32, arr[..]);
 
-    print_arr(@int4, arr.& as *@int4, 8);
+    print_arr(arr[..]);
 
     return 0;
 }

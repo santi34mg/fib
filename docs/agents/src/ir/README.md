@@ -1,65 +1,76 @@
-# `src/ir/`
+# Owned SSA IR
 
-## Responsibility
+The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute.
 
-The middle-end imports a supported subset of `TypedProgram` into flat
-three-address-style control flow. Core entities are `Label`, `Temp`, `SymbolId`,
-`Operand`, `Instruction`, `BasicBlock`, `IrFunction`, and `IrProgram`.
+See the [IR implementation contract](../../../../crates/fib-ir/src/ir/README.md).
 
-Files mirror concerns:
+`Ir` owns stable indexed arenas; raw public records and display do not certify
+validity. `FunctionBuilder` transactionally allocates blocks, values and slots,
+requires termination and verifies before publishing. Failed/dropped builders leave
+input unchanged.
 
-- `mod.rs`: representation, errors, shared numeric predicates, program import;
-- `builder.rs`: scopes, IDs, instruction stream, block formation, defer/loop state;
-- `expressions.rs`: typed expression import;
-- `statements.rs`: functions, statements, control flow, and switch import;
-- `display.rs`: debug text;
-- `test.rs`: representation-shape tests.
+`verify_ir` allocates program-indexed predecessor/dominator workspace once per
+verification, releasing each function's CFG sets after its checks. It retains
+whole-program ownership checks and function-level dominance/active-variant proofs.
 
-## Representation Contract
+`verify_ir` checks Bool/fixed-width integer/IEEE float SSA plus interpreter-owned
+byte constants: Constant/direct Call/arithmetic/comparison/unary/numeric Cast
+instructions, Jump/Branch/Switch/Return/Trap/Unreachable, ownership, definitions, reachability/dominance,
+entry and edge signatures, calls/returns, constants and orphan arena records.
+Unreachable blocks are rejected. Structs, typed pointers, null constants,
+stack-slot ownership, aggregate operations and typed memory operations are
+verified. Enum construction, tags, constants and payload extraction are checked, including active-variant proofs. Globals and constant address/slice projections are verified, including known array extents and constant-graph cycles. Byte values are
+currently valid only for interpreted build-API calls and have no LLVM ABI lowering.
 
-- each source binding receives a `SymbolId`, preserving shadowing;
-- source locals use explicit alloca/load/store operations;
-- signedness and float category are carried by `Ty`;
-- control flow is labels and jumps;
-- `IfGoto` encodes only the true target; the false target is the next block;
-- the builder splits blocks at labels and after selected terminators.
+`ir::lowering::lower` produces verified SSA for fixed-width integer/float/bool
+helpers/calls, initialized locals, assignments, arithmetic/bitwise/shifts,
+comparisons, explicit casts, short-circuit booleans, if/else, while loops, break/continue and returns.
+Defer statements and blocks register at their source position and execute in
+reverse order on lexical scope exits. Return expressions are evaluated before
+cleanup; break/continue clean up only scopes left by that loop transfer. Cleanup
+uses ordinary verified CFG and memory operations; traps do not unwind it.
+See [scalar semantics](../../../scalar-semantics.md) for operation rules.
+Enum constructors and switches with copied payload bindings also lower; see [enum semantics](../../../enum-semantics.md). SSA variable merges and loop-carried values use block parameters. Struct,
+uninitialized and address-taken locals use explicit stack storage; ordinary
+dereference adds a null-check/trap CFG, and the unchecked intrinsic omits it. Tests cover valid scalar graphs, invalid references,
+ownership, signatures, forward uses, dominance and transactional construction.
 
-`IrProgram` currently omits nominal type definitions, module ownership, source
-spans, target data, explicit CFG edges, and PHIs/block arguments.
+Concrete generic instances are keyed by canonical template/type identities, with
+rechecked binding environments used for storage classification and SSA joins.
+Type parameters/arguments are absent from runtime signatures/calls. Multi-file
+function identities are registered before bodies; internal symbols distinguish
+same-spelled declarations. Fixed-array aggregates validate lengths, element
+signatures and by-value cycles. Numeric casts include explicit bool conversions.
 
-## Effective Support
+Non-unit enum constructors carry one operand of the actual payload type; switch
+bindings extract that operand under the existing active-variant proof. Normalized
+unit variants have no stored payload. Their bindings synthesize an empty tuple
+value, also used for ordinary runtime void values. Void-returning calls retain
+effects before yielding unit in value positions, and unit equality evaluates both
+operands. Function void returns have no result; opaque pointers retain opaque
+pointees rather than the unit-value representation.
 
-The importer supports scalar literals, locals, scalar arithmetic, logical
-control flow, named calls, casts, loops, returns, defer, assignment forms, and
-some enum/tuple operations. Aggregate, pointer, slice, enum payload, and
-qualified operations are either rejected or represented by instructions the
-LLVM consumer does not yet implement.
+## Standard-library operations
 
-The existence of an `Instruction` variant does not imply end-to-end support.
+Memory intrinsics resolve under `std::memory`. Source lowering supports
+`slice_from_parts`, `slice_data`, indexing, indexed assignment, slicing and `.len`.
+Bounds guards use `IndexOutOfBounds`/`InvalidSlice` traps before narrowing offsets;
+element access also preserves null checks. Array temporaries use function-owned
+slots, while slices of places retain original storage. `Syscall` takes a uint64 number
+and up to six uint64/pointer arguments and returns int64. Verification checks
+types, signatures, ownership and dominance. LLVM emits Linux x86-64 inline
+assembly with side effects and register/flags/memory clobbers; other targets fail.
+Package-private typed pointer/word helpers lower to verified uint64-to-pointer
+and pointer-to-uint64 casts, supporting source std mappings and allocation.
+Build-file interpretation never executes syscalls.
 
-## Known Correctness Risks
-
-- short-circuit lowering assigns one `Temp` on multiple control-flow paths;
-  the LLVM consumer stores only one host-side value and emits no PHI, violating
-  dominance;
-- pointer binary expressions can reach unchecked integer conversions in the
-  consumer and panic rather than return unsupported;
-- the false-edge-by-block-order convention is fragile and unverified;
-- duplicate/missing labels, temp use-before-definition, dominance, operand
-  categories, and terminator shape are not verified;
-- normal nested-scope fallthrough does not emit deferred statements, diverging
-  from direct lowering;
-- constants are modeled/imported but ignored or broken in LLVM lowering;
-- many emitted instruction variants are rejected by the consumer;
-- route failure is hidden by broad driver fallback.
-
-## Improvement Direction
-
-1. Define an explicit capability result and permit fallback only for
-   `UnsupportedFeature`.
-2. Add structural verification before LLVM lowering.
-3. Add explicit CFG successors and PHIs/block parameters, or define temporaries
-   as mutable stack slots rather than claiming SSA-like values.
-4. Carry nominal type/module/source information.
-5. Delete dead variants or implement and test both importer and consumer.
-6. Add a forced-route API and differential execution tests.
+File-level storage has constant initial data, including relocations and slice
+views. Lowering registers all global identities before initializers or bodies.
+No startup function is generated; the build-file interpreter rejects global accesses
+before applying operations. Value-returning `comp fn` evaluation is scaffolding
+with an explicit diagnostic, never a runtime fallback.

@@ -1,0 +1,16 @@
+fn give(a: [1]int32) const [1]int32 {
+    return a;
+}
+
+fn take(a: const [1]int32) int32 {
+    return a[0];
+}
+
+fn main() int32 {
+    a := [42];
+    b: const [1]int32 = a;
+    a[0] = 1;
+    if b[0] != 42 { return 2; };
+    b = give([42]);
+    return take(b);
+}

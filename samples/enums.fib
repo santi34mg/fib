@@ -1,16 +1,17 @@
-// Plain enum discriminant cast.
-// Expected output:
-//   color discriminant = 1
-import std::libc
+// Plain enum values and exhaustive matching. Prints green.
 
-type Color enum {
+comp Color: type = enum {
     Red,
     Green,
     Blue,
-}
+};
 
-fn main() @int4 {
+fn main() int32 {
     c: Color = Color.Green;
-    libc::printf("color discriminant = %d\n", c as @uint8);
+    switch (c) {
+        when .Red { std::io::print("red\n"); }
+        when .Green { std::io::print("green\n"); }
+        when .Blue { std::io::print("blue\n"); }
+    };
     return 0;
 }

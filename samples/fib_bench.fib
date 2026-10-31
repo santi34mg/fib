@@ -1,23 +1,21 @@
-// Naive recursive fib(50) benchmark.
-// Compile-only in e2e: takes hours to run, so no expected output is pinned.
-import std::libc
+// Naive recursive Fibonacci benchmark. Defaults to fib(20) for a quick run.
+// Increase the limit to 50 for a slow benchmark; int64 holds fib(50).
 
-fn fib(n: @int4) @int4;
-
-fn fib(n: @int4) @int4 {
+fn fib(n: int32) int64 {
     if n <= 1 {
-        return n;
+        return n as int64;
     };
     return fib(n - 1) + fib(n - 2);
 }
 
-fn main() @int4 {
-    libc::printf("Fibonacci benchmark (recursive, no memoization)\n");
-    libc::printf("-----------------------------------------------\n");
-    i: @int4 = 0;
-    while (i <= 50) {
-        result: @int4 = fib(i);
-        libc::printf("fib(%d) = %d\n", i, result);
+fn main() int32 {
+    std::io::print("Fibonacci benchmark (recursive, no memoization)\n");
+    std::io::print("-----------------------------------------------\n");
+    i: int32 = 0;
+    while (i <= 20) {
+        result: int64 = fib(i);
+        args: [2]std::io::Arg = [std::io::Arg.Signed(i as int64), std::io::Arg.Signed(result)];
+        std::io::printf("fib({}) = {}\n", args[..]);
         i += 1;
     };
     return 0;

@@ -1,0 +1,59 @@
+// Direct payloads, generic Result specialization, and normalized unit values.
+comp Result := std::result::Result;
+comp Status := Result(void, uint8);
+comp Empty := struct {};
+comp UnitRecord := struct { value: void, empty: Empty };
+comp NestedUnit := struct { inner: UnitRecord };
+comp Choice := enum {
+    Absent, NoValue: void, Empty: Empty, Unit: NestedUnit, Number: int32
+};
+comp Box := struct { unit: void, number: int32 };
+
+fn success() Status { return Status.Ok; }
+fn failure() Status { return Status.Err(42); }
+fn consume(value: void) void { return value; }
+fn identity(T: type, value: T) T { return value; }
+fn mark(trace: *int32, digit: int32) void {
+    trace* = (trace*) * 10 + digit;
+}
+
+fn score(choice: Choice) int32 {
+    switch (choice) {
+        when .Absent(unit) { consume(unit); return 1; }
+        when .NoValue(unit) { consume(unit); return 2; }
+        when .Empty(unit) { consume(unit); return 3; }
+        when .Unit(unit) { consume(unit); return 4; }
+        when .Number(number) { return number; }
+    };
+}
+
+fn status_code(status: Status) int32 {
+    switch (status) {
+        when .Ok(unit) {
+            copy := identity(void, unit);
+            copy = consume(copy);
+            return 0;
+        }
+        when .Err(error) { return error as int32; }
+    };
+}
+
+fn main() int32 {
+    if score(Choice.Absent) != 1 || score(Choice.NoValue) != 2
+        || score(Choice.Empty) != 3 || score(Choice.Unit) != 4
+        || score(Choice.Number(42)) != 42 { return 1; };
+    if status_code(success()) != 0 { return 2; };
+    trace := 0;
+    if mark(trace&, 1) != mark(trace&, 2) { return 3; };
+    if trace != 12 { return 4; };
+    unit := mark(trace&, 3);
+    box := Box { unit: unit, number: 42 };
+    box.unit = identity(void, unit);
+    unit = box.unit;
+    pointer := unit&;
+    if pointer == null { return 5; };
+    callback: fn(void) void = consume;
+    callback(unit);
+    if unit != mark(trace&, 4) || trace != 1234 { return 6; };
+    return status_code(failure());
+}

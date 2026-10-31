@@ -1,0 +1,29 @@
+// Byte-string helpers. Lengths count bytes; no encoding or NUL convention.
+pub comp Error := enum { BufferTooSmall };
+pub comp ConcatResult := root::result::Result([]uint8, Error);
+
+// Borrow caller-owned storage without allocation or lifetime extension. Sources
+// must not overlap destination. Failure leaves destination unchanged; success
+// preserves its unused tail and appends no NUL. Check capacity without adding
+// input lengths first, so even oversized lengths cannot wrap the check.
+pub fn concat(destination: []uint8, a: const []uint8, b: const []uint8) ConcatResult {
+    if a.len > destination.len { return ConcatResult.Err(Error.BufferTooSmall); };
+    if b.len > destination.len - a.len { return ConcatResult.Err(Error.BufferTooSmall); };
+    root::memory::memcpy(destination, a);
+    root::memory::memcpy(destination[a.len..], b);
+    return ConcatResult.Ok(destination[..a.len + b.len]);
+}
+
+// Compatibility helper for ordinary calls; .len is the direct spelling.
+pub fn str_len(value: const []uint8) usize { return value.len; }
+
+// Bytewise content equality, including empty slices; no allocation.
+pub fn str_eq(s1: const []uint8, s2: const []uint8) bool {
+    if s1.len != s2.len { return false; };
+    i: usize = 0;
+    while (i < s1.len) {
+        if s1[i] != s2[i] { return false; };
+        i += 1;
+    };
+    return true;
+}

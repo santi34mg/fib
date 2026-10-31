@@ -43,12 +43,23 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.98.0
 
+      - name: Cache Rust dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-frontend-cargo-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.github/workflows/ci.yml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-frontend-cargo-
+
       - name: Check (no default features)
         run: cargo check --no-default-features
 
       - name: Test (no default features)
-        # e2e.rs is `#![cfg(feature = "llvm")]`, so this exercises the
-        # frontend unit tests only — it catches silent-noop feature gating.
+        # Native executable/sample tests require LLVM. Frontend and LSP tests
+        # also run here to cover the configuration without the LLVM dependency.
         run: cargo test --no-default-features
 
   build_and_test:
@@ -80,7 +91,7 @@ jobs:
             target
           # Includes the workflow file and the pinned toolchain (`rust-toolchain.toml`)
           # so LLVM/toolchain bumps invalidate the cache, not just Cargo.lock changes.
-          key: ${{ runner.os }}-llvm21-cargo-${{ hashFiles('**/Cargo.lock', '.github/workflows/ci.yml', 'rust-toolchain.toml') }}
+          key: ${{ runner.os }}-llvm21-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', '.github/workflows/ci.yml', 'rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-llvm21-cargo-
 
@@ -98,9 +109,7 @@ jobs:
         run: cargo build
 
       - name: Test
-        run: cargo test
-
-      - name: Test (all features)
+        # Currently identical to default features; run the suite once.
         run: cargo test --all-features
 
   audit:

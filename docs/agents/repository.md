@@ -1,49 +1,87 @@
-# Repository Map
+# Repository map and commands
 
-This page mirrors the repository root and records the role of non-source
-assets.
+The [language specification](../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute.
 
-| Repository path | Responsibility | Implementation notes |
-| --- | --- | --- |
-| `Cargo.toml` | Package, feature, and dependency declaration | The `llvm` feature is enabled by default and gates Inkwell. Several direct dependencies appear unused and should be verified before removal. |
-| `Cargo.lock` | Reproducible Rust dependency graph | Keep synchronized with deliberate manifest changes. |
-| `rust-toolchain.toml` | Rust/MSRV pin | Rust 1.98.0 with rustfmt and clippy. A bump is a policy change. |
-| `src/` | Compiler library and binary | See [`src/`](src/README.md). |
-| `tests/` | Integration and LLVM e2e tests | See [`tests/`](tests/README.md). |
-| `samples/` | Runnable feature examples | See [`samples/`](samples/README.md). |
-| `std/` | Fib standard-library experiments and libc declarations | See [`std/`](std/README.md). |
-| `docs/` | User language guide, historical audits, implementation guide | Historical `docs/audit/` pages are snapshots, not current contracts. |
-| `.github/workflows/ci.yml` | Hosted validation | See [CI](.github/workflows/ci.md). |
-| `.githooks/pre-commit` | Local full gate | Installation is not automatic; it is intentionally more expensive than a typical pre-commit hook. |
+## Cargo and toolchain
 
-## Build Model
+[`Cargo.toml`](../../Cargo.toml) defines a Rust 2024 workspace with `fibc` 0.2.0
+as its facade, CLI and driver package. Internal packages separate builtin
+identities, frontend analysis, owned SSA, lowering and LLVM emission; see the
+[crate map](../../crates/README.md). Default members include every package, so
+root check/test/Clippy commands cover their unit tests. Default feature `llvm` enables optional Inkwell 0.8
+(`llvm21-1`); default dependency builds therefore require LLVM 21. The backend
+emits scalar/struct/enum/pointer LLVM objects. No-default-features builds avoid LLVM.
+Dependencies also include anyhow, num-bigint, num-traits, rustc_apfloat, serde,
+serde_json, toml, clap, walkdir, and tempfile. Unused direct dependencies on regex,
+petgraph, either and indextree were removed after checking current Rust sources.
 
-Fib is one Rust package with a library and binary. Default builds require LLVM
-21 through Inkwell and a clang-compatible tool capable of consuming textual
-LLVM IR. `--no-default-features` keeps the frontend, driver, diagnostics, and
-flat IR importer available without LLVM.
+Development and test builds use line-table debug info to reduce code generation
+and linking costs while retaining source locations in backtraces. For debugger
+variable inspection, use `CARGO_PROFILE_DEV_DEBUG=2` (or
+`CARGO_PROFILE_TEST_DEBUG=2` for tests). Release and benchmark profiles are unchanged.
+The compiler and installer binaries have no unit tests and skip empty test
+harnesses; Cargo still builds them for integration tests. The LSP unit tests remain enabled.
+The `fib-dist` Rust tool builds a relocatable Linux x86-64 archive via the installer,
+tests it after extraction, and emits a SHA-256 checksum. Release publication uploads
+that bundle; packaging PRs/manual runs produce Actions artifacts. See the
+[release handoff](../releases/0.2.0.md#release-handoff) for commands and requirements.
+See [Rust build measurements](../rust-build-performance.md) for scope and reproduction.
 
-The current "project" model is an entry `.fib` file plus recursive imports and
-include roots. There is no package manifest, dependency resolver, target model,
-or installed-standard-library discovery.
+[`rust-toolchain.toml`](../../rust-toolchain.toml) pins 1.98.0 with rustfmt/clippy;
+its comments define the pin as MSRV policy. Bump deliberately with CI, not by drift.
 
-## Dependency Notes
+## Local validation
 
-Observed runtime dependencies are `clap`, optional `inkwell`, and `tempfile`.
-The manifest also declares `serde`, `toml`, `regex`, `walkdir`, `petgraph`,
-`either`, and `indextree`; no direct source use was found during the 2026-09-23
-exploration. Confirm with compiler tooling before removing them because feature
-or generated-code uses can be non-obvious.
+Local validation uses cached offline dependencies:
 
-## Portability Boundary
+```sh
+cargo check --offline --no-default-features
+cargo test --offline --no-default-features
+cargo fmt --check
+cargo clippy --offline --no-default-features --all-targets -- -D warnings
+```
 
-The generated ABI assumes a native 64-bit target in several places:
+The unfiltered no-default-features suite passes, including all six former pending
+acceptance cases. See
+[test commands and measured results](tests/README.md). Offline mode requires a
+populated cache and is optional outside restricted environments. The CLI builds
+the supported multi-file scalar/aggregate/control-flow subset
+with LLVM and host `cc`, either directly or through a narrow interpreted build
+file. Default discovery, `run` and `test` remain unfinished.
 
-- `@usize`, pointers, function pointers, and slice lengths are modeled as 64-bit.
-- Slice layout is treated as `{ ptr, i64 }`.
-- tagged-union payload layout is computed manually.
-- runtime bounds diagnostics call libc/POSIX functions.
-- linking has no target, sysroot, `-L`, `-l`, or arbitrary linker-argument API.
+Useful focused commands: `cargo test --no-default-features frontend::parser`,
+`cargo test --no-default-features frontend::tokenizer`, and
+`cargo test --no-default-features name_resolution::phase_01_files`. All analyzer
+tests and helpers live in `crates/fib-frontend/src/frontend/analyzer/test.rs`, with six inline
+`name_resolution` phases. These filters select Rust unit tests, not Fib program
+compilation.
 
-Treat cross-compilation and broad platform claims as unsupported until target
-triple/data-layout ownership and native linker configuration are explicit.
+For faster isolated work, use `cargo test -p fib-frontend`, `cargo test -p fib-ir`,
+or `cargo test -p fib-backend --features llvm`. Frontend/IR package tests require
+no LLVM installation. `cargo test -p fibc` only selects the facade package;
+use root `cargo test` or `cargo test --workspace` for the complete suite.
+
+## Assets
+
+- [`src/`](../../src): active compiler modules.
+- [`samples/`](../../samples): current-syntax examples with automatic parser coverage
+  and selected scalar/loop/struct/enum execution coverage.
+- `tests/executable.rs` compiles, links and executes supported scalar/aggregate/control-flow programs with LLVM.
+- [`CI`](.github/workflows/ci.md) records configured gates, not proof they pass.
+- [`.githooks/pre-commit`](../../.githooks/pre-commit) is opt-in; it skips docs-only
+  staged changes and runs `cargo deny check` as well as frontend/full gates.
+  Unlike advisory CI deny, local deny failure blocks the hook.
+
+The project model uses explicitly named files in `BuildPlan`. The explicit
+`--build-file` route compiles a `build() int32` entry to verified owned IR and
+interprets literal `build_api` operations against host-owned builder state.
+Finalization validates deterministic source identities and root-relative paths,
+names, entry and output. General interpretation and default discovery remain
+unfinished. Build files do not emit or load native build-file artifacts, and
+source membership is explicit rather than recursively discovered through imports. See the
+[future build-file plan](../roadmap/08-interpreted-build-files.md).

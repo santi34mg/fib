@@ -7,22 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-31
+
 ### Added
-- An opt-in `BuilderObject` constructor backed by the existing compiler driver; build-file execution remains inactive.
-- Split tokenizer and new token shapes for the upcoming parser migration; the current compiler still uses the existing lexer.
-- Opt-in statement-only parser and AST modules for the new syntax, including bit-width builtin type names, per-binding types and `const` in multi-variable declarations, and qualified-access module aliases instead of import declarations; the compiler continues to use the established parser and analyzer.
+
+- Reconstructed native compilation through analyzed source, verified owned SSA,
+  LLVM 21, PIC objects and host `cc` linking. Explicit single-file and narrow
+  interpreted build-file routes work; default discovery, `run` and `test` remain pending.
+- Fixed-width signed/unsigned 8–128-bit integers, float16/32/64/128 and bool:
+  arithmetic, bitwise operations, shifts, numeric/bool casts, comparisons,
+  short-circuit logic, helpers, recursion, branches, loops and break/continue.
+  Integer arithmetic wraps; invalid division, shifts and float-to-integer casts trap.
+- Structs, partial initialization, typed pointers, null-checked dereferences,
+  unchecked memory places, direct enum payloads/switches, fixed-array values,
+  checked indexing/slicing and constant-initialized global storage with relocations.
+- Function values and indirect calls, including mutable callbacks in struct fields.
+  Linux x86-64 System V `callconv "C"` supports scalar/pointer and nonempty-struct
+  boundaries, register coercions and indirect struct arguments/results. Native
+  linking accepts `--c-source`, `-l`/`--link-lib` and `-L`/`--library-path`.
+- Concrete generic specialization with body rechecking, computed type annotations,
+  bounded `comp fn` type computation, initialization/flow validation, exhaustive
+  enum switches and reverse-order lexical defer on normal exits/return/break/continue.
+  Value-returning `comp fn` evaluation remains explicit scaffolding.
+- Package-rooted lookup, scoped visibility, identity-preserving aliases, protected
+  primitive prelude names and canonical cross-file linkage with persistent package
+  identities, pinned Unicode normalization and versioned symbols.
+- Installed version-matched source std with `--sysroot`/`--no-std`, reusable Result,
+  Linux x86-64 syscalls, process arguments/environment and generic maps. Main accepts
+  optional argument/environment parameters and void/int32 or supported Result returns.
+- Source std typed sbrk allocation/free, aligned mmap page allocation/release,
+  checked byte `memset`/`memcpy`, target-derived runtime `core::sizeof(T)`, OS randomness,
+  tagged formatting to buffers/writer callbacks, reliable output and explicit string
+  equality/length/concatenation helpers. Buffer formatting adds no NUL suffix.
+- Native compiler-backed LSP with collecting diagnostics, semantic tokens, unsaved
+  overlays, UTF-16 positions, build-file planning and accessible qualified-name completion.
+- Rust installer for compiler/LSP binaries and std sources; compiler/LSP benchmark
+  tooling with recorded measurements. Automatic top-level sample compile/run coverage
+  checks output and exit statuses, alongside frontend, IR, native and std regressions.
+- Rust release packaging for Linux x86-64 binaries and matching std, with SHA-256
+  checksums and extracted-archive smoke tests. Publishing a GitHub release builds
+  and attaches the bundle; manual/PR workflow runs produce Actions artifacts only.
+- Experimental `fibc-fib` token/arena/command scaffolding and `std::io::Reader(T)`
+  scaffolding. Neither is a working compiler/input abstraction; the Fib compiler
+  experiment is outside the sample sweep and still needs API migration.
 
 ### Changed
-- Builtin numeric type variants and displayed names use bit widths (`Int32`, `int32`); bare `int` and `uint` now denote 32-bit types. The production lexer still accepts legacy numbered `@int4`-style source spellings until the parser migration.
-- The opt-in parser uses postfix `&`/`*`, direct indexing and slicing (`arr[i]`, `arr[a..b]`), and `.len` instead of the established compiler's dotted access forms.
+
+- **Breaking:** prefix container types `[N]T`/`[]T` replace suffix forms. Byte sentinel
+  arrays `[N:S]uint8`, slices `[:S]uint8` and pointers `[*:S]uint8` preserve termination;
+  `c"..."` has type `const [*:0]uint8`. `openat` requires a terminated path.
+- **Breaking:** unified bindings require explicit `comp` for types. Primitive types
+  are ordinary protected identifiers; `char` is removed and character literals use uint8.
+  Binding constness and layer-local element/pointee constness are independent.
+- **Breaking:** enum variants carry one direct payload type; recursively unit-only
+  payloads use bare variant values. Named-field payload shorthand is removed.
+- **Breaking:** remove `@` builtins/types, variadics, legacy type declarations and
+  `extern` (use `callconv "C"`). `std::memory` replaces automatic `memory::` access;
+  string helpers live explicitly in `std::string`. Fixed-signature shims handle C varargs.
+- Arrays implicitly borrow as full slices in expected-type contexts, preserving
+  readonly backing storage; string literals can form readonly byte slices.
+- Split compiler stages into workspace crates, retaining the root facade/driver.
+  Share immutable collecting-analysis data, reuse verifier graph tables, reduce
+  development debug-info costs and avoid duplicate LLVM validation runs.
+- Replace the historical flat-IR/typed-AST pipeline and experimental std with the
+  current analyzer, transactional SSA, shared lowering and installed source std.
+  Compiler-declaration revision is now 4. Historical positional/check/emit/release
+  CLI flags are absent; runtime checks are not disabled by a release flag.
 
 ### Fixed
-- The tokenizer now rejects an unescaped quote in a character literal, so `'''` (and the bare forms `''` and `'''''`) no longer parse as a valid character literal; a literal quote must be written as an escape (`'\''`).
+
+- Render readable types/readonly qualifiers and explain invalid slice conversions.
+- Preserve const protection through nested inline arrays, field access, addresses
+  and borrowed views; check bounds before narrowing indices or writing destinations.
+- Preserve package/intrinsic identities and unsaved sibling overlays when editing std.
+- Bound active generic expansion, clean failed specialization caches and resolve long
+  alias chains iteratively; reject malformed ABI plans without panicking.
+- Preserve existing outputs on linker failure and reject source-overwriting outputs.
+- Repair current-syntax callback fixtures and migrate all top-level samples to source std.
+- Reject malformed character quotes, known-zero remainders and overflowing inclusive
+  slice bounds; parse void type arguments through the ordinary type-expression path.
 
 ## [0.1.1] - 2026-10-14
 
 ### Added
-- Slice types (`T[]`), explicit array views and sub-slicing, inclusive and
+- Slice types (`[]T`), explicit array views and sub-slicing, inclusive and
   exclusive ranges, indexed reads and writes, and slice arguments and returns.
 - `@usize` and the `.@len` property for arrays and slices.
 - Compile-time diagnostics for constant out-of-bounds array indices and invalid
@@ -132,6 +200,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropped the self-hosted compiler effort (`compiler.fib`, 518 lines) to
   focus on the Rust/LLVM compiler.
 
-[Unreleased]: https://github.com/santi34mg/fib/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/santi34mg/fib/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/santi34mg/fib/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/santi34mg/fib/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/santi34mg/fib/releases/tag/v0.1.0

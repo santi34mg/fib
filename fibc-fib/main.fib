@@ -1,0 +1,136 @@
+// Fib implementation of the fibc compiler
+
+comp Token: type = struct {
+    pos: uint32,
+    line: uint32,
+    row: uint32,
+    kind: TokenKind,
+};
+comp TokenKind: type = enum {
+    Literal: TokenLiteral,
+    Keyword: TokenKeyword,
+    Punctuation: TokenPunctuation,
+    Operator: TokenOperator,
+    Unknown: uint8,
+    Comment,
+    Error: const []uint8,
+};
+comp TokenLiteral: type = enum {
+    Integer: uint64,
+    Float: const []uint8,
+    Boolean: bool,
+    Character: uint8,
+    String: const []uint8,
+    CString: const []uint8,
+    Null,
+};
+comp TokenKeyword: type = enum {
+    Var,
+    Const,
+    Pub,
+    Comp,
+    If,
+    Else,
+    While,
+    Break,
+    Continue,
+    Return,
+    Function,
+    Switch,
+    When,
+    Struct,
+    Enum,
+    Union,
+    As,
+    Extern,
+    Callconv,
+    Defer,
+    Import,
+};
+comp TokenPunctuation: type = enum {
+    OpeningParenthesis,
+    ClosingParenthesis,
+    OpeningCurlyBrace,
+    ClosingCurlyBrace,
+    OpeningSquareBrace,
+    ClosingSquareBrace,
+    Semicolon,
+    Comma,
+    Colon,
+    DoubleColon,
+    Dot,
+    // Reserved for future attribute/decorator syntax; not consumed by the parser yet.
+    At,
+};
+comp TokenOperator: type = enum {
+    Plus,               // +
+    Minus,              // -
+    Star,               // *
+    Slash,              // /
+    Percent,            // %
+    GreaterThan,        // >
+    LesserThan,         // <
+    GreaterEqual,       // >=
+    LesserEqual,        // <=
+    LeftShift,          // <<
+    RightShift,         // >>
+    Assign,             // =
+    Def,                // :=
+    DoubleEquals,       // ==
+    Different,          // !=
+    PlusAssign,         // +=
+    MinusAssign,        // -=
+    StarAssign,         // *=
+    SlashAssign,        // /=
+    PercentAssign,      // %=
+    LogicalAnd,         // &&
+    LogicalOr,          // ||
+    LogicalNot,         // !
+    Ampersand,          // &
+    Pipe,               // |
+    Tilde,              // ~
+    Caret,              // ^
+    DoubleDot,          // ..
+    DotEq,              // .=
+    Ellipsis,           // ...
+    ThinRightArrow,     // ->
+    AddressOf,          // .&
+    Dereference,        // .*
+};
+
+comp fn Arena(T: type) type {
+    return struct {
+        data: []T,
+    };
+}
+
+comp CompilerErr: type = enum {
+    MissingArgs,
+    NotImplemented,
+    Lexer,
+    Parser,
+    Analyzer,
+    Ir,
+    Lowering,
+};
+
+fn main(args: std::process::Arguments, env: std::process::Environment) std::result::Result(void, CompilerErr) {
+    comp CharArena := Arena(uint8);
+    arena :=  CharArena {
+        data: std::memory::alloc(uint8, 4096),
+    };
+    if args.len < 2 {
+        std::io::print("usage: fibc-fib <filename>");
+        return std::result::Result(void, CompilerErr).Err(CompilerErr.MissingArgs);
+    };
+    command := args[1];
+    if std::prelude::str_eq(command, "build") {
+
+    } else if std::prelude::str_eq(command, "run") {
+        return std::result::Result(void, CompilerErr).Err(CompilerErr.NotImplemented);
+    } else if std::prelude::str_eq(command, "test") {
+        return std::result::Result(void, CompilerErr).Err(CompilerErr.NotImplemented);
+    };
+
+    return std::result::Result(void, CompilerErr).Ok;
+}

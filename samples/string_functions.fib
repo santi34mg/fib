@@ -1,0 +1,17 @@
+// Strings are byte slices. Concatenation borrows caller-owned output storage.
+
+fn main() int32 {
+    buffer: [11]uint8 = [0,0,0,0,0,0,0,0,0,0,0];
+    greeting: []uint8;
+    switch (std::string::concat(buffer[..], "Hello, ", "fib!")) {
+        when .Ok(bytes) { greeting = bytes; }
+        when .Err(error) { return 5; }
+    };
+    if std::string::str_len(greeting) != 11 || !std::string::str_eq(greeting, "Hello, fib!") { return 1; };
+    if std::string::str_eq(greeting, "Hello") || std::string::str_eq("a", "b") { return 2; };
+    if !std::string::str_eq("", "") || std::string::str_eq("ab", "ac") || std::string::str_eq("", "a") { return 4; };
+    switch (std::io::print(greeting)) {
+        when .Ok(_) { return 0; }
+        when .Err(_) { return 3; }
+    };
+}

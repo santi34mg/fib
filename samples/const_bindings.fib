@@ -1,0 +1,28 @@
+comp Record: type = struct { items: [2]int32 };
+comp Choice: type = enum { Value: Record };
+
+fn first(items: const []int32) int32 {
+    return items[0];
+}
+
+fn main() int32 {
+    const original: Record = Record { items: [40, 2] };
+    const offset: int32 = 2;
+    const enabled: bool = true;
+    const scale: float32 = 1.0;
+    const selected: Choice = Choice.Value(original);
+    const view := original.items[..];
+
+    // original.items[0] = 0; would write immutable inline storage.
+    // A value copy has independent inline storage and can be modified.
+    copy := original;
+    copy.items[0] = 0;
+    if copy.items[0] != 0 { return 1; };
+    if !enabled || scale != 1.0 { return 2; };
+    switch (selected) {
+        when .Value(record) {
+            if record.items[0] != 40 { return 3; };
+            return first(view) + offset;
+        }
+    };
+}

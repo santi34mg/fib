@@ -1,29 +1,68 @@
-# Fib Language Documentation
+# Fib documentation
 
-Fib is a systems programming language designed for performance, clarity, and developer control. The pages below cover each feature of the language briefly with example syntax.
+Fib is in the middle of a compiler refactor. **Intended language design and
+current compiler behavior are different kinds of documentation.** A temporary
+implementation limitation must not silently become a language rule.
 
-## Contents
+## Language specification
 
-- [Types](types.md) — built-in primitive types (`@`-prefixed)
-- [Builtins](builtins.md) — `@`-prefixed builtin functions (`@concat`, `@str_len`, `@str_eq`)
-- [Literals and Comments](literals.md) — integer bases, floats, chars, strings, escapes, `null`, comments
-- [Variables](variables.md) — declarations, type inference, immutability
-- [Operators](operators.md) — arithmetic, bitwise, logical, comparison, compound assignment
-- [Control Flow](control-flow.md) — `if`/`else`, `for`, `break`, `continue`, `defer`, `return`
-- [Functions](functions.md) — declarations, parameters, return types, multiple returns, forward declarations, variadic, `extern`
-- [Structs](structs.md) — record types, construction, field access
-- [Enums and Tagged Unions](enums.md) — discriminated enums and variants with payloads
-- [Switch](switch.md) — pattern matching over enums and tagged unions
-- [Arrays](arrays.md) — fixed-size arrays, indexing, array literals
-- [Pointers and Memory](pointers-memory.md) — raw pointers, address-of, dereference, manual allocation
-- [Imports and Modules](imports.md) — `import`, qualified access, selective imports, aliasing
-- [Casting](casting.md) — `as` operator
-- [Generics via Type Parameters](generics.md) — `T type` parameters
+The [language specification](language-specification.md) defines the settled rules
+for file/package namespaces, visibility, prelude types, declarations, generics,
+arrays, numeric behavior, mutability and enum switches. It describes the language
+independently of current compiler support.
 
-For working programs that exercise these features end-to-end, see the [`samples/`](../samples) directory.
-Each sample carries an `Expected output:` header comment — the same strings `tests/e2e.rs` asserts on.
+Implementation status and remaining design work are documented separately below.
 
-Compiler contributors and automated agents should start with the
-[`implementation/`](implementation/README.md) tree. It mirrors the repository
-layout and records pipeline ownership, implementation invariants, known risks,
-and prioritized improvements.
+## Verified implementation behavior
+
+The [performance report](performance.md) describes repeatable compiler/LSP
+benchmarks, measured baselines, and optimization candidates without behavior changes.
+
+The [parsing reference](parsing/README.md) records accepted and rejected syntax,
+examples, and parser-test evidence. These pages are an implementation snapshot,
+not the language specification or a promise of semantic/runtime behavior.
+
+The [compiler architecture](compiler-architecture.md) describes current data
+contracts and unfinished pipeline boundaries. The
+[agent implementation guide](agents/README.md) provides source-level details,
+testing instructions, and contributor guidance.
+
+The [standard-library guide](standard-library.md) describes installed sources,
+package/prelude integration, reusable results and the Linux x86-64 syscall boundary.
+
+## Language design and future work
+
+- [Name resolution](name-resolution.md): current namespace, alias, visibility and
+  lookup implementation, with links to the confirmed package design.
+- [Type resolution](type-resolution.md): semantic rules implemented by the type
+  pass and explicitly marked differences from the confirmed design.
+- [Scalar semantics](scalar-semantics.md): implemented wrapping arithmetic, explicit
+  numeric/Boolean conversions, runtime traps and IEEE rules.
+- [Enum semantics](enum-semantics.md): executable constructors, payload copies,
+  switches, storage and internal ABI/layout contracts.
+- [Struct/storage semantics](struct-storage-semantics.md): implemented struct copies,
+  partial initialization, typed pointers, null traps and unchecked places.
+- [Roadmap](roadmap/README.md): proposals, dependencies, open decisions, and
+  acceptance criteria. Proposed syntax is not necessarily parsed today.
+- [Interpreted build files](roadmap/08-interpreted-build-files.md): future
+  `build.fib` discovery, bootstrap lowering, IR interpretation and validated
+  `BuildPlan` construction.
+
+These design documents should guide the refactor; parser observations alone do
+not settle language semantics. There is not yet a complete standalone language
+specification in this tree.
+
+## Analysis work
+
+Analysis gaps discovered while checking the documentation belong in actionable
+GitHub issues, not repeated warnings in user-facing syntax pages. The
+[analysis issue inventory](agents/issues/README.md) links the six published reports
+(#9–#14). Track implementation progress and discussion on
+GitHub; these reports do not settle the open language-design questions in RFC #2.
+
+The [samples](../samples/README.md) use current syntax and all have automatic
+parser coverage. `tests/samples.rs` also discovers, compiles and executes every
+top-level sample, checking output and exit statuses. Installed source std modules
+have dedicated executable coverage; see the [standard-library guide](standard-library.md).
+The separate [Fib compiler experiment](../fibc-fib/README.md) remains scaffolding
+and is outside the top-level sample sweep.

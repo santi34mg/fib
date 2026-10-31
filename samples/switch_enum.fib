@@ -3,23 +3,22 @@
 //   red
 //   green
 //   blue
-import std::libc
 
-type Color enum {
+comp Color: type = enum {
     Red,
     Green,
     Blue,
-}
+};
 
-fn describe(c: Color) @void {
+fn describe(c: Color) void {
     switch (c) {
-        when .Red { libc::printf("red\n"); }
-        when .Green { libc::printf("green\n"); }
-        when .Blue { libc::printf("blue\n"); }
+        when .Red { std::os::write(1, "red\n"); }
+        when .Green{ std::os::write(1, "green\n"); }
+        when .Blue { std::os::write(1, "blue\n"); }
     };
 }
 
-fn main() @int4 {
+fn main() int32 {
     describe(Color.Red);
     describe(Color.Green);
     describe(Color.Blue);

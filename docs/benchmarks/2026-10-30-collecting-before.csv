@@ -1,0 +1,7 @@
+benchmark,samples,min_ms,p50_ms,p95_ms,mean_ms
+compiler/10/no_std/analyze_collecting,10,0.960281,0.977523,1.277637,1.041898
+compiler/10/std/analyze_collecting,10,188.671904,189.542427,190.266545,189.565024
+compiler/100/no_std/analyze_collecting,10,71.956742,72.321996,72.693283,72.345825
+compiler/100/std/analyze_collecting,10,447.471688,451.445463,453.321402,450.830934
+compiler/500/no_std/analyze_collecting,10,2069.363695,2405.565236,2665.876916,2409.325752
+compiler/500/std/analyze_collecting,10,3139.960705,3241.189808,3283.641843,3226.091283

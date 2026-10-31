@@ -1,73 +1,86 @@
-# 00 — Canonical Cross-Module Linkage Names
+# 00 — Canonical cross-file linkage names
 
-**Depends on:** nothing. **Blocks:** [06 — Function Overloading](06-function-overloading.md).
-**Kind:** bug fix. Belongs to Phase 3 "Declaration Identity and Linkage".
+**Status: implemented.** Related: [name resolution](../name-resolution.md) and
+[overloading](06-function-overloading.md).
 
-## Problem
+## Package and module identity
 
-Calls across modules to non-`extern` functions do not link.
+`PackageId`, `FileId`, declaration slots and semantic type IDs are build-local
+handles. `PackageSpec::identity` is the persistent, case-sensitive acquisition
+identity supplied by the host: for example `registry:example.org/math@1.2.0`
+or a repository URL plus immutable revision. It must include the version or
+revision that distinguishes installations. Empty identities, control characters,
+and duplicate identities in a plan are errors. Dependency diamonds refer to the
+same package registration; hosts must not register a second copy of that identity.
+Different revisions may coexist under distinct dependency names. Acquisition and
+download orchestration remain part of the build-system roadmap, not linkage.
 
-`src/frontend/analyze/expressions.rs:849-855` mangles a qualified callee to
-`{alias}__{member}`, but the defining module emits the definition under its bare
-source name (`src/backend/lowering/llvm_lower.rs:34`, fed by
-`src/driver.rs:814-815`). The call then falls into the auto-declare path in
-`src/backend/lowering/expressions.rs:924-942` and fails at link time.
+Identity never includes the checkout path or the consumer's dependency alias.
+The single application compatibility adapter uses `local:application`; independently
+linkable packages must supply their own identity. Installed std uses
+`fib:std@<compiler-version>:decl<declaration-revision>`.
 
-Reproduce with two files and `--emit=typed`: the call site emits
-`helper__add_one` while the definition is emitted as `add_one`.
+Modules use package-relative paths with the source extension removed. Legacy flat
+plans instead use normalized `SourceFile::name` values. Namespace segments
+replace hyphens with underscores, apply NFC, full default (non-Turkic)
+Unicode case folding, then NFC again. The tables are pinned by exact dependency
+versions (`caseless` 0.2.2, Unicode 16 folding; `unicode-normalization` 0.1.26,
+Unicode 18 normalization). Changing those tables requires an explicit compatibility
+review. Paths must be UTF-8. Invalid segments, normalized collisions and
+file/directory conflicts are errors. Declarations and locals remain case-sensitive.
 
-The bug is invisible today because every cross-module callee in `samples/` and
-`std/` is `extern`, and `extern` callees are deliberately left unmangled.
+## Symbol encoding v1
 
-A second defect hides behind the same code: the call site mangles with the
-**import alias**, so two spellings of one module produce two different symbols.
+`lowering/linkage.rs` owns the encoding. A string component is its UTF-8 byte
+length in decimal, `_`, then the original bytes. Length-delimited components
+avoid punctuation ambiguity without lossy escaping or hashes.
 
-## Design
+- Ordinary functions: `fib.v1.function.` followed by package, module and
+  declaration-name components.
+- Globals: the same identity under `fib.v1.global.`.
+- Generic instances: `fib.v1.instance.`, the template declaration identity,
+  `A<count>_`, and length-delimited canonical type keys.
+- Anonymous constant backing storage: `fib.v1.literal.`, its module identity,
+  source location and canonical storage type. These are private implementation
+  symbols; moving an anonymous source site may change its name.
 
-One canonical symbol per declaration, computed by the **defining** module and
-stored on the declaration. Call sites read it; they never recompute it.
+Type keys resolve aliases and encode builtin kinds, pointer/readonly layers,
+array lengths, slices, tuples and complete function types. Named nominal types
+use their defining declarations. Computed nominal types retain the computation
+that created them and its concrete arguments, including unused parameters;
+later aliases or forwarding computations cannot rename them. Anonymous nominal
+types retain source sites, enclosing specialization arguments and member types.
+Recursive anonymous graphs use traversal-relative backreferences, never type IDs.
 
-- Add `TypedFunction::symbol: String` next to `name`. `name` stays the source
-  name and remains what diagnostics, tests, and the LSP show.
-- Compute it through a single `linkage_name(module_id, name, ...)` helper so
-  Phase 3 can swap the module-identity half without touching anything else.
-- `extern` functions keep their declared C symbol. `main` in the entry unit
-  keeps `main`.
-- `analyze()` does not currently know which module it is analyzing
-  (`src/driver.rs:803` wraps the result in a `TypedModule` only afterwards).
-  Add `analyze_in_module(ast, resolved, module_path)` and keep `analyze` as a
-  wrapper passing `&[]`, so existing tests compile unchanged.
+Definitions and calls share declaration/instance-to-`FunctionId` maps. Globals
+and address relocations share `GlobalId` maps. Both maps are populated before
+bodies and initializers; neither aliases nor diamond edges add definitions.
 
-## Work
+## Entry, foreign symbols and compatibility
 
-- [ ] Add `TypedFunction::symbol` and populate it at the three construction
-      sites (`analyze/functions.rs:99`, `analyze/functions.rs:251`,
-      `analyze/generics.rs:348`).
-- [ ] Add `analyze_in_module`; pass the module path from `src/driver.rs:803`
-      and `&[]` from `analyze_entry`.
-- [ ] Add `linkage_name` behind a `ModuleId`-shaped parameter.
-- [ ] Emit definitions under `symbol` in `backend/lowering/llvm_lower.rs:34`
-      and `ir/mod.rs:306`.
-- [ ] Resolve qualified call sites to the callee's `symbol`; delete the
-      alias-based `format!` at `analyze/expressions.rs:853` and its duplicate at
-      `backend/lowering/expressions.rs:1302`.
-- [ ] Key `decl_key` (`src/driver.rs:841-846`) on `symbol` for functions.
+The designated executable entry is `main`; the build evaluator keeps `build`.
+Other functions with those source names receive ordinary canonical names.
+`callconv "C"` declarations and definitions preserve the declared symbol exactly.
+All duplicate emitted symbols, including compatible foreign redeclarations,
+incompatible signatures and foreign/entry collisions, are errors before emission.
+Declare a foreign symbol once and share it through aliases or re-exports.
 
-## Tests
+Fib helper/global symbols remain internal: source `pub` controls language
+visibility and does not export a native ABI. The v1 spelling is deterministic
+under checkout relocation, local ID renumbering, equivalent namespace spelling,
+file ordering and dependency alias changes. This is not a promise of identical
+object bytes or a stable production Fib ABI. Incompatible future encodings must
+use a new version prefix; C symbols follow their explicit ABI contract.
 
-- [ ] Driver test: a non-`extern` function called across a module boundary
-      compiles, links, and runs.
-- [ ] The same function reached through two different import aliases resolves to
-      one symbol and is emitted once.
-- [ ] `main` is emitted as `main`; an `extern` keeps its declared C name.
-- [ ] A diamond import still emits each declaration exactly once.
+## Acceptance coverage
 
-## Risks
+- [x] Declaration collection, aliases, package-relative lookup and visibility.
+- [x] Persistent acquisition identities and normalized Unicode module identities.
+- [x] Canonical declaration and generic-instance encoding without build-local IDs.
+- [x] Function/global predeclarations and shared call/address identity maps.
+- [x] Relocation, reordered/renumbered plans, aliases, diamonds, nominal types,
+      generic local types, foreign redeclarations and entry collisions.
+- [x] Executable diamond calls, same-spelled helpers and native C symbol linkage.
 
-- Every non-`extern`, non-`main` symbol is renamed. Any test asserting on IR
-  text or on `decl_key` strings breaks — sweep for `fn:` and `__` first.
-  `src/driver.rs:1430` asserts `decl_key(d) == "fn:shared"` and must change.
-- A local `fn helper` and an imported `mod::helper` currently collide on
-  `decl_key`, so the local one silently replaces the imported one — which
-  breaks that module's internal calls to its own `helper`. After this change
-  both are emitted. That is correct, and it changes `.ll` output.
+`tests/linkage.rs` checks the identity invariants and executable boundaries;
+`tests/executable.rs` additionally covers cross-file globals and relocations.

@@ -1,14 +1,18 @@
-// Multi-value return: divmod(17, 5).
+// Return two named values in a struct: divmod(17, 5).
+// Tuple returns are analyzed but do not yet lower to native code.
 // Expected output:
 //   q=3 r=2
-import std::libc
 
-fn divmod(a: @int4, b: @int4) (@int4, @int4) {
-    return a / b, a % b;
+comp DivMod := struct { quotient: int32, remainder: int32 };
+
+fn divmod(a: int32, b: int32) DivMod {
+    return DivMod { quotient: a / b, remainder: a % b };
 }
 
-fn main() @int4 {
-    q, r := divmod(17, 5);
-    libc::printf("q=%d r=%d\n", q, r);
+fn main() int32 {
+    result := divmod(17, 5);
+    q, r := result.quotient, result.remainder;
+    args: [2]std::io::Arg = [std::io::Arg.Signed(q as int64), std::io::Arg.Signed(r as int64)];
+    std::io::printf("q={} r={}\n", args[..]);
     return 0;
 }

@@ -1,22 +1,74 @@
 [package]
 name = "fibc"
-version = "0.1.1"
+default-run = "fibc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[workspace]
+members = ["crates/*"]
+default-members = [".", "crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 
-[features]
-default = ["llvm"]
-llvm = ["inkwell"]
-
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.103"
+num-bigint = "0.4.8"
+num-traits = "0.2.19"
+rustc_apfloat = "=0.2.3"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9.8"
-clap = { version = "4.5.60", features = ["derive"]}
-regex = "1.12.3"
-inkwell = { version = "0.8.0", features = ["llvm21-1"], optional = true }
-walkdir = "2.3.4"
-petgraph = "0.6.1"
-either = "1.15.0"
-indextree = "4.7.4"
 tempfile = "3"
+inkwell = { version = "0.8.0", features = ["llvm21-1"] }
+fib-builtins = { path = "crates/fib-builtins" }
+fib-frontend = { path = "crates/fib-frontend" }
+fib-ir = { path = "crates/fib-ir" }
+fib-lowering = { path = "crates/fib-lowering" }
+fib-backend = { path = "crates/fib-backend", default-features = false }
+
+[[bin]]
+name = "fib-install"
+path = "scripts/install.rs"
+test = false
+
+[[bin]]
+name = "fibc"
+path = "src/main.rs"
+test = false
+
+[[bin]]
+name = "fib-dist"
+path = "scripts/dist.rs"
+test = false
+
+[[bench]]
+name = "performance"
+harness = false
+
+[features]
+default = ["llvm"]
+llvm = ["fib-backend/llvm", "dep:inkwell"]
+
+[dependencies]
+anyhow.workspace = true
+fib-frontend.workspace = true
+fib-ir.workspace = true
+fib-lowering.workspace = true
+fib-backend.workspace = true
+# LLVM integration tests inspect emitted target layouts directly.
+inkwell = { workspace = true, optional = true }
+
+serde_json = "1.0"
+
+clap = { version = "4.5.60", features = ["derive"]}
+walkdir = "2.3.4"
+tempfile = "3"
+
+# Keep source locations and backtraces while reducing debug generation and linking.
+# The test profile inherits this; release/bench profiles are unchanged.
+[profile.dev]
+debug = "line-tables-only"

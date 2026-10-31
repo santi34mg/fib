@@ -1,0 +1,18 @@
+// The compiler injects these helpers into std::os_abi with pub(root) visibility:
+// only the std package can use them. Signatures below are documentation, not
+// source declarations. They implement the Linux x86-64 pointer/register boundary
+// and do not provide a public pointer/integer conversion API.
+//
+// pub(root) fn pointer_from_word(T: type, word: uint64) *T
+// Interpret a register word as an address of T. Pass T explicitly; no allocation,
+// dereference, alignment, capacity or lifetime validation occurs. A zero word
+// produces a null pointer. The caller must establish validity before access.
+// Example within std: root::os_abi::pointer_from_word(uint8, word)
+//
+// pub(root) fn pointer_to_word(pointer: *T) uint64
+// pub(root) fn pointer_to_word(pointer: const *T) uint64
+// Return the pointer's address as a register word without accessing storage.
+// T is inferred; no separate type argument is passed. The result retains no
+// readonly or lifetime information, so std callers must preserve those contracts
+// when reconstructing pointers. A null pointer produces zero.
+// Example within std: root::os_abi::pointer_to_word(pointer)

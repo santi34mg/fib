@@ -1,38 +1,41 @@
-# `src/main.rs` and `src/cli.rs`
+# Binary and CLI
 
-## Responsibility
+The [language specification](../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute; value-returning `comp fn` execution remains scaffolding.
 
-`main.rs` delegates to `cli::parse_args` and `cli::exec_command`. `cli.rs` owns
-the Clap argument schema, conversion to `CompilationOptions`, printing stage
-outputs, printing the single final diagnostic, and process exit status.
+`main.rs` parses Clap commands and delegates to `cli::exec_command`.
+The binary target is `fibc`; the Clap tool name is `fib`.
 
-## User Options
+```sh
+cargo run -- --help
+cargo run -- build --single-file tests/programs/return_42.fib
+./tests/programs/return_42  # exit status 42
+```
 
-The CLI accepts an entry file, repeatable include roots, output paths, an emit
-kind, check-only mode, retained LLVM output, compiler selection, optimization
-level, and release mode. `--check` forces the effective stage to typed analysis.
-`--release` currently means "omit dynamic bounds traps"; it is not a complete
-release profile and does not imply optimization.
+`build --single-file PATH` loads, analyzes, lowers, verifies, emits an LLVM object
+and links an executable beside the source, then prints its path. The current subset supports fixed-width numeric/bool
+helpers/direct calls, structs/typed pointers, partial initialization, stack
+storage, field/pointer mutation, assignment, arithmetic/casts, comparisons,
+nested if/else, while loops, break/continue and early returns. LLVM 21 and a
+host `cc` linker are required. Without the LLVM feature, building reports an
+explicit error. Help and frontend/IR library APIs need no LLVM.
 
-## Output Contract
+`build --build-file PATH` supports the narrow interpreted build API. Default
+build-file discovery, `run` and `test` return errors. Historical
+positional-file, include-root, check/emit/link/release and output flags are absent.
+`tests/executable.rs` exercises real CLI builds and executable exit statuses.
 
-- lex, parse, and typed outputs are debug-oriented text.
-- LLVM and binary emits report output paths through `CompileOutput`.
-- compilation failures print once to stderr and exit with status 1.
-- Clap owns malformed-command-line behavior.
+Native interoperability uses `callconv "C"` declarations. Repeatable
+`--c-source PATH` options compile C helpers with host `cc`; `-l`/`--link-lib LIB`
+and `-L`/`--library-path PATH` add native libraries and search paths. These options
+work with either explicit build route. External C ABI support currently targets
+Linux x86-64; see the [backend contract](../../../crates/fib-backend/src/backend/README.md).
 
-## Known Risks
-
-- Lex/parse emits are named as stage cutoffs but the driver still runs all
-  frontend stages.
-- Typed debug output contains hash maps and is not guaranteed deterministic.
-- There are no subprocess tests asserting stdout/stderr and exit behavior.
-- Irrelevant or conflicting options are generally accepted rather than
-  diagnosed before compilation.
-- `--release` is easy to misread as an optimization/production umbrella.
-
-## Tests
-
-Unit tests in `src/cli.rs` exercise argument parsing. Add process-level tests for
-help/version, every emit, parse and analysis failures, missing LLVM/compiler,
-link failures, path conflicts, and exit codes.
+The future default `fib build` path will discover exactly `<cwd>/build.fib`, lower
+it to verified owned IR and interpret it to construct a validated `BuildPlan`; it
+will not emit or load a native build-file artifact. See the
+[interpreted build-file plan](../../roadmap/08-interpreted-build-files.md).

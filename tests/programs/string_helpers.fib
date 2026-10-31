@@ -1,0 +1,30 @@
+fn main() int32 {
+    buffer: [4]uint8 = [9,9,9,9];
+    switch (std::string::concat(buffer[..], "ab", "c")) {
+        when .Err(error) { return 1; }
+        when .Ok(bytes) {
+            if !std::string::str_eq(bytes, "abc") || std::string::str_len(bytes) != 3 { return 2; };
+            bytes[0] = 120;
+            if buffer[0] != 120 || buffer[3] != 9 { return 3; };
+        }
+    };
+    switch (std::string::concat(buffer[..], "abc", "de")) {
+        when .Ok(bytes) { return 4; }
+        when .Err(error) {}
+    };
+    switch (std::string::concat(buffer[..], "abcde", "")) {
+        when .Ok(bytes) { return 5; }
+        when .Err(error) {}
+    };
+    if !std::string::str_eq(buffer[..], "xbc\t") { return 6; };
+    switch (std::string::concat(buffer[..], "", "abcd")) {
+        when .Err(error) { return 7; }
+        when .Ok(bytes) { if !std::string::str_eq(bytes, "abcd") { return 8; }; }
+    };
+    switch (std::string::concat(buffer[..0], "", "")) {
+        when .Err(error) { return 9; }
+        when .Ok(bytes) { if bytes.len != 0 { return 10; }; }
+    };
+    if !std::string::str_eq("", "") || std::string::str_eq("a", "b") || std::string::str_eq("a", "ab") { return 11; };
+    return 0;
+}

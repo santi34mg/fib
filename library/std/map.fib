@@ -1,0 +1,74 @@
+// Generic maps with caller-supplied equality and linear lookup.
+// Copies share storage: treat each map as one owner and call deinit once.
+pub comp fn Map(K: type, V: type) type {
+    return struct { keys: []K, values: []V, len: usize, equal: fn(K, K) bool };
+}
+
+pub fn init(K: type, V: type, equal: fn(K, K) bool) Map(K, V) {
+    comp M := Map(K, V);
+    return M {
+        keys: root::memory::slice_from_parts(null as *K, 0),
+        values: root::memory::slice_from_parts(null as *V, 0), len: 0, equal: equal
+    };
+}
+
+pub fn bytes_equal(a: const []uint8, b: const []uint8) bool {
+    if a.len != b.len { return false; };
+    i: usize = 0;
+    while (i < a.len) {
+        if a[i] != b[i] { return false; };
+        i = i + 1;
+    };
+    return true;
+}
+
+// Replaces an existing key. False means allocation failed; the map is unchanged.
+pub fn insert(K: type, V: type, map: *Map(K, V), key: K, value: V) bool {
+    i: usize = 0;
+    while (i < (map*).len) {
+        if ((map*).equal)((map*).keys[i], key) { (map*).values[i] = value; return true; };
+        i = i + 1;
+    };
+    if (map*).len == (map*).keys.len {
+        capacity := (map*).len * 2 + 4;
+        if capacity <= (map*).len { return false; };
+        keys := root::memory::alloc(K, capacity);
+        values := root::memory::alloc(V, capacity);
+        if keys.len == 0 || values.len == 0 {
+            root::memory::free(K, root::memory::slice_data(keys));
+            root::memory::free(V, root::memory::slice_data(values));
+            return false;
+        };
+        i = 0;
+        while (i < (map*).len) {
+            keys[i] = (map*).keys[i];
+            values[i] = (map*).values[i];
+            i = i + 1;
+        };
+        root::memory::free(K, root::memory::slice_data((map*).keys));
+        root::memory::free(V, root::memory::slice_data((map*).values));
+        (map*).keys = keys;
+        (map*).values = values;
+    };
+    (map*).keys[(map*).len] = key;
+    (map*).values[(map*).len] = value;
+    (map*).len = (map*).len + 1;
+    return true;
+}
+
+// Missing keys use the unit Err variant; an empty value is still a present key.
+pub fn get(K: type, V: type, map: Map(K, V), key: K) root::result::Result(V, void) {
+    comp Lookup := root::result::Result(V, void);
+    i: usize = 0;
+    while (i < map.len) {
+        if (map.equal)(map.keys[i], key) { return Lookup.Ok(map.values[i]); };
+        i = i + 1;
+    };
+    return Lookup.Err;
+}
+
+pub fn deinit(K: type, V: type, map: *Map(K, V)) {
+    root::memory::free(K, root::memory::slice_data((map*).keys));
+    root::memory::free(V, root::memory::slice_data((map*).values));
+    map* = init(K, V, (map*).equal);
+}

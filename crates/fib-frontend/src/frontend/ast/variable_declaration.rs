@@ -1,0 +1,36 @@
+use crate::frontend::{
+    analysis_annotation::BindingAnnotation,
+    ast::{expression::Expression, type_expression::TypeExpression},
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VariableDeclaration {
+    pub identifier: String,
+    /// Also owns the binding identity when nested in a multi-declaration.
+    pub annotation: BindingAnnotation,
+    pub ty: Option<TypeExpression>,
+    pub expression: Option<Expression>,
+    pub is_const: bool,
+    pub is_pub: bool,
+    pub pub_scope: Option<crate::frontend::namespace::Visibility>,
+    pub is_comp: bool,
+}
+
+impl VariableDeclaration {
+    pub fn new(
+        identifier: String,
+        ty: Option<TypeExpression>,
+        expression: Option<Expression>,
+    ) -> Self {
+        Self {
+            identifier,
+            annotation: BindingAnnotation::default(),
+            ty,
+            expression,
+            is_const: false,
+            is_pub: false,
+            pub_scope: None,
+            is_comp: false,
+        }
+    }
+}

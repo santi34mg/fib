@@ -1,0 +1,2 @@
+// Public declarations here select automatic aliases for consuming packages.
+// String helpers live together in std::string; none are implicitly imported.

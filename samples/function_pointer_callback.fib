@@ -1,0 +1,17 @@
+comp Enemigo: type = struct {
+    vidas: int32,
+    muere: fn(int32) int32,
+};
+
+fn impl_muere(val: int32) int32 {
+    return val + 10;
+}
+
+fn main() int32 {
+    // Call the function stored in a struct field.
+    enemigo := Enemigo {
+        vidas: 10,
+        muere: impl_muere,
+    };
+    return enemigo.muere(enemigo.vidas);
+}

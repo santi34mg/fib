@@ -1,42 +1,28 @@
-# `.github/workflows/ci.yml`
+# Configured CI versus current implementation
 
-## Current Jobs
+Source: [`.github/workflows/ci.yml`](../../../../.github/workflows/ci.yml).
+CI pins Rust 1.98.0, LLVM 21 via `ZhongRuoyu/setup-llvm@v0`, Ubuntu runners,
+and read-only contents permission.
 
-- formatting;
-- frontend check/test without default features;
-- LLVM 21 check, clippy, build, default tests, and all-feature tests;
-- advisory non-blocking security audit;
-- advisory non-blocking dependency/license checks;
-- advisory non-blocking coverage.
+- `fmt`: `cargo fmt --check`.
+- `frontend`: `cargo check --no-default-features`, then
+  `cargo test --no-default-features`.
+- `build_and_test`: fmt, check, `cargo clippy --all-targets -- -D warnings`,
+  build, `cargo test --all-features` in that order after LLVM setup.
+- `audit`, `deny`, `coverage`: advisory `continue-on-error: true`, running
+  cargo-audit, cargo-deny, cargo-tarpaulin respectively.
 
-The blocking command order matches `AGENTS.md`. Documentation-only changes are
-excluded by path filters.
+Jobs are separate, not one sequential global gate. Default and all-features
+currently select the same sole `llvm` feature, so only the all-features LLVM
+test command runs. Frontend and LLVM jobs cache Cargo artifacts under separate keys.
+The frontend job runs unit and integration tests without LLVM; native executable
+and sample acceptance tests run in the LLVM job. Cache configuration does not
+change the selected tests.
 
-## Current Strengths
+Push/PR workflows target `main` and ignore `docs/**`, `*.md`, `LICENSE`, and
+`.gitignore`; docs-only updates do not run these gates. The optional local
+pre-commit hook also runs blocking cargo-deny, unlike CI's advisory deny.
 
-- Rust and LLVM versions are explicit;
-- frontend-only feature configuration is tested;
-- clippy warnings fail the build;
-- GitHub token permissions are read-only;
-- sample e2e tests run with LLVM in isolated output directories.
-
-## Known Gaps
-
-- default and all-features tests are currently equivalent because LLVM is the
-  sole default feature;
-- formatting is duplicated across jobs;
-- audit/deny/coverage do not gate or enforce a baseline;
-- installed cargo tools and some actions are not pinned to immutable revisions;
-- CI covers only Ubuntu despite platform-sensitive std/FFI claims;
-- there is no release-mode, sanitizer, fuzz, docs-link, rustdoc, std-sweep, or
-  deterministic-output job;
-- jobs have no explicit timeouts or workflow concurrency policy;
-- sample enumeration allows an untested sample to be added silently.
-
-## Improvement Direction
-
-Prioritize correctness gates over raw suite duplication: LLVM verification,
-automatic samples, std frontend sweep, real module link/run tests, release
-bounds behavior, and parser fuzz smoke tests. Pin advisory tooling and actions,
-publish useful reports, and add platform jobs only after platform support is
-defined.
+Configuration is not a green-build claim. See [local results](../../tests/README.md).
+Remaining useful future gates include docs links, fuzzing and determinism.
+No release-mode or cross-platform coverage should be inferred from these jobs.

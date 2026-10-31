@@ -1,0 +1,106 @@
+use crate::frontend::{
+    ast::{
+        pattern::{Pattern, PatternBinding},
+        statement::StatementKind,
+        switch::SwitchArm,
+    },
+    tokens::{Keyword, Punctuation, Token, TokenKind},
+};
+
+use super::Parser;
+impl<'a, I> Parser<'a, I>
+where
+    I: Iterator<Item = Token>,
+{
+    pub fn parse_switch_statement(&mut self) -> anyhow::Result<StatementKind> {
+        // 'switch' already consumed by caller.
+        self.expect_token(
+            TokenKind::Punctuation(Punctuation::OpeningParenthesis),
+            "expected '(' after 'switch'",
+        )?;
+        let subject = self.parse_expression()?;
+        self.expect_token(
+            TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+            "expected ')' after switch subject",
+        )?;
+        self.expect_token(
+            TokenKind::Punctuation(Punctuation::OpeningCurlyBrace),
+            "expected '{' to open switch body",
+        )?;
+        let mut arms: Vec<SwitchArm> = Vec::new();
+        while let Some(t) = self.peek() {
+            if matches!(
+                t.kind,
+                TokenKind::Punctuation(Punctuation::ClosingCurlyBrace)
+            ) {
+                self.next();
+                break;
+            }
+            self.expect_token(
+                TokenKind::Keyword(Keyword::When),
+                "expected 'when' inside switch body",
+            )?;
+            // Pattern: either `.VariantName`, `_` (wildcard), or `else`
+            let pattern = match self.peek() {
+                Some(Token {
+                    kind: TokenKind::Punctuation(Punctuation::Dot),
+                    ..
+                }) => {
+                    self.next(); // consume '.'
+                    let name = self.expect_identifier("expected variant name after '.'")?;
+                    self.mark_name("enumMember");
+                    // Optional `(binding)` for variants carrying a payload.
+                    let binding = if matches!(
+                        self.peek(),
+                        Some(Token {
+                            kind: TokenKind::Punctuation(Punctuation::OpeningParenthesis),
+                            ..
+                        })
+                    ) {
+                        self.next(); // consume '('
+                        let b = self.expect_identifier("expected binding name in pattern")?;
+                        let binding_span = self.last_identifier_span;
+                        self.mark_name("variable");
+                        self.expect_token(
+                            TokenKind::Punctuation(Punctuation::ClosingParenthesis),
+                            "expected ')' after pattern binding",
+                        )?;
+                        Some(PatternBinding {
+                            identifier: b,
+                            annotation: crate::frontend::analysis_annotation::BindingAnnotation {
+                                source_span: binding_span.map(Into::into),
+                                ..Default::default()
+                            },
+                        })
+                    } else {
+                        None
+                    };
+                    Pattern::EnumVariant {
+                        variant: name,
+                        member: Default::default(),
+                        binding,
+                    }
+                }
+                Some(Token {
+                    kind: TokenKind::Keyword(Keyword::Else),
+                    ..
+                }) => {
+                    self.next();
+                    Pattern::Wildcard
+                }
+                _ => {
+                    let tok =
+                        self.expect_next("expected '.' followed by variant name, or 'else'")?;
+                    return Err(self.error(
+                        "expected '.' followed by variant name, or 'else'",
+                        tok.line,
+                        tok.column,
+                    ));
+                }
+            };
+            let body = self.parse_body()?;
+            arms.push(SwitchArm { pattern, body });
+        }
+        Ok(StatementKind::Switch { subject, arms })
+    }
+}

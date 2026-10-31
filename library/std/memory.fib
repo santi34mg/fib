@@ -1,0 +1,259 @@
+// The compiler injects the functions documented below into std::memory.
+// Signatures are comments, not source declarations. T is inferred from the
+// pointer or slice argument; do not pass it as a separate type argument.
+// Calls and aliases retain compiler identities.
+//
+// pub fn unchecked_deref(pointer: *T) T
+// pub fn unchecked_deref(pointer: const *T) T
+// Access the pointed-to place without the usual null-pointer trap. The result
+// can be assigned to or addressed; a readonly pointer yields a readonly place.
+// The caller must supply live, aligned storage valid for the access. This does
+// not allocate, copy the pointee, or extend its lifetime. *void is not supported.
+// Example: std::memory::unchecked_deref(pointer) = value;
+//
+// pub fn slice_from_parts(pointer: *T, length: usize) []T
+// pub fn slice_from_parts(pointer: const *T, length: usize) const []T
+// Construct a view with length elements (not bytes), preserving readonly access.
+// No allocation, copy, pointer dereference or backing-storage validation occurs.
+// The caller maintains the storage's lifetime and sufficient capacity; later
+// indexing checks the declared length, not the actual allocation. T cannot be
+// void. A typed null pointer with length zero creates an empty slice:
+// empty := std::memory::slice_from_parts(null as *uint8, 0);
+//
+// pub fn slice_data(slice: []T) *T
+// pub fn slice_data(slice: const []T) const *T
+// Return the backing pointer, preserving readonly access, without dereferencing
+// it or changing the slice. The pointer borrows the same storage and lifetime.
+// Empty slices may have null or non-null data; use .len to test for emptiness.
+// Example: pointer := std::memory::slice_data(bytes);
+// Sentinel slices preserve their terminator in the pointer result:
+// slice_data(view: const [:0]uint8) returns const [*:0]uint8.
+// slice_from_parts always produces an ordinary slice; arbitrary lengths do
+// not establish a sentinel at the new endpoint.
+
+pub comp AllocError: type = enum {
+    NotEnoughMemory,
+    MapFailed,
+    InvalidAlignment,
+    UnmapFailed,
+};
+
+pub comp Allocator: type = struct {
+    context: *void,
+    // Allocate uninitialized storage; alignment must be a positive power of two.
+    alloc: fn(*void, usize, usize) root::result::Result(*uint8, AllocError),
+    // Free only the original live pointer returned by this allocator, or null.
+    free: fn(*void, *void) root::result::Result(void, AllocError),
+};
+
+// Stateless Linux mmap allocator; context is ignored. Zero size and size/padding
+// overflow return NotEnoughMemory. Unknown pointers and double frees are invalid.
+pub fn create_page_alloc() Allocator {
+    return Allocator {
+        context: null,
+        alloc: page_alloc,
+        free: page_free,
+    };
+}
+
+// An explicit struct, rather than a byte slice, makes the mapping metadata's intent clear.
+// Pointer and usize fields give this header 8-byte alignment on Linux x86-64.
+comp PageHeader: type = struct {
+    base: *uint8,
+    length: usize,
+};
+
+fn page_alloc(context: *void, size: usize, align: usize) root::result::Result(*uint8, AllocError) {
+    comp R := root::result::Result(*uint8, AllocError);
+    if align == 0 { return R.Err(AllocError.InvalidAlignment); };
+    if (align & (align - 1)) != 0 { return R.Err(AllocError.InvalidAlignment); };
+    if size == 0 { return R.Err(AllocError.NotEnoughMemory); };
+    alignment := align;
+    if alignment < 8 { alignment = 8; };
+    header := core::sizeof(PageHeader);
+    limit: usize = 18446744073709551615;
+    padding := alignment - 1;
+    if header > limit - padding { return R.Err(AllocError.NotEnoughMemory); };
+    overhead := header + padding;
+    if size > limit - overhead { return R.Err(AllocError.NotEnoughMemory); };
+    length := size + overhead;
+    switch (root::os::mmap(
+        null,
+        length,
+        root::os::PROT_READ | root::os::PROT_WRITE,
+        root::os::MAP_PRIVATE | root::os::MAP_ANONYMOUS,
+        -1,
+        0
+    )) {
+        when .Ok(ptr) {
+            // A successful mapping contains length bytes, so these addresses
+            // cannot wrap. Round within the reserved worst-case padding.
+            start := root::os_abi::pointer_to_word(ptr) + (header as uint64);
+            extra := ((alignment as uint64) - start % (alignment as uint64)) % (alignment as uint64);
+            aligned := start + extra;
+            metadata := root::os_abi::pointer_from_word(PageHeader, aligned - (header as uint64));
+            metadata* = PageHeader { base: ptr, length: length };
+            return R.Ok(root::os_abi::pointer_from_word(uint8, aligned));
+        }
+        when .Err(err) {
+            if err == 12 { return R.Err(AllocError.NotEnoughMemory); };
+            return R.Err(AllocError.MapFailed);
+        }
+    };
+}
+
+fn page_free(context: *void, ptr: *void) root::result::Result(void, AllocError) {
+    comp R := root::result::Result(void, AllocError);
+    if ptr == null { return R.Ok; };
+    metadata := root::os_abi::pointer_from_word(PageHeader,
+        root::os_abi::pointer_to_word(ptr) - (core::sizeof(PageHeader) as uint64));
+    // Copy before unmapping; do not mutate the header, including on failure.
+    mapping := metadata*;
+    switch (root::os::munmap(mapping.base, mapping.length)) {
+        when .Ok { return R.Ok; }
+        when .Err(err) { return R.Err(AllocError.UnmapFailed); }
+    };
+}
+
+// Fill every byte in destination. Empty slices do not access storage.
+pub fn memset(destination: []uint8, value: uint8) {
+    i: usize = 0;
+    while (i < destination.len) {
+        destination[i] = value;
+        i = i + 1;
+    };
+}
+
+// Copy source bytes into destination's prefix; the remaining bytes are unchanged.
+// A short destination traps before any write. The regions must not overlap.
+pub fn memcpy(destination: []uint8, source: const []uint8) {
+    target := destination[..source.len];
+    i: usize = 0;
+    while (i < source.len) {
+        target[i] = source[i];
+        i = i + 1;
+    };
+}
+
+comp Block := struct {
+    size: usize,
+    next: *Block,
+    is_free: bool,
+};
+
+head: *Block = null;
+
+fn header_size() usize {
+    return ((core::sizeof(Block) + 15) / 16) * 16;
+}
+
+fn address(pointer: *Block) uint64 {
+    return root::os_abi::pointer_to_word(pointer);
+}
+
+fn block_at(word: uint64) *Block {
+    return root::os_abi::pointer_from_word(Block, word);
+}
+
+fn data(block: *Block) *uint8 {
+    return root::os_abi::pointer_from_word(uint8, address(block) + (header_size() as uint64));
+}
+
+fn find_free_block(size: usize) *Block {
+    current := head;
+    while (current != null) {
+        if (current*).is_free && (current*).size >= size { return current; };
+        current = (current*).next;
+    };
+    return null;
+}
+
+fn request_memory(size: usize) *Block {
+    header := header_size();
+    if size > 9223372036854775807 - header - 15 { return null; };
+    start: uint64;
+    switch (root::os::sbrk(0)) {
+        when .Err(error) { return null; }
+        when .Ok(pointer) { start = root::os_abi::pointer_to_word(pointer); }
+    };
+    padding := (16 - start % 16) % 16;
+    total := size + header + (padding as usize);
+    switch (root::os::sbrk(total as int64)) {
+        when .Err(error) { return null; }
+        when .Ok(pointer) {
+            block := block_at(start + padding);
+            block* = Block { size: size, next: null, is_free: true };
+            if head == null {
+                head = block;
+            } else {
+                tail := head;
+                while ((tail*).next != null) { tail = (tail*).next; };
+                (tail*).next = block;
+            };
+            return block;
+        }
+    };
+}
+
+fn split(block: *Block, size: usize) {
+    header := header_size();
+    if (block*).size - size >= header + 16 {
+        remainder := block_at(address(block) + ((header + size) as uint64));
+        remainder* = Block {
+            size: (block*).size - size - header,
+            next: (block*).next,
+            is_free: true
+        };
+        (block*).next = remainder;
+        (block*).size = size;
+    };
+    (block*).is_free = false;
+}
+
+// Returns an empty slice for zero count, size overflow or exhaustion.
+// Storage is uninitialized. Supported Linux x86-64 types fit 16-byte alignment.
+// Zero-sized elements still receive a live allocation.
+pub fn alloc(T: type, n: usize) []T {
+    empty: *T = null;
+    if n == 0 { return root::memory::slice_from_parts(empty, 0); };
+    element := core::sizeof(T);
+    limit: usize = 9223372036854775807;
+    if element > limit / n { return root::memory::slice_from_parts(empty, 0); };
+    size := element * n;
+    if size > limit - 15 { return root::memory::slice_from_parts(empty, 0); };
+    size = ((size + 15) / 16) * 16;
+    if size == 0 { size = 16; };
+    block := find_free_block(size);
+    if block == null { block = request_memory(size); };
+    if block == null { return root::memory::slice_from_parts(empty, 0); };
+    split(block, size);
+    pointer := root::os_abi::pointer_from_word(T, root::os_abi::pointer_to_word(data(block)));
+    return root::memory::slice_from_parts(pointer, n);
+}
+
+// Free only an allocation's original pointer; all views then expire.
+// Null, unknown and already-free pointers are ignored. Storage is retained.
+pub fn free(T: type, ptr: *T) {
+    if ptr == null { return; };
+    target := root::os_abi::pointer_to_word(ptr);
+    current := head;
+    while (current != null) {
+        if root::os_abi::pointer_to_word(data(current)) == target {
+            (current*).is_free = true;
+            // Another sbrk user may have left a gap between owned regions.
+            block := head;
+            while (block != null) {
+                next := (block*).next;
+                if next != null && (block*).is_free && (next*).is_free &&
+                    address(block) + ((header_size() + (block*).size) as uint64) == address(next) {
+                    (block*).size = (block*).size + header_size() + (next*).size;
+                    (block*).next = (next*).next;
+                } else {
+                    block = next;
+                };
+            };
+            return;
+        };
+        current = (current*).next;
+    };
+}

@@ -22,4 +22,5 @@ target
 
 # Fib outputs
 out/
+/dist/
 *.ll

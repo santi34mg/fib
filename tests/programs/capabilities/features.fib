@@ -1,0 +1,84 @@
+// These implementation types and helpers stay private to this source file.
+comp Point: type = struct { x: int32, y: int32 };
+comp Measurement: type = enum { Empty, Count: int32, Position: Point };
+
+fn translate(point: *Point, amount: int32) {
+    (point*).x = (point*).x + amount;
+}
+
+// A writable pointer can be passed as a shallow readonly view. Explicit
+// dereference retains the null check without an implicit-access warning.
+fn total(point: const *Point) int32 {
+    return (point*).x + (point*).y;
+}
+
+pub(root) fn structs_and_pointers() bool {
+    point: Point;
+    point.x = 10;
+    point.y = 20;
+    copy := point;
+    translate(copy&, 12);
+    return point.x == 10 && point.y == 20
+        && copy.x == 22 && total(copy&) == 42;
+}
+
+fn measurement_score(value: Measurement) int32 {
+    // Every variant is named, so no fallback arm is required.
+    switch (value) {
+        when .Empty { return 0; }
+        when .Count(payload) { return payload; }
+        when .Position(payload) { return total(payload&); }
+    };
+}
+
+fn copy_measurement(value: Measurement) Measurement { return value; }
+
+pub(root) fn enums_and_switches() bool {
+    original := Measurement.Count(42);
+    copy := copy_measurement(original);
+    // Switch bindings are payload copies; changing one leaves the enum intact.
+    switch (copy) {
+        when .Empty {}
+        when .Count(payload) { payload = 7; }
+        when .Position(payload) {}
+    };
+    position := Measurement.Position(Point { x: 20, y: 22 });
+    return measurement_score(Measurement.Empty) == 0
+        && measurement_score(original) == 42
+        && measurement_score(copy) == 42
+        && measurement_score(copy_measurement(position)) == 42;
+}
+
+fn identity(T: type, value: T) T { return value; }
+
+// Returning an array and recording a side effect makes call execution visible
+// without indexing array elements, which is not supported at runtime yet.
+fn make_values(calls: *int32) [2]int32 {
+    (calls*) = (calls*) + 1;
+    return [10, 20];
+}
+
+fn record(trace: *int32, digit: int32) int32 {
+    (trace*) = (trace*) * 10 + digit;
+    return digit;
+}
+
+pub(root) fn generics_and_arrays() bool {
+    calls := 0;
+    values := identity([2]int32, make_values(calls&));
+    copy := values;
+    copy = identity([2]int32, [30, 40]);
+    scalar := identity(int32, 40);
+    wide := identity(int64, 42);
+
+    // Initializers run left to right before either new binding is registered;
+    // each binding retains its own type and mutability.
+    trace := 0;
+    const first: int32, second: int32 = record(trace&, 1), record(trace&, 2);
+    second += 1;
+    enabled := scalar as bool;
+    return calls == 1 && values.len == 2 && copy.len == 2
+        && scalar + (values.len as int32) == (wide as int32)
+        && trace == 12 && first == 1 && second == 3
+        && enabled && (enabled as int32) == 1 && !(0 as bool);
+}

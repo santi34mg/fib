@@ -10,7 +10,6 @@
 #                   cargo check
 #                   cargo clippy --all-targets -- -D warnings
 #                   cargo build
-#                   cargo test
 #                   cargo test --all-features
 #
 # Mirrors ci.yml paths-ignore: docs/**, *.md, LICENSE, .gitignore.
@@ -54,7 +53,6 @@ run cargo test --no-default-features
 run cargo check
 run cargo clippy --all-targets -- -D warnings
 run cargo build
-run cargo test
 run cargo test --all-features
 
 echo "pre-commit: all blocking CI checks passed."

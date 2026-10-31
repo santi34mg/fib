@@ -1,84 +1,224 @@
-# Compiler Implementation Guide
+# Compiler implementation guide
 
-This tree is the maintained implementation map for Fib compiler contributors
-and automated agents. It complements the user-facing language guide in
-[`docs/`](../README.md) and replaces the dated audit files as the starting point
-for current architecture work.
+The [language specification](../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
+warned pointer field access and exhaustive switches. Concrete generic functions,
+multiple source files and fixed-array values execute. Package-rooted lookup, scoped
+visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
+discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
+globals execute; value-returning `comp fn` execution remains explicit scaffolding.
 
-Reviewed against the repository on 2026-09-23.
+Status reviewed against source and tests on 2026-10-28. Source and tests take
+precedence over historical comments, samples and language proposals. Dated
+validation results are recorded in the [test guide](tests/README.md). The source std
+allocator now executes through Linux `sbrk`, with aligned blocks, reuse, splitting
+and coalescing. Earlier suite records remain dated below.
 
-## Pipeline
+## Actual status
+
+Character literals have type `uint8` (values above 255 are rejected); `char` is
+no longer a prelude type. String literals retain readonly fixed byte arrays by
+default and implicitly form `const []uint8` in a matching expected-type context.
+
+Array/slice types use prefix brackets: `[N]T`, `[]T`. Byte sentinel forms
+`[N:S]uint8`, `[:S]uint8` and `[*:S]uint8` execute, with S in 0–255.
+`c"..."` has type `const [*:0]uint8`; ordinary pointers cannot acquire
+termination by assignment or casts. Sentinel arrays retain an extra byte through
+storage/copies/calls; full-tail slices and `slice_data` preserve termination.
+Value indexing/slicing syntax is unchanged. See the language specification.
+
+The source `std::formatting` module owns tagged-argument `{}` formatting,
+escaped braces, template validation and full-range 64-bit integer conversion.
+`format` writes into caller-owned byte slices after syntax/count/capacity checks;
+`format_to` shares the renderer with synchronous callback sinks. The I/O module
+implements literal output and delegates formatted output to that renderer, with
+write loops handling short writes and EINTR. Its formatting types remain aliases.
+
+The source `std::random` module uses Linux x86-64 `getrandom` for byte filling,
+full-width uint64 values and rejection-sampled bounded integers. It retries EINTR
+and short reads, propagates OS errors and rejects zero bounds without a syscall.
+
+The source `std::memory::create_page_alloc` implements stateless Linux mmap
+allocation and munmap release through public allocator callbacks. Private headers
+retain mapping lengths; checked power-of-two alignment includes over-page values.
+It is separate from the typed sbrk heap allocator, and requires original live
+pointers for release. Raw mmap errors use the full Linux negative-errno range.
+
+The source std memory module implements byte-slice `memset` and `memcpy` with
+checked loops. Copy accepts readonly sources and checks destination capacity
+before writing; callers must provide nonoverlapping regions.
+`std::string::str_eq` provides byte-slice equality; the string sample uses
+qualified calls to the shared string module. The std prelude is currently empty.
+`std::string` supplies allocation-free concatenation into caller storage with
+capacity errors before writes and a borrowed prefix result; `str_len` wraps
+byte-slice `.len`. Native tests cover capacity failures, empty inputs and aliasing
+of the returned view. Sources must not overlap the concatenation destination.
+
+Working components are the tokenizer, parser, AST construction, lexical scope
+utilities, diagnostic rendering, and raw IR data/access/formatting utilities.
+The name pass validates named units, annotates declarations, and resolves lexical
+names, file paths, visibility, and compile-time aliases. Semantic typing/member
+lookup now execute and validate their annotations. Explicit metatype
+specialization now rechecks concrete bodies, retaining symbolic template checks.
+Bounded type computation requires explicit `comp fn` eligibility. Metatype
+parameters and type values provide generic specialization. Independent binding/element mutability, `never` bottom coercion, definite initialization and
+structured control-flow checks run; see [typing](../type-resolution.md).
+Binding `const` protects struct fields and nested inline array elements; slices
+and addresses of that storage preserve readonly access. Scalar, struct and enum
+bindings use `const name: Type`; type-level qualifiers remain container-only.
+Variadics are removed. Numeric literals use arbitrary-precision integer magnitudes and direct decimal-to-IEEE
+rounding; constant evaluation implements fixed-width wrapping and exact IEEE
+operations. Compilation of explicitly planned files supports fixed-width signed/unsigned integers
+through 128 bits, float16/32/64/128 and bool through locals, arithmetic,
+bitwise/shifts, explicit casts, short-circuit logic, helpers/calls, conditionals,
+while loops, break/continue and returns. Typed numeric values require explicit
+conversions. Native helpers use a limited direct Fib fastcc ABI; main keeps the
+C int32 entry contract. Linux x86-64 System V `callconv "C"` also supports
+integer/bool, float32/64, pointer/function-pointer and nonempty-struct boundaries,
+including register coercions and indirect struct arguments/results. Function
+addresses and indirect calls execute, including callbacks stored in structs.
+Native linking accepts C sources, libraries and search paths through
+`--c-source`, `-l`/`--link-lib` and `-L`/`--library-path`.
+Extended main signatures use an analyzed source wrapper:
+optional `std::process::Arguments` and `Environment` parameters, with void/int32
+or unit/int32-success `std::result::Result` returns. Source `std::map` implements
+generic `Map(K, V)` with supplied equality, specialized to byte strings for the
+environment. Computed type annotations work in signatures and declarations;
+specialization recomputes nominal type identities from substituted arguments.
+See [process contracts](../standard-library.md#process-entry-and-maps).
+Struct values, partial initialization, stack storage,
+field/pointer mutation and internal struct/pointer calls work. Ordinary dereference
+traps on null; `std::memory::unchecked_deref(pointer)` returns an unchecked place.
+`core::sizeof(T)` returns `usize` byte sizes from LLVM's
+selected target allocation layout, including padding. Concrete generic arguments
+work. Values, void, never and metatypes are rejected. This target-dependent
+operation is not yet available to frontend constant evaluation (including array
+lengths, `comp` values and global initializers).
+Enum constructors, payload copies, switches, storage and internal calls also execute; see [enum semantics](../enum-semantics.md). Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Checked array/slice projections and constant-initialized globals also execute. Broader runtime representations remain unfinished. See
+[scalar semantics](../scalar-semantics.md) for numeric rules and
+[struct/storage semantics](../struct-storage-semantics.md) for memory rules.
+`build.fib` has an
+initial synthetic-module build API and shared-lowering/interpreter subset for
+literal `build_api::{add_source, set_entry, set_output}` calls; deterministic project-plan finalization now validates its initial path/name/entry/output
+contract; general interpretation remains unfinished.
+See [driver](src/driver.md), [IR](src/ir/README.md), [backend](src/backend/README.md)
+and [tests](tests/README.md) for exact limits.
 
 ```text
-src/main.rs
-  -> src/cli.rs
-  -> src/driver.rs
-       validate and read
-       -> lexer
-       -> parser / AST
-       -> recursive import resolution
-       -> semantic analysis / TypedProgram
-       -> TypedProgram -> IrProgram -> LLVM (core subset)
-          or TypedProgram -> LLVM (fallback)
-       -> emit LLVM / invoke clang
+build --single-file PATH -> BuildPlan -> parse_files -> Analyzer
+  -> AnalyzedProject -> ir::lowering::lower -> verified Ir -> verified LLVM
+  -> object -> cc -> executable (scalar/struct/enum/pointer/control-flow subset)
+
+build.fib + synthetic build_api -> Analyzer -> ir::lowering::lower -> verified IR
+  -> limited IR interpreter -> PlanBuilder state (partial)
+  -> validated project BuildPlan (narrow literal-operation subset)
 ```
 
-The two lowering routes both produce LLVM. They are not independent target
-backends. The direct typed-AST route currently supports more language features.
+The [future build-file plan](../roadmap/08-interpreted-build-files.md) fixes IR
+interpretation—not native artifact loading—as the intended execution route.
 
-## Repository Mirror
+There is no separate typed AST, direct AST-to-LLVM fallback, recursive import
+loader, `compile_project` or `check_project`. `tests/executable.rs` checks real
+compile/link/run behavior. Public architecture records alone do not certify
+successful analysis, verification or support by the emitter.
 
-- [`repository.md`](repository.md): root manifests, toolchain, workflows, and directory ownership
-- [`src/`](src/README.md): compiler pipeline and public API
-- [`src/frontend/`](src/frontend/README.md): tokens, lexer, parser, AST, analyzer, and typed AST
-- [`src/ir/`](src/ir/README.md): flat middle-end representation and importer
-- [`src/backend/`](src/backend/README.md): LLVM feature boundary and lowering routes
-- [`tests/`](tests/README.md): unit, integration, and end-to-end strategy
-- [`samples/`](samples/README.md): executable language coverage
-- [`std/`](std/README.md): standard-library status and safety concerns
-- [`.github/workflows/`](.github/workflows/ci.md): CI contract
-- [`roadmap/README.md`](docs/roadmap/README.md): prioritized language and compiler work
+Enum variants use `Name: Type` for one direct payload value. Explicit struct
+payloads take one struct argument. Omitted, void and recursively unit-only struct
+payloads normalize to bare variant values; calls on them are rejected. Optional
+unit switch bindings have type void. Declared payload metadata is retained for
+generic substitution and annotation proofs, while shared normalization determines
+constructor, binding and storage behavior. Runtime unit values use empty aggregates
+without changing resultless void returns or opaque `*void`.
 
-## Reading Rules
+## Experimental scaffolding
 
-Every implementation page distinguishes these concepts:
+The separate `fibc-fib` experiment contains token/arena/command scaffolding and
+is not a working compiler or validated bootstrap path. `std::io::Reader(T)` is
+also scaffolding; supported input currently uses `std::os::read`. See the
+[experiment status](../../fibc-fib/README.md) and [std guide](../standard-library.md).
 
-- **Current behavior** describes what the checked-in code does now.
-- **Invariant** describes a property a stage establishes or relies on.
-- **Known risk** describes evidence-backed behavior that may be incorrect,
-  incomplete, nondeterministic, or unsafe.
-- **Improvement direction** is not a compatibility promise. Confirm it against
-  tests and language documentation before implementation.
+## Language server
 
-Source line numbers intentionally are not embedded here because they decay
-quickly. Links point to files and name the relevant functions or types.
+`src/bin/fib-lsp.rs` is a native stdio server sharing compiler tokens, parsing,
+analysis and build planning through `frontend::tooling` and `frontend::source`.
+`Analyzer::analyze_collecting` returns an `AnalysisReport` with partial semantic
+information and independent diagnostics; it is never a lowering input.
+`Analyzer::analyze_available` explicitly tracks files unavailable after parse/IO
+errors and suppresses dependent checks. Strict `Analyzer::analyze` retains its
+validated-project contract. Identifier annotation locations support highlighting
+without a separate language grammar. See [LSP setup](../../lsp/README.md).
 
-## Highest-Risk Boundaries
+Qualified-name LSP completion uses collected namespaces, package dependency paths
+and compiler visibility checks. It supports unfinished `std::`/module expressions
+and partial member names, using the current background-analysis generation.
+Local-variable and field completion remain deferred.
 
-1. Module analysis resolves qualified names, but backend declaration flattening
-   does not preserve stable module-qualified symbol identity.
-2. Semantic analysis does not yet prove all assumptions made by lowering,
-   including boolean conditions, legal casts/operators, initialization, and
-   all-path returns.
-3. The flat IR route silently falls back on every error, has no verifier, and
-   has known SSA and capability mismatches with its LLVM consumer.
-4. The direct LLVM route tracks storage by source name rather than resolved
-   binding identity, which can violate lexical scoping under shadowing.
-5. LLVM modules are printed without verification, and target layout is largely
-   hard-coded for a 64-bit native environment.
-6. Most standard-library modules are not exercised by CI and several expose
-   stubs or platform-sensitive FFI as if they were complete.
+Directly opened std files use their owning sysroot manifest and reuse the open
+document's ID in the std package. This preserves `root` and compiler intrinsic
+identities, avoids duplicate application/library copies, and shares unsaved std
+sibling overlays even when the running server uses another installed source tree.
 
-Start correctness changes with the P0 section of the
-[`improvement roadmap`](docs/roadmap/README.md).
+## Specification implementation gaps
 
-## Updating This Tree
+Primitive names resolve through protected synthetic prelude declarations. Direct
+same-family literal cast context, explicit numeric/bool casts, shallow readonly
+views, warned one-layer pointer field access and exhaustive switches are implemented.
+Concrete rechecked generic instances and calls across explicitly planned files
+lower to verified IR and LLVM. Fixed arrays support literals, inline storage,
+whole-value copies/assignment, calls/returns and `.len`; multi-binding locals
+initialize only after all RHS expressions evaluate.
 
-When changing a compiler subsystem:
+`BuildPlan::packages` records explicit package IDs, source roots, dependency
+maps and file membership. Scoped visibility uses package/directory regions;
+public aliases preserve target identity without exposing the original path.
+Existing single-file/flat-plan callers use the compatibility adapter.
 
-1. Update its mirrored implementation page in the same change.
-2. Update the support matrix or known risks if a stage boundary changes.
-3. Move completed roadmap items to the changelog rather than leaving stale
-   warnings here.
-4. Add both positive and negative tests for new semantic invariants.
-5. Prefer named items and relative source paths over line-number references.
+Package-qualified lookup uses each source package's dependency environment and
+package-relative file paths, with Unicode case/hyphen normalization and collision
+checks. Flat-plan callers retain their compatibility path. Installed std is added
+before parsing; see [standard library](../standard-library.md).
+Canonical linkage uses persistent package identities and versioned type/declaration keys;
+see [linkage contracts](../roadmap/00-cross-module-linkage.md).
+Still deferred: public package/discovery build-API
+signatures and discovery/deduplication integration, ownership/lifetime enforcement,
+and broader compiler namespace spelling.
+General build interpretation, value-returning compile-time function execution and broader ABI remain
+unfinished. These are implementation boundaries, not amendments to the specification.
+
+Globals require explicit constant initial data, including aggregate/enum values,
+addresses and slices into global storage. No runtime startup initializer or `static`
+keyword is needed. Ordinary initializer calls and runtime binding reads are rejected.
+Value-returning `comp fn` definitions are type/flow checked; evaluation requests
+report "not implemented". Existing bounded type-returning computation is preserved.
+Fixed arrays implicitly form full slices in expected slice-type contexts,
+including arguments, declarations and returns, preserving backing-storage readonly
+permissions. Array literals receive the expected slice element type.
+Slices borrow original storage without extending its lifetime. Dynamic array reads
+and slicing require initialized backing arrays; bounds guards precede offset casts.
+## Map
+
+- [Repository and commands](repository.md)
+- [Source ownership](src/README.md)
+- [Tokenizer, parser, AST, and analysis](src/frontend/README.md)
+- [SSA IR](src/ir/README.md)
+- [LLVM backend](src/backend/README.md)
+- [Tests and validation](tests/README.md)
+- [Samples](samples/README.md)
+- [CI](.github/workflows/ci.md)
+- [Open design boundaries](language-design-questions.md)
+- [Documentation overview and language-design proposals](../README.md)
+- [Verified parsing snapshot](../parsing/README.md), not a language specification
+- [Analysis issues on GitHub](issues/README.md)
+
+## Maintenance rules
+
+Distinguish working behavior, raw representation contracts, and intended future
+passes. Do not turn a stub into successful empty output to satisfy tests. Preserve
+source spellings/spans and stable identity through future passes. Add positive
+and negative tests for implemented invariants. The phased name-resolution suite
+covers names and identities. Separate type-resolution acceptance tests cover types,
+expressions and members; all six former pending completion cases now pass. Update these pages with
+subsystem changes; avoid line-number links and unverified runtime claims. Keep observed syntax in `docs/parsing/`;
+parser limitations are not design decisions. Report analysis gaps as actionable
+GitHub issues rather than embedding implementation backlogs in user-facing
+language documentation. Keep only GitHub links in the issue index, not local
+copies of report bodies.

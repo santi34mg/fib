@@ -1,29 +1,28 @@
-# `src/` Compiler Map
+# Source ownership
 
-This directory mirrors the Rust source root.
+See the [workspace crate map](../../../crates/README.md) for compiler dependency boundaries.
 
-| Source | Ownership | Detailed page |
-| --- | --- | --- |
-| `main.rs` | Minimal binary entry; parse CLI and execute | [`cli.md`](cli.md) |
-| `lib.rs` | Library facade and public re-exports | [`lib.md`](lib.md) |
-| `cli.rs` | Clap schema, output printing, process exit | [`cli.md`](cli.md) |
-| `diagnostics.rs` | User-facing diagnostic structure and rendering | [`diagnostics.md`](diagnostics.md) |
-| `driver.rs` | Pipeline orchestration, modules, outputs, linking | [`driver.md`](driver.md) |
-| `frontend/` | Lexing, parsing, semantic analysis | [`frontend/`](frontend/README.md) |
-| `ir/` | Flat middle-end importer and representation | [`ir/`](ir/README.md) |
-| `backend/` | LLVM lowering under the `llvm` feature | [`backend/`](backend/README.md) |
+| Source | Current role |
+| --- | --- |
+| `src/main.rs`, `src/cli.rs` | CLI entry and build commands |
+| `src/lib.rs` | Public `fibc` facade over workspace crates |
+| `src/plan.rs` | Build stages and mutable build-file planning/finalization |
+| `src/driver.rs`, `src/driver/` | Parsing entry points, analysis, entry adaptation and pipeline orchestration |
+| `src/ir_interpreter.rs` | Restricted build-file IR interpreter |
+| `crates/fib-builtins/src/lib.rs` | Stage-independent builtin identities |
+| `crates/fib-frontend/src/frontend/` | Tokens, AST, parsing, names, typing, flow validation and editor services |
+| `crates/fib-frontend/src/plan.rs` | File/package identities, immutable source plans and single-file loading |
+| `crates/fib-frontend/src/standard_library.rs` | Installed source std and plan preparation |
+| `crates/fib-frontend/src/diagnostics.rs`, `numeric.rs` | Diagnostics and shared scalar semantics |
+| `crates/fib-ir/src/ir/` | Owned SSA, transactional builder and verifier |
+| `crates/fib-lowering/src/lowering.rs`, `lowering/` | Validated analyzed-source to SSA lowering |
+| `crates/fib-backend/src/backend/` | LLVM emission and target/ABI classification |
 
-## Ownership Rule
+Frontend establishes source validity; the driver owns filesystem and pipeline
+orchestration; IR owns backend-independent runtime identities/types; lowering
+bridges frontend and IR; backend owns target representation. Cross-stage tests
+live in `tests/frontend_lowering.rs` rather than making frontend depend on lowering.
 
-- The frontend owns source-language validity.
-- The driver owns stage orchestration, filesystem/module loading, output policy,
-  and tool invocation.
-- The IR owns a verifiable, backend-independent control-flow/value contract.
-- The backend owns target representation and ABI details, not source-language
-  type checking.
-- Diagnostics should cross boundaries as structured errors; stages should not
-  print directly.
-
-Several current implementation gaps violate these ideal boundaries. They are
-listed on the subsystem pages and in the
-[`improvement roadmap`](../improvement-roadmap.md).
+Details: [CLI](cli.md), [library](lib.md), [driver/build](driver.md),
+[frontend](frontend/README.md), [IR](ir/README.md),
+[backend](backend/README.md), [diagnostics](diagnostics.md).

@@ -1,35 +1,26 @@
-# `src/diagnostics.rs`
+# Diagnostics and source locations
 
-## Responsibility
+[`diagnostics.rs`](../../../crates/fib-frontend/src/diagnostics.rs) implements `ErrorKind`,
+`Span`, `CompilerError`, rendering, and `source_line_at`. `Span` is a 1-based
+start line/column, not a byte range. `CompilerError` holds optional filename,
+source line, span, and hint. Parser-error conversion preserves source context;
+analyzer conversion is commented out. No complete driver-wide diagnostic funnel
+exists: sketches use anyhow errors, and CLI dispatch still panics.
 
-Diagnostics defines `ErrorKind`, point `Span`, `CompilerError`, source-line
-extraction, error promotion, and rustc-like terminal rendering.
+## Current source map limits
 
-`CompilerError` currently carries a category, message, optional point span,
-optional hint, filename, and one source line. The CLI is intended to be the only
-printing path.
+There is no centralized source-map database. `BuildPlan` associates file identity,
+logical name, and disk path; `SourceUnit` associates that identity with an AST.
+Tokens retain start/end positions, while AST expressions/statements/type expressions
+retain point spans, not full ranges. `Parser::with_source` snapshots source lines
+for errors. `Parser::new` reads the filename and silently uses empty text on read
+failure. Prefer `with_source` in tests to avoid disk and source mismatches.
 
-## Current Flow
+`source_line_at` extracts a 1-based line. Rendering uses spaces for caret alignment;
+tabs and wide Unicode can misalign it. IR has no comprehensive source-map plumbing.
+Future passes should retain source records and byte ranges keyed by file identity,
+not reread sources or infer locations from unrelated nodes.
 
-- parser failures preserve filename, point position, and source line;
-- analyzer failures begin as `AnalysisError` and are promoted by the driver;
-- entry analysis errors may reread the source to add a panel;
-- imported-module analysis errors keep a logical module name but no source line;
-- backend, emit, and linker failures are mostly string-based by promotion time.
-
-## Known Risks
-
-- lexer failures become parser errors, leaving `ErrorKind::Lex` effectively unused;
-- analyzer errors default to `Type`, including many missing-name failures;
-- point spans discard token end positions and typed/IR nodes discard spans entirely;
-- tabs and wide Unicode can misalign the caret;
-- underlying error chains are often converted to strings;
-- a source reread after analysis can display text different from what was compiled;
-- several backend paths print errors directly and continue.
-
-## Improvement Direction
-
-Use `SourceId` plus byte ranges throughout AST, typed AST, and IR. Retain source
-records for every module. Categorize errors at their origin and preserve causes.
-Add range labels and machine-readable output only after the taxonomy and source
-map are stable.
+Tests cover parser promotion, panels/hints, plain rendering, line extraction and
+Display. Assert category, stable substring and relevant location rather than full
+rendered diagnostic equality when adding new failure cases.

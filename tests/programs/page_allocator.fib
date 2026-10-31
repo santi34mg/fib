@@ -1,0 +1,70 @@
+comp memory := std::memory;
+
+fn error_code(error: memory::AllocError) int32 {
+    switch (error) {
+        when .NotEnoughMemory { return 1; }
+        when .InvalidAlignment { return 2; }
+        when .MapFailed { return 3; }
+        when .UnmapFailed { return 4; }
+    };
+}
+
+fn rejected(allocator: memory::Allocator, size: usize, align: usize, expected: memory::AllocError) bool {
+    switch (allocator.alloc(allocator.context, size, align)) {
+        when .Ok(pointer) { return false; }
+        when .Err(error) { return error_code(error) == error_code(expected); }
+    };
+}
+
+fn exercise(allocator: memory::Allocator, size: usize, align: usize) bool {
+    switch (allocator.alloc(allocator.context, size, align)) {
+        when .Err(error) { return false; }
+        when .Ok(pointer) {
+            bytes := memory::slice_from_parts(pointer, size);
+            i: usize = 0;
+            while (i < size) {
+                if bytes[i] != 0 { return false; };
+                bytes[i] = (i % 251) as uint8;
+                i = i + 1;
+            };
+            if bytes[0] != 0 || bytes[size - 1] != ((size - 1) % 251) as uint8 { return false; };
+            switch (allocator.free(allocator.context, pointer as *void)) {
+                when .Err(error) { return false; }
+                when .Ok {}
+            };
+            return true;
+        }
+    };
+}
+
+fn main() int32 {
+    first := memory::create_page_alloc();
+    second := memory::create_page_alloc();
+    // Keep one allocation live while the other allocator allocates and frees.
+    switch (first.alloc(first.context, 17, 8)) {
+        when .Err(error) { return 11; }
+        when .Ok(pointer) {
+            pointer* = 93;
+            if !exercise(second, 4111, 8) { return 12; };
+            if (pointer*) != 93 { return 13; };
+            switch (first.free(first.context, pointer as *void)) {
+                when .Err(error) { return 14; }
+                when .Ok {}
+            };
+        }
+    };
+    if !exercise(first, 1, 1) { return 1; };
+    if !exercise(second, 37, 8) { return 2; };
+    if !exercise(first, 12291, 4096) { return 3; };
+    if !exercise(second, 8193, 65536) { return 4; };
+    switch (first.free(first.context, null)) {
+        when .Err(error) { return 5; }
+        when .Ok {}
+    };
+    if !rejected(first, 0, 8, memory::AllocError.NotEnoughMemory) { return 6; };
+    if !rejected(first, 1, 0, memory::AllocError.InvalidAlignment) { return 7; };
+    if !rejected(first, 1, 3, memory::AllocError.InvalidAlignment) { return 8; };
+    if !rejected(first, 18446744073709551615, 8, memory::AllocError.NotEnoughMemory) { return 9; };
+    if !rejected(first, 9223372036854775808, 9223372036854775808, memory::AllocError.NotEnoughMemory) { return 10; };
+    return 0;
+}

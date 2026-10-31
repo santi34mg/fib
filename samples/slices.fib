@@ -1,24 +1,26 @@
-// Slices (`T[]`) as `(ptr, len)` views over arrays.
+// Slices (`[]T`) borrow array storage with checked indexing.
 // Expected output:
 //   len=4 sum=100 s0=10
 //   after s1=99 arr1=99
-import std::libc
 
-fn sum(s: @int4[]) @int4 {
-    total: @int4 = 0;
-    i: @int4 = 0;
-    while (i < s.@len as @int4) {
-        total += s.[i];
+fn sum(s: []int32) int32 {
+    total: int32 = 0;
+    i: int32 = 0;
+    while (i < s.len as int32) {
+        total += s[i];
         i += 1;
     };
     return total;
 }
 
-fn main() @int4 {
-    arr: @int4[4] = [10, 20, 30, 40];
-    s: @int4[] = arr.[0..4];
-    libc::printf("len=%d sum=%d s0=%d\n", s.@len as @int4, sum(s), s.[0]);
-    s.[1] = 99;
-    libc::printf("after s1=%d arr1=%d\n", s.[1], arr.[1]);
+fn main() int32 {
+    arr: [4]int32 = [10, 20, 30, 40];
+    s: []int32 = arr[0..4];
+    before: [3]std::io::Arg = [std::io::Arg.Unsigned(s.len as uint64),
+        std::io::Arg.Signed(sum(s) as int64), std::io::Arg.Signed(s[0] as int64)];
+    std::io::printf("len={} sum={} s0={}\n", before[..]);
+    s[1] = 99;
+    after: [2]std::io::Arg = [std::io::Arg.Signed(s[1] as int64), std::io::Arg.Signed(arr[1] as int64)];
+    std::io::printf("after s1={} arr1={}\n", after[..]);
     return 0;
 }

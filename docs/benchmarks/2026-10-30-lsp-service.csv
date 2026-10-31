@@ -1,0 +1,5 @@
+benchmark,samples,min_ms,p50_ms,p95_ms,mean_ms
+lsp_service/cached_completion_1000_requests,30,0.303890,0.316013,0.341280,0.319845
+lsp_service/10_functions/cached_completion_100_requests,30,2.399301,2.420901,2.487256,2.431660
+lsp_service/100_functions/cached_completion_100_requests,30,23.805195,24.034726,24.560202,24.135194
+lsp_service/500_functions/cached_completion_100_requests,30,119.542757,121.683252,123.447241,121.752009
