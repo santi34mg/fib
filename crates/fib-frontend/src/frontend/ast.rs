@@ -6,6 +6,7 @@ pub mod function_body;
 pub mod function_declaration;
 pub mod function_parameter;
 pub mod function_signature;
+pub mod members;
 
 pub mod pattern;
 pub mod qualified_name;

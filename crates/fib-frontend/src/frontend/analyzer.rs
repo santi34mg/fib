@@ -472,6 +472,42 @@ impl Analyzer {
                 // Reserve identities without adding lexical names or resolving initializers.
                 struct LocalTypes<'a>(&'a mut Namespace, Option<Recovery>, FileId);
                 impl walk::Visitor for LocalTypes<'_> {
+                    fn ty(
+                        &mut self,
+                        node: &mut crate::frontend::ast::type_expression::TypeExpression,
+                    ) -> anyhow::Result<()> {
+                        if let crate::frontend::ast::type_expression::TypeExpressionKind::Struct {
+                            members,
+                            ..
+                        } = &mut node.kind
+                        {
+                            for member in members {
+                                if let StatementKind::FunctionDeclaration(function) =
+                                    &mut member.kind
+                                {
+                                    // Hidden declaration identities permit ordinary calls without
+                                    // introducing member spellings into the file namespace.
+                                    let name = format!(
+                                        "member@{}:{}::{}",
+                                        node.span.line,
+                                        node.span.column,
+                                        function.signature.identifier
+                                    );
+                                    let id = add_declaration(
+                                        self.0,
+                                        &name,
+                                        false,
+                                        DeclarationKind::Value,
+                                        member.span,
+                                        false,
+                                    )?;
+                                    function.signature.annotation.binding =
+                                        Some(BindingId::Declaration(id));
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
                     fn variable(
                         &mut self,
                         var: &mut VariableDeclaration,

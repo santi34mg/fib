@@ -6,6 +6,14 @@ impl TypeExpression {
     /// Resolve referenced types without registering field or variant spellings
     /// in lexical scopes; member definitions belong to the semantic owner type.
     pub fn resolve_name(&mut self, context: &mut ResolveContext<'_>) -> anyhow::Result<()> {
+        self.resolve_name_with_member_owner(context, None)
+    }
+
+    pub(super) fn resolve_name_with_member_owner(
+        &mut self,
+        context: &mut ResolveContext<'_>,
+        owner: Option<(&str, crate::frontend::identifier::DeclId)>,
+    ) -> anyhow::Result<()> {
         use crate::frontend::{analyzer::Analyzer, ast::type_expression::TypeExpressionKind as T};
         let result = (|| {
             match &mut self.kind {
@@ -33,10 +41,21 @@ impl TypeExpression {
                 T::Array { element_type, .. } | T::Slice { element_type } => {
                     element_type.resolve_name(context)?
                 }
-                T::Struct { fields } => {
+                T::Struct { fields, members } => {
                     for field in fields {
                         Analyzer::resolve_name_expression(&mut field.expression, context)?;
                     }
+                    context.scoped(crate::frontend::scope_kind::ScopeKind::Block, |context| {
+                        if let Some((name, id)) = owner {
+                            context.lexical.insert_binding(name.to_owned(), crate::frontend::symbol_table::LocalBinding::CompAlias(crate::frontend::identifier::Entity::Declaration(id)))?;
+                        }
+                        for member in members {
+                            if let crate::frontend::ast::statement::StatementKind::FunctionDeclaration(function) = &mut member.kind {
+                                function.resolve_name(context)?;
+                            }
+                        }
+                        Ok(())
+                    })?;
                 }
                 T::Enum { variants } => {
                     for variant in variants {

@@ -58,6 +58,8 @@ impl FunctionDeclaration {
         let previous_comp =
             std::mem::replace(&mut context.state.comp_function, self.signature.is_comp);
         let previous = context.state.return_type.replace(function.return_type);
+        let previous_loop = std::mem::take(&mut context.state.loop_depth);
+        let previous_defer = std::mem::take(&mut context.state.in_defer);
         let result = if let Some(body) = &mut self.body {
             context.statements(&mut body.statements)
         } else {
@@ -65,6 +67,83 @@ impl FunctionDeclaration {
         };
         context.state.return_type = previous;
         context.state.comp_function = previous_comp;
+        context.state.loop_depth = previous_loop;
+        context.state.in_defer = previous_defer;
         result
     }
+}
+
+/// Type-owned functions have no closure context. Check reads and assignment
+/// targets alike, rather than relying on definite initialization to catch reads.
+pub(super) fn validate_member_captures(
+    function: &FunctionDeclaration,
+    types: &crate::frontend::semantic_type::SemanticTypes,
+) -> anyhow::Result<()> {
+    use crate::{
+        diagnostics::Span,
+        frontend::{
+            analysis_annotation::{BindingAnnotation, BindingId, ValueCategory},
+            ast::qualified_name::QualifiedIdentifier,
+            identifier::ResolvedName,
+            semantic_type::type_error,
+        },
+    };
+    use std::collections::HashSet;
+    let Some(body) = &function.body else {
+        return Ok(());
+    };
+    struct Owned(HashSet<BindingId>);
+    impl super::walk::Visitor for Owned {
+        fn binding(
+            &mut self,
+            _: &str,
+            slot: &mut BindingAnnotation,
+            _: Span,
+        ) -> anyhow::Result<()> {
+            if let Some(id) = slot.binding {
+                self.0.insert(id);
+            }
+            Ok(())
+        }
+    }
+    let mut owned = Owned(
+        function
+            .signature
+            .parameters
+            .iter()
+            .filter_map(|p| p.annotation.binding)
+            .collect(),
+    );
+    let mut body = body.statements.clone();
+    super::walk::statements(&mut owned, &mut body, false)?;
+    struct Captures<'a>(
+        &'a HashSet<BindingId>,
+        &'a crate::frontend::semantic_type::SemanticTypes,
+    );
+    impl super::walk::Visitor for Captures<'_> {
+        fn name(&mut self, name: &mut QualifiedIdentifier) -> anyhow::Result<()> {
+            if let Some(ResolvedName::Local(id)) = name.annotation.resolved {
+                let id = BindingId::Local(id);
+                if !self.0.contains(&id)
+                    && !self.1.type_values.contains_key(&id)
+                    && self
+                        .1
+                        .bindings
+                        .get(&id)
+                        .is_none_or(|info| info.category != ValueCategory::Value)
+                {
+                    let error = type_error(
+                        "comp member function cannot capture an enclosing runtime local or parameter",
+                    );
+                    return Err(if let Some(span) = name.annotation.source_span {
+                        super::at_span(error, span.into())
+                    } else {
+                        error
+                    });
+                }
+            }
+            Ok(())
+        }
+    }
+    super::walk::statements(&mut Captures(&owned.0, types), &mut body, false)
 }

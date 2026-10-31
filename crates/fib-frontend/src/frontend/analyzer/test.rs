@@ -2482,7 +2482,7 @@ mod name_resolution {
                 TypeExpressionKind::Pointer { pointed_type } => self.ty(pointed_type),
                 TypeExpressionKind::Array { element_type, .. }
                 | TypeExpressionKind::Slice { element_type } => self.ty(element_type),
-                TypeExpressionKind::Struct { fields } => {
+                TypeExpressionKind::Struct { fields, .. } => {
                     for field in fields {
                         self.expr(&mut field.expression);
                     }

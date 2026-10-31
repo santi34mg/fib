@@ -1998,7 +1998,7 @@ mod tests {
         else {
             panic!("expected type value: {:#?}", record.expression);
         };
-        let TypeExpressionKind::Struct { fields } = &record_type.kind else {
+        let TypeExpressionKind::Struct { fields, .. } = &record_type.kind else {
             panic!("expected struct type: {:#?}", record.expression);
         };
         assert_eq!(
@@ -2670,7 +2670,7 @@ mod tests {
         else {
             panic!("expected type value");
         };
-        let TypeExpressionKind::Struct { fields } = &ty.kind else {
+        let TypeExpressionKind::Struct { fields, .. } = &ty.kind else {
             panic!("expected struct type");
         };
         assert_eq!(fields[0].annotation.resolved, None);

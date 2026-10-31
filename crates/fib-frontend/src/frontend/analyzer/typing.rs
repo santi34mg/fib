@@ -176,7 +176,11 @@ pub(super) fn resolve_project_collecting(
     let mut functions = HashMap::new();
     for unit in units.iter() {
         collect(&unit.ast.statements, &mut definitions);
-        for node in &unit.ast.statements {
+        let members = crate::frontend::ast::members::declarations(&unit.ast.statements);
+        for member in &members {
+            collect(std::slice::from_ref(*member), &mut definitions);
+        }
+        for node in unit.ast.statements.iter().chain(members) {
             if let S::FunctionDeclaration(fun) = &node.kind
                 && let Some(BindingId::Declaration(id)) = fun.signature.annotation.binding
             {
@@ -542,10 +546,44 @@ impl TypeContext<'_> {
                     return_type,
                 }))
             }
-            K::Struct { fields } => {
+            K::Struct { fields, members } => {
                 let owner = self.aggregate_site(node.span);
                 let fs = self.field_definitions(fields, owner)?;
                 self.types.types[owner.0 as usize] = T::Struct(fs);
+                let mut seen: HashSet<_> = fields
+                    .iter()
+                    .map(|field| field.field_identifier.clone())
+                    .collect();
+                // Publish all member signatures before checking any body so
+                // sibling calls and recursive functions have stable identities.
+                for member in members.iter() {
+                    let S::FunctionDeclaration(function) = &member.kind else {
+                        return Err(type_error("expected comp member function"));
+                    };
+                    if !seen.insert(function.signature.identifier.clone()) {
+                        return Err(at_span(type_error("duplicate struct member"), member.span));
+                    }
+                    let Some(BindingId::Declaration(id)) = function.signature.annotation.binding
+                    else {
+                        return Err(type_error("pending comp member identity"));
+                    };
+                    self.types
+                        .comp_members
+                        .insert((owner, function.signature.identifier.clone()), id);
+                }
+                for member in members.iter_mut() {
+                    let S::FunctionDeclaration(function) = &mut member.kind else {
+                        unreachable!()
+                    };
+                    self.signature(&mut function.signature)?;
+                }
+                self.statements(members)?;
+                for member in members {
+                    let S::FunctionDeclaration(function) = &member.kind else {
+                        unreachable!()
+                    };
+                    super::function_declaration::validate_member_captures(function, self.types)?;
+                }
                 owner
             }
             K::Enum { variants } => {

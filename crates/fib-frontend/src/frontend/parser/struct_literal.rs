@@ -19,9 +19,9 @@ where
         match self.next() {
             Some(first_token) => match first_token.kind {
                 TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => {
-                    let fields = self.parse_type_fields()?;
+                    let (fields, members) = self.parse_type_fields()?;
                     Ok(TypeExpression::at(
-                        TypeExpressionKind::Struct { fields },
+                        TypeExpressionKind::Struct { fields, members },
                         Span::new(type_token.line, type_token.column),
                     ))
                 }
