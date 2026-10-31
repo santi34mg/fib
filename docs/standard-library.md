@@ -55,6 +55,13 @@ and package-private helpers resolve normally. Other open std files supply unsave
 overlays in that same package. An enclosing application's `build.fib` does not
 select the library's source membership. `--no-std` still disables this preparation.
 
+## Unfinished input API
+
+`std::io::Reader(T)` is an experimental public type scaffold containing a `read`
+callback field. Its nearby private `read` function has an empty body. Neither
+provides a working reader abstraction; use the typed `std::os::read` syscall
+wrapper for supported input. Reader behavior and its public contract remain pending.
+
 ## Process entry and maps
 
 On Linux x86-64, `main` may return `int32`, `void`, or an instance of

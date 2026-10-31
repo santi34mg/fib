@@ -1,6 +1,6 @@
 # Fib roadmap
 
-## Implementation and test baseline (2026-10-24)
+## Implementation and test baseline (2026-10-31)
 
 This roadmap describes reconstruction and future language work. Source and
 executable tests take precedence over historical release notes, samples, and
@@ -15,9 +15,9 @@ several rules require implementation changes beyond this baseline.
 | Analysis | Names, visibility, aliases, types/members, explicit metatype specialization, bounded type computation, initialization/control flow and completion validation on the original AST. |
 | Driver/build | Multi-file pipeline, explicit package metadata and deterministic plan finalization; build files have a narrow interpreted literal-operation API. General interpretation and default discovery remain unfinished. |
 | SSA IR | Transactional construction and scalar/aggregate verification of ownership, signatures, reachability and dominance. Source lowering supports scalar helpers/calls, initialized locals, arithmetic/casts, short-circuit logic, conditionals, while loops, break/continue and returns. Struct/pointer values, stack storage, partial initialization and checked/unchecked dereference are supported. Enums support constructors, payload copies, switches, storage and internal calls. |
-| Backend | LLVM 21 emits verified multi-block SSA/PHIs/backedges, fixed-array aggregates and scalar operations. C int32 entry and internal direct scalar/struct/enum/pointer Fib fastcc ABI, objects and host linking work; full production ABI and broader representations remain unfinished. |
+| Backend | LLVM 21 emits verified multi-block SSA, arrays/slices, globals and direct/indirect calls. Linux x86-64 System V C scalar/pointer/nonempty-struct boundaries, internal Fib fastcc, objects and native host linking work; broader ABI types/targets remain unfinished. |
 | CLI/execution | `build --single-file PATH` and narrow `build --build-file PATH` work. `run` and `test` report explicit errors. |
-| Tests/corpus | Frontend, driver, IR and backend suites plus LLVM-enabled executable acceptance tests. All top-level samples have parser coverage; scalar, loop, struct and enum samples additionally have execution coverage. |
+| Tests/corpus | Frontend, driver, IR and backend suites plus LLVM-enabled executable acceptance tests. All top-level samples have parser and compile/run coverage with output/exit checks; installed std has dedicated executable coverage. |
 
 ## Active design and implementation work
 
@@ -61,22 +61,25 @@ concrete rechecked instances also execute through verified IR and LLVM.
 
 ### Runtime lowering and SSA
 
-- [ ] Lower tuples, runtime indexing/slices, multiple results,
-      globals and dynamic bounds checks.
+- [x] Lower checked runtime indexing/slicing and constant-initialized globals.
+- [ ] Lower general tuples and multiple-result source functions.
 - [x] Lower concrete generic specializations and calls across explicitly planned
       source files, preserving canonical declaration/instance identities.
 - [x] Lower lexical defer, including cleanup on return, break and
       continue, according to [implemented flow semantics](../type-resolution.md).
 
-See the [SSA contract](../../src/ir/README.md) for representation boundaries.
+See the [SSA contract](../../crates/fib-ir/src/ir/README.md) for representation boundaries.
 
 ### Backend and orchestration
 
-- [ ] Extend target-derived layout to slices and tuples; fixed-array values are implemented.
+- [ ] Extend target-derived layout to general tuples; arrays and slices execute.
 - [ ] Extend shared ABI classification beyond the internal direct scalar/struct/enum/pointer Fib subset;
-      implement external scalar C interoperability and broader representations.
-- [ ] Specify and implement C vararg promotions, callbacks and indirect calls.
-- [ ] Add configurable linker arguments, targets, sysroots, library paths and
+      implement broader representations and C types/targets beyond the supported
+      Linux x86-64 System V scalar/pointer/nonempty-struct subset.
+- [x] Implement function addresses, callbacks and indirect calls with per-signature ABI.
+- C variadics are removed; fixed-signature C shims are required.
+- [x] Support native C sources, library names/search paths and installed std sysroots.
+- [ ] Add general linker arguments, cross-target CLI configuration and broader
       toolchain diagnostics beyond the current host-linking path.
 - [ ] Add build-API recursive source discovery under explicit package source roots:
       select `.fib` files, skip symlinks, exclude the active build file, support
@@ -86,7 +89,7 @@ See the [SSA contract](../../src/ir/README.md) for representation boundaries.
       Preserve centralized validation and the opaque host-owned API.
 - [ ] Implement the `run` and `test` commands with explicit execution contracts.
 
-See the [backend contract](../../src/backend/README.md) and
+See the [backend contract](../../crates/fib-backend/src/backend/README.md) and
 [interpreted build-file plan](08-interpreted-build-files.md).
 
 ### Diagnostics, parser reliability and determinism
@@ -105,8 +108,8 @@ See the [backend contract](../../src/backend/README.md) and
 
 - [ ] Specify copy/move, borrowing, mutation, view lifetimes, escaping slices,
       deterministic destruction and suppression, including all control-flow exits.
-- [ ] Implement standard-library modules under current syntax with semantic and
-      runtime tests. Historical experimental sources have been removed. Validate
+- [ ] Extend installed source std beyond the implemented memory, formatting, I/O,
+      strings, process, maps, results, randomness and OS modules. Validate
       allocation failure, overflow, genuine atomics and platform FFI contracts
       rather than restoring unchecked bindings or success-returning stubs.
 - [x] Provide installed, versioned std/prelude registration, reusable `Result(T, E)`
@@ -115,14 +118,16 @@ See the [backend contract](../../src/backend/README.md) and
       paths and move-only files; specify allocation failure and embedded NUL.
 - [ ] Replace public libc dependencies with a private platform layer, immediate
       errno translation, retry handling and C shims for ABI-sensitive structures.
-- [ ] Add robust files/I/O, buffering, formatting, partial-I/O and destruction
-      tests before migrating samples to supported standard-library APIs.
-- [ ] Later: process, time, random, networking, threading and genuine atomics.
+- [x] Implement shared formatting and output retry loops, and migrate top-level
+      samples to supported source std APIs.
+- [ ] Add owned files, buffering, reader behavior and destruction contracts/tests.
+- [x] Implement process arguments/environment entry adaptation and OS randomness.
+- [ ] Later: time, networking, threading and genuine atomics.
 
 ### Native interoperability
 
-- [ ] Specify function-pointer/callback syntax and ABI; captured closures remain
-      outside this proposal.
+- [x] Implement function-pointer/callback syntax and ABI, including struct fields.
+      Captured closures remain outside this implementation.
 - [ ] Specify untagged C-union initialization/active-field safety and validate
       size/alignment against C, separately from tagged enums.
 - [ ] Add platform-gated X11 bindings/shims and compile/link tests; run display
@@ -130,17 +135,17 @@ See the [backend contract](../../src/backend/README.md) and
 
 ### Tooling, tests and performance
 
-- [ ] Extend the existing executable harness to broader sample policies:
-      expected output, compile-only cases and expected diagnostics.
+- [x] Discover and execute all top-level samples with expected output/exit checks.
+- [ ] Extend sample policies to compile-only cases and expected diagnostics.
 - [ ] Separate optimization from bounds policy; add target and CLI policy tests.
 - [ ] Measure lowering before optimizing allocation placement or aggregate spills.
 - [ ] Audit dependencies and package metadata; keep toolchain/MSRV changes deliberate.
-- [ ] Build a Rust compiler-backed LSP after identity/diagnostics stabilize:
-      versioned in-memory source provider, cancellation, dependency-aware caches,
-      partial-AST recovery, semantic index and UTF-16 position conversions.
-- [ ] Test unsaved/transitive files, stale-result suppression, diagnostic clearing,
-      Unicode and operation without LLVM; then add hover/navigation/rename and
-      semantic tokens rather than relying on heuristic highlighting.
+- [x] Build a Rust compiler-backed LSP with unsaved overlays, collecting diagnostics,
+      semantic tokens, UTF-16 positions and qualified-name completion.
+- [x] Test unsaved dependencies, stale-result suppression, diagnostic clearing,
+      Unicode and operation without LLVM.
+- [ ] Extend LSP recovery/indexing and add local/field completion, hover, navigation
+      and rename.
 - [ ] Implement editor configuration around finalized package/source membership;
       specify package acquisition and version identity separately from source discovery.
 - [ ] Later: formatter and package tooling.

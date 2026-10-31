@@ -37,7 +37,7 @@ package/prelude integration, reusable results and the Linux x86-64 syscall bound
 - [Type resolution](type-resolution.md): semantic rules implemented by the type
   pass and explicitly marked differences from the confirmed design.
 - [Scalar semantics](scalar-semantics.md): implemented wrapping arithmetic, explicit
-  conversions, runtime traps and IEEE rules, plus pending literal/Boolean cast changes.
+  numeric/Boolean conversions, runtime traps and IEEE rules.
 - [Enum semantics](enum-semantics.md): executable constructors, payload copies,
   switches, storage and internal ABI/layout contracts.
 - [Struct/storage semantics](struct-storage-semantics.md): implemented struct copies,
@@ -61,7 +61,8 @@ GitHub issues, not repeated warnings in user-facing syntax pages. The
 GitHub; these reports do not settle the open language-design questions in RFC #2.
 
 The [samples](../samples/README.md) use current syntax and all have automatic
-parser coverage. Selected scalar, loop, struct and enum samples also have
-compile/link/run coverage in the executable acceptance suite; this does not
-certify every sample as executable. Standard-library implementations remain pending;
-the historical source sketches and C bindings have been removed.
+parser coverage. `tests/samples.rs` also discovers, compiles and executes every
+top-level sample, checking output and exit statuses. Installed source std modules
+have dedicated executable coverage; see the [standard-library guide](standard-library.md).
+The separate [Fib compiler experiment](../fibc-fib/README.md) remains scaffolding
+and is outside the top-level sample sweep.
