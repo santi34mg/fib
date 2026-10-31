@@ -2577,7 +2577,12 @@ mod name_resolution {
                     }
                 }
                 StatementKind::ExpressionStatement(expr) => self.expr(expr),
-                StatementKind::Assignment { left, right } => {
+                StatementKind::Assignment { left, right }
+                | StatementKind::IndexedCompoundAssignment {
+                    target: left,
+                    value: right,
+                    ..
+                } => {
                     self.expr(left);
                     self.expr(right);
                 }
@@ -2791,6 +2796,20 @@ mod type_resolution {
     }
     fn good(source: &str) {
         run(source).unwrap_or_else(|e| panic!("expected successful typing: {source}\n{e:#}"));
+    }
+    #[test]
+    fn indexed_compound_assignment_reports_pending_analysis() {
+        let source = "fn f() { items: [2]int32 = [1, 2]; items[0] += 1; }";
+        let error = run(source).err().expect("unsupported operation accepted");
+        assert!(
+            format!("{error:#}")
+                .contains("indexed compound assignment analysis is not implemented")
+        );
+        let report = analyzer(source).analyze_collecting();
+        assert!(report.errors.iter().any(|d| {
+            d.message
+                .contains("indexed compound assignment analysis is not implemented")
+        }));
     }
     fn bad(source: &str, fragment: &str) {
         let report = analyzer(source).analyze_collecting();

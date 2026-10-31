@@ -274,23 +274,31 @@ where
                                     _ => unreachable!(),
                                 };
                                 let left = *bexpr.left;
-                                if !matches!(&left.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments.len() == 1)
-                                {
-                                    return Err(self.error(
-                                        "compound assignment requires a variable name",
-                                        line,
-                                        column,
-                                    ));
-                                }
-                                let right = Expression::at(
-                                    ExpressionKind::BinaryExpresison(BinaryExpression {
-                                        left: Box::new(left.clone()),
+                                if matches!(&left.kind, ExpressionKind::IndexAccess { .. }) {
+                                    StatementKind::IndexedCompoundAssignment {
+                                        target: left,
                                         operator,
-                                        right: bexpr.right,
-                                    }),
-                                    left.span,
-                                );
-                                StatementKind::Assignment { left, right }
+                                        value: *bexpr.right,
+                                    }
+                                } else {
+                                    if !matches!(&left.kind, ExpressionKind::QualifiedIdentifier(name) if name.segments.len() == 1)
+                                    {
+                                        return Err(self.error(
+                                            "compound assignment requires a variable name or indexed target",
+                                            line,
+                                            column,
+                                        ));
+                                    }
+                                    let right = Expression::at(
+                                        ExpressionKind::BinaryExpresison(BinaryExpression {
+                                            left: Box::new(left.clone()),
+                                            operator,
+                                            right: bexpr.right,
+                                        }),
+                                        left.span,
+                                    );
+                                    StatementKind::Assignment { left, right }
+                                }
                             }
                             _ => unreachable!(),
                         }
