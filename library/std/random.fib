@@ -1,0 +1,55 @@
+// OS-backed randomness for Linux x86-64. No userspace generator state.
+pub comp Error := enum { Io: int32, InvalidBound };
+pub comp Status := root::result::Result(void, Error);
+pub comp Uint64Result := root::result::Result(uint64, Error);
+
+// Fill the entire slice, retrying interruptions and short reads. An error may
+// leave a partially filled buffer. Empty slices do not issue a syscall.
+pub fn fill(buffer: uint8[]) Status {
+    filled: usize = 0;
+    while (filled < buffer.len) {
+        remaining := buffer[filled..];
+        // getrandom with flags=0 waits for the kernel RNG to initialize.
+        count := root::os::syscall3(318, root::memory::slice_data(remaining),
+            remaining.len as uint64, 0);
+        if count < 0 {
+            if count != -4 { return Status.Err(Error.Io((-count) as int32)); };
+        } else {
+            if count == 0 { return Status.Err(Error.Io(5)); };
+            filled = filled + (count as usize);
+        };
+    };
+    return Status.Ok;
+}
+
+// Decode bytes explicitly so the numeric API does not depend on host byte order.
+pub fn random_uint64() Uint64Result {
+    bytes: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
+    switch (fill(bytes)) {
+        when .Err(error) { return Uint64Result.Err(error); }
+        when .Ok {}
+    };
+    value: uint64 = 0;
+    i: usize = 0;
+    while (i < bytes.len) {
+        value = (value << 8) | (bytes[i] as uint64);
+        i = i + 1;
+    };
+    return Uint64Result.Ok(value);
+}
+
+// Uniform in [0, upper). Rejection sampling avoids modulo bias. A zero bound
+// is rejected without requesting entropy; one always returns zero.
+pub fn below(upper: uint64) Uint64Result {
+    if upper == 0 { return Uint64Result.Err(Error.InvalidBound); };
+    if upper == 1 { return Uint64Result.Ok(0); };
+    threshold := ((0 as uint64) - upper) % upper;
+    while (true) {
+        switch (random_uint64()) {
+            when .Err(error) { return Uint64Result.Err(error); }
+            when .Ok(value) {
+                if value >= threshold { return Uint64Result.Ok(value % upper); };
+            }
+        };
+    };
+}

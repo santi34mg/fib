@@ -1,0 +1,133 @@
+// Borrowed tagged arguments and allocation-free byte formatting.
+pub comp Arg := enum {
+    Bytes: const uint8[],
+    Signed: int64,
+    Unsigned: uint64,
+    Boolean: bool
+};
+pub comp Error := enum { InvalidFormat, ArgumentCount, BufferTooSmall, Io: int32 };
+pub comp FormatResult := root::result::Result(usize, Error);
+
+// Validate the entire template before invoking a writer.
+fn validate(template: const uint8[], count: usize) FormatResult {
+    i: usize = 0;
+    arguments: usize = 0;
+    while (i < template.len) {
+        byte := template[i];
+        if byte == 123 || byte == 125 {
+            if template.len - i < 2 { return FormatResult.Err(Error.InvalidFormat); };
+            next := template[i + 1];
+            if byte == 123 && next == 125 {
+                arguments = arguments + 1;
+            } else {
+                if byte != next { return FormatResult.Err(Error.InvalidFormat); };
+            };
+            i = i + 2;
+        } else {
+            i = i + 1;
+        };
+    };
+    if arguments != count { return FormatResult.Err(Error.ArgumentCount); };
+    return FormatResult.Ok(arguments);
+}
+
+fn write_integer(T: type, context: *T, writer: fn(*T, const uint8[]) FormatResult, magnitude: uint64, negative: bool) FormatResult {
+    buffer: uint8[21] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+    position: usize = 21;
+    remaining := magnitude;
+    while (true) {
+        position = position - 1;
+        buffer[position] = ((remaining % 10) as uint8) + 48;
+        remaining = remaining / 10;
+        if remaining == 0 { break; };
+    };
+    if negative {
+        position = position - 1;
+        buffer[position] = 45;
+    };
+    return writer(context, buffer[position..]);
+}
+
+fn write_arg(T: type, context: *T, writer: fn(*T, const uint8[]) FormatResult, argument: Arg) FormatResult {
+    switch (argument) {
+        when .Bytes(bytes) { return writer(context, bytes); }
+        when .Unsigned(value) { return write_integer(T, context, writer, value, false); }
+        when .Signed(value) {
+            // Avoid signed negation overflow for INT64_MIN.
+            if value < 0 { return write_integer(T, context, writer, ((-(value + 1)) as uint64) + 1, true); };
+            return write_integer(T, context, writer, value as uint64, false);
+        }
+        when .Boolean(value) {
+            if value { return writer(context, "true"); };
+            return writer(context, "false");
+        }
+    };
+}
+
+// {} consumes one argument; {{ and }} emit literal braces. No width, precision,
+// type specifiers or floating-point conversion. The writer must consume the full
+// borrowed chunk synchronously and return its length, or Err. Errors can leave
+// partial sink output, but invalid syntax/counts never invoke the writer.
+pub fn format_to(T: type, context: *T, writer: fn(*T, const uint8[]) FormatResult, template: const uint8[], values: const Arg[]) FormatResult {
+    switch (validate(template, values.len)) {
+        when .Err(error) { return FormatResult.Err(error); }
+        when .Ok(count) {}
+    };
+    i: usize = 0;
+    argument: usize = 0;
+    written: usize = 0;
+    while (i < template.len) {
+        start := i;
+        while (i < template.len && template[i] != 123 && template[i] != 125) { i = i + 1; };
+        switch (writer(context, template[start..i])) {
+            when .Err(error) { return FormatResult.Err(error); }
+            when .Ok(count) { written = written + count; }
+        };
+        if i < template.len {
+            if template[i] == 123 && template[i + 1] == 125 {
+                switch (write_arg(T, context, writer, values[argument])) {
+                    when .Err(error) { return FormatResult.Err(error); }
+                    when .Ok(count) { written = written + count; }
+                };
+                argument = argument + 1;
+            } else {
+                switch (writer(context, template[i..i + 1])) {
+                    when .Err(error) { return FormatResult.Err(error); }
+                    when .Ok(count) { written = written + count; }
+                };
+            };
+            i = i + 2;
+        };
+    };
+    return FormatResult.Ok(written);
+}
+
+comp Buffer := struct { destination: uint8[], position: usize, writing: bool };
+fn buffer_write(context: *Buffer, bytes: const uint8[]) FormatResult {
+    if bytes.len > (context*).destination.len - (context*).position {
+        return FormatResult.Err(Error.BufferTooSmall);
+    };
+    if (context*).writing {
+        i: usize = 0;
+        while (i < bytes.len) {
+            (context*).destination[(context*).position + i] = bytes[i];
+            i = i + 1;
+        };
+    };
+    (context*).position = (context*).position + bytes.len;
+    return FormatResult.Ok(bytes.len);
+}
+
+// Validate syntax, count and capacity before modifying destination. No NUL is
+// appended; the untouched tail remains unchanged. Template and byte arguments
+// must not overlap destination, and must remain unchanged throughout this call.
+pub fn format(destination: uint8[], template: const uint8[], values: const Arg[]) FormatResult {
+    buffer := Buffer { destination: destination, position: 0, writing: false };
+    switch (format_to(Buffer, buffer&, buffer_write, template, values)) {
+        when .Err(error) { return FormatResult.Err(error); }
+        when .Ok(count) {}
+    };
+    buffer.position = 0;
+    buffer.writing = true;
+    return format_to(Buffer, buffer&, buffer_write, template, values);
+}

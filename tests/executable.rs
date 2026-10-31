@@ -7,6 +7,64 @@ use fibc::{
 use std::process::Command;
 
 #[test]
+fn standard_random_executes() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("main.fib");
+    std::fs::write(
+        &source,
+        r#"
+fn main() int32 {
+    p: *uint8 = null;
+    switch (std::random::fill(std::memory::slice_from_parts(p, 0))) {
+        when .Ok {}
+        when .Err { return 1; }
+    };
+    switch (std::random::below(0)) {
+        when .Ok { return 2; }
+        when .Err(error) {
+            switch (error) {
+                when .InvalidBound {}
+                when .Io { return 3; }
+            };
+        }
+    };
+    switch (std::random::below(1)) {
+        when .Ok(value) { if value != 0 { return 4; }; }
+        when .Err { return 5; }
+    };
+    bytes: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
+    switch (std::random::fill(bytes[..])) {
+        when .Ok {}
+        when .Err { return 6; }
+    };
+    bounds: uint64[4] = [2, 10, 9223372036854775809, 18446744073709551615];
+    i: usize = 0;
+    while (i < bounds.len) {
+        n := 0;
+        while (n < 32) {
+            switch (std::random::below(bounds[i])) {
+                when .Ok(value) { if value >= bounds[i] { return 7; }; }
+                when .Err { return 8; }
+            };
+            n = n + 1;
+        };
+        i = i + 1;
+    };
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+    let plan = BuildPlan::single_file(&source)
+        .unwrap()
+        .with_standard_library(fibc::standard_library::StandardLibrary::at(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("library"),
+        ));
+    run_pipeline(&plan, PipelineGoal::Binary).unwrap();
+    assert_eq!(Command::new(&plan.output).status().unwrap().code(), Some(0));
+}
+
+#[test]
 fn single_file_cli_compiles_links_and_runs() {
     for status in [0, 42, 127] {
         let directory = tempfile::tempdir().unwrap();

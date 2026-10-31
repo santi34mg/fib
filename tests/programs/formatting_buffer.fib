@@ -1,0 +1,96 @@
+comp fmt := std::formatting;
+
+fn matches(destination: uint8[], template: const uint8[], values: const fmt::Arg[], expected: const uint8[]) bool {
+    switch (fmt::format(destination, template, values)) {
+        when .Err(error) { return false; }
+        when .Ok(count) { if count != expected.len { return false; }; }
+    };
+    i: usize = 0;
+    while (i < expected.len) {
+        if destination[i] != expected[i] { return false; };
+        i = i + 1;
+    };
+    while (i < destination.len) {
+        if destination[i] != 165 { return false; };
+        i = i + 1;
+    };
+    return true;
+}
+
+// Each failed call must preserve even the prefix it could have written.
+fn rejected(template: const uint8[], values: const fmt::Arg[], expected: int32) bool {
+    buffer: uint8[8] = [165,165,165,165,165,165,165,165];
+    switch (fmt::format(buffer[..], template, values)) {
+        when .Ok(count) { return false; }
+        when .Err(error) {
+            switch (error) {
+                when .InvalidFormat { if expected != 1 { return false; }; }
+                when .ArgumentCount { if expected != 2 { return false; }; }
+                when .BufferTooSmall { if expected != 3 { return false; }; }
+                when .Io(errno) { return false; }
+            };
+        }
+    };
+    i: usize = 0;
+    while (i < buffer.len) {
+        if buffer[i] != 165 { return false; };
+        i = i + 1;
+    };
+    return true;
+}
+
+fn main() int32 {
+    none: fmt::Arg[0] = [];
+    values: fmt::Arg[9] = [
+        fmt::Arg.Signed(-9223372036854775808),
+        fmt::Arg.Signed(9223372036854775807),
+        fmt::Arg.Signed(0),
+        fmt::Arg.Unsigned(0),
+        fmt::Arg.Unsigned(18446744073709551615),
+        fmt::Arg.Boolean(true),
+        fmt::Arg.Boolean(false),
+        fmt::Arg.Bytes("{raw}\0"),
+        fmt::Arg.Bytes("")
+    ];
+    buffer: uint8[96] = [165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,
+        165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,
+        165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,
+        165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,
+        165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,
+        165,165,165,165,165,165,165,165,165,165,165,165,165,165,165,165];
+    if !matches(buffer[..], "{{{}}}|{}|{}|{}|{}|{}|{}|{}|{}\0", values[..],
+        "{-9223372036854775808}|9223372036854775807|0|0|18446744073709551615|true|false|{raw}\0|\0") { return 1; };
+    exact: uint8[4] = [165,165,165,165];
+    if !matches(exact[..], "{{}}\0x", none[..], "{}\0x") { return 2; };
+    tail: uint8[8] = [165,165,165,165,165,165,165,165];
+    if !matches(tail[..], "hello", none[..], "hello") { return 3; };
+    if !matches(tail[..0], "", none[..], "") { return 4; };
+    empty: uint8[0] = [];
+    if !matches(empty[..], "", none[..], "") { return 5; };
+    null_destination := std::memory::slice_from_parts(null as *uint8, 0);
+    if !matches(null_destination, "", none[..], "") { return 6; };
+    empty_value: fmt::Arg[1] = [fmt::Arg.Bytes("")];
+    if !matches(null_destination, "{}", empty_value[..], "") { return 7; };
+    switch (fmt::format(null_destination, "x", none[..])) {
+        when .Ok(count) { return 8; }
+        when .Err(error) {
+            switch (error) {
+                when .BufferTooSmall {}
+                when .InvalidFormat { return 9; }
+                when .ArgumentCount { return 10; }
+                when .Io(errno) { return 11; }
+            };
+        }
+    };
+    if !rejected("123456789", none[..], 3) ||
+        !rejected("prefix {}", values[..1], 3) ||
+        !rejected("prefix {", none[..], 1) ||
+        !rejected("prefix }", none[..], 1) ||
+        !rejected("prefix {x}", none[..], 1) ||
+        !rejected("prefix }{", none[..], 1) ||
+        !rejected("{{}", none[..], 1) ||
+        !rejected("prefix {}", none[..], 2) ||
+        !rejected("prefix", values[..1], 2) ||
+        !rejected("{}{}", values[..1], 2) { return 12; };
+    return 0;
+}

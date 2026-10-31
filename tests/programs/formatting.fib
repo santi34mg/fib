@@ -9,6 +9,7 @@ fn invalid(format: const uint8[], count_error: bool) bool {
                 when .InvalidFormat { return !count_error; }
                 when .ArgumentCount { return count_error; }
                 when .Io(errno) { return false; }
+                when .BufferTooSmall { return false; }
             };
         }
     };
@@ -26,6 +27,7 @@ fn main() int32 {
                 when .ArgumentCount {}
                 when .InvalidFormat { return 3; }
                 when .Io(errno) { return 4; }
+                when .BufferTooSmall { return 17; }
             };
         }
     };
@@ -36,6 +38,7 @@ fn main() int32 {
                 when .Io(errno) { if errno != 9 { return 6; }; }
                 when .InvalidFormat { return 7; }
                 when .ArgumentCount { return 8; }
+                when .BufferTooSmall { return 18; }
             };
         }
     };
