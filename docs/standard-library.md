@@ -150,15 +150,61 @@ alias. `unchecked_deref` skips its null check, while `slice_from_parts` and
 `slice_data` preserve the element type and readonly qualifier. Neither allocation
 validity nor view lifetime is guaranteed by these operations.
 
-## Formatted output
+## Formatting and output
+
+`std::formatting` owns tagged arguments, template validation, integer conversion
+and the shared allocation-free renderer. Its base byte-string API is:
+
+```fib
+std::formatting::format(destination: uint8[], template: const uint8[], values: const Arg[])
+```
+
+It returns `FormatResult = Result(usize, Error)`, with the byte count on success.
+The formatted string is `destination[..count]`; no terminating NUL is appended,
+and unused destination bytes are unchanged. Syntax, argument count and capacity
+are checked before modifying destination, including on failure. Errors are
+`InvalidFormat`, `ArgumentCount` and `BufferTooSmall`. Template and `Arg.Bytes`
+storage must not overlap destination and must remain unchanged during the call.
+Byte strings need not be UTF-8 and may contain NUL bytes. Empty output accepts an
+empty, including null-backed, destination.
+
+```fib
+comp formatting := std::formatting;
+fn main() int32 {
+    buffer: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
+    values: formatting::Arg[1] = [formatting::Arg.Unsigned(42)];
+    switch (formatting::format(buffer, "id={}", values)) {
+        when .Ok(count) {
+            switch (std::io::print(buffer[..count])) {
+                when .Ok { return 0; }
+                when .Err { return 1; }
+            };
+        }
+        when .Err { return 1; }
+    };
+}
+```
+
+`format_to(T, context: *T, writer: fn(*T, const uint8[]) FormatResult,
+template: const uint8[], values: const Arg[])` renders to a custom sink. The
+writer must synchronously consume each complete borrowed chunk and return its
+length or an error; it must not retain the slice. Syntax/count errors never call
+the writer, while writer errors can leave partial output. `Error.Io(errno)` is
+available for I/O sinks. `format` uses the same renderer with a capacity-checking
+buffer sink; it neither allocates nor performs I/O.
 
 `std::io::print(bytes: const uint8[])` writes literal bytes to stdout.
 `printf(format: const uint8[], values: const Arg[])` formats to stdout;
 `fprintf(fd: int32, format: const uint8[], values: const Arg[])` selects a
 descriptor. All return `PrintResult = Result(usize, PrintError)`, with the number
-of bytes written on success. `Arg` variants are `Bytes: const uint8[]`,
+of bytes written on success. `io::Arg`, `io::PrintError` and `io::PrintResult`
+remain aliases of `formatting::Arg`, `formatting::Error` and
+`formatting::FormatResult`. Exhaustive switches on the former `PrintError` must
+now include `BufferTooSmall`, though the built-in I/O sink does not produce it.
+`Arg` variants are `Bytes: const uint8[]`,
 `Signed: int64`, `Unsigned: uint64` and `Boolean: bool`. Arguments are passed in
-an explicitly typed array and sliced, as in the [formatting sample](../samples/formatting.fib).
+an explicitly typed array, which implicitly converts to the expected slice type;
+explicit slicing also remains valid, as in the [formatting sample](../samples/formatting.fib).
 
 Each `{}` consumes one argument and uses its default representation: raw bytes,
 decimal integers or `true`/`false`. `{{` and `}}` emit literal braces. Syntax and
@@ -170,8 +216,42 @@ are not implemented. Integer formatting includes the full int64/uint64 range.
 `write_all(fd: int32, bytes: const uint8[])` retries interrupted and short writes;
 empty writes make no syscall. Other errors return `PrintError.Io(errno)`, with
 positive errno; a zero-progress write reports EIO (5). I/O errors can leave
-partial output. Formatting writes segments directly, uses stack storage for
-integers and performs no allocation. Calls are not atomic across segments.
+partial output. `printf` and `fprintf` delegate to `formatting::format_to` with
+an I/O writer adapter. Formatting writes segments directly, uses stack storage
+for integers and performs no allocation. Calls are not atomic across segments.
+
+## Randomness
+
+`std::random` provides OS-backed randomness on Linux x86-64 using `getrandom`
+with flags zero, waiting for kernel RNG initialization. There is no predictable
+fallback, userspace seed, shared generator state or allocation.
+
+- `fill(buffer: uint8[]) Status` fills the complete buffer, retrying EINTR and
+  short reads. Empty slices succeed without a syscall. Errors may leave partial
+  contents; zero progress reports EIO (5).
+- `uint64_value() Uint64Result` returns a uniformly random full-width `uint64`.
+- `below(upper: uint64) Uint64Result` samples uniformly from `[0, upper)` using
+  rejection sampling rather than biased modulo reduction. Zero returns
+  `Error.InvalidBound`; one returns zero without requesting entropy.
+
+`Status` aliases `Result(void, Error)` and `Uint64Result` aliases
+`Result(uint64, Error)`. `Error.Io(errno)` carries a positive Linux errno,
+including ENOSYS when the syscall is unavailable. Other targets have the same
+explicit syscall-emission restriction as `std::os`. No deterministic PRNG or
+floating-point sampling API is provided.
+
+```fib
+fn main() std::result::Result(int32, std::random::Error) {
+    switch (std::random::below(6)) {
+        when .Ok(value) {
+            return std::result::Result(int32, std::random::Error).Ok((value + 1) as int32);
+        }
+        when .Err(error) {
+            return std::result::Result(int32, std::random::Error).Err(error);
+        }
+    };
+}
+```
 
 ## Results
 
@@ -233,6 +313,52 @@ regions and traps before writing if the destination is shorter than the source.
 Empty operations do not access storage, including for null-backed empty slices.
 These ordinary Fib functions use checked byte loops; they do not convert element
 types. See [memory sample](../samples/memory.fib).
+
+### Page allocator
+
+`std::memory::create_page_alloc()` returns a public `Allocator` with a context
+pointer and `alloc`/`free` callbacks. It uses Linux x86-64 anonymous private
+read/write mappings, independently of the `sbrk` allocator below. Its context is
+null and ignored; allocator values can be copied without sharing mutable state.
+
+- `allocator.alloc(allocator.context, size, alignment)` returns
+  `Result(*uint8, AllocError)`. Alignment must be a positive power of two; alignments
+  larger than the page size are supported. The requested bytes are writable and
+  initially zero on this implementation, but the general allocator contract is
+  uninitialized storage.
+- `allocator.free(allocator.context, pointer as *void)` returns
+  `Result(void, AllocError)`. Null succeeds without a syscall. Other pointers must
+  be original live allocations from this page allocator, not interior pointers,
+  pointers from `alloc(T, n)`, or already-freed pointers. A successful release
+  unmaps the storage immediately; all borrowed views expire.
+
+Private metadata before each returned allocation stores the mapping base and
+length, so free needs no size parameter. Requested size, metadata and alignment
+padding arithmetic are checked before mapping. `AllocError.InvalidAlignment` rejects
+zero/non-power-of-two alignment; `NotEnoughMemory` reports zero size, arithmetic
+overflow or kernel ENOMEM. Other mapping failures report `MapFailed`; release
+failures report `UnmapFailed`, leaving metadata intact so release can be retried.
+Alignment validation takes precedence over zero-size validation. The former
+placeholder `NotImplemented` error variant has been removed.
+
+```fib
+fn main() int32 {
+    allocator := std::memory::create_page_alloc();
+    switch (allocator.alloc(allocator.context, 100, 16)) {
+        when .Err { return 1; }
+        when .Ok(pointer) {
+            bytes := std::memory::slice_from_parts(pointer, 100);
+            bytes[0] = 42;
+            switch (allocator.free(allocator.context, pointer as *void)) {
+                when .Ok { return 0; }
+                when .Err { return 1; }
+            };
+        }
+    };
+}
+```
+
+### Typed heap allocator
 
 `std::memory::alloc(T, n: usize)` returns a writable `T[]` of length `n`.
 Zero count, overflow or allocation failure returns an empty slice. Storage is

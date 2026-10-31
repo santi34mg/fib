@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Complete `std::memory::create_page_alloc()` with aligned mmap allocation, checked size arithmetic, per-allocation mapping metadata and munmap release. Expose `Allocator`/`AllocError`, replace `NotImplemented` with alignment/release errors, and recognize all raw Linux errno returns in `std::os::mmap`.
+
+- Move tagged arguments, brace validation and integer rendering into `std::formatting`. Add allocation-free `format(destination, template, values)` for byte strings, validating capacity before writes, and shared callback-based `format_to`. Keep `std::io` formatting entry points and type aliases; exhaustive `PrintError` switches now require the added `BufferTooSmall` variant.
+
+- Allow implicit fixed-array `T[N]` to slice `T[]` conversion in expected-type contexts, borrowing original storage and preserving readonly permissions.
+
+- Add Linux x86-64 `std::random` with OS-backed byte filling, full-width uint64 values and unbiased bounded sampling, explicit errors and EINTR/short-read handling.
+
 - Allow implicit `T` to `const T` conversion for fixed arrays, alongside pointers and slices. Nested qualifiers remain unchanged and reverse conversions remain forbidden.
 
 - Remove the `char` primitive; character literals are `uint8` and reject values above 255. String literals implicitly form `const uint8[]` views in typed contexts, including function arguments, without `[..]`.

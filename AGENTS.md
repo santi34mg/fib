@@ -85,6 +85,20 @@ empty aggregate; void function returns remain resultless and `*void` stays opaqu
 
 ## Standard library
 
+`std::memory::create_page_alloc()` returns a public `Allocator` with context,
+allocation and free callbacks. It uses mmap/munmap with private mapping headers,
+checked sizes and positive power-of-two alignment (including over-page values).
+Zero size fails; null free succeeds. Free requires an original live pointer.
+This is separate from the typed sbrk allocator. `AllocError` exposes allocation,
+alignment, mapping and release failures; no `NotImplemented` placeholder remains.
+
+`std::formatting` owns tagged `Arg` values, template validation and rendering.
+`format(destination, template, values)` writes byte strings into caller-owned
+`uint8[]` storage after syntax/count/capacity checks; no allocation or NUL suffix.
+`format_to` shares rendering with synchronous writer callbacks. `std::io` retains
+literal output, write retries and thin `printf`/`fprintf` adapters; its formatting
+types alias `std::formatting`, including the `BufferTooSmall` error variant.
+
 `library/std` contains ordinary Fib sources; `library/sysroot.toml` pins compiler
 version and compiler-declaration revision. CLI/build/LSP plans load the installed
 sources before parsing. Use `--sysroot library` or `FIB_SYSROOT="$PWD/library"` for
@@ -143,6 +157,11 @@ Value-returning `comp fn` declarations have normal type/flow checks, but calls
 requiring value computation report an explicit not-implemented error.
 Type-level `const *T`, `const T[]` and `const T[N]` qualify elements independently of binding
 `const`; qualifiers are layer-local and compatibility does not discard them.
+Fixed arrays `T[N]` implicitly form full slices in expected `T[]` contexts,
+including declarations, assignments, arguments, returns and aggregate fields.
+Conversion borrows backing storage without copying or extending its lifetime;
+readonly backing storage cannot form a writable slice. Array literals receive
+the expected slice element type. Explicit array-to-slice `as` casts remain rejected.
 Legacy `@` types, `var`, `for`, dot-index and imports
 are not the current working grammar. Parsing is not semantic/runtime support.
 See [parser details](docs/agents/src/frontend/parser.md). Samples use current

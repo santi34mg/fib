@@ -19,9 +19,22 @@ Character literals have type `uint8` (values above 255 are rejected); `char` is
 no longer a prelude type. String literals retain readonly fixed byte arrays by
 default and implicitly form `const uint8[]` in a matching expected-type context.
 
-The source std I/O module implements literal output and tagged-argument `{}`
-formatting, with escaped braces, format validation before writes, full-range
-64-bit integer conversion and write loops handling short writes and EINTR.
+The source `std::formatting` module owns tagged-argument `{}` formatting,
+escaped braces, template validation and full-range 64-bit integer conversion.
+`format` writes into caller-owned byte slices after syntax/count/capacity checks;
+`format_to` shares the renderer with synchronous callback sinks. The I/O module
+implements literal output and delegates formatted output to that renderer, with
+write loops handling short writes and EINTR. Its formatting types remain aliases.
+
+The source `std::random` module uses Linux x86-64 `getrandom` for byte filling,
+full-width uint64 values and rejection-sampled bounded integers. It retries EINTR
+and short reads, propagates OS errors and rejects zero bounds without a syscall.
+
+The source `std::memory::create_page_alloc` implements stateless Linux mmap
+allocation and munmap release through public allocator callbacks. Private headers
+retain mapping lengths; checked power-of-two alignment includes over-page values.
+It is separate from the typed sbrk heap allocator, and requires original live
+pointers for release. Raw mmap errors use the full Linux negative-errno range.
 
 The source std memory module implements byte-slice `memset` and `memcpy` with
 checked loops. Copy accepts readonly sources and checks destination capacity
@@ -150,6 +163,9 @@ addresses and slices into global storage. No runtime startup initializer or `sta
 keyword is needed. Ordinary initializer calls and runtime binding reads are rejected.
 Value-returning `comp fn` definitions are type/flow checked; evaluation requests
 report "not implemented". Existing bounded type-returning computation is preserved.
+Fixed arrays implicitly form full slices in expected slice-type contexts,
+including arguments, declarations and returns, preserving backing-storage readonly
+permissions. Array literals receive the expected slice element type.
 Slices borrow original storage without extending its lifetime. Dynamic array reads
 and slicing require initialized backing arrays; bounds guards precede offset casts.
 ## Map
