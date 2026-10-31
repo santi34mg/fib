@@ -1050,6 +1050,7 @@ fn file_backed_mapping_and_short_reads_preserve_kernel_results() {
 }
 
 // Enumerate the installed tree so new std modules participate in mocked sysroots.
+#[cfg(feature = "llvm")]
 fn page_allocator_sysroot(source: &Path, destination: &Path) {
     std::fs::create_dir_all(destination).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
@@ -1063,6 +1064,7 @@ fn page_allocator_sysroot(source: &Path, destination: &Path) {
     }
 }
 
+#[cfg(feature = "llvm")]
 fn page_allocator_input(source: &str) -> (tempfile::TempDir, BuildPlan) {
     let (directory, mut plan) = input(source);
     let installed = directory.path().join("sysroot");
@@ -1094,14 +1096,38 @@ fn page_allocator_input(source: &str) -> (tempfile::TempDir, BuildPlan) {
 
 #[test]
 fn page_allocator_analyzes_and_lowers() {
-    let (_directory, plan) = page_allocator_input(include_str!("programs/page_allocator.fib"));
+    // The checked-in program uses only the public installed std API, so it also
+    // works in the editor and outside the instrumented test sysroot.
+    let (_directory, plan) = input(include_str!("programs/page_allocator.fib"));
     fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Ir).unwrap();
+}
+
+#[cfg(feature = "llvm")]
+fn instrumented_page_allocator_program() -> String {
+    let source = include_str!("programs/page_allocator.fib");
+    let allocation = "bytes := memory::slice_from_parts(pointer, size);";
+    let released = "return true;";
+    assert_eq!(source.matches(allocation).count(), 1);
+    assert_eq!(source.matches(released).count(), 1);
+    source
+        .replace(
+            allocation,
+            &format!(
+                r#"
+        // Preserve only the numeric address after free; never dereference it.
+        address := std::os::test_address(pointer);
+        if !std::os::test_alignment(pointer, align) {{ return false; }};
+        {allocation}
+    "#
+            ),
+        )
+        .replace(released, "return std::os::test_unmapped(address, size);")
 }
 
 #[test]
 #[cfg(feature = "llvm")]
 fn page_allocator_executes_and_unmaps() {
-    let (_directory, plan) = page_allocator_input(include_str!("programs/page_allocator.fib"));
+    let (_directory, plan) = page_allocator_input(&instrumented_page_allocator_program());
     fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
     let output = std::process::Command::new(&plan.output).output().unwrap();
     assert_eq!(output.status.code(), Some(0), "{output:?}");
