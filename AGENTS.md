@@ -71,7 +71,8 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   Full production Fib ABI, broader external C types/targets and representations
   remain unfinished.
 - `build --single-file PATH` compiles the scalar/control-flow subset through LLVM,
-  object and host `cc` linking. The narrow `build --build-file PATH` route also works; default discovery, `run` and `test` error explicitly.
+  object and host `cc` linking. Bare `build` discovers `<cwd>/build.fib`;
+  the narrow `build --build-file PATH` route also works. `run` and `test` error explicitly.
   Old positional-file, include-root, check/emit/link/release flags do not exist.
 
 See [scalar semantics](docs/scalar-semantics.md) for wrapping, casts, traps and IEEE rules. Typed numeric values require explicit conversions; no implicit widening is performed.

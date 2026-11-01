@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bare `build` discovers exactly `<cwd>/build.fib` and uses the existing
+  interpreted build-file pipeline, with actionable errors when discovery fails.
+
 - `export-symbols --single-file PATH` / `--build-file PATH` exports deterministic
   JSON for unrestricted public top-level declarations, signatures and alias
   targets without requiring an executable entry or LLVM.
