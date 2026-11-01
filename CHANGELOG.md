@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Native LSP completion for in-scope parameters/locals and struct fields, including
+  partial and unfinished expressions, UTF-16 positions and `.` triggering.
 - Build-file IR execution of branches, loops, block arguments and direct helpers,
   with integer/boolean values, computed byte arguments, transactional build effects
   and explicit step/call-depth limits.

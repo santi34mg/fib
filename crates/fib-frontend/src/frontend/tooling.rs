@@ -16,7 +16,7 @@ use super::{
     semantic_type::{SemanticType, SemanticTypes},
     source::SourceProvider,
     tokenizer::Tokenizer,
-    tokens::{Literal, Token, TokenKind, builtin::BuiltinType},
+    tokens::{Literal, Punctuation, Token, TokenKind, builtin::BuiltinType},
 };
 use crate::{
     CompilationUnit,
@@ -108,6 +108,33 @@ pub struct DocumentAnalysis {
     pub semantic_tokens: Vec<u32>,
     pub diagnostics: Vec<EditorDiagnostic>,
     pub completions: BTreeMap<String, Vec<Completion>>,
+    pub completion_context: Option<std::sync::Arc<CompletionContext>>,
+}
+
+/// Immutable project inputs from the same analysis generation as the document.
+#[derive(Debug)]
+pub struct CompletionContext {
+    inputs: std::sync::Arc<CompletionInputs>,
+    path: PathBuf,
+}
+
+#[derive(Debug)]
+struct CompletionInputs {
+    plan: BuildPlan,
+    sources: HashMap<PathBuf, String>,
+    build_file: bool,
+}
+
+struct SnapshotSources<'a>(&'a HashMap<PathBuf, String>);
+impl SourceProvider for SnapshotSources<'_> {
+    fn read(&self, path: &Path) -> std::io::Result<String> {
+        self.0.get(path).cloned().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "source unavailable in analysis snapshot",
+            )
+        })
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -117,7 +144,7 @@ pub struct Completion {
     pub detail: String,
 }
 
-/// Qualified-name completion tolerates an unfinished expression and UTF-16 positions.
+/// Semantic completion tolerates unfinished expressions and UTF-16 positions.
 pub fn complete(document: &DocumentAnalysis, position: Position) -> Vec<Completion> {
     let Some(line) = document.source.split('\n').nth(position.line as usize) else {
         return vec![];
@@ -137,9 +164,13 @@ pub fn complete(document: &DocumentAnalysis, position: Position) -> Vec<Completi
     let index = SourceIndex::new(&document.source);
     if document.tokens.iter().any(|token| {
         let range = index.token_range(token);
-        matches!(token.kind, TokenKind::Comment | TokenKind::Literal(_))
-            && (range.start.line, range.start.character) <= (position.line, position.character)
-            && (position.line, position.character) < (range.end.line, range.end.character)
+        matches!(
+            token.kind,
+            TokenKind::Comment | TokenKind::Literal(_) | TokenKind::Error(_)
+        ) && (range.start.line, range.start.character) <= (position.line, position.character)
+            && ((position.line, position.character) < (range.end.line, range.end.character)
+                || (matches!(token.kind, TokenKind::Comment | TokenKind::Error(_))
+                    && position == range.end))
     }) {
         return vec![];
     }
@@ -147,17 +178,114 @@ pub fn complete(document: &DocumentAnalysis, position: Position) -> Vec<Completi
     let start = prefix
         .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
         .map_or(0, |i| i + prefix[i..].chars().next().unwrap().len_utf8());
-    let Some((namespace, partial)) = prefix[start..].rsplit_once("::") else {
+    if let Some((namespace, partial)) = prefix[start..].rsplit_once("::") {
+        return document
+            .completions
+            .get(namespace)
+            .into_iter()
+            .flatten()
+            .filter(|item| item.label.starts_with(partial))
+            .cloned()
+            .collect();
+    }
+    let field = prefix[..start].trim_end().ends_with('.');
+    let key = completion_key(
+        field,
+        position.line,
+        line[..start].encode_utf16().count() as u32,
+    );
+    let partial = &prefix[start..];
+    if let Some(items) = document.completions.get(&key) {
+        return items
+            .iter()
+            .filter(|item| item.label.starts_with(partial))
+            .cloned()
+            .collect();
+    }
+    let Some(context) = &document.completion_context else {
         return vec![];
     };
-    document
-        .completions
-        .get(namespace)
-        .into_iter()
-        .flatten()
-        .filter(|item| item.label.starts_with(partial))
-        .cloned()
-        .collect()
+    // Repair only the requested expression. Diagnostics still use the original
+    // source; this private query AST can never enter compilation or lowering.
+    let line_offset = document
+        .source
+        .split_inclusive('\n')
+        .take(position.line as usize)
+        .map(str::len)
+        .sum::<usize>();
+    let cursor = line_offset + offset;
+    let end = document.source[cursor..]
+        .char_indices()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+        .map_or(document.source.len(), |(i, _)| cursor + i);
+    let mut source = document.source.clone();
+    source.replace_range(line_offset + start..end, "__fib_completion_probe");
+    // A common editing state is a missing terminator and unclosed function/body.
+    // Try the intact suffix first, then a terminated prefix with balanced delimiters.
+    let probe_end = line_offset + start + "__fib_completion_probe".len();
+    let mut candidates = vec![source.clone()];
+    if source[probe_end..].trim_start().starts_with('}') {
+        let mut terminated = source.clone();
+        terminated.insert(probe_end, ';');
+        candidates.push(terminated);
+    }
+    source.truncate(probe_end);
+    let mut delimiters = Vec::new();
+    for token in Tokenizer::new(&source) {
+        match token.kind {
+            TokenKind::Punctuation(Punctuation::OpeningCurlyBrace) => delimiters.push('}'),
+            TokenKind::Punctuation(Punctuation::OpeningParenthesis) => delimiters.push(')'),
+            TokenKind::Punctuation(Punctuation::OpeningSquareBrace) => delimiters.push(']'),
+            TokenKind::Punctuation(
+                Punctuation::ClosingCurlyBrace
+                | Punctuation::ClosingParenthesis
+                | Punctuation::ClosingSquareBrace,
+            ) => {
+                delimiters.pop();
+            }
+            _ => {}
+        }
+    }
+    while delimiters.last().is_some_and(|c| *c != '}') {
+        source.push(delimiters.pop().unwrap());
+    }
+    source.push(';');
+    while let Some(delimiter) = delimiters.pop() {
+        source.push(delimiter);
+        if delimiter == '}' && !delimiters.is_empty() {
+            source.push(';');
+        }
+    }
+    candidates.push(source);
+    for source in candidates {
+        let mut sources = context.inputs.sources.clone();
+        sources.insert(context.path.clone(), source);
+        let result = analyze_plan_inner(
+            &context.inputs.plan,
+            &SnapshotSources(&sources),
+            context.inputs.build_file,
+            false,
+        );
+        if let Some(items) = result
+            .documents
+            .get(&context.path)
+            .and_then(|d| d.completions.get(&key))
+        {
+            return items
+                .iter()
+                .filter(|item| item.label.starts_with(partial))
+                .cloned()
+                .collect();
+        }
+    }
+    vec![]
+}
+
+fn completion_key(field: bool, line: u32, character: u32) -> String {
+    format!(
+        "{}:{line}:{character}",
+        if field { "field" } else { "local" }
+    )
 }
 #[derive(Default, Debug)]
 pub struct ProjectAnalysis {
@@ -180,6 +308,7 @@ impl ProjectAnalysis {
                 tokens,
                 diagnostics: Vec::new(),
                 completions: BTreeMap::new(),
+                completion_context: None,
             }
         });
         document.diagnostics.push(EditorDiagnostic {
@@ -240,6 +369,15 @@ pub fn analyze_plan(
     sources: &dyn SourceProvider,
     build_file: bool,
 ) -> ProjectAnalysis {
+    analyze_plan_inner(plan, sources, build_file, true)
+}
+
+fn analyze_plan_inner(
+    plan: &BuildPlan,
+    sources: &dyn SourceProvider,
+    build_file: bool,
+    retain_context: bool,
+) -> ProjectAnalysis {
     let mut output = ProjectAnalysis::default();
     let prepared = match plan.prepare() {
         Ok(plan) => plan,
@@ -254,6 +392,7 @@ pub fn analyze_plan(
     let mut units = Vec::new();
     let mut roles = HashMap::<FileId, HashMap<Span, &'static str>>::new();
     let mut unavailable = std::collections::HashSet::new();
+    let mut snapshot_sources = HashMap::new();
     for file in &plan.files {
         let source = match sources.read(&file.path) {
             Ok(source) => source,
@@ -264,6 +403,9 @@ pub fn analyze_plan(
             }
         };
         let tokens = Tokenizer::new(&source).collect::<Vec<_>>();
+        if retain_context {
+            snapshot_sources.insert(file.path.clone(), source.clone());
+        }
         let mut parser = Parser::with_source(tokens.clone().into_iter(), &file.path, &source);
         let parsed = parser.parse();
         let syntax_roles = parser.name_sites.into_iter().collect::<HashMap<_, _>>();
@@ -290,6 +432,7 @@ pub fn analyze_plan(
                 semantic_tokens,
                 diagnostics,
                 completions: BTreeMap::new(),
+                completion_context: None,
             },
         );
         roles.insert(file.id, syntax_roles);
@@ -304,6 +447,19 @@ pub fn analyze_plan(
         }
     };
     apply_report(&mut output, plan, report, roles);
+    if retain_context {
+        let inputs = std::sync::Arc::new(CompletionInputs {
+            plan: plan.clone(),
+            sources: snapshot_sources,
+            build_file,
+        });
+        for (path, document) in &mut output.documents {
+            document.completion_context = Some(std::sync::Arc::new(CompletionContext {
+                inputs: inputs.clone(),
+                path: path.clone(),
+            }));
+        }
+    }
     output
 }
 
@@ -318,6 +474,25 @@ fn apply_report(
             continue;
         };
         let symbols = &report.symbols;
+        let index = SourceIndex::new(&document.source);
+        for ((owner, span), bindings) in &report.lexical_completions {
+            if *owner != file.id {
+                continue;
+            }
+            let position = index.position(*span);
+            let items = bindings
+                .keys()
+                .map(|name| Completion {
+                    label: name.clone(),
+                    kind: 6,
+                    detail: "lexical binding".into(),
+                })
+                .collect();
+            document.completions.insert(
+                completion_key(false, position.line, position.character),
+                items,
+            );
+        }
         let mut paths: BTreeMap<String, FileId> = symbols
             .files_by_name
             .iter()
@@ -408,6 +583,8 @@ fn apply_report(
             continue;
         };
         let mut classifier = Classifier {
+            completions: &mut document.completions,
+            index: SourceIndex::new(&document.source),
             roles: roles.entry(file.id).or_default(),
             tokens: &document.tokens,
             types: &report.types,
@@ -439,6 +616,8 @@ fn apply_report(
 }
 
 struct Classifier<'a> {
+    completions: &'a mut BTreeMap<String, Vec<Completion>>,
+    index: SourceIndex<'a>,
     roles: &'a mut HashMap<Span, &'static str>,
     tokens: &'a [Token],
     types: &'a SemanticTypes,
@@ -538,6 +717,29 @@ impl walk::Visitor for Classifier<'_> {
         Ok(())
     }
     fn expression(&mut self, node: &mut Expression) -> anyhow::Result<()> {
+        if let ExpressionKind::ExprAcess { expr, member, .. } = &node.kind
+            && let (Some(span), Some(info)) = (member.source_span, expr.annotation.resolved)
+            && info.type_value.is_none()
+        {
+            let mut ty = info.ty;
+            if let Ok((SemanticType::Pointer(inner), _)) = self.types.container(ty) {
+                ty = *inner;
+            }
+            if let Ok((SemanticType::Struct(fields), _)) = self.types.container(ty) {
+                let position = self.index.position(span.into());
+                self.completions.insert(
+                    completion_key(true, position.line, position.character),
+                    fields
+                        .iter()
+                        .map(|field| Completion {
+                            label: field.spelling.clone(),
+                            kind: 5,
+                            detail: "struct field".into(),
+                        })
+                        .collect(),
+                );
+            }
+        }
         if let ExpressionKind::ExprAcess { member, .. } = &node.kind
             && let (Some(span), Some(info)) = (member.source_span.map(Span::from), member.resolved)
         {
@@ -644,6 +846,115 @@ mod tests {
             .iter()
             .map(|d| d.diagnostic.message.as_str())
             .collect()
+    }
+
+    fn suggestions(marked: &str) -> Vec<Completion> {
+        let cursor = marked.find('|').unwrap();
+        let source = marked.replacen('|', "", 1);
+        let prefix = &marked[..cursor];
+        let position = Position {
+            line: prefix.bytes().filter(|b| *b == b'\n').count() as u32,
+            character: prefix.rsplit('\n').next().unwrap().encode_utf16().count() as u32,
+        };
+        complete(&analyze(&source), position)
+    }
+
+    #[test]
+    fn completion_uses_lexical_scope_and_declaration_order() {
+        let items =
+            suggestions("fn f(parameter: int32) { local_value := 42; loc|al_value; later := 1; }");
+        assert_eq!(
+            items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
+            ["local_value"]
+        );
+        assert_eq!(
+            suggestions("fn f(parameter: int32) { par|ameter; }")[0].label,
+            "parameter"
+        );
+        let items = suggestions(
+            "fn other(hidden: int32) {} fn f(parameter: int32) { if (true) { inner := 1; }; outer := 2; | later := 3; }",
+        );
+        let labels = items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>();
+        assert_eq!(labels, ["outer", "parameter"]);
+        assert!(suggestions("fn f() { later|; later := 3; }").is_empty());
+        assert!(suggestions("fn f(outer: int32) { fn inner() { out|; } }").is_empty());
+    }
+
+    #[test]
+    fn completion_handles_incomplete_input_and_utf16() {
+        for source in [
+            "fn f(parameter: int32) { local_value := 42; local_v|",
+            "fn f(parameter: int32) { local_value := 42; local_v| }",
+            "fn f(parameter: int32) { local_value := 42; s := \"😀\"; local_v|; }",
+            "fn f(parameter: int32) {\r\n local_value := 42;\r\n local_v|",
+            "fn consume(x: int32) {} fn f() { local_value := 42; consume(local_v|",
+            "fn f() { local_value := 42; if (true) { local_v|",
+        ] {
+            assert_eq!(suggestions(source)[0].label, "local_value", "{source}");
+        }
+        assert_eq!(
+            suggestions("fn f(parameter: int32) { | ")[0].label,
+            "parameter"
+        );
+    }
+
+    #[test]
+    fn completion_uses_receiver_type_including_shadowing_and_pointers() {
+        let declarations =
+            "comp A := struct { alpha: int32, another: int32 }; comp B := struct { beta: int32 }; ";
+        for suffix in [
+            "fn f(value: A) { value.a|lpha; }",
+            "fn f(value: A) { value.a|",
+            "fn f(value: A) { value.| }",
+            "fn f(value: *A) { value.|",
+            "fn f(value: A) { s := \"😀\"; value.a|; }",
+            "fn f(value: A) { if (true) { value.a|",
+        ] {
+            let items = suggestions(&format!("{declarations}{suffix}"));
+            assert_eq!(
+                items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
+                ["alpha", "another"],
+                "{suffix}"
+            );
+            assert!(items.iter().all(|i| i.kind == 5));
+        }
+        let items = suggestions(&format!(
+            "{declarations}value: A = A {{ alpha: 1, another: 2 }}; fn f(value: B) {{ value.b|; }}"
+        ));
+        assert_eq!(items[0].label, "beta");
+        assert!(suggestions(&format!("{declarations}fn f(value: A) {{ value.z|; }}")).is_empty());
+        assert!(suggestions(&format!("{declarations}fn f() {{ A.a|; }}")).is_empty());
+    }
+
+    #[test]
+    fn completion_handles_chained_receivers_and_original_issue_examples() {
+        assert_eq!(
+            suggestions("fn f() { local_value := 42; local_v|alue; }")[0].label,
+            "local_value"
+        );
+        assert_eq!(suggestions("comp S := struct { member: int32 }; fn f() { value := S { member: 42 }; value.mem|ber; }")[0].label, "member");
+        assert_eq!(suggestions("comp S := struct { member: int32 }; comp Outer := struct { child: S }; fn f(value: Outer) { value.child.mem|; }")[0].label, "member");
+        assert_eq!(
+            suggestions(
+                "comp S := struct { member: int32 }; fn f(values: []S) { values[0].mem|; }"
+            )[0]
+            .label,
+            "member"
+        );
+        assert_eq!(suggestions("comp S := struct { member: int32 }; fn make() S { return S { member: 1 }; } fn f() { make().mem|; }")[0].label, "member");
+    }
+
+    #[test]
+    fn completion_is_suppressed_in_comments_and_literals() {
+        for source in [
+            "fn f(local: int32) { \"loc|al\"; }",
+            "fn f(local: int32) { // loc|al\n }",
+            "fn f(local: int32) { /* loc|al */ }",
+            "fn f(local: int32) { // loc|",
+            "fn f(local: int32) { \"loc|",
+        ] {
+            assert!(suggestions(source).is_empty(), "{source}");
+        }
     }
 
     #[test]
@@ -766,6 +1077,59 @@ mod project_tests {
 
     use super::super::source::OverlaySources;
     use super::*;
+    #[test]
+    fn completion_respects_cross_file_visibility_and_frozen_overlays() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("main.fib");
+        let helper = root.path().join("helper.fib");
+        let mut plan = standalone_plan(&main);
+        plan.files.push(SourceFile {
+            id: FileId(1),
+            name: FileName("helper".into()),
+            path: helper.clone(),
+        });
+        let source = "fn f(value: helper::Public) { value.mem";
+        let sources = OverlaySources([
+            (main.clone(), source.into()),
+            (helper.clone(), "pub comp Public := struct { member: int32 }; comp Private := struct { hidden: int32 };".into()),
+        ].into_iter().collect());
+        let analysis = analyze_plan(&plan, &sources, false);
+        let document = &analysis.documents[&main];
+        // A later disk edit must not leak into the retained analysis generation.
+        std::fs::write(&helper, "pub comp Public := struct { replacement: int32 };").unwrap();
+        let items = complete(
+            document,
+            Position {
+                line: 0,
+                character: source.len() as u32,
+            },
+        );
+        assert_eq!(
+            items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
+            ["member"]
+        );
+        let sources = OverlaySources(
+            [
+                (main.clone(), "fn f() { helper::".into()),
+                (helper, sources.0[&root.path().join("helper.fib")].clone()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let analysis = analyze_plan(&plan, &sources, false);
+        let items = complete(
+            &analysis.documents[&main],
+            Position {
+                line: 0,
+                character: 17,
+            },
+        );
+        assert_eq!(
+            items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
+            ["Public"]
+        );
+    }
+
     #[test]
     fn syntax_failure_blocks_dependencies_but_not_independent_files() {
         let root = PathBuf::from("/editor");

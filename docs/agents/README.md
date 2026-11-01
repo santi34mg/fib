@@ -158,7 +158,13 @@ without a separate language grammar. See [LSP setup](../../lsp/README.md).
 Qualified-name LSP completion uses collected namespaces, package dependency paths
 and compiler visibility checks. It supports unfinished `std::`/module expressions
 and partial member names, using the current background-analysis generation.
-Local-variable and field completion remain deferred.
+Local-variable and parameter completion use name-resolver scope snapshots;
+struct-field completion uses analyzed receiver types, including one pointer layer.
+Partial and unfinished editor expressions use a private repaired analysis query
+when the current AST has no completion site. Requests preserve the current
+generation's source overlays and UTF-16 positions and suppress comments/literals.
+The server advertises both `:` and `.` triggers. Unqualified file declarations,
+hover and navigation remain deferred.
 
 Directly opened std files use their owning sysroot manifest and reuse the open
 document's ID in the std package. This preserves `root` and compiler intrinsic
