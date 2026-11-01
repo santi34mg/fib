@@ -24,18 +24,20 @@ nested if/else, while loops, break/continue and early returns. LLVM 21 and a
 host `cc` linker are required. Without the LLVM feature, building reports an
 explicit error. Help and frontend/IR library APIs need no LLVM.
 
-`build --build-file PATH` supports the narrow interpreted build API. Default
-build-file discovery, `run` and `test` return errors. Historical
+`build --build-file PATH` supports the narrow interpreted build API. Bare `build`
+selects exactly `<cwd>/build.fib`; missing files report the selected path and
+suggest creating it or using an explicit option. `run` and `test` return errors. Historical
 positional-file, include-root, check/emit/link/release and output flags are absent.
 `tests/executable.rs` exercises real CLI builds and executable exit statuses.
 
 Native interoperability uses `callconv "C"` declarations. Repeatable
 `--c-source PATH` options compile C helpers with host `cc`; `-l`/`--link-lib LIB`
 and `-L`/`--library-path PATH` add native libraries and search paths. These options
-work with either explicit build route. External C ABI support currently targets
+work with all build routes. External C ABI support currently targets
 Linux x86-64; see the [backend contract](../../../crates/fib-backend/src/backend/README.md).
 
-The future default `fib build` path will discover exactly `<cwd>/build.fib`, lower
-it to verified owned IR and interpret it to construct a validated `BuildPlan`; it
-will not emit or load a native build-file artifact. See the
+The default `fib build` path lowers the selected build file to verified owned IR
+and interprets it to construct a validated `BuildPlan`. Source and output paths
+resolve relative to that file's directory. Discovery does not search parent
+directories or recursively select sources. See the
 [interpreted build-file plan](../../roadmap/08-interpreted-build-files.md).

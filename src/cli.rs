@@ -1,5 +1,6 @@
 use std::{env, path::PathBuf};
 
+use anyhow::Context;
 use clap::Parser;
 
 use crate::plan::PlanBuilder;
@@ -12,6 +13,7 @@ pub enum Command {
         /// Compile one file without requiring build.fib.
         #[arg(long, value_name = "PATH")]
         single_file: Option<PathBuf>,
+        /// Use this build file instead of <cwd>/build.fib.
         #[arg(long, value_name = "PATH")]
         build_file: Option<PathBuf>,
         /// Installed version-matched standard-library sysroot.
@@ -101,12 +103,23 @@ pub fn exec_command(command: Command, _env_vars: env::VarsOs) -> anyhow::Result<
             };
             let mut plan = match (single_file, build_file) {
                 (Some(path), None) => crate::plan::BuildPlan::single_file(&path)?,
-                (None, Some(path)) => {
+                (None, build_file) => {
+                    let path = match build_file {
+                        Some(path) => path,
+                        None => {
+                            let path = env::current_dir()?.join("build.fib");
+                            path.canonicalize().with_context(|| {
+                                format!(
+                                    "could not discover build file {}; create build.fib or use --build-file PATH or --single-file PATH",
+                                    path.display()
+                                )
+                            })?
+                        }
+                    };
                     let mut builder = PlanBuilder::from(path);
                     builder.standard_library = standard_library.clone();
                     builder.compile_and_interpret_build_file()?
                 }
-                (None, None) => anyhow::bail!("either single_file or build_file must be provided"),
                 (Some(_), Some(_)) => {
                     anyhow::bail!("cannot provide single_file and build_file at the same time")
                 }

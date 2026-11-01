@@ -97,7 +97,9 @@ state unchanged. Each block, instruction and call consumes a step.
 Broader `BuilderObject` orchestration remains unfinished. The current finalizer resolves
 source/output paths against the build-file directory, assigns deterministic IDs and
 stem-derived logical names, validates the selected entry, and rejects duplicate,
-missing, escaping or overwriting paths. The path remains fixed as `<cwd>/build.fib` discovery, bootstrap
+missing, escaping or overwriting paths. Bare `build` selects exactly
+`<cwd>/build.fib`, while explicit source/build-file options override discovery.
+The route is discovery, bootstrap
 compilation to verified owned IR, interpretation through an opaque host-owned build
 API, and centralized `BuildPlan` finalization. It will not emit or load a native
 build-file executable and will not expose Rust ABI or Rust object layouts. See the
