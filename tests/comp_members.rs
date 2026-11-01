@@ -9,6 +9,26 @@ use fibc::{
 };
 use std::path::Path;
 
+#[test]
+fn comp_members_traversal_visits_indexed_compound_target_and_value() {
+    use fibc::frontend::ast::{members, statement::StatementKind};
+    let source = r#"
+items[index(struct { comp target := fn() void {}; })] +=
+    amount(struct { comp value := fn() void {}; });
+"#;
+    let ast = Parser::with_source(Tokenizer::new(source), Path::new("main.fib"), source)
+        .parse()
+        .unwrap();
+    let names: Vec<_> = members::declarations(&ast.statements)
+        .into_iter()
+        .map(|node| match &node.kind {
+            StatementKind::FunctionDeclaration(function) => function.signature.identifier.as_str(),
+            _ => panic!("expected member function declaration"),
+        })
+        .collect();
+    assert_eq!(names, ["target", "value"]);
+}
+
 fn analyze(text: &str) -> anyhow::Result<AnalyzedProject> {
     analyze_files(&[("main", text)])
 }

@@ -18,6 +18,8 @@ Selections require a type value, produce ordinary function values, and never
 infer or bind a receiver. Completion validation traverses member bodies and checks
 their owner/identity mappings. Flow checking and lowering use the shared borrowed
 `ast::members` traversal; no synthetic source functions or closure storage are used.
+The traversal visits both target and value expressions in indexed compound
+assignments; their semantic analysis remains explicitly unsupported.
 
 Collecting type analysis shares immutable declaration recipes, function AST
 snapshots and source paths through `Arc` maps. Statement recovery checkpoints
