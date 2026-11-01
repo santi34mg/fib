@@ -25,6 +25,7 @@ fn expected(name: &str) -> (i32, String) {
         | "struct_storage" => (42, ""),
         "function_pointer_callback" => (20, ""),
         "minimal" => (0, ""),
+        "comp_members" => (0, "woofwoofwoof"),
         "bitwise_ops" => (
             0,
             "Packed IPv4: 3232235876\nOctet 0: 192\nOctet 1: 168\nOctet 2: 1\nOctet 3: 100\n\nInitial permissions: 3\nAfter grant EXEC:    7\nAfter revoke WRITE:  5\n  [x] READ\n  [x] EXEC\nBits set in perms: 2\n",

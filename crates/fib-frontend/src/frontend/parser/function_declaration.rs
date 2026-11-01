@@ -67,8 +67,8 @@ where
             TokenKind::Keyword(Keyword::Function),
             "parse_function_declaration: expected 'fn' keyword",
         )?;
-        let mut line: usize = fn_kw_token.line;
-        let mut column: usize = fn_kw_token.column;
+        let line: usize = fn_kw_token.line;
+        let column: usize = fn_kw_token.column;
 
         // Function name
         let identifier =
@@ -76,6 +76,38 @@ where
 
         let name_span = self.last_identifier_span;
         self.mark_name("function");
+
+        self.parse_function_tail(
+            FunctionSignature {
+                identifier,
+                is_comp,
+                calling_convention,
+                annotation: crate::frontend::analysis_annotation::BindingAnnotation {
+                    source_span: name_span.map(Into::into),
+                    ..Default::default()
+                },
+                parameters: Vec::new(),
+                generic_parameters: Vec::new(),
+                return_type: TypeExpression::at(
+                    TypeExpressionKind::Builtin(BuiltinType::Void),
+                    Span::new(line, column),
+                ),
+            },
+            (is_pub, pub_scope),
+            Span::new(line, column),
+        )
+    }
+
+    pub(super) fn parse_function_tail(
+        &mut self,
+        mut signature: FunctionSignature,
+        (is_pub, pub_scope): (bool, Option<crate::frontend::namespace::Visibility>),
+        position: Span,
+    ) -> anyhow::Result<FunctionDeclaration> {
+        let is_extern =
+            signature.calling_convention == crate::frontend::semantic_type::CallConvention::C;
+        let mut line = position.line;
+        let mut column = position.column;
 
         // Parameters
         self.expect_token(
@@ -160,19 +192,10 @@ where
             None
         };
 
+        signature.parameters = args;
+        signature.return_type = return_type;
         Ok(FunctionDeclaration {
-            signature: FunctionSignature {
-                identifier,
-                is_comp,
-                calling_convention,
-                annotation: crate::frontend::analysis_annotation::BindingAnnotation {
-                    source_span: name_span.map(Into::into),
-                    ..Default::default()
-                },
-                parameters: args,
-                return_type,
-                generic_parameters: Vec::new(),
-            },
+            signature,
             body,
             is_extern,
             // FIXME: parse function visibility properly

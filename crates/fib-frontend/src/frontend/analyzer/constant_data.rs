@@ -414,6 +414,7 @@ impl<'a> DataEvaluator<'a> {
                 .ok_or_else(|| type_error("missing constant member"))?
                 .kind
             {
+                MemberKind::Function(id) => DataKind::Function(id),
                 MemberKind::Length => {
                     let length = match self
                         .types

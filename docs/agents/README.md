@@ -76,6 +76,10 @@ C int32 entry contract. Linux x86-64 System V `callconv "C"` also supports
 integer/bool, float32/64, pointer/function-pointer and nonempty-struct boundaries,
 including register coercions and indirect struct arguments/results. Function
 addresses and indirect calls execute, including callbacks stored in structs.
+Struct `comp name := fn(...) ...;` members also execute with explicit receiver
+types and `Type.name(value&)` calls. They have hidden declaration identities,
+occupy no instance storage, and cannot be supplied or replaced by constructors.
+They remain runtime functions unless the initializer explicitly uses `comp fn`.
 Native linking accepts C sources, libraries and search paths through
 `--c-source`, `-l`/`--link-lib` and `-L`/`--library-path`.
 Extended main signatures use an analyzed source wrapper:

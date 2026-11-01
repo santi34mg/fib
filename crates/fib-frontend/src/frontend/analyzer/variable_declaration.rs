@@ -22,7 +22,14 @@ impl Analyzer {
             ty.resolve_name(context)?;
         }
         if let Some(expr) = &mut var.expression {
-            Self::resolve_name_expression(expr, context)?;
+            if var.is_comp
+                && let Some(BindingId::Declaration(id)) = var.annotation.binding
+                && let ExpressionKind::TypeValue(ty) = &mut expr.kind
+            {
+                ty.resolve_name_with_member_owner(context, Some((&var.identifier, id)))?;
+            } else {
+                Self::resolve_name_expression(expr, context)?;
+            }
         }
         let target = Self::check_binding(var, var.expression.as_ref(), context)?;
         Self::insert_local(var, target, context)
@@ -49,8 +56,16 @@ impl Analyzer {
                 ty.resolve_name(context)?;
             }
         }
-        for value in values.iter_mut() {
-            Self::resolve_name_expression(value, context)?;
+        for (index, value) in values.iter_mut().enumerate() {
+            if let Some(binding) = bindings.get(index)
+                && binding.is_comp
+                && let Some(BindingId::Declaration(id)) = binding.annotation.binding
+                && let ExpressionKind::TypeValue(ty) = &mut value.kind
+            {
+                ty.resolve_name_with_member_owner(context, Some((&binding.identifier, id)))?;
+            } else {
+                Self::resolve_name_expression(value, context)?;
+            }
         }
         if bindings.iter().any(|b| b.is_comp) && bindings.len() != values.len() {
             return Err(name_error(

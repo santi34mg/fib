@@ -1,0 +1,25 @@
+comp Dog := struct {
+    volume: uint8,
+
+    comp bark := fn(self: const *Dog) void {
+        i: uint8 = 0;
+        while (i < self.volume) {
+            std::io::print("woof");
+            i += 1;
+        };
+    };
+};
+
+// This stateless type stores no callbacks per instance. Its adapter explicitly
+// produces the existing callback-based Allocator value.
+comp PageAllocator := struct {
+    comp as_allocator := fn() std::memory::Allocator {
+        return std::memory::create_page_alloc();
+    };
+};
+
+fn main() void {
+    dog := Dog { volume: 3 };
+    Dog.bark(dog&);
+    allocator := PageAllocator.as_allocator();
+}

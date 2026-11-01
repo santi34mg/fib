@@ -116,7 +116,14 @@ fn validate_parts(
                 .as_mut()
                 .unwrap()
                 .set_file(unit.source_file_id);
-            for node in &unit.ast.statements {
+            for node in
+                unit.ast
+                    .statements
+                    .iter()
+                    .chain(crate::frontend::ast::members::declarations(
+                        &unit.ast.statements,
+                    ))
+            {
                 if phase.is_some_and(|functions| {
                     matches!(node.kind, S::FunctionDeclaration(_)) != functions
                 }) {

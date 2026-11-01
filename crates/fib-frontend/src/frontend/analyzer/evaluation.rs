@@ -16,6 +16,14 @@ use std::collections::HashMap;
 pub(super) use crate::frontend::semantic_type::ComputationArgument as Argument;
 
 pub(super) fn function_id(expr: &Expression) -> Option<DeclId> {
+    if let E::ExprAcess { member, .. } = &expr.kind
+        && let Some(crate::frontend::analysis_annotation::MemberInfo {
+            kind: crate::frontend::analysis_annotation::MemberKind::Function(id),
+            ..
+        }) = member.resolved
+    {
+        return Some(id);
+    }
     if let E::QualifiedIdentifier(n) = &expr.kind
         && let Some(ResolvedName::Entity(Entity::Declaration(id))) = n.annotation.resolved
     {

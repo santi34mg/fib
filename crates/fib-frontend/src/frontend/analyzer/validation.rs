@@ -47,6 +47,9 @@ pub(super) fn validate(
             return Err(type_error("invalid or duplicate compilation-unit identity"));
         }
         v.collect(&unit.ast.statements)?;
+        for member in crate::frontend::ast::members::declarations(&unit.ast.statements) {
+            v.collect(std::slice::from_ref(member))?;
+        }
     }
     // Compiler-provided namespaces have no source AST to walk. Their declarations
     // are nevertheless canonical bindings and must still pass the semantic-table
@@ -161,7 +164,7 @@ pub(super) fn validate(
             if fun.signature.annotation.binding != Some(BindingId::Declaration(key.template)) {
                 return Err(type_error("instance body has the wrong template identity"));
             }
-            let template = units.iter().flat_map(|u| &u.ast.statements).find(|node| matches!(&node.kind, S::FunctionDeclaration(f) if f.signature.annotation.binding == fun.signature.annotation.binding))
+            let template = units.iter().flat_map(|u| u.ast.statements.iter().chain(crate::frontend::ast::members::declarations(&u.ast.statements))).find(|node| matches!(&node.kind, S::FunctionDeclaration(f) if f.signature.annotation.binding == fun.signature.annotation.binding))
                 .ok_or_else(|| type_error("instance has no source template"))?;
             let source = Statement {
                 kind: S::FunctionDeclaration(fun.clone()),
@@ -242,6 +245,20 @@ pub(super) fn validate(
     for id in types.generic_parameters.keys() {
         if !v.bindings.contains(&BindingId::Declaration(*id)) {
             return Err(type_error("unknown generic template identity"));
+        }
+    }
+    for ((owner, _), declaration) in &types.comp_members {
+        if !matches!(types.get(*owner)?, T::Struct(_))
+            || !v.bindings.contains(&BindingId::Declaration(*declaration))
+            || !matches!(
+                types
+                    .declarations
+                    .get(declaration)
+                    .and_then(|ty| types.get(*ty).ok()),
+                Some(T::Function(_))
+            )
+        {
+            return Err(type_error("invalid comp member owner or declaration"));
         }
     }
     for (&(owner, index), &constructor) in &types.variant_constructors {
@@ -340,7 +357,7 @@ fn instance_source(mut node: Statement) -> anyhow::Result<(Statement, HashSet<Bi
         }
         fn ty(&mut self, node: &mut TypeExpression) -> anyhow::Result<()> {
             node.annotation.resolved = None;
-            if let K::Struct { fields } = &mut node.kind {
+            if let K::Struct { fields, .. } = &mut node.kind {
                 for f in fields {
                     f.annotation = MemberAnnotation::default();
                 }
@@ -612,8 +629,45 @@ impl Validator<'_> {
                             .into_iter()
                             .all(|same| same)
                 }
-                (K::Struct { fields }, T::Struct(fs)) => {
+                (K::Struct { fields, members }, T::Struct(fs)) => {
                     self.fields(fields, id, true)?;
+                    if self
+                        .types
+                        .comp_members
+                        .keys()
+                        .filter(|(owner, _)| *owner == id)
+                        .count()
+                        != members.len()
+                    {
+                        return Err(type_error("comp member count mismatch"));
+                    }
+                    let mut seen: HashSet<_> =
+                        fields.iter().map(|f| f.field_identifier.as_str()).collect();
+                    for member in members {
+                        let S::FunctionDeclaration(function) = &member.kind else {
+                            return Err(type_error("invalid comp member declaration"));
+                        };
+                        if !seen.insert(function.signature.identifier.as_str()) {
+                            return Err(type_error("duplicate struct member"));
+                        }
+                        let Some(BindingId::Declaration(declaration)) =
+                            function.signature.annotation.binding
+                        else {
+                            return Err(type_error("pending comp member identity"));
+                        };
+                        if self
+                            .types
+                            .comp_members
+                            .get(&(id, function.signature.identifier.clone()))
+                            != Some(&declaration)
+                        {
+                            return Err(type_error("comp member identity mismatch"));
+                        }
+                        super::function_declaration::validate_member_captures(
+                            function, self.types,
+                        )?;
+                    }
+                    self.statements(members)?;
                     fields.len() == fs.len()
                         && fields
                             .iter()
@@ -746,6 +800,19 @@ impl Validator<'_> {
                     let receiver = self.expression(expr)?;
                     let (receiver, implicit_deref) =
                         super::value_typing::field_receiver(receiver, self.types)?;
+                    match member.resolved.map(|m| m.kind) {
+                        Some(MemberKind::Function(_) | MemberKind::EnumVariant(_))
+                            if receiver.type_value.is_none() =>
+                        {
+                            return Err(type_error("member requires a type value"));
+                        }
+                        Some(MemberKind::Field(_) | MemberKind::Length)
+                            if receiver.type_value.is_some() =>
+                        {
+                            return Err(type_error("member requires a runtime receiver"));
+                        }
+                        _ => {}
+                    }
                     if member.implicit_deref != implicit_deref {
                         return Err(type_error("implicit dereference annotation mismatch"));
                     }

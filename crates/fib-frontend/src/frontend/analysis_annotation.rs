@@ -10,7 +10,9 @@
 //! slots; `StructField` owns one for both initializer and type-definition fields.
 //! Function bindings live only on `FunctionSignature`, not its declaration
 //! wrapper. Parameters, type/variable declarations (including each multi-binding),
-//! and `PatternBinding` each own one binding slot. Members are never bindings.
+//! and `PatternBinding` each own one binding slot. Stored fields/variants are
+//! never bindings. Type-owned functions carry a hidden declaration binding on
+//! their signature; selecting one does not introduce a lexical binding.
 //!
 //! `LabelAnnotation` is not embedded yet: label syntax is undefined. The reserved
 //! `FunctionSignature::generic_parameters` string list is not parsed yet either;
@@ -79,11 +81,12 @@ pub struct ExpressionAnnotation {
     pub resolved: Option<ExpressionInfo>,
 }
 
-/// Member indices refer to the owner's semantic field/variant list, not locals.
+/// Field/variant indices refer to the owner's semantic list, not locals.
+/// Function members refer to hidden declaration identities and have no field index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemberKind {
     Field(u32),
-    Function(),
+    Function(DeclId),
     EnumVariant(u32),
     Length,
     /// Selection whose owner is dependent; the instance must resolve it again.

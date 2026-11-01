@@ -1,5 +1,19 @@
 # Tests and validation
 
+## Type-owned comp function members (2026-10-31)
+
+Full offline workspace tests and strict all-target Clippy passed with both
+`--no-default-features` and `--all-features` (LLVM 21 selected with
+`LLVM_SYS_211_PREFIX=/usr/lib/llvm/21`). Formatting and whitespace checks passed.
+`tests/comp_members.rs` covers parser failures, explicit receiver mutability,
+storage exclusion, callbacks, fixed helpers, explicit adapters, recursive/generic
+member calls, cross-file/alias lookup, nominal compatibility, capture rejection
+and independent annotation validation. Its native test checks one-byte `Dog`
+layout, mutable/readonly receivers and indirect callbacks. The sample sweep
+compiles and runs `samples/comp_members.fib`, checking `woofwoofwoof` output and
+the stateless `PageAllocator` adapter. This implements function members; general
+function expressions and non-function member initializers remain unsupported.
+
 ## Release archive packaging (2026-10-31)
 
 `fib-dist` built `fib-0.2.0-linux-x86_64.tar.gz` and its SHA-256 checksum using

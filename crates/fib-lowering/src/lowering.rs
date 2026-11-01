@@ -360,7 +360,14 @@ pub fn lower_with_entry(project: &AnalyzedProject, entry_name: &str) -> anyhow::
             pointers: &pointers,
             globals: &globals,
         };
-        for node in &unit.ast.statements {
+        for node in unit
+            .ast
+            .statements
+            .iter()
+            .chain(crate::frontend::ast::members::declarations(
+                &unit.ast.statements,
+            ))
+        {
             if matches!(&node.kind, S::VariableDeclaration(v) if v.is_comp)
                 || matches!(&node.kind, S::MultiVariableDeclaration { bindings, .. } if bindings.iter().all(|v| v.is_comp))
             {
@@ -408,7 +415,12 @@ pub fn lower_with_entry(project: &AnalyzedProject, entry_name: &str) -> anyhow::
             {
                 return Err(source.error(node.span, "duplicate lowered function identity"));
             }
-            let entry = unit.source_file_id == project.entry && signature.identifier == entry_name;
+            let entry = unit.source_file_id == project.entry
+                && signature.identifier == entry_name
+                && project.symbols.namespaces[&unit.source_file_id]
+                    .names
+                    .get(&signature.identifier)
+                    == Some(&declaration);
             let mut lowered_signature = source.signature(declaration, node.span)?;
             if entry {
                 lowered_signature.calling_convention = CallingConvention::C;
@@ -669,9 +681,18 @@ fn callee(
     args: &[Expression],
     functions: &HashMap<FunctionKey, FunctionId>,
 ) -> Option<FunctionId> {
-    if let E::QualifiedIdentifier(name) = &expr.kind
-        && let Some(ResolvedName::Entity(Entity::Declaration(id))) = name.annotation.resolved
-    {
+    let declaration = match &expr.kind {
+        E::QualifiedIdentifier(name) => match name.annotation.resolved {
+            Some(ResolvedName::Entity(Entity::Declaration(id))) => Some(id),
+            _ => None,
+        },
+        E::ExprAcess { member, .. } => match member.resolved?.kind {
+            crate::frontend::analysis_annotation::MemberKind::Function(id) => Some(id),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(id) = declaration {
         let arguments = args
             .iter()
             .filter_map(|arg| arg.annotation.resolved?.type_value)
@@ -896,6 +917,9 @@ impl Checker<'_, '_> {
             {
                 self.constants.push(constant);
             }
+            return Ok(());
+        }
+        if callee(expr, &[], self.functions).is_some() {
             return Ok(());
         }
         match &expr.kind {

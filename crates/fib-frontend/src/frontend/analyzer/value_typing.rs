@@ -210,6 +210,17 @@ pub(super) fn member(
     types: &SemanticTypes,
 ) -> anyhow::Result<MemberInfo> {
     let owner = types.canonical(owner)?;
+    if let Some(&id) = types.comp_members.get(&(owner, spelling.to_owned())) {
+        let ty = *types
+            .declarations
+            .get(&id)
+            .ok_or_else(|| type_error("pending comp member signature"))?;
+        return Ok(MemberInfo {
+            owner,
+            kind: MemberKind::Function(id),
+            ty,
+        });
+    }
     let (kind, ty) = match types.container(owner)?.0 {
         T::Struct(fields) => {
             let (i, f) = fields
@@ -699,6 +710,9 @@ impl TypeContext<'_> {
                 }
                 let selected = member(owner, accessed_identifier, self.types)?;
                 match selected.kind {
+                    MemberKind::Function(_) if info.type_value.is_none() => {
+                        return Err(type_error("comp member requires a type value"));
+                    }
                     MemberKind::EnumVariant(_) if info.type_value.is_none() => {
                         return Err(type_error("enum variant member requires a type value"));
                     }
@@ -751,6 +765,11 @@ impl TypeContext<'_> {
                         ));
                     }
                     let selected = member(owner, &field.field_identifier, self.types)?;
+                    if !matches!(selected.kind, MemberKind::Field(_)) {
+                        return Err(type_error(
+                            "comp member cannot be initialized in an instance",
+                        ));
+                    }
                     self.expression(&mut field.expression, Some(selected.ty))?;
                     field.annotation.resolved = Some(selected);
                 }

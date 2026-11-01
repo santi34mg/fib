@@ -258,10 +258,11 @@ fn ty_expression(v: &mut impl Visitor, ty: &mut TypeExpression) -> Result {
         T::Array { element_type, .. } | T::Slice { element_type } => {
             ty_expression(v, element_type)?
         }
-        T::Struct { fields } => {
+        T::Struct { fields, members } => {
             for field in fields {
                 expression(v, &mut field.expression)?;
             }
+            statements(v, members, false)?;
         }
         T::Enum { variants } => {
             for variant in variants {

@@ -52,6 +52,8 @@ pub enum TypeExpressionKind {
     },
     Struct {
         fields: Vec<StructField>,
+        /// Type-owned function declarations, excluded from instance storage.
+        members: Vec<crate::frontend::ast::statement::Statement>,
     },
     Enum {
         variants: Vec<EnumVariant>,
@@ -101,8 +103,8 @@ impl fmt::Display for TypeExpressionKind {
                     return_type
                 )
             }
-            TypeExpressionKind::Struct { fields } => {
-                write!(f, "struct {{ {:?} }}", fields)
+            TypeExpressionKind::Struct { fields, members } => {
+                write!(f, "struct {{ {:?} {:?} }}", fields, members)
             }
             TypeExpressionKind::Tuple { elements } => {
                 write!(f, "({:?})", elements)

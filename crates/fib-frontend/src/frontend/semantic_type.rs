@@ -99,6 +99,8 @@ pub struct VariantType {
 /// Canonical types and binding facts. Layout and complete analysis are separate.
 #[derive(Debug, Clone, Default)]
 pub struct SemanticTypes {
+    /// Type-owned functions, excluded from instance fields and layout.
+    pub comp_members: HashMap<(TypeId, String), DeclId>,
     /// Source identity for anonymous nominal types; never a type-table index.
     pub nominal_sites: HashMap<TypeId, (crate::plan::FileId, crate::diagnostics::Span)>,
     pub nominal_arguments: HashMap<TypeId, Vec<TypeId>>,

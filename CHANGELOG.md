@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Type-owned struct `comp` function members with explicit receiver types,
+  ordinary callback values and fixed helpers. Members add no instance storage
+  and cannot be initialized or replaced by instances; interface adapters remain
+  explicit.
 - Native LSP completion for in-scope parameters/locals and struct fields, including
   partial and unfinished expressions, UTF-16 positions and `.` triggering.
 - Build-file IR execution of branches, loops, block arguments and direct helpers,

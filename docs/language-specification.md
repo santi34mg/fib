@@ -174,6 +174,33 @@ expressions execute in written order; field storage follows declaration order.
 Plain-data assignment, arguments and returns copy values, including nested
 values; copied pointers preserve their addresses and therefore pointee aliases.
 
+Structs may declare type-owned functions with `comp`:
+
+```fib
+comp Dog := struct {
+    volume: uint8,
+    comp bark := fn(self: const *Dog) uint8 { return self.volume; };
+};
+dog := Dog { volume: 3 };
+volume := Dog.bark(dog&);
+```
+
+These members occupy no instance storage and are excluded from construction,
+copying and layout. They cannot be assigned or supplied as initializer fields.
+Select them through a type value (including an alias), then pass the receiver
+explicitly. `self` is an ordinary parameter name: a value receiver copies,
+`const *Dog` permits readonly field access, and `*Dog` permits mutation under
+the existing pointer rules. Member functions may reference their enclosing type
+and other members through the type name; member names do not become lexical
+bindings. They do not capture runtime locals from an enclosing function.
+
+`comp bark := fn(...) ...` binds a runtime function at compile time. Explicit
+`comp bark := comp fn(...) ...` separately enables the existing bounded
+compile-time execution rules. Function members are ordinary callable values and
+can be used as callbacks. Fixed helpers can call configurable function fields.
+Interface conversion remains an explicit adapter returning a callback struct;
+structural typing, interface conformance and implicit receivers are not introduced.
+
 Uninitialized declarations and field-by-field initialization are allowed. Every
 read must be definitely initialized; copying a whole struct requires every field.
 There is no implicit zeroing. Loops that may run zero times do not establish
