@@ -15,6 +15,9 @@ impl Analyzer {
         name: &mut QualifiedIdentifier,
         context: &ResolveContext<'_>,
     ) -> anyhow::Result<ResolvedName> {
+        if let (Some(recovery), Some(span)) = (&context.recovery, name.annotation.source_span) {
+            recovery.record_lexical(context.file_id, span.into(), &context.lexical);
+        }
         let Some(first) = name.segments.first() else {
             return Err(name_error("empty qualified name"));
         };

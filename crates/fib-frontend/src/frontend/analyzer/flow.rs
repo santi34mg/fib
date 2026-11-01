@@ -825,6 +825,11 @@ impl Flow<'_> {
             }
         }
         match &node.kind {
+            S::IndexedCompoundAssignment { .. } => {
+                return Err(type_error(
+                    "indexed compound assignment analysis is not implemented",
+                ));
+            }
             S::VariableDeclaration(v) => {
                 if let Some(expr) = &v.expression {
                     self.read(expr, &state)?;

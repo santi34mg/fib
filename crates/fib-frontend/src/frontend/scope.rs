@@ -11,6 +11,9 @@ pub struct Scope {
 }
 
 impl Scope {
+    pub(super) fn binding_names(&self) -> impl Iterator<Item = &String> {
+        self.bindings.keys()
+    }
     pub fn new(kind: ScopeKind) -> Self {
         Self {
             kind,

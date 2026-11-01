@@ -14,8 +14,16 @@ modules after `std::` and accessible functions, types and values after paths suc
 as `std::io::`. Partial names such as `std::io::pri` filter the suggestions.
 Completion works in unfinished expressions and uses installed std sources and
 unsaved overlays; private declarations are filtered by compiler visibility rules.
-Editors can trigger completion on `:` or request it manually. Local-variable,
-field and unqualified-name completion, hover and navigation are not implemented.
+Completion also suggests in-scope parameters and locals, respecting declaration
+order, scope boundaries and local reuse of file declaration names. Struct fields
+use the receiver's semantic type, including one implicit pointer dereference.
+Partial names filter both kinds of suggestions; comments and literals suppress
+completion. Editors can trigger completion on `:` or `.` or request it manually.
+Unqualified file declarations, hover and navigation are not implemented.
+
+For incomplete local/field expressions, completion may analyze a private repaired
+copy of the current project snapshot. It preserves unsaved overlays and leaves
+published diagnostics on the original source; it never enters lowering.
 
 ## Install and run
 

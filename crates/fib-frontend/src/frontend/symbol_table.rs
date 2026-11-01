@@ -24,6 +24,15 @@ pub struct SymbolTable {
 }
 
 impl SymbolTable {
+    /// Visible lexical names, with the same shadowing rules as resolution.
+    pub(crate) fn visible_bindings(&self) -> std::collections::BTreeMap<String, ResolvedName> {
+        self.scopes
+            .iter()
+            .chain(std::iter::once(&self.root))
+            .flat_map(|scope| scope.binding_names())
+            .filter_map(|name| self.resolve_lexical(name).map(|id| (name.clone(), id)))
+            .collect()
+    }
     pub fn new() -> Self {
         Self {
             root: Scope::default(),

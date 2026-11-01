@@ -108,7 +108,12 @@ fn statement(v: &mut impl Visitor, node: &mut Statement, file: bool) -> Result {
             }
         }
         S::ExpressionStatement(expr) => expression(v, expr)?,
-        S::Assignment { left, right } => {
+        S::Assignment { left, right }
+        | S::IndexedCompoundAssignment {
+            target: left,
+            value: right,
+            ..
+        } => {
             expression(v, left)?;
             expression(v, right)?;
         }

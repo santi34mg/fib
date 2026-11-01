@@ -415,15 +415,99 @@ fn loops_lower_to_verified_ssa_without_storage_or_unreachable_blocks() {
 }
 
 #[test]
-fn build_file_interpreter_rejects_loop_cfg_before_applying_operations() {
+fn build_file_interpreter_executes_loop_cfg() {
     let (_directory, plan) = source(
         "fn build() int32 { build_api::set_output(\"before-loop\"[..]); while () { break; }; return 0; }",
     );
     let ir = compile_build_file_to_ir(&plan).unwrap();
     let mut builder = crate::plan::PlanBuilder::from(plan.files[0].path.clone());
-    let error = crate::ir_interpreter::interpret_ir(ir, &mut builder).unwrap_err();
-    assert!(error.to_string().contains("unsupported control flow"));
-    assert!(builder.output.is_none());
+    crate::ir_interpreter::interpret_ir(ir, &mut builder).unwrap();
+    assert_eq!(builder.output, Some("before-loop".into()));
+}
+
+#[test]
+fn build_file_interpreter_executes_values_branches_and_helpers() {
+    let (_directory, plan) = source(
+        r#"
+        fn choose(n: int32) const []uint8 {
+            if (n == 3) { return "computed"[..]; };
+            return "wrong"[..];
+        }
+        fn build() int32 {
+            i := 0;
+            while (i < 3) {
+                i = i + 1;
+                if (i == 2) { continue; };
+                build_api::add_source("main.fib"[..]);
+            };
+            build_api::set_output(choose(i));
+            return 0;
+        }
+    "#,
+    );
+    let ir = compile_build_file_to_ir(&plan).unwrap();
+    let mut builder = crate::plan::PlanBuilder::from(plan.files[0].path.clone());
+    crate::ir_interpreter::interpret_ir(ir, &mut builder).unwrap();
+    assert_eq!(
+        builder.modules,
+        vec![std::path::PathBuf::from("main.fib"); 2]
+    );
+    assert_eq!(builder.output, Some("computed".into()));
+}
+
+#[test]
+fn build_file_interpreter_failures_preserve_builder_state() {
+    for (tail, diagnostic) in [
+        ("while () {};", "step limit"),
+        ("recurse();", "call depth limit"),
+        ("x := 0; x = 1 / x;", "division by zero"),
+        ("effect(false);", "globals are not implemented"),
+    ] {
+        let text = format!(
+            r#"
+            global: int32 = 0;
+            fn recurse() {{ recurse(); }}
+            fn effect(flag: bool) {{ if (flag) {{ global = 1; }}; }}
+            fn build() int32 {{
+                build_api::set_output("pending"[..]);
+                {tail}
+                return 0;
+            }}
+        "#
+        );
+        let (_directory, plan) = source(&text);
+        let ir = compile_build_file_to_ir(&plan).unwrap();
+        let mut builder = crate::plan::PlanBuilder::from(plan.files[0].path.clone());
+        builder.output = Some("original".into());
+        let error = crate::ir_interpreter::interpret_ir(ir, &mut builder).unwrap_err();
+        assert!(error.to_string().contains(diagnostic), "{error:#}");
+        assert_eq!(builder.output, Some("original".into()));
+        assert!(builder.modules.is_empty());
+    }
+}
+
+#[test]
+fn build_file_interpreter_preserves_fixed_width_scalar_rules() {
+    let (_directory, plan) = source(
+        r#"
+        fn check(a: int8, b: int8, wide: int128, count: uint8) bool {
+            return a + b == -128 && a * b == 127 && -b == -1
+                && (a as int32) == 127 && (b as bool)
+                && (wide / -1) == wide && (wide % -1) == 0
+                && (wide >> count) < 0 && (~count & 1) == 0;
+        }
+        fn build() int32 {
+            if (check(127, 1, -170141183460469231731687303715884105728, 1)) {
+                build_api::set_output("scalar-ok"[..]);
+            } else { build_api::set_output("wrong"[..]); };
+            return 0;
+        }
+    "#,
+    );
+    let ir = compile_build_file_to_ir(&plan).unwrap();
+    let mut builder = crate::plan::PlanBuilder::from(plan.files[0].path.clone());
+    crate::ir_interpreter::interpret_ir(ir, &mut builder).unwrap();
+    assert_eq!(builder.output, Some("scalar-ok".into()));
 }
 
 #[test]
