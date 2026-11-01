@@ -95,6 +95,10 @@ fn statements<'a>(nodes: &'a [Statement], out: &mut Vec<&'a Statement>) {
                 expression(index, out);
                 expression(expr, out);
             }
+            S::IndexedCompoundAssignment { target, value, .. } => {
+                expression(target, out);
+                expression(value, out);
+            }
             S::MultiAssignment { targets, values } => {
                 for e in targets.iter().chain(values) {
                     expression(e, out);

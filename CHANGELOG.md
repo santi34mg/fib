@@ -13,9 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ordinary callback values and fixed helpers. Members add no instance storage
   and cannot be initialized or replaced by instances; interface adapters remain
   explicit.
+- Native LSP completion for in-scope parameters/locals and struct fields, including
+  partial and unfinished expressions, UTF-16 positions and `.` triggering.
+- Build-file IR execution of branches, loops, block arguments and direct helpers,
+  with integer/boolean values, computed byte arguments, transactional build effects
+  and explicit step/call-depth limits.
+- Bare `build` discovers exactly `<cwd>/build.fib` and uses the existing
+  interpreted build-file pipeline, with actionable errors when discovery fails.
+
 - `export-symbols --single-file PATH` / `--build-file PATH` exports deterministic
   JSON for unrestricted public top-level declarations, signatures and alias
   targets without requiring an executable entry or LLVM.
+
+### Fixed
+
+- Restore compiler builds after integrating indexed compound-assignment syntax
+  with type-owned member traversal; visit both target and value expressions.
+- Parse indexed compound assignments for all five arithmetic operators, retaining
+  one target and RHS in the AST. Analysis and execution remain unsupported.
 
 ## [0.2.0] - 2026-10-31
 

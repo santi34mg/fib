@@ -63,7 +63,7 @@ impl Client {
         assert_eq!(initialized["result"]["serverInfo"]["name"], "fib-lsp");
         assert_eq!(
             initialized["result"]["capabilities"]["completionProvider"]["triggerCharacters"],
-            json!([":"])
+            json!([":", "."])
         );
         assert_eq!(
             initialized["result"]["capabilities"]["positionEncoding"],
@@ -402,5 +402,63 @@ fn completes_std_paths_in_unfinished_unsaved_expressions() {
     client.change(&path, "fn f() { std::os_abi::", 5);
     client.send(json!({"jsonrpc":"2.0","id":30,"method":"textDocument/completion","params":{"textDocument":{"uri":uri(&path)},"position":{"line":0,"character":21}}}));
     assert_eq!(client.wait(|m| m["id"] == 30)["result"]["items"], json!([]));
+    client.finish();
+}
+
+#[test]
+fn completes_locals_and_fields_in_current_unsaved_generation() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("completion.fib");
+    let mut client = Client::new(root.path());
+    for (index, (source, labels, kind)) in [
+        (
+            "fn f(parameter: int32) { s := \"😀\"; par",
+            vec!["parameter"],
+            6,
+        ),
+        (
+            "fn f() { local_value := 42; local_v",
+            vec!["local_value"],
+            6,
+        ),
+        (
+            "comp S := struct { member: int32 }; fn f(value: S) { value.mem",
+            vec!["member"],
+            5,
+        ),
+        (
+            "comp S := struct { changed: int32 }; fn f(value: S) { value.",
+            vec!["changed"],
+            5,
+        ),
+        (
+            "fn f(local: int32) { if (true) { hidden := 1; }; hid",
+            vec![],
+            6,
+        ),
+        ("fn f(local: int32) { \"loc", vec![], 6),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if index == 0 {
+            client.open(&path, source);
+        } else {
+            client.change(&path, source, index as i64 + 1);
+        }
+        let id = index + 80;
+        client.send(json!({"jsonrpc":"2.0","id":id,"method":"textDocument/completion","params":{"textDocument":{"uri":uri(&path)},"position":{"line":0,"character":source.encode_utf16().count()}}}));
+        let response = client.wait(|m| m["id"] == id);
+        let items = response["result"]["items"].as_array().unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item["label"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            labels,
+            "{response}"
+        );
+        assert!(items.iter().all(|item| item["kind"] == kind));
+    }
     client.finish();
 }

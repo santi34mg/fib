@@ -52,7 +52,7 @@ acceptance cases. See
 populated cache and is optional outside restricted environments. The CLI builds
 the supported multi-file scalar/aggregate/control-flow subset
 with LLVM and host `cc`, either directly or through a narrow interpreted build
-file. Default discovery, `run` and `test` remain unfinished.
+file. Bare `build` discovers exactly `<cwd>/build.fib`; `run` and `test` remain unfinished.
 
 Useful focused commands: `cargo test --no-default-features frontend::parser`,
 `cargo test --no-default-features frontend::tokenizer`, and
@@ -81,7 +81,8 @@ The project model uses explicitly named files in `BuildPlan`. The explicit
 `--build-file` route compiles a `build() int32` entry to verified owned IR and
 interprets literal `build_api` operations against host-owned builder state.
 Finalization validates deterministic source identities and root-relative paths,
-names, entry and output. General interpretation and default discovery remain
-unfinished. Build files do not emit or load native build-file artifacts, and
+names, entry and output. Bare `build` uses the same route after selecting
+`<cwd>/build.fib`. General interpretation remains unfinished.
+Build files do not emit or load native build-file artifacts, and
 source membership is explicit rather than recursively discovered through imports. See the
 [future build-file plan](../roadmap/08-interpreted-build-files.md).

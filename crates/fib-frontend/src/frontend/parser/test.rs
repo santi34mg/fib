@@ -2457,8 +2457,8 @@ mod tests {
     }
 
     #[test]
-    fn compound_assignment_still_requires_a_single_identifier() {
-        for target in ["pkg::value", "obj.field", "items[0]", "make()"] {
+    fn compound_assignment_rejects_unrelated_target_forms() {
+        for target in ["pkg::value", "obj.field", "make()"] {
             let source = format!("{target} += 1;");
             let error = get_ast_err(&source);
             assert!(
@@ -2467,6 +2467,66 @@ mod tests {
             );
         }
         assert!(get_ast_err("pkg::value := 1;").contains("expected ';'"));
+    }
+
+    #[test]
+    fn indexed_compound_assignment_preserves_each_expression_once() {
+        for (symbol, operator) in [
+            ("+=", Operator::Plus),
+            ("-=", Operator::Minus),
+            ("*=", Operator::Star),
+            ("/=", Operator::Slash),
+            ("%=", Operator::Percent),
+        ] {
+            for target in [
+                "items[0]",
+                "items[i][j]",
+                "items[next_index()]",
+                "receiver()[next_index()]",
+            ] {
+                let source = format!("{target} {symbol} amount();");
+                let ast = get_ast(&source);
+                let StatementKind::IndexedCompoundAssignment {
+                    target: actual,
+                    operator: actual_operator,
+                    value,
+                } = module_statements(&ast)[0]
+                else {
+                    panic!("expected indexed compound assignment: {source}");
+                };
+                // Compare to independently parsed expressions: no cloned target is
+                // hidden in the RHS, including for side-effecting receivers/indices.
+                let expected = get_ast(&format!("{target};"));
+                let StatementKind::ExpressionStatement(expected) = module_statements(&expected)[0]
+                else {
+                    panic!()
+                };
+                assert_eq!(actual, expected, "{source}");
+                assert_eq!(*actual_operator, operator);
+                assert!(
+                    matches!(&value.kind, ExpressionKind::Call { args, .. } if args.is_empty())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn indexed_compound_assignment_malformed_inputs() {
+        for source in [
+            "items[] += 1;",
+            "items[0 += 1;",
+            "items[0] += ;",
+            "items[0] +=",
+            "items[0] += 1",
+        ] {
+            let error = get_ast_err(source);
+            assert!(
+                error.contains("expected")
+                    || error.contains("unexpected")
+                    || error.contains("requires a variable name or indexed target"),
+                "{source}: {error}"
+            );
+        }
     }
 
     #[test]

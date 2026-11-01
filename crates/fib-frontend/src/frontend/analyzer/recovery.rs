@@ -10,6 +10,7 @@ use std::{cell::RefCell, collections::HashSet, path::PathBuf, rc::Rc};
 pub struct Recovery(Rc<RefCell<State>>);
 #[derive(Default)]
 struct State {
+    lexical: super::LexicalCompletions,
     diagnostics: Vec<CompilerError>,
     failed: HashSet<(FileId, Span)>,
     bindings: HashSet<BindingId>,
@@ -27,6 +28,20 @@ impl std::fmt::Display for Blocked {
 impl std::error::Error for Blocked {}
 
 impl Recovery {
+    pub(super) fn record_lexical(
+        &self,
+        file: FileId,
+        span: Span,
+        lexical: &crate::frontend::symbol_table::SymbolTable,
+    ) {
+        self.0
+            .borrow_mut()
+            .lexical
+            .insert((file, span), lexical.visible_bindings());
+    }
+    pub(super) fn lexical(&self) -> super::LexicalCompletions {
+        self.0.borrow().lexical.clone()
+    }
     pub(super) fn with_paths(paths: std::collections::HashMap<FileId, PathBuf>) -> Self {
         Self(Rc::new(RefCell::new(State {
             paths,

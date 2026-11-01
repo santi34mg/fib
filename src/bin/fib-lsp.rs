@@ -234,6 +234,7 @@ fn analyze(snapshot: Snapshot) -> ProjectAnalysis {
                         semantic_tokens,
                         diagnostics: vec![],
                         completions: Default::default(),
+                        completion_context: None,
                     },
                 );
                 continue;
@@ -394,7 +395,7 @@ impl Server {
             self.initialized = true;
             response(
                 id.unwrap_or(Value::Null),
-                json!({"capabilities":{"positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":1},"completionProvider":{"triggerCharacters":[":"],"resolveProvider":false},"semanticTokensProvider":{"legend":{"tokenTypes":tooling::TOKEN_TYPES,"tokenModifiers":[]},"full":true}},"serverInfo":{"name":"fib-lsp","version":env!("CARGO_PKG_VERSION")}}),
+                json!({"capabilities":{"positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":1},"completionProvider":{"triggerCharacters":[":","."],"resolveProvider":false},"semanticTokensProvider":{"legend":{"tokenTypes":tooling::TOKEN_TYPES,"tokenModifiers":[]},"full":true}},"serverInfo":{"name":"fib-lsp","version":env!("CARGO_PKG_VERSION")}}),
             )?;
             return Ok(None);
         }
