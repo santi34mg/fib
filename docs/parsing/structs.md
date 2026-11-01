@@ -64,7 +64,7 @@ before `)` but not before `.`. Old `pointer.*.field` syntax is rejected.
 
 A plain field assignment parses when the statement begins with a name;
 `outer.inner.value += 1;` does not, because compound assignment is restricted to
-single unqualified names. This is a parser limitation, not a settled design rule.
+single unqualified names or indexed targets. This is a parser limitation, not a settled design rule.
 
 The parser disambiguates name conditions from struct constructions in `if`
 conditions. A construction followed by access/comparison can also parse.

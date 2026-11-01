@@ -71,8 +71,12 @@ count %= 3;
 ```
 
 Assignments are handled in name-starting statements rather than the general
-expression grammar. Compound assignments require a single unqualified name;
-field, index, and qualified-name compound targets are rejected. `:=` is
+expression grammar. Compound assignments accept a single unqualified name or
+an indexed target, including nested indices and calls such as
+`items[next_index()] += amount();`. Indexed compounds retain one target and RHS
+with the arithmetic operator in a dedicated AST node to preserve single evaluation
+in future lowering; analysis and execution are not implemented. Field and
+qualified-name compound targets remain rejected. `:=` is
 inferred-declaration syntax (tokenized as `:` and `=`), not a general expression
 operator. Multiple assignment is not parsed. See [Variables](variables.md).
 
@@ -90,4 +94,5 @@ design rule.
 Parser coverage includes `test_binary_levels_are_left_associative`,
 `test_binary_shift_binds_looser_than_additive`, `test_binary_logical_or_loosest`,
 `test_postfix_access_keeps_binary_operators`, and
-`compound_assignment_still_requires_a_single_identifier`.
+`compound_assignment_rejects_unrelated_target_forms`, and
+`indexed_compound_assignment_preserves_each_expression_once`.

@@ -171,6 +171,11 @@ impl TypeContext<'_> {
             ));
         }
         match &mut node.kind {
+            S::IndexedCompoundAssignment { .. } => {
+                return Err(type_error(
+                    "indexed compound assignment analysis is not implemented",
+                ));
+            }
             S::VariableDeclaration(var) => self.variable(var)?,
             S::MultiVariableDeclaration { bindings, values } => {
                 if values.is_empty() {

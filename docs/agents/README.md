@@ -97,9 +97,12 @@ Enum constructors, payload copies, switches, storage and internal calls also exe
 [scalar semantics](../scalar-semantics.md) for numeric rules and
 [struct/storage semantics](../struct-storage-semantics.md) for memory rules.
 `build.fib` has an
-initial synthetic-module build API and shared-lowering/interpreter subset for
-literal `build_api::{add_source, set_entry, set_output}` calls; deterministic project-plan finalization now validates its initial path/name/entry/output
-contract; general interpretation remains unfinished.
+initial synthetic-module build API and shared-lowering/interpreter subset with
+CFG/block arguments, loops, direct helpers, boolean/fixed-width integer operations
+and immutable bytes. Builder effects commit on success with step/depth limits;
+memory, floats and indirect calls remain unsupported. Deterministic project-plan
+finalization validates its initial path/name/entry/output contract; broader builder
+orchestration remains unfinished.
 See [driver](src/driver.md), [IR](src/ir/README.md), [backend](src/backend/README.md)
 and [tests](tests/README.md) for exact limits.
 
@@ -109,7 +112,7 @@ build --single-file PATH -> BuildPlan -> parse_files -> Analyzer
   -> object -> cc -> executable (scalar/struct/enum/pointer/control-flow subset)
 
 build.fib + synthetic build_api -> Analyzer -> ir::lowering::lower -> verified IR
-  -> limited IR interpreter -> PlanBuilder state (partial)
+  -> bounded CFG/value IR interpreter -> PlanBuilder state (partial)
   -> validated project BuildPlan (narrow literal-operation subset)
 ```
 
@@ -192,7 +195,7 @@ see [linkage contracts](../roadmap/00-cross-module-linkage.md).
 Still deferred: public package/discovery build-API
 signatures and discovery/deduplication integration, ownership/lifetime enforcement,
 and broader compiler namespace spelling.
-General build interpretation, value-returning compile-time function execution and broader ABI remain
+Broader build interpreter values/effects, value-returning compile-time function execution and broader ABI remain
 unfinished. These are implementation boundaries, not amendments to the specification.
 
 Globals require explicit constant initial data, including aggregate/enum values,
