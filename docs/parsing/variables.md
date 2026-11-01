@@ -70,9 +70,11 @@ count %= 3;
 ```
 
 Plain assignment starting from a name can retain a field/index expression as
-its target. Compound assignment requires a **single unqualified variable name**;
-`items[i] += 1;`, `obj.field += 1;`, and `file::count += 1;` are rejected. The
-parser desugars compound assignment to an assignment with a binary RHS.
+its target. Compound assignment accepts a **single unqualified variable name**
+or an indexed target such as `items[i] += 1;`. `obj.field += 1;` and
+`file::count += 1;` remain rejected. The parser desugars simple-name compounds
+to assignment with a binary RHS. Indexed compounds use a dedicated AST node
+retaining one target and RHS; analysis and execution remain unsupported.
 
 The compound-target restriction is a parser limitation, not a settled language
 design rule.

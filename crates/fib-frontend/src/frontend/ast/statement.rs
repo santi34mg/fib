@@ -30,6 +30,13 @@ pub enum StatementKind {
         index: Expression,
         expr: Expression,
     },
+    /// Evaluate the target place once, then the RHS once, and update that place.
+    /// `operator` is the underlying arithmetic operator, not an assignment token.
+    IndexedCompoundAssignment {
+        target: Expression,
+        operator: crate::frontend::tokens::Operator,
+        value: Expression,
+    },
     Return(Option<Vec<Expression>>),
     MultiAssignment {
         targets: Vec<Expression>,

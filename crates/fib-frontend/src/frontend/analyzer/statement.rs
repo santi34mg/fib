@@ -76,7 +76,12 @@ impl Analyzer {
             StatementKind::ExpressionStatement(expr) => {
                 Self::resolve_name_expression(expr, context)?
             }
-            StatementKind::Assignment { left, right } => {
+            StatementKind::Assignment { left, right }
+            | StatementKind::IndexedCompoundAssignment {
+                target: left,
+                value: right,
+                ..
+            } => {
                 Self::resolve_name_expression(left, context)?;
                 Self::resolve_name_expression(right, context)?;
             }

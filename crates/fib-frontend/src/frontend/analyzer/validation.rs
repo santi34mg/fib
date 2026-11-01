@@ -1236,6 +1236,9 @@ impl Validator<'_> {
     }
     fn statement(&self, node: &Statement) -> anyhow::Result<()> {
         match &node.kind {
+            S::IndexedCompoundAssignment { .. } => {
+                anyhow::bail!("indexed compound assignment analysis is not implemented")
+            }
             S::VariableDeclaration(var) => self.variable(var, var.expression.as_ref())?,
             S::MultiVariableDeclaration { bindings, values } => {
                 for (index, var) in bindings.iter().enumerate() {
