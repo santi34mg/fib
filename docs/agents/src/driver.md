@@ -12,6 +12,14 @@ globals execute.
 source context. Empty/missing-entry plans fail before reading files. Analysis uses
 `Analyzer::analyze`, including completion validation.
 
+`run_frontend` exposes preparation, parsing and strict analysis without executable
+entry validation. `export-symbols --single-file PATH` or `--build-file PATH`
+uses it and `symbol_export::public_symbols` to write deterministic versioned JSON
+to stdout, with diagnostics on stderr. The inventory includes unrestricted `pub`
+top-level source names in the prepared plan (including dependencies), excludes
+synthetic namespaces and local declarations, and needs no lowering or LLVM.
+See [symbol export](../../symbol-export.md) for the schema and type-display limits.
+
 Both normal and bootstrap projects use `Analyzer::new(...).analyze()` and the single
 `ir::lowering::lower` entry point. The bootstrap configures `build_api` as a synthetic
 module with ordinary declaration/type identities. The driver validates `main` or

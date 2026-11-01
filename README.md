@@ -34,6 +34,10 @@ For development, use `cargo run -- build --sysroot library --single-file samples
 See [standard-library setup and contracts](docs/standard-library.md), including
 `--no-std` and LSP configuration.
 
+Export public top-level symbols as JSON with
+`fibc export-symbols --single-file api.fib --sysroot library > symbols.json`.
+Build-file projects are supported too; see the [export schema](docs/symbol-export.md).
+
 ## Contributing
 
 The Rust compiler is a [Cargo workspace](crates/README.md). Root `cargo test`

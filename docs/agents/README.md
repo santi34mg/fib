@@ -138,6 +138,11 @@ also scaffolding; supported input currently uses `std::os::read`. See the
 
 ## Language server
 
+`export-symbols` exports unrestricted public top-level source declarations as
+deterministic JSON after strict frontend analysis, without requiring `main` or
+LLVM. It supports explicit single-file and build-file plans. See the
+[export schema](../symbol-export.md) and [driver guide](src/driver.md).
+
 `src/bin/fib-lsp.rs` is a native stdio server sharing compiler tokens, parsing,
 analysis and build planning through `frontend::tooling` and `frontend::source`.
 `Analyzer::analyze_collecting` returns an `AnalysisReport` with partial semantic
