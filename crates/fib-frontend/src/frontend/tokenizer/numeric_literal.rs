@@ -43,6 +43,11 @@ impl<'input> Tokenizer<'input> {
             _ => |c: char| c.is_ascii_digit(),
         };
         self.skip_while(digit_pred);
+        if start == self.position {
+            return Some(TokenKind::Error(
+                "Invalid numeric literal: expected digits after radix prefix".to_owned(),
+            ));
+        }
         // Fractional part (decimal only). Consume the '.' only when a digit
         // follows so `1..5` still lexes as `1`, `..`, `5`.
         let mut is_float = false;
