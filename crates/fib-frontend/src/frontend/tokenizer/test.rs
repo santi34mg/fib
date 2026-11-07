@@ -75,6 +75,32 @@ mod tests {
     }
 
     #[test]
+    fn test_numeric_literal_rejects_empty_radix_prefix() {
+        for source in ["0d.5", "0x.5", "0o.7", "0b.1", "0d", "0x", "0o", "0b"] {
+            let token = Tokenizer::new(source).next().expect("expected a token");
+            assert!(
+                matches!(token.kind, TokenKind::Error(_)),
+                "expected invalid literal {source:?} to produce an error, got {:?}",
+                token.kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_numeric_literal_preserves_valid_radix_values() {
+        for (source, expected) in [
+            ("0d5", TokenKind::Literal(Literal::Integer(5u8.into()))),
+            ("0xF", TokenKind::Literal(Literal::Integer(15u8.into()))),
+            ("0o7", TokenKind::Literal(Literal::Integer(7u8.into()))),
+            ("0b1", TokenKind::Literal(Literal::Integer(1u8.into()))),
+            ("0.5", TokenKind::Literal(Literal::Float("0.5".to_owned()))),
+        ] {
+            let tokens: Vec<_> = Tokenizer::new(source).map(|token| token.kind).collect();
+            assert_eq!(tokens, vec![expected], "unexpected tokens for {source:?}");
+        }
+    }
+
+    #[test]
     fn test_literal_float() {
         let test_string = "3.14 0.14 12.4 1.0";
         #[allow(clippy::approx_constant)]

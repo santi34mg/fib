@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject radix-prefixed numeric literals without digits (such as `0d.5`) instead of treating them as decimal floats.
 - Restore compiler builds after integrating indexed compound-assignment syntax
   with type-owned member traversal; visit both target and value expressions.
 - Parse indexed compound assignments for all five arithmetic operators, retaining
