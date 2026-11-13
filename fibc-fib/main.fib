@@ -98,12 +98,6 @@ comp TokenOperator: type = enum {
     Dereference,        // .*
 };
 
-comp fn Arena(T: type) type {
-    return struct {
-        data: []T,
-    };
-}
-
 comp CompilerErr: type = enum {
     MissingArgs,
     NotImplemented,
@@ -115,20 +109,16 @@ comp CompilerErr: type = enum {
 };
 
 fn main(args: std::process::Arguments, env: std::process::Environment) std::result::Result(void, CompilerErr) {
-    comp CharArena := Arena(uint8);
-    arena :=  CharArena {
-        data: std::memory::alloc(uint8, 4096),
-    };
     if args.len < 2 {
         std::io::print("usage: fibc-fib <filename>");
         return std::result::Result(void, CompilerErr).Err(CompilerErr.MissingArgs);
     };
     command := args[1];
-    if std::prelude::str_eq(command, "build") {
+    if std::string::str_eq(command, "build") {
 
-    } else if std::prelude::str_eq(command, "run") {
+    } else if std::string::str_eq(command, "run") {
         return std::result::Result(void, CompilerErr).Err(CompilerErr.NotImplemented);
-    } else if std::prelude::str_eq(command, "test") {
+    } else if std::string::str_eq(command, "test") {
         return std::result::Result(void, CompilerErr).Err(CompilerErr.NotImplemented);
     };
 
