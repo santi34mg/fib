@@ -1,0 +1,55 @@
+// An optional value. A missing value is the bare variant: `O.None`, `when .None {}`.
+pub comp fn Option(T: type) type {
+    return enum {
+        Some: T,
+        None: void
+    };
+}
+
+// Helpers take the payload type explicitly, like every generic std function:
+// std::option::unwrap_or(int32, value, 0).
+
+pub fn is_some(T: type, value: Option(T)) bool {
+    switch (value) {
+        when .Some { return true; }
+        when .None { return false; }
+    };
+}
+
+pub fn is_none(T: type, value: Option(T)) bool {
+    return !is_some(T, value);
+}
+
+// Return the payload, or fallback when value is None.
+pub fn unwrap_or(T: type, value: Option(T), fallback: T) T {
+    switch (value) {
+        when .Some(payload) { return payload; }
+        when .None { return fallback; }
+    };
+}
+
+// Return the payload, or abort the process with message (see std::process::abort).
+pub fn expect(T: type, value: Option(T), message: const []uint8) T {
+    switch (value) {
+        when .Some(payload) { return payload; }
+        when .None { root::process::abort(message); }
+    };
+}
+
+// Convert to a Result, using error for a missing value.
+pub fn ok_or(T: type, E: type, value: Option(T), error: E) root::result::Result(T, E) {
+    comp R := root::result::Result(T, E);
+    switch (value) {
+        when .Some(payload) { return R.Ok(payload); }
+        when .None { return R.Err(error); }
+    };
+}
+
+// Transform the payload; None passes through unchanged.
+pub fn map(T: type, U: type, value: Option(T), transform: fn(T) U) Option(U) {
+    comp O := Option(U);
+    switch (value) {
+        when .Some(payload) { return O.Some(transform(payload)); }
+        when .None { return O.None; }
+    };
+}

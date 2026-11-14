@@ -112,6 +112,42 @@ jobs:
         # Currently identical to default features; run the suite once.
         run: cargo test --all-features
 
+  build_and_test_macos:
+    name: Build and run tests (macOS arm64)
+    # Apple arm64 uses the AAPCS64 C ABI and the darwin std (libSystem, no raw
+    # syscalls). Linux-only tests are cfg-gated; float128 tests are ignored.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup LLVM
+        run: |
+          brew install llvm@21
+          echo "LLVM_SYS_211_PREFIX=$(brew --prefix llvm@21)" >> "$GITHUB_ENV"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-llvm21-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', '.github/workflows/ci.yml', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-llvm21-cargo-
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --all-features
+
   audit:
     name: Security audit (advisory, non-blocking)
     runs-on: ubuntu-latest

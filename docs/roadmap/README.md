@@ -55,7 +55,7 @@ concrete rechecked instances also execute through verified IR and LLVM.
       access; permit explicit re-exports of accessible restricted targets.
 - [x] Give direct same-family literal cast operands destination context; implement
       explicit numeric/bool conversions with zero/nonzero and 0/1 semantics.
-- [x] Permit shallow writable-to-readonly pointer/slice views and warned one-layer
+- [x] Permit shallow writable-to-readonly pointer/slice views and implicit one-layer
       implicit pointer field dereference, preserving null checks and permissions.
 - [x] Require exhaustive enum switches, allowing `when else` for remaining variants.
 

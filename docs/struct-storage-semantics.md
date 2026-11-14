@@ -1,7 +1,7 @@
 # Struct values, storage and raw pointers
 
 Struct typing, definite initialization, fixed-array value storage/assignment,
-implicit readonly pointer views and warned one-layer pointer field access execute
+implicit readonly pointer views and implicit one-layer pointer field access execute
 through verified IR and LLVM, including multi-file calls and concrete generics.
 See the [mutability and pointer rules](language-specification.md#values-initialization-and-mutability).
 The [architecture](compiler-architecture.md) describes the current pipeline.
@@ -108,8 +108,8 @@ imply array-to-slice conversion or general borrowing safety.
 
 Postfix `value&` takes the address of a place; postfix `pointer*` dereferences it.
 `(pointer*).x` explicitly dereferences before selecting a field. The shorthand
-`pointer.x` inserts exactly one dereference and emits a nonfatal source-located
-warning, preserving null checks and permissions. Two pointer layers require an
+`pointer.x` inserts exactly one dereference without a diagnostic,
+preserving null checks and permissions. Two pointer layers require an
 explicit dereference before the shorthand applies.
 Null requires a pointer context; same-typed pointers support equality/inequality.
 

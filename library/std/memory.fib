@@ -29,26 +29,85 @@
 // Sentinel slices preserve their terminator in the pointer result:
 // slice_data(view: const [:0]uint8) returns const [*:0]uint8.
 // slice_from_parts always produces an ordinary slice; arbitrary lengths do
-// not establish a sentinel at the new endpoint.
+// not establish a sentinel at the new endpoint. Use span below for C strings.
+
+// ---- Allocation ----
+//
+// Every allocator is an Allocator value. Two implementations are provided:
+// heap_allocator() (the free-list heap used by alloc/free) and
+// page_allocator() (one private mmap per allocation). The typed helpers
+// create/destroy work with any Allocator; alloc/free use the heap.
 
 pub comp AllocError: type = enum {
     NotEnoughMemory,
     MapFailed,
     InvalidAlignment,
     UnmapFailed,
+    // The pointer was not returned by this allocator or is already free.
+    InvalidFree,
 };
+
+pub comp AllocResult := root::result::Result(*uint8, AllocError);
+pub comp Status := root::result::Result(void, AllocError);
 
 pub comp Allocator: type = struct {
     context: *void,
-    // Allocate uninitialized storage; alignment must be a positive power of two.
-    alloc: fn(*void, usize, usize) root::result::Result(*uint8, AllocError),
+    // Allocate uninitialized storage of a nonzero size; alignment must be a
+    // positive power of two supported by the implementation.
+    alloc: fn(*void, usize, usize) AllocResult,
     // Free only the original live pointer returned by this allocator, or null.
-    free: fn(*void, *void) root::result::Result(void, AllocError),
+    free: fn(*void, *uint8) Status,
 };
 
+// Alignment requested by the typed helpers. Supported Linux x86-64 types fit it.
+comp TYPED_ALIGNMENT: usize = 16;
+
+// Allocate count uninitialized elements of T from allocator. A zero count
+// returns an empty slice without allocating; zero-sized element types still
+// receive a live allocation. Size overflow returns NotEnoughMemory.
+pub fn create(T: type, allocator: Allocator, count: usize) root::result::Result([]T, AllocError) {
+    comp R := root::result::Result([]T, AllocError);
+    empty: *T = null;
+    if count == 0 { return R.Ok(root::memory::slice_from_parts(empty, 0)); };
+    element := core::sizeof(T);
+    limit: usize = 18446744073709551615;
+    if element > limit / count { return R.Err(AllocError.NotEnoughMemory); };
+    size := element * count;
+    if size == 0 { size = 1; };
+    switch (allocator.alloc(allocator.context, size, TYPED_ALIGNMENT)) {
+        when .Err(error) { return R.Err(error); }
+        when .Ok(pointer) {
+            typed := root::os_abi::pointer_from_word(T, root::os_abi::pointer_to_word(pointer));
+            return R.Ok(root::memory::slice_from_parts(typed, count));
+        }
+    };
+}
+
+// Release a slice returned by create with the same allocator; all views of it
+// then expire. Empty slices own no storage and are ignored.
+pub fn destroy(T: type, allocator: Allocator, items: []T) Status {
+    if items.len == 0 { return Status.Ok; };
+    pointer := root::os_abi::pointer_from_word(uint8,
+        root::os_abi::pointer_to_word(root::memory::slice_data(items)));
+    return allocator.free(allocator.context, pointer);
+}
+
+// create with the heap allocator.
+pub fn alloc(T: type, count: usize) root::result::Result([]T, AllocError) {
+    return create(T, heap_allocator(), count);
+}
+
+// destroy with the heap allocator. Pass the exact slice returned by alloc.
+pub fn free(T: type, items: []T) Status {
+    return destroy(T, heap_allocator(), items);
+}
+
+// ---- Page allocator ----
+
 // Stateless Linux mmap allocator; context is ignored. Zero size and size/padding
-// overflow return NotEnoughMemory. Unknown pointers and double frees are invalid.
-pub fn create_page_alloc() Allocator {
+// overflow return NotEnoughMemory. Any power-of-two alignment is supported.
+// Unknown pointers and double frees are undefined: the header is trusted.
+pub fn page_allocator() Allocator {
     return Allocator {
         context: null,
         alloc: page_alloc,
@@ -63,19 +122,18 @@ comp PageHeader: type = struct {
     length: usize,
 };
 
-fn page_alloc(context: *void, size: usize, align: usize) root::result::Result(*uint8, AllocError) {
-    comp R := root::result::Result(*uint8, AllocError);
-    if align == 0 { return R.Err(AllocError.InvalidAlignment); };
-    if (align & (align - 1)) != 0 { return R.Err(AllocError.InvalidAlignment); };
-    if size == 0 { return R.Err(AllocError.NotEnoughMemory); };
+fn page_alloc(context: *void, size: usize, align: usize) AllocResult {
+    if align == 0 { return AllocResult.Err(AllocError.InvalidAlignment); };
+    if (align & (align - 1)) != 0 { return AllocResult.Err(AllocError.InvalidAlignment); };
+    if size == 0 { return AllocResult.Err(AllocError.NotEnoughMemory); };
     alignment := align;
     if alignment < 8 { alignment = 8; };
     header := core::sizeof(PageHeader);
     limit: usize = 18446744073709551615;
     padding := alignment - 1;
-    if header > limit - padding { return R.Err(AllocError.NotEnoughMemory); };
+    if header > limit - padding { return AllocResult.Err(AllocError.NotEnoughMemory); };
     overhead := header + padding;
-    if size > limit - overhead { return R.Err(AllocError.NotEnoughMemory); };
+    if size > limit - overhead { return AllocResult.Err(AllocError.NotEnoughMemory); };
     length := size + overhead;
     switch (root::os::mmap(
         null,
@@ -93,45 +151,41 @@ fn page_alloc(context: *void, size: usize, align: usize) root::result::Result(*u
             aligned := start + extra;
             metadata := root::os_abi::pointer_from_word(PageHeader, aligned - (header as uint64));
             metadata* = PageHeader { base: ptr, length: length };
-            return R.Ok(root::os_abi::pointer_from_word(uint8, aligned));
+            return AllocResult.Ok(root::os_abi::pointer_from_word(uint8, aligned));
         }
         when .Err(err) {
-            if err == 12 { return R.Err(AllocError.NotEnoughMemory); };
-            return R.Err(AllocError.MapFailed);
+            if err == root::os::ENOMEM { return AllocResult.Err(AllocError.NotEnoughMemory); };
+            return AllocResult.Err(AllocError.MapFailed);
         }
     };
 }
 
-fn page_free(context: *void, ptr: *void) root::result::Result(void, AllocError) {
-    comp R := root::result::Result(void, AllocError);
-    if ptr == null { return R.Ok; };
+fn page_free(context: *void, ptr: *uint8) Status {
+    if ptr == null { return Status.Ok; };
     metadata := root::os_abi::pointer_from_word(PageHeader,
         root::os_abi::pointer_to_word(ptr) - (core::sizeof(PageHeader) as uint64));
     // Copy before unmapping; do not mutate the header, including on failure.
     mapping := metadata*;
     switch (root::os::munmap(mapping.base, mapping.length)) {
-        when .Ok { return R.Ok; }
-        when .Err(err) { return R.Err(AllocError.UnmapFailed); }
+        when .Ok { return Status.Ok; }
+        when .Err(err) { return Status.Err(AllocError.UnmapFailed); }
     };
 }
 
-// Fill every byte in destination. Empty slices do not access storage.
-pub fn memset(destination: []uint8, value: uint8) {
-    i: usize = 0;
-    while (i < destination.len) {
-        destination[i] = value;
-        i = i + 1;
-    };
-}
+// ---- Heap allocator ----
 
-// Copy source bytes into destination's prefix; the remaining bytes are unchanged.
-// A short destination traps before any write. The regions must not overlap.
-pub fn memcpy(destination: []uint8, source: const []uint8) {
-    target := destination[..source.len];
-    i: usize = 0;
-    while (i < source.len) {
-        target[i] = source[i];
-        i = i + 1;
+// Single-threaded first-fit free list; context is ignored. Fresh storage comes
+// from os::heap_grow (the program break on Linux, private mappings on macOS).
+// Alignment up to 16 is supported; larger values return InvalidAlignment.
+// Freed storage is reused and adjacent free blocks coalesce, but memory is
+// never returned to the OS. Freeing an unknown or already-free pointer returns
+// InvalidFree and leaves the heap unchanged. On Linux, do not shrink the break
+// over live heap storage.
+pub fn heap_allocator() Allocator {
+    return Allocator {
+        context: null,
+        alloc: heap_alloc,
+        free: heap_free,
     };
 }
 
@@ -168,20 +222,15 @@ fn find_free_block(size: usize) *Block {
     return null;
 }
 
+// Fresh storage comes from os::heap_grow: the program break on Linux, private
+// anonymous mappings on macOS. Both return 16-byte-aligned regions.
 fn request_memory(size: usize) *Block {
     header := header_size();
     if size > 9223372036854775807 - header - 15 { return null; };
-    start: uint64;
-    switch (root::os::sbrk(0)) {
-        when .Err(error) { return null; }
-        when .Ok(pointer) { start = root::os_abi::pointer_to_word(pointer); }
-    };
-    padding := (16 - start % 16) % 16;
-    total := size + header + (padding as usize);
-    switch (root::os::sbrk(total as int64)) {
+    switch (root::os::heap_grow(size + header)) {
         when .Err(error) { return null; }
         when .Ok(pointer) {
-            block := block_at(start + padding);
+            block := block_at(root::os_abi::pointer_to_word(pointer));
             block* = Block { size: size, next: null, is_free: true };
             if head == null {
                 head = block;
@@ -210,37 +259,31 @@ fn split(block: *Block, size: usize) {
     (block*).is_free = false;
 }
 
-// Returns an empty slice for zero count, size overflow or exhaustion.
-// Storage is uninitialized. Supported Linux x86-64 types fit 16-byte alignment.
-// Zero-sized elements still receive a live allocation.
-pub fn alloc(T: type, n: usize) []T {
-    empty: *T = null;
-    if n == 0 { return root::memory::slice_from_parts(empty, 0); };
-    element := core::sizeof(T);
-    limit: usize = 9223372036854775807;
-    if element > limit / n { return root::memory::slice_from_parts(empty, 0); };
-    size := element * n;
-    if size > limit - 15 { return root::memory::slice_from_parts(empty, 0); };
-    size = ((size + 15) / 16) * 16;
-    if size == 0 { size = 16; };
-    block := find_free_block(size);
-    if block == null { block = request_memory(size); };
-    if block == null { return root::memory::slice_from_parts(empty, 0); };
-    split(block, size);
-    pointer := root::os_abi::pointer_from_word(T, root::os_abi::pointer_to_word(data(block)));
-    return root::memory::slice_from_parts(pointer, n);
+fn heap_alloc(context: *void, size: usize, align: usize) AllocResult {
+    if align == 0 || (align & (align - 1)) != 0 || align > 16 {
+        return AllocResult.Err(AllocError.InvalidAlignment);
+    };
+    if size == 0 { return AllocResult.Err(AllocError.NotEnoughMemory); };
+    // Keep sizes within a signed break increment after rounding and headers.
+    if size > 9223372036854775807 - 15 { return AllocResult.Err(AllocError.NotEnoughMemory); };
+    rounded := ((size + 15) / 16) * 16;
+    block := find_free_block(rounded);
+    if block == null { block = request_memory(rounded); };
+    if block == null { return AllocResult.Err(AllocError.NotEnoughMemory); };
+    split(block, rounded);
+    return AllocResult.Ok(data(block));
 }
 
-// Free only an allocation's original pointer; all views then expire.
-// Null, unknown and already-free pointers are ignored. Storage is retained.
-pub fn free(T: type, ptr: *T) {
-    if ptr == null { return; };
+fn heap_free(context: *void, ptr: *uint8) Status {
+    if ptr == null { return Status.Ok; };
     target := root::os_abi::pointer_to_word(ptr);
     current := head;
     while (current != null) {
         if root::os_abi::pointer_to_word(data(current)) == target {
+            if (current*).is_free { return Status.Err(AllocError.InvalidFree); };
             (current*).is_free = true;
-            // Another sbrk user may have left a gap between owned regions.
+            // Regions need not be adjacent: another break user or separate
+            // mappings can leave gaps, so only touching blocks merge.
             block := head;
             while (block != null) {
                 next := (block*).next;
@@ -252,8 +295,51 @@ pub fn free(T: type, ptr: *T) {
                     block = next;
                 };
             };
-            return;
+            return Status.Ok;
         };
         current = (current*).next;
     };
+    return Status.Err(AllocError.InvalidFree);
+}
+
+// ---- Byte operations and C strings ----
+
+// Fill every byte in destination. Empty slices do not access storage.
+pub fn memset(destination: []uint8, value: uint8) {
+    i: usize = 0;
+    while (i < destination.len) {
+        destination[i] = value;
+        i = i + 1;
+    };
+}
+
+// Copy source bytes into destination's prefix; the remaining bytes are unchanged.
+// A short destination traps before any write. The regions must not overlap.
+pub fn memcpy(destination: []uint8, source: const []uint8) {
+    target := destination[..source.len];
+    i: usize = 0;
+    while (i < source.len) {
+        target[i] = source[i];
+        i = i + 1;
+    };
+}
+
+// View a NUL-terminated C string as a terminated slice, excluding the NUL.
+// Scans for the terminator; no allocation or copy. The view borrows the
+// pointer's storage and lifetime.
+pub fn span(pointer: const [*:0]uint8) const [:0]uint8 {
+    return c_string_at(root::os_abi::pointer_to_word(pointer));
+}
+
+// span for a raw address, e.g. host argv/envp entries. The caller guarantees
+// live NUL-terminated storage at start.
+pub(root) fn c_string_at(start: uint64) const [:0]uint8 {
+    length: usize = 0;
+    while (true) {
+        byte := root::os_abi::pointer_from_word(uint8, start + (length as uint64));
+        if (byte*) == 0 { break; };
+        length = length + 1;
+    };
+    return root::os_abi::terminated_from_parts(
+        root::os_abi::pointer_from_word(uint8, start), length);
 }

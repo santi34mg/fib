@@ -14,7 +14,7 @@ comp Dog := struct {
 // produces the existing callback-based Allocator value.
 comp PageAllocator := struct {
     comp as_allocator := fn() std::memory::Allocator {
-        return std::memory::create_page_alloc();
+        return std::memory::page_allocator();
     };
 };
 

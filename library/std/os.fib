@@ -6,6 +6,7 @@
 // the uint64 forms shown here also describe the register representation.
 // Typed numeric values require explicit conversion to uint64. The syscall
 // number must be uint64; integer literals receive that context automatically.
+// std::syscall names every Linux x86-64 syscall number, e.g. std::syscall::GETPID.
 //
 // pub fn syscall0(number: uint64) int64
 // Invoke a raw syscall without arguments, e.g. std::os::syscall0(39) for getpid.
@@ -35,82 +36,647 @@
 // lengths, permissions and lifetimes. Calls use inline assembly with memory
 // clobbers; no libc wrapper is involved. Other targets and execution in build
 // files are not supported. Prefer the typed wrappers below when available.
+//
+// Typed wrappers return a Result whose Err variant carries an Errno (the
+// positive kernel error number; see the E* constants and errno_name). Like the
+// raw forms, they never retry EINTR or complete short transfers; use
+// std::io::read_full and std::io::write_all for that. Path arguments must reference live
+// NUL-terminated storage, e.g. c"/tmp" or a std::process::Arguments element.
+// Out-pointer arguments must reference live writable storage.
+
+// Positive Linux error number. An alias of int32, so values compare directly
+// with the E* constants: `if error == std::os::ENOENT { ... }`.
+pub comp Errno := int32;
 
 // Type annotations name aliases; computed types are instantiated in comp bindings.
-pub comp CountResult := root::result::Result(usize, int32);
-pub comp IntResult := root::result::Result(int32, int32);
-pub comp MappingResult := root::result::Result(*uint8, int32);
-pub comp Status := enum { Ok, Err: int32 };
+pub comp CountResult := root::result::Result(usize, Errno);
+pub comp IntResult := root::result::Result(int32, Errno);
+pub comp OffsetResult := root::result::Result(int64, Errno);
+pub comp MappingResult := root::result::Result(*uint8, Errno);
+pub comp Status := root::result::Result(void, Errno);
 
-pub comp PROT_READ := 0x1;  // 1
-pub comp PROT_WRITE := 0x2; // 2
+// Two descriptors. For pipes, first is the read end and second the write end.
+pub comp FdPair := struct { first: int32, second: int32 };
+pub comp FdPairResult := root::result::Result(FdPair, Errno);
 
-pub comp MAP_PRIVATE := 0x02;   // 2
-pub comp MAP_ANONYMOUS := 0x20; // 32
-pub comp MAP_FAILED : int64 = -1;
+// struct timespec.
+pub comp Timespec := struct { seconds: int64, nanoseconds: int64 };
+pub comp TimeResult := root::result::Result(Timespec, Errno);
 
-pub const stdout := 1;
-// TODO: i think its 2 but have to check
-pub const stderr := 2;
+// The process ID reaped by waitpid and its raw wait status word.
+pub comp WaitStatus := struct { pid: int32, status: int32 };
+pub comp WaitResult := root::result::Result(WaitStatus, Errno);
+
+// struct stat as laid out by the x86-64 kernel (144 bytes).
+pub comp Stat := struct {
+    dev: uint64,
+    ino: uint64,
+    nlink: uint64,
+    mode: uint32,
+    uid: uint32,
+    gid: uint32,
+    pad0: int32,
+    rdev: uint64,
+    size: int64,
+    blksize: int64,
+    blocks: int64,
+    atime: Timespec,
+    mtime: Timespec,
+    ctime: Timespec,
+    reserved: [3]int64,
+};
+pub comp StatResult := root::result::Result(Stat, Errno);
+
+// struct utsname; each field is a NUL-terminated byte string.
+pub comp Utsname := struct {
+    sysname: [65]uint8,
+    nodename: [65]uint8,
+    release: [65]uint8,
+    version: [65]uint8,
+    machine: [65]uint8,
+    domainname: [65]uint8,
+};
+pub comp UtsnameResult := root::result::Result(Utsname, Errno);
+
+// struct rlimit; RLIM_INFINITY is all bits set.
+pub comp Rlimit := struct { current: uint64, maximum: uint64 };
+pub comp RLIM_INFINITY: uint64 = 18446744073709551615;
+pub comp RlimitResult := root::result::Result(Rlimit, Errno);
+
+// struct iovec for readv/writev.
+pub comp Iovec := struct { base: *uint8, len: usize };
+
+// struct pollfd.
+pub comp PollFd := struct { fd: int32, events: int16, revents: int16 };
+
+// Standard descriptors.
+pub comp stdin: int32 = 0;
+pub comp stdout: int32 = 1;
+pub comp stderr: int32 = 2;
+
+// mmap/mprotect protection and mapping flags.
+pub comp PROT_NONE: int32 = 0x0;
+pub comp PROT_READ: int32 = 0x1;
+pub comp PROT_WRITE: int32 = 0x2;
+pub comp PROT_EXEC: int32 = 0x4;
+
+pub comp MAP_SHARED: int32 = 0x01;
+pub comp MAP_PRIVATE: int32 = 0x02;
+pub comp MAP_FIXED: int32 = 0x10;
+pub comp MAP_ANONYMOUS: int32 = 0x20;
+
+pub comp MS_ASYNC: int32 = 1;
+pub comp MS_INVALIDATE: int32 = 2;
+pub comp MS_SYNC: int32 = 4;
+
+pub comp MADV_NORMAL: int32 = 0;
+pub comp MADV_RANDOM: int32 = 1;
+pub comp MADV_SEQUENTIAL: int32 = 2;
+pub comp MADV_WILLNEED: int32 = 3;
+pub comp MADV_DONTNEED: int32 = 4;
+
+// open/openat flags.
+pub comp O_RDONLY: int32 = 0x0;
+pub comp O_WRONLY: int32 = 0x1;
+pub comp O_RDWR: int32 = 0x2;
+pub comp O_CREAT: int32 = 0x40;
+pub comp O_EXCL: int32 = 0x80;
+pub comp O_NOCTTY: int32 = 0x100;
+pub comp O_TRUNC: int32 = 0x200;
+pub comp O_APPEND: int32 = 0x400;
+pub comp O_NONBLOCK: int32 = 0x800;
+pub comp O_DSYNC: int32 = 0x1000;
+pub comp O_DIRECT: int32 = 0x4000;
+pub comp O_DIRECTORY: int32 = 0x10000;
+pub comp O_NOFOLLOW: int32 = 0x20000;
+pub comp O_NOATIME: int32 = 0x40000;
+pub comp O_CLOEXEC: int32 = 0x80000;
+pub comp O_SYNC: int32 = 0x101000;
+pub comp O_PATH: int32 = 0x200000;
+pub comp O_TMPFILE: int32 = 0x410000;
+
+// *at directory and flag arguments.
+pub comp AT_FDCWD: int32 = -100;
+pub comp AT_SYMLINK_NOFOLLOW: int32 = 0x100;
+pub comp AT_REMOVEDIR: int32 = 0x200;
+pub comp AT_SYMLINK_FOLLOW: int32 = 0x400;
+pub comp AT_EMPTY_PATH: int32 = 0x1000;
+
+// lseek whence.
+pub comp SEEK_SET: int32 = 0;
+pub comp SEEK_CUR: int32 = 1;
+pub comp SEEK_END: int32 = 2;
+
+// access modes.
+pub comp F_OK: int32 = 0;
+pub comp X_OK: int32 = 1;
+pub comp W_OK: int32 = 2;
+pub comp R_OK: int32 = 4;
+
+// fcntl commands and descriptor flags.
+pub comp F_DUPFD: int32 = 0;
+pub comp F_GETFD: int32 = 1;
+pub comp F_SETFD: int32 = 2;
+pub comp F_GETFL: int32 = 3;
+pub comp F_SETFL: int32 = 4;
+pub comp F_DUPFD_CLOEXEC: int32 = 1030;
+pub comp FD_CLOEXEC: int32 = 1;
+
+// flock operations.
+pub comp LOCK_SH: int32 = 1;
+pub comp LOCK_EX: int32 = 2;
+pub comp LOCK_NB: int32 = 4;
+pub comp LOCK_UN: int32 = 8;
+
+// File type and permission bits of Stat.mode.
+pub comp S_IFMT: uint32 = 0xF000;
+pub comp S_IFSOCK: uint32 = 0xC000;
+pub comp S_IFLNK: uint32 = 0xA000;
+pub comp S_IFREG: uint32 = 0x8000;
+pub comp S_IFBLK: uint32 = 0x6000;
+pub comp S_IFDIR: uint32 = 0x4000;
+pub comp S_IFCHR: uint32 = 0x2000;
+pub comp S_IFIFO: uint32 = 0x1000;
+
+// Signals.
+pub comp SIGHUP: int32 = 1;
+pub comp SIGINT: int32 = 2;
+pub comp SIGQUIT: int32 = 3;
+pub comp SIGILL: int32 = 4;
+pub comp SIGTRAP: int32 = 5;
+pub comp SIGABRT: int32 = 6;
+pub comp SIGBUS: int32 = 7;
+pub comp SIGFPE: int32 = 8;
+pub comp SIGKILL: int32 = 9;
+pub comp SIGUSR1: int32 = 10;
+pub comp SIGSEGV: int32 = 11;
+pub comp SIGUSR2: int32 = 12;
+pub comp SIGPIPE: int32 = 13;
+pub comp SIGALRM: int32 = 14;
+pub comp SIGTERM: int32 = 15;
+pub comp SIGCHLD: int32 = 17;
+pub comp SIGCONT: int32 = 18;
+pub comp SIGSTOP: int32 = 19;
+pub comp SIGTSTP: int32 = 20;
+pub comp SIGTTIN: int32 = 21;
+pub comp SIGTTOU: int32 = 22;
+
+// waitpid options.
+pub comp WNOHANG: int32 = 1;
+pub comp WUNTRACED: int32 = 2;
+
+// Clocks.
+pub comp CLOCK_REALTIME: int32 = 0;
+pub comp CLOCK_MONOTONIC: int32 = 1;
+pub comp CLOCK_PROCESS_CPUTIME_ID: int32 = 2;
+pub comp CLOCK_THREAD_CPUTIME_ID: int32 = 3;
+pub comp CLOCK_BOOTTIME: int32 = 7;
+
+// poll events.
+pub comp POLLIN: int16 = 0x1;
+pub comp POLLPRI: int16 = 0x2;
+pub comp POLLOUT: int16 = 0x4;
+pub comp POLLERR: int16 = 0x8;
+pub comp POLLHUP: int16 = 0x10;
+pub comp POLLNVAL: int16 = 0x20;
+
+// Resource limits.
+pub comp RLIMIT_CPU: int32 = 0;
+pub comp RLIMIT_FSIZE: int32 = 1;
+pub comp RLIMIT_DATA: int32 = 2;
+pub comp RLIMIT_STACK: int32 = 3;
+pub comp RLIMIT_CORE: int32 = 4;
+pub comp RLIMIT_RSS: int32 = 5;
+pub comp RLIMIT_NPROC: int32 = 6;
+pub comp RLIMIT_NOFILE: int32 = 7;
+pub comp RLIMIT_MEMLOCK: int32 = 8;
+pub comp RLIMIT_AS: int32 = 9;
+
+// Sockets.
+pub comp AF_UNIX: int32 = 1;
+pub comp AF_INET: int32 = 2;
+pub comp AF_INET6: int32 = 10;
+pub comp SOCK_STREAM: int32 = 1;
+pub comp SOCK_DGRAM: int32 = 2;
+pub comp SOCK_RAW: int32 = 3;
+pub comp SOCK_NONBLOCK: int32 = 0x800;
+pub comp SOCK_CLOEXEC: int32 = 0x80000;
+pub comp IPPROTO_TCP: int32 = 6;
+pub comp IPPROTO_UDP: int32 = 17;
+pub comp SHUT_RD: int32 = 0;
+pub comp SHUT_WR: int32 = 1;
+pub comp SHUT_RDWR: int32 = 2;
+pub comp SOL_SOCKET: int32 = 1;
+pub comp SO_REUSEADDR: int32 = 2;
+pub comp SO_KEEPALIVE: int32 = 9;
+pub comp SO_REUSEPORT: int32 = 15;
+
+// getrandom flags.
+pub comp GRND_NONBLOCK: uint32 = 1;
+pub comp GRND_RANDOM: uint32 = 2;
+
+// Errno values carried by Err variants.
+pub comp EPERM: Errno = 1;
+pub comp ENOENT: Errno = 2;
+pub comp ESRCH: Errno = 3;
+pub comp EINTR: Errno = 4;
+pub comp EIO: Errno = 5;
+pub comp ENXIO: Errno = 6;
+pub comp E2BIG: Errno = 7;
+pub comp ENOEXEC: Errno = 8;
+pub comp EBADF: Errno = 9;
+pub comp ECHILD: Errno = 10;
+pub comp EAGAIN: Errno = 11;
+pub comp ENOMEM: Errno = 12;
+pub comp EACCES: Errno = 13;
+pub comp EFAULT: Errno = 14;
+pub comp EBUSY: Errno = 16;
+pub comp EEXIST: Errno = 17;
+pub comp EXDEV: Errno = 18;
+pub comp ENODEV: Errno = 19;
+pub comp ENOTDIR: Errno = 20;
+pub comp EISDIR: Errno = 21;
+pub comp EINVAL: Errno = 22;
+pub comp ENFILE: Errno = 23;
+pub comp EMFILE: Errno = 24;
+pub comp ENOTTY: Errno = 25;
+pub comp EFBIG: Errno = 27;
+pub comp ENOSPC: Errno = 28;
+pub comp ESPIPE: Errno = 29;
+pub comp EROFS: Errno = 30;
+pub comp EMLINK: Errno = 31;
+pub comp EPIPE: Errno = 32;
+pub comp ERANGE: Errno = 34;
+pub comp ENAMETOOLONG: Errno = 36;
+pub comp ENOSYS: Errno = 38;
+pub comp ENOTEMPTY: Errno = 39;
+pub comp ELOOP: Errno = 40;
+pub comp EADDRINUSE: Errno = 98;
+pub comp ECONNRESET: Errno = 104;
+pub comp ETIMEDOUT: Errno = 110;
+pub comp ECONNREFUSED: Errno = 111;
+pub comp EINPROGRESS: Errno = 115;
+
+// Symbolic name of an error number, e.g. "ENOENT", for diagnostics. Numbers
+// without a constant above return "EUNKNOWN". The bytes have program lifetime.
+pub fn errno_name(error: Errno) const []uint8 {
+    if error == EPERM { return "EPERM"; };
+    if error == ENOENT { return "ENOENT"; };
+    if error == ESRCH { return "ESRCH"; };
+    if error == EINTR { return "EINTR"; };
+    if error == EIO { return "EIO"; };
+    if error == ENXIO { return "ENXIO"; };
+    if error == E2BIG { return "E2BIG"; };
+    if error == ENOEXEC { return "ENOEXEC"; };
+    if error == EBADF { return "EBADF"; };
+    if error == ECHILD { return "ECHILD"; };
+    if error == EAGAIN { return "EAGAIN"; };
+    if error == ENOMEM { return "ENOMEM"; };
+    if error == EACCES { return "EACCES"; };
+    if error == EFAULT { return "EFAULT"; };
+    if error == EBUSY { return "EBUSY"; };
+    if error == EEXIST { return "EEXIST"; };
+    if error == EXDEV { return "EXDEV"; };
+    if error == ENODEV { return "ENODEV"; };
+    if error == ENOTDIR { return "ENOTDIR"; };
+    if error == EISDIR { return "EISDIR"; };
+    if error == EINVAL { return "EINVAL"; };
+    if error == ENFILE { return "ENFILE"; };
+    if error == EMFILE { return "EMFILE"; };
+    if error == ENOTTY { return "ENOTTY"; };
+    if error == EFBIG { return "EFBIG"; };
+    if error == ENOSPC { return "ENOSPC"; };
+    if error == ESPIPE { return "ESPIPE"; };
+    if error == EROFS { return "EROFS"; };
+    if error == EMLINK { return "EMLINK"; };
+    if error == EPIPE { return "EPIPE"; };
+    if error == ERANGE { return "ERANGE"; };
+    if error == ENAMETOOLONG { return "ENAMETOOLONG"; };
+    if error == ENOSYS { return "ENOSYS"; };
+    if error == ENOTEMPTY { return "ENOTEMPTY"; };
+    if error == ELOOP { return "ELOOP"; };
+    if error == EADDRINUSE { return "EADDRINUSE"; };
+    if error == ECONNRESET { return "ECONNRESET"; };
+    if error == ETIMEDOUT { return "ETIMEDOUT"; };
+    if error == ECONNREFUSED { return "ECONNREFUSED"; };
+    if error == EINPROGRESS { return "EINPROGRESS"; };
+    return "EUNKNOWN";
+}
 
 fn failed(value: int64) bool {
     return value < 0 && value >= -4095;
 }
 
-pub fn read(fd: int32, buffer: []uint8) CountResult {
-    comp R := root::result::Result(usize, int32);
-    value := root::os::syscall3(0, (fd as int64) as uint64,
-        root::memory::slice_data(buffer), buffer.len as uint64);
-    if failed(value) { return R.Err((-value) as int32); };
-    return R.Ok(value as usize);
+// The error number of a raw result for which failed(value) holds.
+fn errno(value: int64) Errno {
+    return (-value) as int32;
 }
 
-pub fn write(fd: int32, buffer: const []uint8) CountResult {
-    comp R := root::result::Result(usize, int32);
-    value := root::os::syscall3(1, (fd as int64) as uint64,
-        root::memory::slice_data(buffer), buffer.len as uint64);
-    if failed(value) { return R.Err((-value) as int32); };
-    return R.Ok(value as usize);
+// Sign-extend like the kernel's int arguments.
+fn word(value: int32) uint64 {
+    return (value as int64) as uint64;
 }
 
-pub fn close(fd: int32) Status {
-    value := root::os::syscall1(3, (fd as int64) as uint64);
-    if failed(value) { return Status.Err((-value) as int32); };
+fn status(value: int64) Status {
+    if failed(value) { return Status.Err(errno(value)); };
     return Status.Ok;
 }
 
-pub fn getpid() IntResult {
-    comp R := root::result::Result(int32, int32);
-    value := root::os::syscall0(39);
-    if failed(value) { return R.Err((-value) as int32); };
-    return R.Ok(value as int32);
+fn int_result(value: int64) IntResult {
+    if failed(value) { return IntResult.Err(errno(value)); };
+    return IntResult.Ok(value as int32);
+}
+
+fn count_result(value: int64) CountResult {
+    if failed(value) { return CountResult.Err(errno(value)); };
+    return CountResult.Ok(value as usize);
+}
+
+// ---- File descriptors and I/O ----
+
+pub fn read(fd: int32, buffer: []uint8) CountResult {
+    return count_result(root::os::syscall3(root::syscall::READ, word(fd),
+        root::memory::slice_data(buffer), buffer.len as uint64));
+}
+
+pub fn write(fd: int32, buffer: const []uint8) CountResult {
+    return count_result(root::os::syscall3(root::syscall::WRITE, word(fd),
+        root::memory::slice_data(buffer), buffer.len as uint64));
+}
+
+pub fn close(fd: int32) Status {
+    return status(root::os::syscall1(root::syscall::CLOSE, word(fd)));
+}
+
+pub fn pread(fd: int32, buffer: []uint8, offset: int64) CountResult {
+    return count_result(root::os::syscall4(root::syscall::PREAD64, word(fd),
+        root::memory::slice_data(buffer), buffer.len as uint64, offset as uint64));
+}
+
+pub fn pwrite(fd: int32, buffer: const []uint8, offset: int64) CountResult {
+    return count_result(root::os::syscall4(root::syscall::PWRITE64, word(fd),
+        root::memory::slice_data(buffer), buffer.len as uint64, offset as uint64));
+}
+
+pub fn readv(fd: int32, vectors: const []Iovec) CountResult {
+    return count_result(root::os::syscall3(root::syscall::READV, word(fd),
+        root::memory::slice_data(vectors), vectors.len as uint64));
+}
+
+pub fn writev(fd: int32, vectors: const []Iovec) CountResult {
+    return count_result(root::os::syscall3(root::syscall::WRITEV, word(fd),
+        root::memory::slice_data(vectors), vectors.len as uint64));
 }
 
 // Path must reference live NUL-terminated storage, e.g. c"/dev/null".
 pub fn openat(dirfd: int32, path: const [*:0]uint8, flags: int32, mode: uint32) IntResult {
-    comp R := root::result::Result(int32, int32);
-    value := root::os::syscall4(257, (dirfd as int64) as uint64, path,
-        (flags as int64) as uint64, mode as uint64);
-    if failed(value) { return R.Err((-value) as int32); };
-    return R.Ok(value as int32);
+    return int_result(root::os::syscall4(root::syscall::OPENAT, word(dirfd), path,
+        word(flags), mode as uint64));
 }
 
+pub fn open(path: const [*:0]uint8, flags: int32, mode: uint32) IntResult {
+    return openat(AT_FDCWD, path, flags, mode);
+}
+
+pub fn lseek(fd: int32, offset: int64, whence: int32) OffsetResult {
+    value := root::os::syscall3(root::syscall::LSEEK, word(fd), offset as uint64, word(whence));
+    if failed(value) { return OffsetResult.Err(errno(value)); };
+    return OffsetResult.Ok(value);
+}
+
+pub fn dup(fd: int32) IntResult {
+    return int_result(root::os::syscall1(root::syscall::DUP, word(fd)));
+}
+
+pub fn dup2(old_fd: int32, new_fd: int32) IntResult {
+    return int_result(root::os::syscall2(root::syscall::DUP2, word(old_fd), word(new_fd)));
+}
+
+pub fn dup3(old_fd: int32, new_fd: int32, flags: int32) IntResult {
+    return int_result(root::os::syscall3(root::syscall::DUP3, word(old_fd), word(new_fd),
+        word(flags)));
+}
+
+// flags accepts O_CLOEXEC, O_NONBLOCK and O_DIRECT.
+pub fn pipe2(flags: int32) FdPairResult {
+    fds: [2]int32 = [0, 0];
+    value := root::os::syscall2(root::syscall::PIPE2, root::memory::slice_data(fds[..]),
+        word(flags));
+    if failed(value) { return FdPairResult.Err(errno(value)); };
+    return FdPairResult.Ok(FdPair { first: fds[0], second: fds[1] });
+}
+
+pub fn pipe() FdPairResult {
+    return pipe2(0);
+}
+
+// argument is the command's integer argument; pointer-taking commands use syscall3.
+pub fn fcntl(fd: int32, command: int32, argument: uint64) IntResult {
+    return int_result(root::os::syscall3(root::syscall::FCNTL, word(fd), word(command),
+        argument));
+}
+
+// argument points at the request's in/out structure; integer requests use syscall3.
+pub fn ioctl(fd: int32, request: uint64, argument: *void) IntResult {
+    return int_result(root::os::syscall3(root::syscall::IOCTL, word(fd), request, argument));
+}
+
+pub fn fsync(fd: int32) Status {
+    return status(root::os::syscall1(root::syscall::FSYNC, word(fd)));
+}
+
+pub fn fdatasync(fd: int32) Status {
+    return status(root::os::syscall1(root::syscall::FDATASYNC, word(fd)));
+}
+
+pub fn sync() {
+    root::os::syscall0(root::syscall::SYNC);
+}
+
+pub fn truncate(path: const [*:0]uint8, length: int64) Status {
+    return status(root::os::syscall2(root::syscall::TRUNCATE, path, length as uint64));
+}
+
+pub fn ftruncate(fd: int32, length: int64) Status {
+    return status(root::os::syscall2(root::syscall::FTRUNCATE, word(fd), length as uint64));
+}
+
+pub fn flock(fd: int32, operation: int32) Status {
+    return status(root::os::syscall2(root::syscall::FLOCK, word(fd), word(operation)));
+}
+
+pub fn poll(fds: []PollFd, timeout_milliseconds: int32) CountResult {
+    return count_result(root::os::syscall3(root::syscall::POLL,
+        root::memory::slice_data(fds), fds.len as uint64, word(timeout_milliseconds)));
+}
+
+// ---- Files and directories ----
+
+// Kernel-filled results are written through a pointer to uninitialized storage
+// and read back only on success; flow analysis cannot see the kernel's writes.
+
+// flags accepts AT_SYMLINK_NOFOLLOW and AT_EMPTY_PATH.
+pub fn fstatat(dirfd: int32, path: const [*:0]uint8, flags: int32) StatResult {
+    info: Stat;
+    out := info&;
+    value := root::os::syscall4(root::syscall::NEWFSTATAT, word(dirfd), path, out,
+        word(flags));
+    if failed(value) { return StatResult.Err(errno(value)); };
+    return StatResult.Ok(out*);
+}
+
+pub fn stat(path: const [*:0]uint8) StatResult {
+    return fstatat(AT_FDCWD, path, 0);
+}
+
+pub fn lstat(path: const [*:0]uint8) StatResult {
+    return fstatat(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW);
+}
+
+pub fn fstat(fd: int32) StatResult {
+    info: Stat;
+    out := info&;
+    value := root::os::syscall2(root::syscall::FSTAT, word(fd), out);
+    if failed(value) { return StatResult.Err(errno(value)); };
+    return StatResult.Ok(out*);
+}
+
+// mode combines F_OK, R_OK, W_OK and X_OK.
+pub fn faccessat(dirfd: int32, path: const [*:0]uint8, mode: int32) Status {
+    return status(root::os::syscall3(root::syscall::FACCESSAT, word(dirfd), path,
+        word(mode)));
+}
+
+pub fn access(path: const [*:0]uint8, mode: int32) Status {
+    return faccessat(AT_FDCWD, path, mode);
+}
+
+pub fn chmod(path: const [*:0]uint8, mode: uint32) Status {
+    return status(root::os::syscall2(root::syscall::CHMOD, path, mode as uint64));
+}
+
+pub fn fchmod(fd: int32, mode: uint32) Status {
+    return status(root::os::syscall2(root::syscall::FCHMOD, word(fd), mode as uint64));
+}
+
+pub fn chown(path: const [*:0]uint8, uid: uint32, gid: uint32) Status {
+    return status(root::os::syscall3(root::syscall::CHOWN, path, uid as uint64,
+        gid as uint64));
+}
+
+pub fn fchown(fd: int32, uid: uint32, gid: uint32) Status {
+    return status(root::os::syscall3(root::syscall::FCHOWN, word(fd), uid as uint64,
+        gid as uint64));
+}
+
+pub fn lchown(path: const [*:0]uint8, uid: uint32, gid: uint32) Status {
+    return status(root::os::syscall3(root::syscall::LCHOWN, path, uid as uint64,
+        gid as uint64));
+}
+
+// Returns the previous mask; umask cannot fail.
+pub fn umask(mask: uint32) uint32 {
+    return root::os::syscall1(root::syscall::UMASK, mask as uint64) as uint32;
+}
+
+pub fn mkdirat(dirfd: int32, path: const [*:0]uint8, mode: uint32) Status {
+    return status(root::os::syscall3(root::syscall::MKDIRAT, word(dirfd), path,
+        mode as uint64));
+}
+
+pub fn mkdir(path: const [*:0]uint8, mode: uint32) Status {
+    return mkdirat(AT_FDCWD, path, mode);
+}
+
+// flags accepts AT_REMOVEDIR to remove an empty directory.
+pub fn unlinkat(dirfd: int32, path: const [*:0]uint8, flags: int32) Status {
+    return status(root::os::syscall3(root::syscall::UNLINKAT, word(dirfd), path,
+        word(flags)));
+}
+
+pub fn unlink(path: const [*:0]uint8) Status {
+    return unlinkat(AT_FDCWD, path, 0);
+}
+
+pub fn rmdir(path: const [*:0]uint8) Status {
+    return unlinkat(AT_FDCWD, path, AT_REMOVEDIR);
+}
+
+pub fn renameat(old_dirfd: int32, old_path: const [*:0]uint8, new_dirfd: int32,
+    new_path: const [*:0]uint8) Status {
+    return status(root::os::syscall4(root::syscall::RENAMEAT, word(old_dirfd), old_path,
+        word(new_dirfd), new_path));
+}
+
+pub fn rename(old_path: const [*:0]uint8, new_path: const [*:0]uint8) Status {
+    return renameat(AT_FDCWD, old_path, AT_FDCWD, new_path);
+}
+
+pub fn link(old_path: const [*:0]uint8, new_path: const [*:0]uint8) Status {
+    return status(root::os::syscall5(root::syscall::LINKAT, word(AT_FDCWD), old_path,
+        word(AT_FDCWD), new_path, 0));
+}
+
+pub fn symlink(target: const [*:0]uint8, link_path: const [*:0]uint8) Status {
+    return status(root::os::syscall3(root::syscall::SYMLINKAT, target, word(AT_FDCWD),
+        link_path));
+}
+
+// Writes the link target without a NUL terminator; the count is its length.
+pub fn readlink(path: const [*:0]uint8, buffer: []uint8) CountResult {
+    return count_result(root::os::syscall4(root::syscall::READLINKAT, word(AT_FDCWD), path,
+        root::memory::slice_data(buffer), buffer.len as uint64));
+}
+
+// Writes the NUL-terminated working directory; the count includes the NUL.
+pub fn getcwd(buffer: []uint8) CountResult {
+    return count_result(root::os::syscall2(root::syscall::GETCWD,
+        root::memory::slice_data(buffer), buffer.len as uint64));
+}
+
+pub fn chdir(path: const [*:0]uint8) Status {
+    return status(root::os::syscall1(root::syscall::CHDIR, path));
+}
+
+pub fn fchdir(fd: int32) Status {
+    return status(root::os::syscall1(root::syscall::FCHDIR, word(fd)));
+}
+
+// Fills buffer with linux_dirent64 records; zero means end of directory.
+pub fn getdents64(fd: int32, buffer: []uint8) CountResult {
+    return count_result(root::os::syscall3(root::syscall::GETDENTS64, word(fd),
+        root::memory::slice_data(buffer), buffer.len as uint64));
+}
+
+// ---- Memory ----
+
 pub fn mmap(address: *uint8, length: usize, protection: int32, flags: int32, fd: int32, offset: int64) MappingResult {
-    value := root::os::syscall6(9, address, length as uint64,
-        (protection as int64) as uint64, (flags as int64) as uint64,
-        (fd as int64) as uint64, offset as uint64);
+    value := root::os::syscall6(root::syscall::MMAP, address, length as uint64,
+        word(protection), word(flags), word(fd), offset as uint64);
     if failed(value) {
-        return MappingResult.Err((-value) as int32);
+        return MappingResult.Err(errno(value));
     };
     return MappingResult.Ok(root::os_abi::pointer_from_word(uint8, value as uint64));
 }
 
 pub fn munmap(address: *uint8, length: usize) Status {
-    value := root::os::syscall2(11, address, length as uint64);
-    if failed(value) { return Status.Err((-value) as int32); };
-    return Status.Ok;
+    return status(root::os::syscall2(root::syscall::MUNMAP, address, length as uint64));
 }
 
+pub fn mprotect(address: *uint8, length: usize, protection: int32) Status {
+    return status(root::os::syscall3(root::syscall::MPROTECT, address, length as uint64,
+        word(protection)));
+}
+
+pub fn msync(address: *uint8, length: usize, flags: int32) Status {
+    return status(root::os::syscall3(root::syscall::MSYNC, address, length as uint64,
+        word(flags)));
+}
+
+pub fn madvise(address: *uint8, length: usize, advice: int32) Status {
+    return status(root::os::syscall3(root::syscall::MADVISE, address, length as uint64,
+        word(advice)));
+}
 
 pub fn get_page_size() usize {
     return 4096;
@@ -119,23 +685,282 @@ pub fn get_page_size() usize {
 // Linux brk returns the resulting break, including the unchanged break on failure.
 // Query on every call so this wrapper does not retain a stale cached break.
 pub fn sbrk(increment: int64) MappingResult {
-    current := root::os::syscall1(12, 0) as uint64;
-    if current == 0 { return MappingResult.Err(12); };
+    current := root::os::syscall1(root::syscall::BRK, 0) as uint64;
+    if current == 0 { return MappingResult.Err(ENOMEM); };
     requested := current;
     if increment > 0 {
         amount := increment as uint64;
-        if amount > 18446744073709551615 - current { return MappingResult.Err(12); };
+        if amount > 18446744073709551615 - current { return MappingResult.Err(ENOMEM); };
         requested = current + amount;
     } else {
         // This also handles INT64_MIN without signed negation overflow.
         amount := ((-(increment + 1)) as uint64) + 1;
         if increment == 0 { amount = 0; };
-        if amount >= current { return MappingResult.Err(12); };
+        if amount >= current { return MappingResult.Err(ENOMEM); };
         requested = current - amount;
     };
     if increment != 0 {
-        actual := root::os::syscall1(12, requested) as uint64;
-        if actual != requested { return MappingResult.Err(12); };
+        actual := root::os::syscall1(root::syscall::BRK, requested) as uint64;
+        if actual != requested { return MappingResult.Err(ENOMEM); };
     };
     return MappingResult.Ok(root::os_abi::pointer_from_word(uint8, current));
+}
+
+// Fresh 16-byte-aligned storage of at least size bytes for the std heap
+// allocator, taken by growing the break. Consecutive requests are adjacent
+// unless another break user intervenes or alignment padding is needed.
+pub(root) fn heap_grow(size: usize) MappingResult {
+    start: uint64;
+    switch (sbrk(0)) {
+        when .Err(error) { return MappingResult.Err(error); }
+        when .Ok(pointer) { start = root::os_abi::pointer_to_word(pointer); }
+    };
+    padding := (16 - start % 16) % 16;
+    if size > 9223372036854775807 - 15 { return MappingResult.Err(ENOMEM); };
+    switch (sbrk((size + (padding as usize)) as int64)) {
+        when .Err(error) { return MappingResult.Err(error); }
+        when .Ok(pointer) {}
+    };
+    return MappingResult.Ok(root::os_abi::pointer_from_word(uint8, start + padding));
+}
+
+// ---- Processes ----
+
+// The identity queries below cannot fail.
+pub fn getpid() int32 {
+    return root::os::syscall0(root::syscall::GETPID) as int32;
+}
+
+pub fn getppid() int32 {
+    return root::os::syscall0(root::syscall::GETPPID) as int32;
+}
+
+pub fn gettid() int32 {
+    return root::os::syscall0(root::syscall::GETTID) as int32;
+}
+
+pub fn getuid() uint32 {
+    return root::os::syscall0(root::syscall::GETUID) as uint32;
+}
+
+pub fn geteuid() uint32 {
+    return root::os::syscall0(root::syscall::GETEUID) as uint32;
+}
+
+pub fn getgid() uint32 {
+    return root::os::syscall0(root::syscall::GETGID) as uint32;
+}
+
+pub fn getegid() uint32 {
+    return root::os::syscall0(root::syscall::GETEGID) as uint32;
+}
+
+pub fn setuid(uid: uint32) Status {
+    return status(root::os::syscall1(root::syscall::SETUID, uid as uint64));
+}
+
+pub fn setgid(gid: uint32) Status {
+    return status(root::os::syscall1(root::syscall::SETGID, gid as uint64));
+}
+
+pub fn getpgid(pid: int32) IntResult {
+    return int_result(root::os::syscall1(root::syscall::GETPGID, word(pid)));
+}
+
+pub fn setpgid(pid: int32, pgid: int32) Status {
+    return status(root::os::syscall2(root::syscall::SETPGID, word(pid), word(pgid)));
+}
+
+pub fn getsid(pid: int32) IntResult {
+    return int_result(root::os::syscall1(root::syscall::GETSID, word(pid)));
+}
+
+// Returns the new session ID.
+pub fn setsid() IntResult {
+    return int_result(root::os::syscall0(root::syscall::SETSID));
+}
+
+// Returns 0 in the child and the child's process ID in the parent.
+pub fn fork() IntResult {
+    return int_result(root::os::syscall0(root::syscall::FORK));
+}
+
+// argv and envp point at null-terminated arrays of C strings. Returns only on failure.
+pub fn execve(path: const [*:0]uint8, argv: const *const [*:0]uint8,
+    envp: const *const [*:0]uint8) Status {
+    return status(root::os::syscall3(root::syscall::EXECVE, path, argv, envp));
+}
+
+// Terminates every thread in the process (exit_group); it does not return.
+// Pending defers in callers do not run.
+pub fn exit(code: int32) never {
+    root::os::syscall1(root::syscall::EXIT_GROUP, word(code));
+    while (true) {};
+}
+
+// pid follows waitpid: -1 waits for any child. options accepts WNOHANG and
+// WUNTRACED; with WNOHANG, pid is 0 when no child has changed state.
+pub fn waitpid(pid: int32, options: int32) WaitResult {
+    wait_status: [1]int32 = [0];
+    value := root::os::syscall4(root::syscall::WAIT4, word(pid),
+        root::memory::slice_data(wait_status[..]), word(options), 0);
+    if failed(value) { return WaitResult.Err(errno(value)); };
+    return WaitResult.Ok(WaitStatus { pid: value as int32, status: wait_status[0] });
+}
+
+pub fn kill(pid: int32, signal: int32) Status {
+    return status(root::os::syscall2(root::syscall::KILL, word(pid), word(signal)));
+}
+
+pub fn sched_yield() Status {
+    return status(root::os::syscall0(root::syscall::SCHED_YIELD));
+}
+
+// Returns the seconds remaining on any previously scheduled alarm.
+pub fn alarm(seconds: uint32) uint32 {
+    return root::os::syscall1(root::syscall::ALARM, seconds as uint64) as uint32;
+}
+
+// Sleeps until a signal arrives; the result is always Err(EINTR).
+pub fn pause() Status {
+    return status(root::os::syscall0(root::syscall::PAUSE));
+}
+
+pub fn uname() UtsnameResult {
+    name: Utsname;
+    out := name&;
+    value := root::os::syscall1(root::syscall::UNAME, out);
+    if failed(value) { return UtsnameResult.Err(errno(value)); };
+    return UtsnameResult.Ok(out*);
+}
+
+pub fn getrlimit(resource: int32) RlimitResult {
+    limit := Rlimit { current: 0, maximum: 0 };
+    value := root::os::syscall2(root::syscall::GETRLIMIT, word(resource), limit&);
+    if failed(value) { return RlimitResult.Err(errno(value)); };
+    return RlimitResult.Ok(limit);
+}
+
+pub fn setrlimit(resource: int32, limit: Rlimit) Status {
+    return status(root::os::syscall2(root::syscall::SETRLIMIT, word(resource), limit&));
+}
+
+// ---- Time ----
+
+pub fn clock_gettime(clock: int32) TimeResult {
+    time := Timespec { seconds: 0, nanoseconds: 0 };
+    value := root::os::syscall2(root::syscall::CLOCK_GETTIME, word(clock), time&);
+    if failed(value) { return TimeResult.Err(errno(value)); };
+    return TimeResult.Ok(time);
+}
+
+pub fn clock_getres(clock: int32) TimeResult {
+    time := Timespec { seconds: 0, nanoseconds: 0 };
+    value := root::os::syscall2(root::syscall::CLOCK_GETRES, word(clock), time&);
+    if failed(value) { return TimeResult.Err(errno(value)); };
+    return TimeResult.Ok(time);
+}
+
+// remaining may be null; on EINTR it receives the unslept time.
+pub fn nanosleep(duration: Timespec, remaining: *Timespec) Status {
+    return status(root::os::syscall2(root::syscall::NANOSLEEP, duration&, remaining));
+}
+
+// ---- Randomness ----
+
+pub fn getrandom(buffer: []uint8, flags: uint32) CountResult {
+    return count_result(root::os::syscall3(root::syscall::GETRANDOM,
+        root::memory::slice_data(buffer), buffer.len as uint64, flags as uint64));
+}
+
+// ---- Sockets ----
+// Socket addresses are passed as untyped pointers to a sockaddr_* structure
+// plus its byte length; cast a typed pointer with `(address&) as *void`.
+
+pub fn socket(domain: int32, kind: int32, protocol: int32) IntResult {
+    return int_result(root::os::syscall3(root::syscall::SOCKET, word(domain), word(kind),
+        word(protocol)));
+}
+
+pub fn socketpair(domain: int32, kind: int32, protocol: int32) FdPairResult {
+    fds: [2]int32 = [0, 0];
+    value := root::os::syscall4(root::syscall::SOCKETPAIR, word(domain), word(kind),
+        word(protocol), root::memory::slice_data(fds[..]));
+    if failed(value) { return FdPairResult.Err(errno(value)); };
+    return FdPairResult.Ok(FdPair { first: fds[0], second: fds[1] });
+}
+
+pub fn bind(fd: int32, address: const *void, length: uint32) Status {
+    return status(root::os::syscall3(root::syscall::BIND, word(fd), address,
+        length as uint64));
+}
+
+pub fn connect(fd: int32, address: const *void, length: uint32) Status {
+    return status(root::os::syscall3(root::syscall::CONNECT, word(fd), address,
+        length as uint64));
+}
+
+pub fn listen(fd: int32, backlog: int32) Status {
+    return status(root::os::syscall2(root::syscall::LISTEN, word(fd), word(backlog)));
+}
+
+// address and length may both be null. flags accepts SOCK_NONBLOCK and SOCK_CLOEXEC.
+pub fn accept4(fd: int32, address: *void, length: *uint32, flags: int32) IntResult {
+    return int_result(root::os::syscall4(root::syscall::ACCEPT4, word(fd), address, length,
+        word(flags)));
+}
+
+pub fn accept(fd: int32, address: *void, length: *uint32) IntResult {
+    return accept4(fd, address, length, 0);
+}
+
+pub fn shutdown(fd: int32, how: int32) Status {
+    return status(root::os::syscall2(root::syscall::SHUTDOWN, word(fd), word(how)));
+}
+
+// address may be null with length 0 for connected sockets.
+pub fn sendto(fd: int32, buffer: const []uint8, flags: int32, address: const *void,
+    length: uint32) CountResult {
+    return count_result(root::os::syscall6(root::syscall::SENDTO, word(fd),
+        root::memory::slice_data(buffer), buffer.len as uint64, word(flags), address,
+        length as uint64));
+}
+
+// address and length may both be null.
+pub fn recvfrom(fd: int32, buffer: []uint8, flags: int32, address: *void,
+    length: *uint32) CountResult {
+    return count_result(root::os::syscall6(root::syscall::RECVFROM, word(fd),
+        root::memory::slice_data(buffer), buffer.len as uint64, word(flags), address,
+        length));
+}
+
+pub fn send(fd: int32, buffer: const []uint8, flags: int32) CountResult {
+    return sendto(fd, buffer, flags, null, 0);
+}
+
+pub fn recv(fd: int32, buffer: []uint8, flags: int32) CountResult {
+    return recvfrom(fd, buffer, flags, null, null);
+}
+
+pub fn setsockopt(fd: int32, level: int32, name: int32, value: const *void,
+    length: uint32) Status {
+    return status(root::os::syscall5(root::syscall::SETSOCKOPT, word(fd), word(level),
+        word(name), value, length as uint64));
+}
+
+// length is in/out: the capacity of value on entry, the option size on return.
+pub fn getsockopt(fd: int32, level: int32, name: int32, value: *void,
+    length: *uint32) Status {
+    return status(root::os::syscall5(root::syscall::GETSOCKOPT, word(fd), word(level),
+        word(name), value, length));
+}
+
+pub fn getsockname(fd: int32, address: *void, length: *uint32) Status {
+    return status(root::os::syscall3(root::syscall::GETSOCKNAME, word(fd), address,
+        length));
+}
+
+pub fn getpeername(fd: int32, address: *void, length: *uint32) Status {
+    return status(root::os::syscall3(root::syscall::GETPEERNAME, word(fd), address,
+        length));
 }

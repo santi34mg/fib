@@ -1,0 +1,256 @@
+// Exercises every typed std::os syscall wrapper. Destructive operations target a
+// private scratch directory and a forked child; the program returns 42 on success.
+comp os := std::os;
+
+fn ok(status: os::Status) bool {
+    return std::result::is_ok(void, os::Errno, status);
+}
+
+fn buffer_of(count: usize) []uint8 {
+    return std::result::expect([]uint8, std::memory::AllocError,
+        std::memory::alloc(uint8, count), "test allocation failed");
+}
+
+fn fd_of(result: os::IntResult) int32 {
+    switch (result) {
+        when .Ok(fd) { return fd; }
+        when .Err(error) { return -1; }
+    };
+}
+
+fn count_of(result: os::CountResult) int64 {
+    switch (result) {
+        when .Ok(n) { return n as int64; }
+        when .Err(error) { return -(error as int64); }
+    };
+}
+
+fn size_of(result: os::StatResult) int64 {
+    switch (result) {
+        when .Ok(info) { return info.size; }
+        when .Err(error) { return -1; }
+    };
+}
+
+fn type_of(result: os::StatResult) uint32 {
+    switch (result) {
+        when .Ok(info) { return info.mode & os::S_IFMT; }
+        when .Err(error) { return 0; }
+    };
+}
+
+fn files() int32 {
+    // Run inside a fresh directory so relative paths cannot touch user files.
+    os::mkdir(c"fib-os-wrappers", 0o700);
+    if !ok(os::chdir(c"fib-os-wrappers")) { return 1; };
+    fd := fd_of(os::open(c"data", os::O_RDWR | os::O_CREAT | os::O_TRUNC | os::O_CLOEXEC, 0o600));
+    if fd < 0 { return 2; };
+    if count_of(os::write(fd, "hello"[..])) != 5 { return 3; };
+    if count_of(os::pwrite(fd, "J"[..], 0)) != 1 { return 4; };
+    switch (os::lseek(fd, 0, os::SEEK_SET)) {
+        when .Ok(offset) { if offset != 0 { return 5; }; }
+        when .Err(error) { return 5; }
+    };
+    buffer: [8]uint8 = [0, 0, 0, 0, 0, 0, 0, 0];
+    if count_of(os::read(fd, buffer[..])) != 5 || buffer[0] != 74 { return 6; };
+    if count_of(os::pread(fd, buffer[..2], 3)) != 2 || buffer[0] != 108 { return 7; };
+    vectors: [2]os::Iovec = [
+        os::Iovec { base: std::memory::slice_data(buffer[..]), len: 2 },
+        os::Iovec { base: std::memory::slice_data(buffer[4..]), len: 2 },
+    ];
+    if count_of(os::writev(fd, vectors[..])) != 4 { return 8; };
+    os::lseek(fd, 0, os::SEEK_SET);
+    if count_of(os::readv(fd, vectors[..])) != 4 { return 9; };
+    if size_of(os::fstat(fd)) != 9 { return 10; };
+    if type_of(os::fstat(fd)) != os::S_IFREG { return 11; };
+    if !ok(os::fsync(fd)) || !ok(os::fdatasync(fd)) { return 12; };
+    if !ok(os::ftruncate(fd, 3)) || !ok(os::truncate(c"data", 2)) { return 13; };
+    if size_of(os::stat(c"data")) != 2 { return 14; };
+    if !ok(os::flock(fd, os::LOCK_EX)) || !ok(os::flock(fd, os::LOCK_UN)) { return 15; };
+    copy := fd_of(os::dup(fd));
+    if copy < 0 || fd_of(os::dup2(fd, copy)) != copy { return 16; };
+    if fd_of(os::dup3(fd, copy, os::O_CLOEXEC)) != copy { return 17; };
+    if fd_of(os::fcntl(copy, os::F_GETFD, 0)) != os::FD_CLOEXEC { return 18; };
+    if !ok(os::close(copy)) { return 19; };
+    if !ok(os::fchmod(fd, 0o640)) || !ok(os::chmod(c"data", 0o600)) { return 20; };
+    if !ok(os::fchown(fd, os::getuid(), os::getgid())) { return 21; };
+    if !ok(os::chown(c"data", os::geteuid(), os::getegid())) { return 22; };
+    if !ok(os::access(c"data", os::R_OK | os::W_OK)) { return 23; };
+    if ok(os::access(c"missing", os::F_OK)) { return 24; };
+    if !ok(os::symlink(c"data", c"alias")) || type_of(os::stat(c"alias")) != os::S_IFREG { return 25; };
+    if type_of(os::lstat(c"alias")) != os::S_IFLNK || !ok(os::lchown(c"alias", os::getuid(), os::getgid())) { return 26; };
+    if count_of(os::readlink(c"alias", buffer[..])) != 4 || buffer[0] != 100 { return 27; };
+    if !ok(os::link(c"data", c"hard")) || !ok(os::rename(c"hard", c"moved")) { return 28; };
+    if !ok(os::mkdir(c"child", 0o700)) { return 29; };
+    dir := fd_of(os::open(c"child", os::O_RDONLY | os::O_DIRECTORY, 0));
+    if dir < 0 { return 30; };
+    if type_of(os::fstatat(os::AT_FDCWD, c"child", 0)) != os::S_IFDIR { return 31; };
+    entries := buffer_of(512);
+    if count_of(os::getdents64(dir, entries)) <= 0 { return 31; };
+    if !ok(os::fchdir(dir)) || !ok(os::chdir(c"..")) || !ok(os::close(dir)) { return 32; };
+    cwd := buffer_of(4096);
+    if count_of(os::getcwd(cwd)) <= 1 { return 33; };
+    previous := os::umask(0o22);
+    os::umask(previous);
+    os::sync();
+    if !ok(os::rmdir(c"child")) || !ok(os::unlink(c"moved")) || !ok(os::unlink(c"alias")) { return 34; };
+    if !ok(os::unlink(c"data")) || !ok(os::close(fd)) { return 35; };
+    if !ok(os::chdir(c"..")) || !ok(os::rmdir(c"fib-os-wrappers")) { return 36; };
+    return 0;
+}
+
+fn pipes_and_polling() int32 {
+    switch (os::pipe()) {
+        when .Ok(pair) {
+            if count_of(os::write(pair.second, "x"[..])) != 1 { return 40; };
+            fds: [1]os::PollFd = [os::PollFd { fd: pair.first, events: os::POLLIN, revents: 0 }];
+            if count_of(os::poll(fds[..], 0)) != 1 || (fds[0].revents & os::POLLIN) == 0 { return 41; };
+            byte: [1]uint8 = [0];
+            if count_of(os::read(pair.first, byte[..])) != 1 || byte[0] != 120 { return 42; };
+            os::close(pair.first);
+            os::close(pair.second);
+        }
+        when .Err(error) { return 43; }
+    };
+    switch (os::pipe2(os::O_CLOEXEC)) {
+        when .Ok(pair) { os::close(pair.first); os::close(pair.second); }
+        when .Err(error) { return 44; }
+    };
+    return 0;
+}
+
+fn sockets() int32 {
+    switch (os::socketpair(os::AF_UNIX, os::SOCK_STREAM | os::SOCK_CLOEXEC, 0)) {
+        when .Ok(pair) {
+            if count_of(os::send(pair.first, "ping"[..], 0)) != 4 { return 50; };
+            reply: [4]uint8 = [0, 0, 0, 0];
+            if count_of(os::recv(pair.second, reply[..], 0)) != 4 || reply[1] != 105 { return 51; };
+            enabled: [1]int32 = [1];
+            if !ok(os::setsockopt(pair.first, os::SOL_SOCKET, os::SO_KEEPALIVE,
+                std::memory::slice_data(enabled[..]) as *void, 4)) { return 52; };
+            value: [1]int32 = [0];
+            size: [1]uint32 = [4];
+            if !ok(os::getsockopt(pair.first, os::SOL_SOCKET, os::SO_KEEPALIVE,
+                std::memory::slice_data(value[..]) as *void, std::memory::slice_data(size[..]))) { return 53; };
+            if value[0] == 0 { return 54; };
+            address := buffer_of(128);
+            length: [1]uint32 = [128];
+            if !ok(os::getsockname(pair.first, std::memory::slice_data(address[..]) as *void,
+                std::memory::slice_data(length[..]))) { return 55; };
+            length[0] = 128;
+            if !ok(os::getpeername(pair.first, std::memory::slice_data(address[..]) as *void,
+                std::memory::slice_data(length[..]))) { return 56; };
+            if !ok(os::shutdown(pair.first, os::SHUT_RDWR)) { return 57; };
+            os::close(pair.first);
+            os::close(pair.second);
+        }
+        when .Err(error) { return 58; }
+    };
+    // An unbound TCP socket rejects listen/accept/connect without network access.
+    server := fd_of(os::socket(os::AF_INET, os::SOCK_STREAM, os::IPPROTO_TCP));
+    if server < 0 { return 59; };
+    zero: [16]uint8 = [2, 0, 0, 0, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+    if !ok(os::bind(server, std::memory::slice_data(zero[..]) as *void, 16)) { return 60; };
+    if !ok(os::listen(server, 1)) { return 61; };
+    flags := os::fcntl(server, os::F_GETFL, 0);
+    os::fcntl(server, os::F_SETFL, ((fd_of(flags) | os::O_NONBLOCK) as int64) as uint64);
+    switch (os::accept(server, null, null)) {
+        when .Ok(client) { return 62; }
+        when .Err(error) { if error != os::EAGAIN { return 63; }; }
+    };
+    if fd_of(os::accept4(server, null, null, os::SOCK_CLOEXEC)) != -1 { return 64; };
+    // A loopback UDP socket sends a datagram to its own kernel-assigned port.
+    client := fd_of(os::socket(os::AF_INET, os::SOCK_DGRAM, os::IPPROTO_UDP));
+    if client < 0 || !ok(os::bind(client, std::memory::slice_data(zero[..]) as *void, 16)) { return 65; };
+    own := buffer_of(16);
+    own_length: [1]uint32 = [16];
+    if !ok(os::getsockname(client, std::memory::slice_data(own) as *void,
+        std::memory::slice_data(own_length[..]))) { return 66; };
+    if count_of(os::sendto(client, "u"[..], 0, std::memory::slice_data(own) as *void, 16)) != 1 { return 67; };
+    received: [1]uint8 = [0];
+    if count_of(os::recvfrom(client, received[..], 0, null, null)) != 1 || received[0] != 117 { return 68; };
+    if !ok(os::connect(client, std::memory::slice_data(own) as *void, 16)) { return 69; };
+    os::fcntl(client, os::F_SETFL, (os::O_NONBLOCK as int64) as uint64);
+    if count_of(os::recv(client, received[..], 0)) != -(os::EAGAIN as int64) { return 70; };
+    os::close(client);
+    os::close(server);
+    return 0;
+}
+
+fn processes() int32 {
+    if os::getpid() <= 0 || os::getppid() <= 0 || os::gettid() <= 0 { return 82; };
+    if fd_of(os::getpgid(0)) < 0 || fd_of(os::getsid(0)) < 0 { return 71; };
+    if !ok(os::setuid(os::getuid())) || !ok(os::setgid(os::getgid())) { return 72; };
+    if !ok(os::sched_yield()) { return 73; };
+    if os::alarm(0) != 0 { return 74; };
+    switch (os::uname()) {
+        when .Ok(name) { if name.sysname[0] != 76 { return 75; }; }
+        when .Err(error) { return 75; }
+    };
+    switch (os::getrlimit(os::RLIMIT_NOFILE)) {
+        when .Ok(limit) { if !ok(os::setrlimit(os::RLIMIT_NOFILE, limit)) { return 76; }; }
+        when .Err(error) { return 76; }
+    };
+    switch (os::fork()) {
+        when .Ok(pid) {
+            if pid == 0 {
+                os::setpgid(0, 0);
+                os::setsid();
+                os::kill(0, 0);
+                os::exit(7);
+            };
+            switch (os::waitpid(pid, 0)) {
+                when .Ok(state) {
+                    if state.pid != pid || ((state.status >> 8) & 255) != 7 { return 77; };
+                }
+                when .Err(error) { return 78; }
+            };
+        }
+        when .Err(error) { return 79; }
+    };
+    if ok(os::kill(-2147483647, 0)) { return 80; };
+    // The missing file fails before the kernel reads argv/envp.
+    argv: [2]const [*:0]uint8 = [c"missing", c""];
+    if ok(os::execve(c"/nonexistent/fib", std::memory::slice_data(argv[..]), std::memory::slice_data(argv[1..]))) { return 81; };
+    return 0;
+}
+
+fn memory_time_and_random() int32 {
+    switch (os::mmap(null, 4096, os::PROT_READ | os::PROT_WRITE, os::MAP_PRIVATE | os::MAP_ANONYMOUS, -1, 0)) {
+        when .Ok(page) {
+            if !ok(os::mprotect(page, 4096, os::PROT_READ)) { return 90; };
+            if !ok(os::madvise(page, 4096, os::MADV_WILLNEED)) { return 91; };
+            if !ok(os::msync(page, 4096, os::MS_ASYNC)) { return 92; };
+            if !ok(os::munmap(page, 4096)) { return 93; };
+        }
+        when .Err(error) { return 94; }
+    };
+    switch (os::clock_gettime(os::CLOCK_MONOTONIC)) {
+        when .Ok(now) { if now.nanoseconds < 0 || now.nanoseconds >= 1000000000 { return 95; }; }
+        when .Err(error) { return 96; }
+    };
+    switch (os::clock_getres(os::CLOCK_REALTIME)) {
+        when .Ok(resolution) { if resolution.seconds != 0 { return 97; }; }
+        when .Err(error) { return 98; }
+    };
+    if !ok(os::nanosleep(os::Timespec { seconds: 0, nanoseconds: 1000 }, null)) { return 99; };
+    bytes := buffer_of(16);
+    if count_of(os::getrandom(bytes, 0)) != 16 { return 100; };
+    if std::syscall::GETPID != 39 || std::syscall::FILE_SET_ATTR != 469 { return 101; };
+    if std::os::syscall0(std::syscall::GETPID) as int32 != os::getpid() { return 102; };
+    return 0;
+}
+
+fn main() int32 {
+    result := files();
+    if result != 0 { return result; };
+    result = pipes_and_polling();
+    if result != 0 { return result; };
+    result = sockets();
+    if result != 0 { return result; };
+    result = processes();
+    if result != 0 { return result; };
+    result = memory_time_and_random();
+    if result != 0 { return result; };
+    return 42;
+}

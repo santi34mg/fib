@@ -1,5 +1,7 @@
 // Fib implementation of the fibc compiler
 
+comp Option := std::option::Option;
+
 comp Token: type = struct {
     pos: uint32,
     line: uint32,
@@ -114,13 +116,46 @@ fn main(args: std::process::Arguments, env: std::process::Environment) std::resu
         return std::result::Result(void, CompilerErr).Err(CompilerErr.MissingArgs);
     };
     command := args[1];
-    if std::string::str_eq(command, "build") {
-
-    } else if std::string::str_eq(command, "run") {
+    if std::string::eq(command, "build") {
+        build_cmd();
+    } else if std::string::eq(command, "run") {
         return std::result::Result(void, CompilerErr).Err(CompilerErr.NotImplemented);
-    } else if std::string::str_eq(command, "test") {
+    } else if std::string::eq(command, "test") {
         return std::result::Result(void, CompilerErr).Err(CompilerErr.NotImplemented);
     };
 
+
     return std::result::Result(void, CompilerErr).Ok;
 }
+
+fn build_cmd() void {
+
+}
+
+
+comp StandardLibrary := struct {
+    enabled: bool,
+    sysroot: Option(PathBuf),
+    loaded: Option(Registration),
+};
+
+/// BuilderObject uses the builder pattern to create an object that
+/// guides the build process of the project.
+comp PlanBuilder := struct {
+    standard_library: StandardLibrary,
+    /// True if the build configuration is done
+    build_stage: BuildStage,
+    /// Main file that orchestrates the compilation process
+    // note that PathBuf is owning
+    build_file: PathBuf,
+    /// Modules defined in the build file
+    modules: Vec(PathBuf),
+    native: NativeInputs,
+    /// Logical entry source selected by the interpreted build file.
+    entry_name: Option(String),
+    /// Output path selected by the interpreted build file.
+    output: Option(PathBuf),
+    /// Optimization level passed to clang as `-O<level>`.
+    /// Accepted: `0`, `1`, `2`, `3`, `s`, `z`.
+    _opt_level: Option(String),
+};

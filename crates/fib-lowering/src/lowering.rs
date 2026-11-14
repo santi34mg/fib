@@ -29,6 +29,22 @@ mod runtime_types;
 mod storage;
 use runtime_types::register_runtime_types;
 use storage::storage_bindings;
+
+/// Control-flow signal raised after lowering a call that never returns. The
+/// current block is already terminated with `Unreachable`; the nearest
+/// statement (or short-circuit operand) boundary treats it as a dead path so
+/// no unreachable blocks are created. Never escapes `lower_with_entry`.
+#[derive(Debug)]
+struct Diverged;
+impl std::fmt::Display for Diverged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("control flow diverged")
+    }
+}
+impl std::error::Error for Diverged {}
+fn diverged(result: &anyhow::Result<impl Sized>) -> bool {
+    result.as_ref().is_err_and(|e| e.is::<Diverged>())
+}
 const SCALARS: [BuiltinType; 17] = [
     BuiltinType::Int32,
     BuiltinType::Boolean,
@@ -123,11 +139,13 @@ impl Source<'_> {
         }
         error.into()
     }
+    /// Void and never both have no runtime result; never calls are followed by
+    /// an explicit `Unreachable` terminator instead.
     fn ir_type(&self, ty: SemanticId, span: Span) -> anyhow::Result<Option<TypeId>> {
         let ty = self.types.canonical(ty)?;
         if matches!(
             self.types.get(ty)?,
-            SemanticType::Builtin(BuiltinType::Void)
+            SemanticType::Builtin(BuiltinType::Void | BuiltinType::Never)
         ) {
             return Ok(None);
         }
@@ -136,6 +154,21 @@ impl Source<'_> {
             .copied()
             .map(Some)
             .ok_or_else(|| self.error(span, "unsupported runtime type in IR lowering"))
+    }
+    /// Whether an analyzed expression is a call that never returns.
+    fn is_never_call(&self, expr: &Expression) -> anyhow::Result<bool> {
+        Ok(matches!(expr.kind, E::Call { .. }) && self.is_never(expr)?)
+    }
+    /// Whether an analyzed expression has type never, such as `x + stop()`.
+    /// Its runtime operands diverge before any result would be produced.
+    fn is_never(&self, expr: &Expression) -> anyhow::Result<bool> {
+        let Some(info) = expr.annotation.resolved else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            self.types.get(self.types.canonical(info.ty)?)?,
+            SemanticType::Builtin(BuiltinType::Never)
+        ))
     }
     fn pointer_type(&self, ty: TypeId) -> anyhow::Result<TypeId> {
         self.pointers
@@ -360,6 +393,30 @@ pub fn lower_with_entry(project: &AnalyzedProject, entry_name: &str) -> anyhow::
             pointers: &pointers,
             globals: &globals,
         };
+        // Members declared inside type computations or generic functions are
+        // symbolic templates; only their specialized member instances lower.
+        let templates: std::collections::HashSet<DeclId> = unit
+            .ast
+            .statements
+            .iter()
+            .filter_map(|node| match &node.kind {
+                S::FunctionDeclaration(f) => f.body.as_ref().map(|body| (f, body)),
+                _ => None,
+            })
+            .filter(|(f, _)| {
+                f.signature.is_comp
+                    || matches!(f.signature.annotation.binding, Some(BindingId::Declaration(id))
+                        if project.types.generic_parameters.get(&id).is_some_and(|p| !p.is_empty()))
+            })
+            .flat_map(|(_, body)| crate::frontend::ast::members::declarations(&body.statements))
+            .filter_map(|node| match &node.kind {
+                S::FunctionDeclaration(f) => match f.signature.annotation.binding {
+                    Some(BindingId::Declaration(id)) => Some(id),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
         for node in unit
             .ast
             .statements
@@ -368,6 +425,11 @@ pub fn lower_with_entry(project: &AnalyzedProject, entry_name: &str) -> anyhow::
                 &unit.ast.statements,
             ))
         {
+            if let S::FunctionDeclaration(f) = &node.kind
+                && matches!(f.signature.annotation.binding, Some(BindingId::Declaration(id)) if templates.contains(&id))
+            {
+                continue;
+            }
             if matches!(&node.kind, S::VariableDeclaration(v) if v.is_comp)
                 || matches!(&node.kind, S::MultiVariableDeclaration { bindings, .. } if bindings.iter().all(|v| v.is_comp))
             {
@@ -500,6 +562,43 @@ pub fn lower_with_entry(project: &AnalyzedProject, entry_name: &str) -> anyhow::
             function,
             Span::new(1, 1),
             instance.key.template.file_id,
+            Some(environment),
+        ));
+    }
+    let mut members = project.types.member_instances.iter().collect::<Vec<_>>();
+    members.sort_by_key(|((id, owner), _)| (id.file_id, id.index, owner.0));
+    for (&(template, owner), instance) in members {
+        let mut environment = project.types.clone();
+        for (&binding, &info) in &instance.bindings {
+            environment.bind(binding, info);
+        }
+        environment
+            .declarations
+            .insert(template, instance.signature);
+        let source = Source {
+            project,
+            types: &environment,
+            file: template.file_id,
+            runtime_types: &runtime_types,
+            pointers: &pointers,
+            globals: &globals,
+        };
+        let id = FunctionId(ir.functions.len());
+        functions.insert(FunctionKey::Member(template, owner), id);
+        ir.functions.push(Function {
+            identifier: linkage::member_instance(project, template, owner)?,
+            signature: Signature {
+                calling_convention: CallingConvention::Fib,
+                ..source.signature(template, Span::new(1, 1))?
+            },
+            linkage: Linkage::Internal,
+            body: FunctionBody::Declaration,
+        });
+        declarations.push((
+            id,
+            &instance.body,
+            Span::new(1, 1),
+            template.file_id,
             Some(environment),
         ));
     }
@@ -670,6 +769,8 @@ fn local(expr: &Expression) -> Option<LocalId> {
 enum FunctionKey {
     Declaration(DeclId),
     Instance(crate::frontend::analyzer::generics::GenericInstanceKey),
+    /// A type-owned function specialized for one computed owner.
+    Member(DeclId, crate::frontend::semantic_type::TypeId),
 }
 fn runtime_argument(expr: &&Expression) -> bool {
     expr.annotation
@@ -686,10 +787,18 @@ fn callee(
             Some(ResolvedName::Entity(Entity::Declaration(id))) => Some(id),
             _ => None,
         },
-        E::ExprAcess { member, .. } => match member.resolved?.kind {
-            crate::frontend::analysis_annotation::MemberKind::Function(id) => Some(id),
-            _ => None,
-        },
+        E::ExprAcess { member, .. } => {
+            let member = member.resolved?;
+            match member.kind {
+                crate::frontend::analysis_annotation::MemberKind::Function(id) => {
+                    if let Some(function) = functions.get(&FunctionKey::Member(id, member.owner)) {
+                        return Some(*function);
+                    }
+                    Some(id)
+                }
+                _ => None,
+            }
+        }
         _ => None,
     };
     if let Some(id) = declaration {
@@ -737,6 +846,7 @@ fn unit_comparison(source: &Source<'_>, expr: &Expression) -> anyhow::Result<Opt
             binary.operator,
             Operator::DoubleEquals | Operator::Different
         )
+        && !source.is_never(&binary.left)?
         && source
             .ir_type(
                 binary
@@ -860,7 +970,10 @@ impl Checker<'_, '_> {
             }
             return Ok(());
         }
-        self.source.expression_type(expr)?;
+        // Never expressions produce no runtime value; their operands still lower.
+        if !self.source.is_never(expr)? {
+            self.source.expression_type(expr)?;
+        }
         if let E::Call { callee, args } = &expr.kind
             && self.source.builtin(callee) == Some(crate::builtins::BuiltinFunction::Sizeof)
         {
@@ -1166,6 +1279,13 @@ impl Lowerer<'_, '_, '_> {
             return globals::lower_data(self.source, self.builder.ir_mut(), value, self.functions)
                 .map(Operand::Constant);
         }
+        if let E::Call { callee, .. } = &expr.kind
+            && !self.source.intrinsic(callee)
+            && self.source.is_never_call(expr)?
+        {
+            self.expression_statement(state, expr)?;
+            return Err(self.source.error(expr.span, "never call did not diverge"));
+        }
         if matches!(expr.kind, E::VoidExpression)
             || (matches!(expr.kind, E::Call { .. })
                 && self
@@ -1255,7 +1375,9 @@ impl Lowerer<'_, '_, '_> {
             } else {
                 match builtin {
                     F::SliceData => InstructionKind::SliceData(values[0]),
-                    F::SliceFromParts => InstructionKind::Slice {
+                    // Termination is a type-level guarantee; the runtime slice
+                    // representation is identical.
+                    F::SliceFromParts | F::TerminatedFromParts => InstructionKind::Slice {
                         data: values[0],
                         length: values[1],
                     },
@@ -1513,14 +1635,17 @@ impl Lowerer<'_, '_, '_> {
                 },
             )?;
             state.block = rhs_block;
-            let right = self.value_expression(state, &binary.right)?;
-            self.builder.set_terminator(
-                state.block,
-                Terminator::Jump(Edge {
-                    target: join,
-                    args: vec![right],
-                }),
-            )?;
+            let right = self.value_expression(state, &binary.right);
+            // A diverging right operand leaves only the short-circuit edge into join.
+            if !diverged(&right) {
+                self.builder.set_terminator(
+                    state.block,
+                    Terminator::Jump(Edge {
+                        target: join,
+                        args: vec![right?],
+                    }),
+                )?;
+            }
             state.block = join;
             return Ok(Operand::Value(self.builder.block_params(join)?[0]));
         }
@@ -1737,6 +1862,12 @@ impl Lowerer<'_, '_, '_> {
                 .into_iter()
                 .collect::<Vec<_>>(),
         )?;
+        if self.source.is_never_call(expr)? {
+            // Defers do not run: a never call leaves the function abnormally.
+            self.builder
+                .set_terminator(state.block, Terminator::Unreachable)?;
+            return Err(Diverged.into());
+        }
         Ok(())
     }
     fn initialize_binding(
@@ -1768,6 +1899,8 @@ impl Lowerer<'_, '_, '_> {
         let result = self.statements_inner(nodes, state);
         let result = match result {
             Ok(Some(state)) => self.run_defers(state, self.defers.len() - 1).map(Some),
+            // The diverging statement terminated its block; the rest of the list is dead.
+            result if diverged(&result) => Ok(None),
             other => other,
         };
         self.defers.pop();

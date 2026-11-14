@@ -492,7 +492,9 @@ mod name_resolution {
             let ns = &analyzer.symbols.namespaces[&FileId(0)];
             assert_eq!(ns.file_id, FileId(0));
             let expected = ["value", "limit", "callable", "Type", "left", "right"];
-            assert_eq!(ns.declarations.len(), expected.len());
+            // File declarations are followed by the struct's hidden `Self` slot.
+            assert_eq!(ns.declarations.len(), expected.len() + 1);
+            assert!(ns.declarations[expected.len()].name.starts_with("self@"));
             assert_eq!(ns.names.len(), expected.len());
             for (i, name) in expected.iter().enumerate() {
                 assert_eq!(ns.names[*name], decl(0, i as u32));
@@ -5282,12 +5284,9 @@ mod generic_flow_regressions {
         );
         let project =
             analyze("comp S:type = struct { x:int32 }; fn f(p:*S) int32 { p.x = 42; return p.x; }");
-        assert_eq!(project.warnings.len(), 2);
         assert!(
-            project
-                .warnings
-                .iter()
-                .all(|w| w.diagnostic.span.is_some() && w.render().starts_with("warning["))
+            project.warnings.is_empty(),
+            "implicit field dereferences do not warn"
         );
         reject(
             "comp S:type = struct { x:int32 }; fn f(p:**S) int32 { return p.x; }",
@@ -5481,21 +5480,9 @@ mod generic_flow_regressions {
     fn readonly_casts_cannot_change_nested_pointer_permissions() {
         reject("fn f(p:*const *int32) { q := p as **int32; }", "cast");
         reject("fn f(p:**int32) { q := p as *const *int32; }", "cast");
-        let project = analyze(
-            "comp S:type = struct { next:*S, x:int32 }; fn f(p:*S) int32 { return p.next.x; }",
-        );
-        assert_eq!(
-            project.warnings.len(),
-            2,
-            "each field access inserts its own dereference"
-        );
-        let project = analyze(
+        analyze("comp S:type = struct { next:*S, x:int32 }; fn f(p:*S) int32 { return p.next.x; }");
+        analyze(
             "comp S:type = struct { x:int32 }; fn read(T:type, x:T) int32 { return x.x; } fn f(p:*S) int32 { return read(*S,p)+read(*S,p); }",
-        );
-        assert_eq!(
-            project.warnings.len(),
-            1,
-            "concrete-only implicit accesses warn once per source site"
         );
     }
 
@@ -6165,13 +6152,12 @@ mod collecting_diagnostics {
         assert!(!report.errors.iter().any(|e| e.message.contains("pending")));
     }
     #[test]
-    fn warnings_survive_unrelated_errors() {
+    fn implicit_field_dereferences_do_not_warn_beside_errors() {
         let report = collect(
             "comp S := struct { x: int32 }; fn f(p: *S) int32 { return p.x; } fn g() { missing; }",
         );
         assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
-        assert_eq!(report.warnings.len(), 1);
-        assert!(report.warnings[0].diagnostic.filename.is_some());
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     }
     #[test]
     fn multiple_invalid_generic_instances_have_source_diagnostics() {
@@ -6211,6 +6197,56 @@ mod collecting_diagnostics {
             "{:?}",
             report.errors
         );
+    }
+
+    #[test]
+    fn self_names_the_enclosing_struct_in_members_and_fields() {
+        for source in [
+            "comp S := struct { x: int32, comp get := fn(self: *Self) int32 { return self.x; }; }; fn f(s: *S) int32 { return S.get(s); }",
+            "comp Node := struct { value: int32, next: *Self }; fn f(n: *Node) *Node { return n.next; }",
+            // Anonymous struct produced by a type computation; fields may name `Self`.
+            "comp fn List(T: type) type { return struct { value: T, next: *Self }; } fn f(n: *List(int32)) *List(int32) { return n.next; }",
+            // Members of computed owners specialize per owner.
+            "comp fn Box(T: type) type { return struct { value: T, comp one := fn() int32 { return 1; }; }; } fn f() int32 { return Box(int32).one(); }",
+            "comp fn Box(T: type) type { return struct { value: T, comp id := fn(x: T) T { return x; }; }; } fn f(x: int32) int32 { return Box(int32).id(x); } fn g(x: bool) bool { return Box(bool).id(x); }",
+            "comp fn Box(T: type) type { return struct { value: T, comp get := fn(self: *Self) T { return self.value; }; comp twice := fn(self: *Self) T { return Self.get(self) + Self.get(self); }; }; } fn f(b: *Box(int32)) int32 { return Box(int32).twice(b); }",
+        ] {
+            let report = collect(source);
+            assert!(report.errors.is_empty(), "{source}: {:?}", report.errors);
+        }
+    }
+
+    #[test]
+    fn self_specializations_stay_distinct() {
+        let report = collect(
+            "comp fn List(T: type) type { return struct { value: T, next: *Self }; } fn f(n: *List(bool)) *List(int32) { return n.next; }",
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.message.contains("incompatible")),
+            "{:?}",
+            report.errors
+        );
+    }
+
+    #[test]
+    fn self_is_contextual_and_reserved() {
+        let report = collect("fn f(x: Self) {}");
+        assert!(
+            report.errors.iter().any(|e| e.message.contains("Self")),
+            "{:?}",
+            report.errors
+        );
+        for source in ["comp Self := struct { x: int32 };", "fn f() { Self := 1; }"] {
+            let report = collect(source);
+            assert!(
+                report.errors.iter().any(|e| e.message.contains("reserved")),
+                "{source}: {:?}",
+                report.errors
+            );
+        }
     }
 
     #[test]

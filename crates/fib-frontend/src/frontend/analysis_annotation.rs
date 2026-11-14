@@ -57,6 +57,9 @@ pub struct LabelAnnotation {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct TypeAnnotation {
     pub resolved: Option<TypeId>,
+    /// Struct literals only: hidden type declaration that the contextual `Self`
+    /// name resolves to inside the struct body.
+    pub self_binding: Option<DeclId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

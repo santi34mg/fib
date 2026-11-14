@@ -1,0 +1,926 @@
+// macOS (Apple arm64) implementation of std::os over libSystem (std::libc).
+//
+// The public API mirrors the Linux implementation: the same function names,
+// Errno/Result aliases, Stat fields and constant names, with darwin values.
+// Differences:
+// - No raw syscalls: syscall0-6 exist for name resolution but are rejected by
+//   the backend, and std::syscall is unavailable on this target.
+// - Linux-only operations and flags are absent: getdents64, accept4, sbrk,
+//   O_DIRECT, O_NOATIME, O_PATH, O_TMPFILE, AT_EMPTY_PATH, CLOCK_BOOTTIME,
+//   SOCK_NONBLOCK and SOCK_CLOEXEC. Using them fails at name resolution.
+// - pipe2 and dup3 emulate their flags with fcntl after the call (not atomic).
+// - getrandom reads at most 256 bytes per call (getentropy) and ignores flags.
+// - Utsname uses darwin's five 256-byte fields (no domainname).
+// - exit uses _exit: no atexit handlers or stdio flushing, like exit_group.
+//
+// Typed wrappers return a Result whose Err variant carries an Errno (darwin's
+// positive error number). Like the Linux wrappers, they never retry EINTR or
+// complete short transfers; use std::io::read_full and std::io::write_all.
+
+comp libc := root::libc;
+
+pub comp Errno := int32;
+
+pub comp CountResult := root::result::Result(usize, Errno);
+pub comp IntResult := root::result::Result(int32, Errno);
+pub comp OffsetResult := root::result::Result(int64, Errno);
+pub comp MappingResult := root::result::Result(*uint8, Errno);
+pub comp Status := root::result::Result(void, Errno);
+
+// Two descriptors. For pipes, first is the read end and second the write end.
+pub comp FdPair := struct { first: int32, second: int32 };
+pub comp FdPairResult := root::result::Result(FdPair, Errno);
+
+// struct timespec.
+pub comp Timespec := struct { seconds: int64, nanoseconds: int64 };
+pub comp TimeResult := root::result::Result(Timespec, Errno);
+
+// The process ID reaped by waitpid and its raw wait status word.
+pub comp WaitStatus := struct { pid: int32, status: int32 };
+pub comp WaitResult := root::result::Result(WaitStatus, Errno);
+
+// File metadata with the same fields and types as the Linux std::os::Stat,
+// converted from darwin's struct stat.
+pub comp Stat := struct {
+    dev: uint64,
+    ino: uint64,
+    nlink: uint64,
+    mode: uint32,
+    uid: uint32,
+    gid: uint32,
+    pad0: int32,
+    rdev: uint64,
+    size: int64,
+    blksize: int64,
+    blocks: int64,
+    atime: Timespec,
+    mtime: Timespec,
+    ctime: Timespec,
+    reserved: [3]int64,
+};
+pub comp StatResult := root::result::Result(Stat, Errno);
+
+// darwin's 64-bit-inode struct stat (144 bytes on arm64).
+pub(root) comp DarwinStat := struct {
+    dev: int32,
+    mode: uint16,
+    nlink: uint16,
+    ino: uint64,
+    uid: uint32,
+    gid: uint32,
+    rdev: int32,
+    atime: Timespec,
+    mtime: Timespec,
+    ctime: Timespec,
+    birthtime: Timespec,
+    size: int64,
+    blocks: int64,
+    blksize: int32,
+    flags: uint32,
+    gen: uint32,
+    lspare: int32,
+    qspare: [2]int64,
+};
+
+// darwin struct utsname; each field is a NUL-terminated byte string.
+pub comp Utsname := struct {
+    sysname: [256]uint8,
+    nodename: [256]uint8,
+    release: [256]uint8,
+    version: [256]uint8,
+    machine: [256]uint8,
+};
+pub comp UtsnameResult := root::result::Result(Utsname, Errno);
+
+// struct rlimit.
+pub comp Rlimit := struct { current: uint64, maximum: uint64 };
+pub comp RLIM_INFINITY: uint64 = 9223372036854775807;
+pub comp RlimitResult := root::result::Result(Rlimit, Errno);
+
+// struct iovec for readv/writev.
+pub comp Iovec := struct { base: *uint8, len: usize };
+
+// struct pollfd.
+pub comp PollFd := struct { fd: int32, events: int16, revents: int16 };
+
+// Standard descriptors.
+pub comp stdin: int32 = 0;
+pub comp stdout: int32 = 1;
+pub comp stderr: int32 = 2;
+
+// mmap/mprotect protection and mapping flags.
+pub comp PROT_NONE: int32 = 0x0;
+pub comp PROT_READ: int32 = 0x1;
+pub comp PROT_WRITE: int32 = 0x2;
+pub comp PROT_EXEC: int32 = 0x4;
+
+pub comp MAP_SHARED: int32 = 0x01;
+pub comp MAP_PRIVATE: int32 = 0x02;
+pub comp MAP_FIXED: int32 = 0x10;
+pub comp MAP_ANONYMOUS: int32 = 0x1000;
+
+pub comp MS_ASYNC: int32 = 1;
+pub comp MS_INVALIDATE: int32 = 2;
+pub comp MS_SYNC: int32 = 0x10;
+
+pub comp MADV_NORMAL: int32 = 0;
+pub comp MADV_RANDOM: int32 = 1;
+pub comp MADV_SEQUENTIAL: int32 = 2;
+pub comp MADV_WILLNEED: int32 = 3;
+pub comp MADV_DONTNEED: int32 = 4;
+
+// open/openat flags.
+pub comp O_RDONLY: int32 = 0x0;
+pub comp O_WRONLY: int32 = 0x1;
+pub comp O_RDWR: int32 = 0x2;
+pub comp O_NONBLOCK: int32 = 0x4;
+pub comp O_APPEND: int32 = 0x8;
+pub comp O_SYNC: int32 = 0x80;
+pub comp O_NOFOLLOW: int32 = 0x100;
+pub comp O_CREAT: int32 = 0x200;
+pub comp O_TRUNC: int32 = 0x400;
+pub comp O_EXCL: int32 = 0x800;
+pub comp O_NOCTTY: int32 = 0x20000;
+pub comp O_DIRECTORY: int32 = 0x100000;
+pub comp O_DSYNC: int32 = 0x400000;
+pub comp O_CLOEXEC: int32 = 0x1000000;
+
+// *at directory and flag arguments.
+pub comp AT_FDCWD: int32 = -2;
+pub comp AT_SYMLINK_NOFOLLOW: int32 = 0x20;
+pub comp AT_SYMLINK_FOLLOW: int32 = 0x40;
+pub comp AT_REMOVEDIR: int32 = 0x80;
+
+// lseek whence.
+pub comp SEEK_SET: int32 = 0;
+pub comp SEEK_CUR: int32 = 1;
+pub comp SEEK_END: int32 = 2;
+
+// access modes.
+pub comp F_OK: int32 = 0;
+pub comp X_OK: int32 = 1;
+pub comp W_OK: int32 = 2;
+pub comp R_OK: int32 = 4;
+
+// fcntl commands and descriptor flags.
+pub comp F_DUPFD: int32 = 0;
+pub comp F_GETFD: int32 = 1;
+pub comp F_SETFD: int32 = 2;
+pub comp F_GETFL: int32 = 3;
+pub comp F_SETFL: int32 = 4;
+pub comp F_DUPFD_CLOEXEC: int32 = 67;
+pub comp FD_CLOEXEC: int32 = 1;
+
+// flock operations.
+pub comp LOCK_SH: int32 = 1;
+pub comp LOCK_EX: int32 = 2;
+pub comp LOCK_NB: int32 = 4;
+pub comp LOCK_UN: int32 = 8;
+
+// File type and permission bits of Stat.mode.
+pub comp S_IFMT: uint32 = 0xF000;
+pub comp S_IFSOCK: uint32 = 0xC000;
+pub comp S_IFLNK: uint32 = 0xA000;
+pub comp S_IFREG: uint32 = 0x8000;
+pub comp S_IFBLK: uint32 = 0x6000;
+pub comp S_IFDIR: uint32 = 0x4000;
+pub comp S_IFCHR: uint32 = 0x2000;
+pub comp S_IFIFO: uint32 = 0x1000;
+
+// Signals.
+pub comp SIGHUP: int32 = 1;
+pub comp SIGINT: int32 = 2;
+pub comp SIGQUIT: int32 = 3;
+pub comp SIGILL: int32 = 4;
+pub comp SIGTRAP: int32 = 5;
+pub comp SIGABRT: int32 = 6;
+pub comp SIGFPE: int32 = 8;
+pub comp SIGKILL: int32 = 9;
+pub comp SIGBUS: int32 = 10;
+pub comp SIGSEGV: int32 = 11;
+pub comp SIGPIPE: int32 = 13;
+pub comp SIGALRM: int32 = 14;
+pub comp SIGTERM: int32 = 15;
+pub comp SIGSTOP: int32 = 17;
+pub comp SIGTSTP: int32 = 18;
+pub comp SIGCONT: int32 = 19;
+pub comp SIGCHLD: int32 = 20;
+pub comp SIGTTIN: int32 = 21;
+pub comp SIGTTOU: int32 = 22;
+pub comp SIGUSR1: int32 = 30;
+pub comp SIGUSR2: int32 = 31;
+
+// waitpid options.
+pub comp WNOHANG: int32 = 1;
+pub comp WUNTRACED: int32 = 2;
+
+// Clocks.
+pub comp CLOCK_REALTIME: int32 = 0;
+pub comp CLOCK_MONOTONIC: int32 = 6;
+pub comp CLOCK_PROCESS_CPUTIME_ID: int32 = 12;
+pub comp CLOCK_THREAD_CPUTIME_ID: int32 = 16;
+
+// poll events.
+pub comp POLLIN: int16 = 0x1;
+pub comp POLLPRI: int16 = 0x2;
+pub comp POLLOUT: int16 = 0x4;
+pub comp POLLERR: int16 = 0x8;
+pub comp POLLHUP: int16 = 0x10;
+pub comp POLLNVAL: int16 = 0x20;
+
+// Resource limits.
+pub comp RLIMIT_CPU: int32 = 0;
+pub comp RLIMIT_FSIZE: int32 = 1;
+pub comp RLIMIT_DATA: int32 = 2;
+pub comp RLIMIT_STACK: int32 = 3;
+pub comp RLIMIT_CORE: int32 = 4;
+pub comp RLIMIT_AS: int32 = 5;
+pub comp RLIMIT_RSS: int32 = 5;
+pub comp RLIMIT_MEMLOCK: int32 = 6;
+pub comp RLIMIT_NPROC: int32 = 7;
+pub comp RLIMIT_NOFILE: int32 = 8;
+
+// Sockets.
+pub comp AF_UNIX: int32 = 1;
+pub comp AF_INET: int32 = 2;
+pub comp AF_INET6: int32 = 30;
+pub comp SOCK_STREAM: int32 = 1;
+pub comp SOCK_DGRAM: int32 = 2;
+pub comp SOCK_RAW: int32 = 3;
+pub comp IPPROTO_TCP: int32 = 6;
+pub comp IPPROTO_UDP: int32 = 17;
+pub comp SHUT_RD: int32 = 0;
+pub comp SHUT_WR: int32 = 1;
+pub comp SHUT_RDWR: int32 = 2;
+pub comp SOL_SOCKET: int32 = 0xffff;
+pub comp SO_REUSEADDR: int32 = 0x4;
+pub comp SO_KEEPALIVE: int32 = 0x8;
+pub comp SO_REUSEPORT: int32 = 0x200;
+
+// getrandom flags, accepted for portability and ignored on this target.
+pub comp GRND_NONBLOCK: uint32 = 1;
+pub comp GRND_RANDOM: uint32 = 2;
+
+// Errno values carried by Err variants (darwin numbering).
+pub comp EPERM: Errno = 1;
+pub comp ENOENT: Errno = 2;
+pub comp ESRCH: Errno = 3;
+pub comp EINTR: Errno = 4;
+pub comp EIO: Errno = 5;
+pub comp ENXIO: Errno = 6;
+pub comp E2BIG: Errno = 7;
+pub comp ENOEXEC: Errno = 8;
+pub comp EBADF: Errno = 9;
+pub comp ECHILD: Errno = 10;
+pub comp ENOMEM: Errno = 12;
+pub comp EACCES: Errno = 13;
+pub comp EFAULT: Errno = 14;
+pub comp EBUSY: Errno = 16;
+pub comp EEXIST: Errno = 17;
+pub comp EXDEV: Errno = 18;
+pub comp ENODEV: Errno = 19;
+pub comp ENOTDIR: Errno = 20;
+pub comp EISDIR: Errno = 21;
+pub comp EINVAL: Errno = 22;
+pub comp ENFILE: Errno = 23;
+pub comp EMFILE: Errno = 24;
+pub comp ENOTTY: Errno = 25;
+pub comp EFBIG: Errno = 27;
+pub comp ENOSPC: Errno = 28;
+pub comp ESPIPE: Errno = 29;
+pub comp EROFS: Errno = 30;
+pub comp EMLINK: Errno = 31;
+pub comp EPIPE: Errno = 32;
+pub comp ERANGE: Errno = 34;
+pub comp EAGAIN: Errno = 35;
+pub comp EINPROGRESS: Errno = 36;
+pub comp EADDRINUSE: Errno = 48;
+pub comp ECONNRESET: Errno = 54;
+pub comp ETIMEDOUT: Errno = 60;
+pub comp ECONNREFUSED: Errno = 61;
+pub comp ELOOP: Errno = 62;
+pub comp ENAMETOOLONG: Errno = 63;
+pub comp ENOTEMPTY: Errno = 66;
+pub comp ENOSYS: Errno = 78;
+
+// Symbolic name of an error number, e.g. "ENOENT", for diagnostics. Numbers
+// without a constant above return "EUNKNOWN". The bytes have program lifetime.
+pub fn errno_name(error: Errno) const []uint8 {
+    if error == EPERM { return "EPERM"; };
+    if error == ENOENT { return "ENOENT"; };
+    if error == ESRCH { return "ESRCH"; };
+    if error == EINTR { return "EINTR"; };
+    if error == EIO { return "EIO"; };
+    if error == ENXIO { return "ENXIO"; };
+    if error == E2BIG { return "E2BIG"; };
+    if error == ENOEXEC { return "ENOEXEC"; };
+    if error == EBADF { return "EBADF"; };
+    if error == ECHILD { return "ECHILD"; };
+    if error == ENOMEM { return "ENOMEM"; };
+    if error == EACCES { return "EACCES"; };
+    if error == EFAULT { return "EFAULT"; };
+    if error == EBUSY { return "EBUSY"; };
+    if error == EEXIST { return "EEXIST"; };
+    if error == EXDEV { return "EXDEV"; };
+    if error == ENODEV { return "ENODEV"; };
+    if error == ENOTDIR { return "ENOTDIR"; };
+    if error == EISDIR { return "EISDIR"; };
+    if error == EINVAL { return "EINVAL"; };
+    if error == ENFILE { return "ENFILE"; };
+    if error == EMFILE { return "EMFILE"; };
+    if error == ENOTTY { return "ENOTTY"; };
+    if error == EFBIG { return "EFBIG"; };
+    if error == ENOSPC { return "ENOSPC"; };
+    if error == ESPIPE { return "ESPIPE"; };
+    if error == EROFS { return "EROFS"; };
+    if error == EMLINK { return "EMLINK"; };
+    if error == EPIPE { return "EPIPE"; };
+    if error == ERANGE { return "ERANGE"; };
+    if error == EAGAIN { return "EAGAIN"; };
+    if error == EINPROGRESS { return "EINPROGRESS"; };
+    if error == EADDRINUSE { return "EADDRINUSE"; };
+    if error == ECONNRESET { return "ECONNRESET"; };
+    if error == ETIMEDOUT { return "ETIMEDOUT"; };
+    if error == ECONNREFUSED { return "ECONNREFUSED"; };
+    if error == ELOOP { return "ELOOP"; };
+    if error == ENAMETOOLONG { return "ENAMETOOLONG"; };
+    if error == ENOTEMPTY { return "ENOTEMPTY"; };
+    if error == ENOSYS { return "ENOSYS"; };
+    return "EUNKNOWN";
+}
+
+// The errno left by the failing libc call that just returned.
+fn errno() Errno {
+    return libc::__error()*;
+}
+
+fn status(value: int32) Status {
+    if value == -1 { return Status.Err(errno()); };
+    return Status.Ok;
+}
+
+fn int_result(value: int32) IntResult {
+    if value == -1 { return IntResult.Err(errno()); };
+    return IntResult.Ok(value);
+}
+
+fn count_result(value: int64) CountResult {
+    if value < 0 { return CountResult.Err(errno()); };
+    return CountResult.Ok(value as usize);
+}
+
+// ---- File descriptors and I/O ----
+
+pub fn read(fd: int32, buffer: []uint8) CountResult {
+    return count_result(libc::read(fd, root::memory::slice_data(buffer), buffer.len));
+}
+
+pub fn write(fd: int32, buffer: const []uint8) CountResult {
+    return count_result(libc::write(fd, root::memory::slice_data(buffer), buffer.len));
+}
+
+pub fn close(fd: int32) Status {
+    return status(libc::close(fd));
+}
+
+pub fn pread(fd: int32, buffer: []uint8, offset: int64) CountResult {
+    return count_result(libc::pread(fd, root::memory::slice_data(buffer), buffer.len, offset));
+}
+
+pub fn pwrite(fd: int32, buffer: const []uint8, offset: int64) CountResult {
+    return count_result(libc::pwrite(fd, root::memory::slice_data(buffer), buffer.len, offset));
+}
+
+pub fn readv(fd: int32, vectors: const []Iovec) CountResult {
+    return count_result(libc::readv(fd, root::memory::slice_data(vectors), vectors.len as int32));
+}
+
+pub fn writev(fd: int32, vectors: const []Iovec) CountResult {
+    return count_result(libc::writev(fd, root::memory::slice_data(vectors), vectors.len as int32));
+}
+
+// Path must reference live NUL-terminated storage, e.g. c"/dev/null".
+pub fn openat(dirfd: int32, path: const [*:0]uint8, flags: int32, mode: uint32) IntResult {
+    return int_result(libc::openat(dirfd, path, flags, 0, 0, 0, 0, 0, mode as uint64));
+}
+
+pub fn open(path: const [*:0]uint8, flags: int32, mode: uint32) IntResult {
+    return openat(AT_FDCWD, path, flags, mode);
+}
+
+pub fn lseek(fd: int32, offset: int64, whence: int32) OffsetResult {
+    value := libc::lseek(fd, offset, whence);
+    if value < 0 { return OffsetResult.Err(errno()); };
+    return OffsetResult.Ok(value);
+}
+
+pub fn dup(fd: int32) IntResult {
+    return int_result(libc::dup(fd));
+}
+
+pub fn dup2(old_fd: int32, new_fd: int32) IntResult {
+    return int_result(libc::dup2(old_fd, new_fd));
+}
+
+// Apply O_CLOEXEC/O_NONBLOCK to a fresh descriptor, closing it on failure.
+fn apply_flags(fd: int32, flags: int32) Status {
+    if (flags & O_CLOEXEC) != 0 {
+        if libc::fcntl(fd, F_SETFD, 0, 0, 0, 0, 0, 0, FD_CLOEXEC as uint64) == -1 {
+            error := errno();
+            libc::close(fd);
+            return Status.Err(error);
+        };
+    };
+    if (flags & O_NONBLOCK) != 0 {
+        current := libc::fcntl(fd, F_GETFL, 0, 0, 0, 0, 0, 0, 0);
+        if current == -1 || libc::fcntl(fd, F_SETFL, 0, 0, 0, 0, 0, 0, (current | O_NONBLOCK) as uint64) == -1 {
+            error := errno();
+            libc::close(fd);
+            return Status.Err(error);
+        };
+    };
+    return Status.Ok;
+}
+
+// flags accepts O_CLOEXEC. Equal descriptors fail with EINVAL, as on Linux.
+pub fn dup3(old_fd: int32, new_fd: int32, flags: int32) IntResult {
+    if old_fd == new_fd || (flags & ~O_CLOEXEC) != 0 { return IntResult.Err(EINVAL); };
+    fd := libc::dup2(old_fd, new_fd);
+    if fd == -1 { return IntResult.Err(errno()); };
+    switch (apply_flags(fd, flags)) {
+        when .Err(error) { return IntResult.Err(error); }
+        when .Ok {}
+    };
+    return IntResult.Ok(fd);
+}
+
+// flags accepts O_CLOEXEC and O_NONBLOCK, applied after creation.
+pub fn pipe2(flags: int32) FdPairResult {
+    if (flags & ~(O_CLOEXEC | O_NONBLOCK)) != 0 { return FdPairResult.Err(EINVAL); };
+    fds: [2]int32 = [0, 0];
+    if libc::pipe(root::memory::slice_data(fds[..])) == -1 { return FdPairResult.Err(errno()); };
+    switch (apply_flags(fds[0], flags)) {
+        when .Err(error) { libc::close(fds[1]); return FdPairResult.Err(error); }
+        when .Ok {}
+    };
+    switch (apply_flags(fds[1], flags)) {
+        when .Err(error) { libc::close(fds[0]); return FdPairResult.Err(error); }
+        when .Ok {}
+    };
+    return FdPairResult.Ok(FdPair { first: fds[0], second: fds[1] });
+}
+
+pub fn pipe() FdPairResult {
+    return pipe2(0);
+}
+
+// argument is the command's integer argument.
+pub fn fcntl(fd: int32, command: int32, argument: uint64) IntResult {
+    return int_result(libc::fcntl(fd, command, 0, 0, 0, 0, 0, 0, argument));
+}
+
+// argument points at the request's in/out structure.
+pub fn ioctl(fd: int32, request: uint64, argument: *void) IntResult {
+    return int_result(libc::ioctl(fd, request, 0, 0, 0, 0, 0, 0, argument));
+}
+
+pub fn fsync(fd: int32) Status {
+    return status(libc::fsync(fd));
+}
+
+pub fn fdatasync(fd: int32) Status {
+    return status(libc::fdatasync(fd));
+}
+
+pub fn sync() {
+    libc::sync();
+}
+
+pub fn truncate(path: const [*:0]uint8, length: int64) Status {
+    return status(libc::truncate(path, length));
+}
+
+pub fn ftruncate(fd: int32, length: int64) Status {
+    return status(libc::ftruncate(fd, length));
+}
+
+pub fn flock(fd: int32, operation: int32) Status {
+    return status(libc::flock(fd, operation));
+}
+
+pub fn poll(fds: []PollFd, timeout_milliseconds: int32) CountResult {
+    value := libc::poll(root::memory::slice_data(fds), fds.len as uint32, timeout_milliseconds);
+    if value == -1 { return CountResult.Err(errno()); };
+    return CountResult.Ok(value as usize);
+}
+
+// ---- Files and directories ----
+
+fn converted(raw: DarwinStat) Stat {
+    return Stat {
+        dev: (raw.dev as int64) as uint64,
+        ino: raw.ino,
+        nlink: raw.nlink as uint64,
+        mode: raw.mode as uint32,
+        uid: raw.uid,
+        gid: raw.gid,
+        pad0: 0,
+        rdev: (raw.rdev as int64) as uint64,
+        size: raw.size,
+        blksize: raw.blksize as int64,
+        blocks: raw.blocks,
+        atime: raw.atime,
+        mtime: raw.mtime,
+        ctime: raw.ctime,
+        reserved: [0, 0, 0],
+    };
+}
+
+// Kernel-filled results are written through a pointer to uninitialized storage
+// and read back only on success; flow analysis cannot see libc's writes.
+
+// flags accepts AT_SYMLINK_NOFOLLOW.
+pub fn fstatat(dirfd: int32, path: const [*:0]uint8, flags: int32) StatResult {
+    info: DarwinStat;
+    out := info&;
+    if libc::fstatat(dirfd, path, out, flags) == -1 { return StatResult.Err(errno()); };
+    return StatResult.Ok(converted(out*));
+}
+
+pub fn stat(path: const [*:0]uint8) StatResult {
+    return fstatat(AT_FDCWD, path, 0);
+}
+
+pub fn lstat(path: const [*:0]uint8) StatResult {
+    return fstatat(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW);
+}
+
+pub fn fstat(fd: int32) StatResult {
+    info: DarwinStat;
+    out := info&;
+    if libc::fstat(fd, out) == -1 { return StatResult.Err(errno()); };
+    return StatResult.Ok(converted(out*));
+}
+
+// mode combines F_OK, R_OK, W_OK and X_OK.
+pub fn faccessat(dirfd: int32, path: const [*:0]uint8, mode: int32) Status {
+    return status(libc::faccessat(dirfd, path, mode, 0));
+}
+
+pub fn access(path: const [*:0]uint8, mode: int32) Status {
+    return faccessat(AT_FDCWD, path, mode);
+}
+
+pub fn chmod(path: const [*:0]uint8, mode: uint32) Status {
+    return status(libc::chmod(path, mode as uint16));
+}
+
+pub fn fchmod(fd: int32, mode: uint32) Status {
+    return status(libc::fchmod(fd, mode as uint16));
+}
+
+pub fn chown(path: const [*:0]uint8, uid: uint32, gid: uint32) Status {
+    return status(libc::chown(path, uid, gid));
+}
+
+pub fn fchown(fd: int32, uid: uint32, gid: uint32) Status {
+    return status(libc::fchown(fd, uid, gid));
+}
+
+pub fn lchown(path: const [*:0]uint8, uid: uint32, gid: uint32) Status {
+    return status(libc::lchown(path, uid, gid));
+}
+
+// Returns the previous mask; umask cannot fail.
+pub fn umask(mask: uint32) uint32 {
+    return libc::umask(mask as uint16) as uint32;
+}
+
+pub fn mkdirat(dirfd: int32, path: const [*:0]uint8, mode: uint32) Status {
+    return status(libc::mkdirat(dirfd, path, mode as uint16));
+}
+
+pub fn mkdir(path: const [*:0]uint8, mode: uint32) Status {
+    return mkdirat(AT_FDCWD, path, mode);
+}
+
+// flags accepts AT_REMOVEDIR to remove an empty directory.
+pub fn unlinkat(dirfd: int32, path: const [*:0]uint8, flags: int32) Status {
+    return status(libc::unlinkat(dirfd, path, flags));
+}
+
+pub fn unlink(path: const [*:0]uint8) Status {
+    return unlinkat(AT_FDCWD, path, 0);
+}
+
+pub fn rmdir(path: const [*:0]uint8) Status {
+    return unlinkat(AT_FDCWD, path, AT_REMOVEDIR);
+}
+
+pub fn renameat(old_dirfd: int32, old_path: const [*:0]uint8, new_dirfd: int32,
+    new_path: const [*:0]uint8) Status {
+    return status(libc::renameat(old_dirfd, old_path, new_dirfd, new_path));
+}
+
+pub fn rename(old_path: const [*:0]uint8, new_path: const [*:0]uint8) Status {
+    return renameat(AT_FDCWD, old_path, AT_FDCWD, new_path);
+}
+
+pub fn link(old_path: const [*:0]uint8, new_path: const [*:0]uint8) Status {
+    return status(libc::linkat(AT_FDCWD, old_path, AT_FDCWD, new_path, 0));
+}
+
+pub fn symlink(target: const [*:0]uint8, link_path: const [*:0]uint8) Status {
+    return status(libc::symlinkat(target, AT_FDCWD, link_path));
+}
+
+// Writes the link target without a NUL terminator; the count is its length.
+pub fn readlink(path: const [*:0]uint8, buffer: []uint8) CountResult {
+    return count_result(libc::readlinkat(AT_FDCWD, path, root::memory::slice_data(buffer), buffer.len));
+}
+
+// Writes the NUL-terminated working directory; the count includes the NUL.
+pub fn getcwd(buffer: []uint8) CountResult {
+    if libc::getcwd(root::memory::slice_data(buffer), buffer.len) == null {
+        return CountResult.Err(errno());
+    };
+    switch (root::string::index_of(buffer, 0)) {
+        when .Some(end) { return CountResult.Ok(end + 1); }
+        when .None { return CountResult.Err(ERANGE); }
+    };
+}
+
+pub fn chdir(path: const [*:0]uint8) Status {
+    return status(libc::chdir(path));
+}
+
+pub fn fchdir(fd: int32) Status {
+    return status(libc::fchdir(fd));
+}
+
+// ---- Memory ----
+
+pub fn mmap(address: *uint8, length: usize, protection: int32, flags: int32, fd: int32, offset: int64) MappingResult {
+    pointer := libc::mmap(address, length, protection, flags, fd, offset);
+    // MAP_FAILED is (void *)-1.
+    if root::os_abi::pointer_to_word(pointer) == 18446744073709551615 {
+        return MappingResult.Err(errno());
+    };
+    return MappingResult.Ok(pointer);
+}
+
+pub fn munmap(address: *uint8, length: usize) Status {
+    return status(libc::munmap(address, length));
+}
+
+pub fn mprotect(address: *uint8, length: usize, protection: int32) Status {
+    return status(libc::mprotect(address, length, protection));
+}
+
+pub fn msync(address: *uint8, length: usize, flags: int32) Status {
+    return status(libc::msync(address, length, flags));
+}
+
+pub fn madvise(address: *uint8, length: usize, advice: int32) Status {
+    return status(libc::madvise(address, length, advice));
+}
+
+pub fn get_page_size() usize {
+    return libc::getpagesize() as usize;
+}
+
+// Fresh 16-byte-aligned storage of at least size bytes for the std heap
+// allocator; one private anonymous mapping per request.
+pub(root) fn heap_grow(size: usize) MappingResult {
+    return mmap(null, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+}
+
+// ---- Processes ----
+
+// The identity queries below cannot fail.
+pub fn getpid() int32 {
+    return libc::getpid();
+}
+
+pub fn getppid() int32 {
+    return libc::getppid();
+}
+
+// The calling thread's Mach port name, darwin's per-thread identifier.
+pub fn gettid() int32 {
+    return libc::pthread_mach_thread_np(libc::pthread_self()) as int32;
+}
+
+pub fn getuid() uint32 {
+    return libc::getuid();
+}
+
+pub fn geteuid() uint32 {
+    return libc::geteuid();
+}
+
+pub fn getgid() uint32 {
+    return libc::getgid();
+}
+
+pub fn getegid() uint32 {
+    return libc::getegid();
+}
+
+pub fn setuid(uid: uint32) Status {
+    return status(libc::setuid(uid));
+}
+
+pub fn setgid(gid: uint32) Status {
+    return status(libc::setgid(gid));
+}
+
+pub fn getpgid(pid: int32) IntResult {
+    return int_result(libc::getpgid(pid));
+}
+
+pub fn setpgid(pid: int32, pgid: int32) Status {
+    return status(libc::setpgid(pid, pgid));
+}
+
+pub fn getsid(pid: int32) IntResult {
+    return int_result(libc::getsid(pid));
+}
+
+// Returns the new session ID.
+pub fn setsid() IntResult {
+    return int_result(libc::setsid());
+}
+
+// Returns 0 in the child and the child's process ID in the parent.
+pub fn fork() IntResult {
+    return int_result(libc::fork());
+}
+
+// argv and envp point at null-terminated arrays of C strings. Returns only on failure.
+pub fn execve(path: const [*:0]uint8, argv: const *const [*:0]uint8,
+    envp: const *const [*:0]uint8) Status {
+    return status(libc::execve(path, argv, envp));
+}
+
+// Terminates the process immediately (_exit); it does not return.
+// Pending defers in callers do not run.
+pub fn exit(code: int32) never {
+    libc::_exit(code);
+}
+
+// pid follows waitpid: -1 waits for any child. options accepts WNOHANG and
+// WUNTRACED; with WNOHANG, pid is 0 when no child has changed state.
+pub fn waitpid(pid: int32, options: int32) WaitResult {
+    wait_status: [1]int32 = [0];
+    value := libc::waitpid(pid, root::memory::slice_data(wait_status[..]), options);
+    if value == -1 { return WaitResult.Err(errno()); };
+    return WaitResult.Ok(WaitStatus { pid: value, status: wait_status[0] });
+}
+
+pub fn kill(pid: int32, signal: int32) Status {
+    return status(libc::kill(pid, signal));
+}
+
+pub fn sched_yield() Status {
+    return status(libc::sched_yield());
+}
+
+// Returns the seconds remaining on any previously scheduled alarm.
+pub fn alarm(seconds: uint32) uint32 {
+    return libc::alarm(seconds);
+}
+
+// Sleeps until a signal arrives; the result is always Err(EINTR).
+pub fn pause() Status {
+    return status(libc::pause());
+}
+
+pub fn uname() UtsnameResult {
+    name: Utsname;
+    out := name&;
+    if libc::uname(out) == -1 { return UtsnameResult.Err(errno()); };
+    return UtsnameResult.Ok(out*);
+}
+
+pub fn getrlimit(resource: int32) RlimitResult {
+    limit := Rlimit { current: 0, maximum: 0 };
+    if libc::getrlimit(resource, limit&) == -1 { return RlimitResult.Err(errno()); };
+    return RlimitResult.Ok(limit);
+}
+
+pub fn setrlimit(resource: int32, limit: Rlimit) Status {
+    return status(libc::setrlimit(resource, limit&));
+}
+
+// ---- Time ----
+
+pub fn clock_gettime(clock: int32) TimeResult {
+    time := Timespec { seconds: 0, nanoseconds: 0 };
+    if libc::clock_gettime(clock, time&) == -1 { return TimeResult.Err(errno()); };
+    return TimeResult.Ok(time);
+}
+
+pub fn clock_getres(clock: int32) TimeResult {
+    time := Timespec { seconds: 0, nanoseconds: 0 };
+    if libc::clock_getres(clock, time&) == -1 { return TimeResult.Err(errno()); };
+    return TimeResult.Ok(time);
+}
+
+// remaining may be null; on EINTR it receives the unslept time.
+pub fn nanosleep(duration: Timespec, remaining: *Timespec) Status {
+    return status(libc::nanosleep(duration&, remaining));
+}
+
+// ---- Randomness ----
+
+// Fills a prefix of at most 256 bytes (getentropy's limit) and returns its
+// length. flags are ignored: getentropy blocks only until the RNG is seeded.
+pub fn getrandom(buffer: []uint8, flags: uint32) CountResult {
+    count := buffer.len;
+    if count > 256 { count = 256; };
+    if count == 0 { return CountResult.Ok(0); };
+    if libc::getentropy(root::memory::slice_data(buffer), count) == -1 {
+        return CountResult.Err(errno());
+    };
+    return CountResult.Ok(count);
+}
+
+// ---- Sockets ----
+// Socket addresses are passed as untyped pointers to a sockaddr_* structure
+// plus its byte length; cast a typed pointer with `(address&) as *void`.
+// darwin sockaddr structures begin with a length byte (sin_len).
+
+pub fn socket(domain: int32, kind: int32, protocol: int32) IntResult {
+    return int_result(libc::socket(domain, kind, protocol));
+}
+
+pub fn socketpair(domain: int32, kind: int32, protocol: int32) FdPairResult {
+    fds: [2]int32 = [0, 0];
+    if libc::socketpair(domain, kind, protocol, root::memory::slice_data(fds[..])) == -1 {
+        return FdPairResult.Err(errno());
+    };
+    return FdPairResult.Ok(FdPair { first: fds[0], second: fds[1] });
+}
+
+pub fn bind(fd: int32, address: const *void, length: uint32) Status {
+    return status(libc::bind(fd, address, length));
+}
+
+pub fn connect(fd: int32, address: const *void, length: uint32) Status {
+    return status(libc::connect(fd, address, length));
+}
+
+pub fn listen(fd: int32, backlog: int32) Status {
+    return status(libc::listen(fd, backlog));
+}
+
+// address and length may both be null.
+pub fn accept(fd: int32, address: *void, length: *uint32) IntResult {
+    return int_result(libc::accept(fd, address, length));
+}
+
+pub fn shutdown(fd: int32, how: int32) Status {
+    return status(libc::shutdown(fd, how));
+}
+
+// address may be null with length 0 for connected sockets.
+pub fn sendto(fd: int32, buffer: const []uint8, flags: int32, address: const *void,
+    length: uint32) CountResult {
+    return count_result(libc::sendto(fd, root::memory::slice_data(buffer), buffer.len, flags,
+        address, length));
+}
+
+// address and length may both be null.
+pub fn recvfrom(fd: int32, buffer: []uint8, flags: int32, address: *void,
+    length: *uint32) CountResult {
+    return count_result(libc::recvfrom(fd, root::memory::slice_data(buffer), buffer.len, flags,
+        address, length));
+}
+
+pub fn send(fd: int32, buffer: const []uint8, flags: int32) CountResult {
+    return sendto(fd, buffer, flags, null, 0);
+}
+
+pub fn recv(fd: int32, buffer: []uint8, flags: int32) CountResult {
+    return recvfrom(fd, buffer, flags, null, null);
+}
+
+pub fn setsockopt(fd: int32, level: int32, name: int32, value: const *void,
+    length: uint32) Status {
+    return status(libc::setsockopt(fd, level, name, value, length));
+}
+
+// length is in/out: the capacity of value on entry, the option size on return.
+pub fn getsockopt(fd: int32, level: int32, name: int32, value: *void,
+    length: *uint32) Status {
+    return status(libc::getsockopt(fd, level, name, value, length));
+}
+
+pub fn getsockname(fd: int32, address: *void, length: *uint32) Status {
+    return status(libc::getsockname(fd, address, length));
+}
+
+pub fn getpeername(fd: int32, address: *void, length: *uint32) Status {
+    return status(libc::getpeername(fd, address, length));
+}

@@ -42,12 +42,20 @@ impl TypeExpression {
                     element_type.resolve_name(context)?
                 }
                 T::Struct { fields, members } => {
-                    for field in fields {
-                        Analyzer::resolve_name_expression(&mut field.expression, context)?;
-                    }
+                    let self_binding = self.annotation.self_binding;
                     context.scoped(crate::frontend::scope_kind::ScopeKind::Block, |context| {
+                        use crate::frontend::{identifier::Entity, symbol_table::LocalBinding};
+                        if let Some(id) = self_binding {
+                            context.lexical.insert_binding(
+                                crate::frontend::analyzer::SELF_TYPE_NAME.to_owned(),
+                                LocalBinding::CompAlias(Entity::Declaration(id)),
+                            )?;
+                        }
+                        for field in fields.iter_mut() {
+                            Analyzer::resolve_name_expression(&mut field.expression, context)?;
+                        }
                         if let Some((name, id)) = owner {
-                            context.lexical.insert_binding(name.to_owned(), crate::frontend::symbol_table::LocalBinding::CompAlias(crate::frontend::identifier::Entity::Declaration(id)))?;
+                            context.lexical.insert_binding(name.to_owned(), LocalBinding::CompAlias(Entity::Declaration(id)))?;
                         }
                         for member in members {
                             if let crate::frontend::ast::statement::StatementKind::FunctionDeclaration(function) = &mut member.kind {

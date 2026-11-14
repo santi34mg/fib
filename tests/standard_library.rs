@@ -15,6 +15,24 @@ fn sysroot() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("library")
 }
 
+/// Copy every std source, including per-target subdirectories, so fixtures
+/// stay valid as manifest modules are added.
+fn copy_std_sources(installed: &Path) {
+    fn copy(source: &Path, destination: &Path) {
+        std::fs::create_dir_all(destination).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let path = entry.unwrap().path();
+            let target = destination.join(path.file_name().unwrap());
+            if path.is_dir() {
+                copy(&path, &target);
+            } else if path.extension().is_some_and(|e| e == "fib") {
+                std::fs::copy(&path, target).unwrap();
+            }
+        }
+    }
+    copy(&sysroot().join("std"), &installed.join("std"));
+}
+
 fn input(source: &str) -> (tempfile::TempDir, BuildPlan) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("main.fib");
@@ -70,6 +88,118 @@ fn analyze(plan: &BuildPlan) -> anyhow::Result<AnalyzedProject> {
 }
 
 #[test]
+fn os_syscall_wrappers_analyze_and_lower() {
+    let (_directory, mut plan) = input(include_str!("programs/os_wrappers.fib"));
+    // The Linux implementation lowers to raw syscalls on any host.
+    plan.standard_library.target_os = Some("linux".into());
+    let project = analyze(&plan).unwrap();
+    let ir = fibc::ir::lowering::lower(&project).unwrap();
+    let syscalls = ir
+        .blocks
+        .iter()
+        .flat_map(|b| &b.instructions)
+        .filter(|i| matches!(i.kind, fibc::ir::InstructionKind::Syscall { .. }))
+        .count();
+    assert!(syscalls >= 60, "only {syscalls} syscall instructions");
+}
+
+#[test]
+fn portable_os_program_analyzes_and_lowers_for_every_target_family() {
+    for family in ["linux", "darwin"] {
+        let (_directory, mut plan) = input(include_str!("programs/os_portable.fib"));
+        plan.standard_library.target_os = Some(family.into());
+        let ir = fibc::ir::lowering::lower(&analyze(&plan).unwrap()).unwrap();
+        fibc::ir::verify_ir(&ir).unwrap();
+        let syscalls = ir
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .any(|i| matches!(i.kind, fibc::ir::InstructionKind::Syscall { .. }));
+        // Linux wraps raw syscalls; macOS goes through libSystem only.
+        assert_eq!(syscalls, family == "linux", "{family}");
+    }
+    // Linux-only names are absent on darwin rather than silently emulated.
+    let (_directory, mut plan) = input(
+        "fn main() { buffer: [8]uint8 = [0,0,0,0,0,0,0,0]; std::os::getdents64(0, buffer[..]); }",
+    );
+    plan.standard_library.target_os = Some("darwin".into());
+    assert!(format!("{:#}", analyze(&plan).unwrap_err()).contains("getdents64"));
+    plan.standard_library.target_os = Some("darwin".into());
+    std::fs::write(
+        &plan.files[0].path,
+        "fn main() { x := std::syscall::GETPID; }",
+    )
+    .unwrap();
+    assert!(format!("{:#}", analyze(&plan).unwrap_err()).contains("syscall"));
+}
+
+#[cfg(all(
+    feature = "llvm",
+    any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
+    )
+))]
+#[test]
+fn portable_os_program_executes_on_the_host() {
+    let (directory, plan) = input(include_str!("programs/os_portable.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+    // The program creates and removes its own scratch directory under cwd.
+    let output = std::process::Command::new(&plan.output)
+        .current_dir(directory.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
+}
+
+#[test]
+fn syscall_numbers_cover_the_linux_x86_64_table() {
+    let numbers = std::fs::read_to_string(sysroot().join("std/syscall.fib")).unwrap();
+    let mut values: Vec<u64> = numbers
+        .lines()
+        .filter_map(|line| line.strip_prefix("pub comp "))
+        .map(|line| {
+            let (_, value) = line.split_once("= ").unwrap();
+            value.trim_end_matches(';').parse().unwrap()
+        })
+        .collect();
+    let count = values.len();
+    values.sort_unstable();
+    values.dedup();
+    assert_eq!(values.len(), count, "duplicate syscall numbers");
+    let expected: Vec<u64> = (0..=334).chain(424..=469).collect();
+    assert_eq!(values, expected);
+}
+
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn os_syscall_wrappers_execute() {
+    let (directory, plan) = input(include_str!("programs/os_wrappers.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+    // The program creates and removes its own scratch directory under cwd.
+    let output = std::process::Command::new(&plan.output)
+        .current_dir(directory.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
+}
+
+#[test]
+fn never_returning_exit_sample_lowers() {
+    let (_directory, plan) = input(include_str!("../samples/never_exit.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Ir).unwrap();
+}
+
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn never_returning_exit_ends_main_without_a_return() {
+    let (_directory, plan) = input(include_str!("../samples/never_exit.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+    let status = std::process::Command::new(&plan.output).status().unwrap();
+    assert_eq!(status.code(), Some(7));
+}
+
+#[test]
 fn string_helpers_analyze_and_lower() {
     let (_directory, plan) = input(include_str!("programs/string_helpers.fib"));
     fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Ir).unwrap();
@@ -90,6 +220,61 @@ fn string_helpers_execute() {
         let output = std::process::Command::new(&plan.output).output().unwrap();
         assert_eq!(output.status.code(), Some(0), "{output:?}");
         assert_eq!(output.stdout, expected.as_bytes());
+    }
+}
+
+#[test]
+fn std_helpers_vectors_streams_and_allocators_analyze_and_lower() {
+    let (_directory, plan) = input(include_str!("programs/std_helpers.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Ir).unwrap();
+    for (source, expected) in [
+        (
+            "comp V := std::vector::Vec(int32); fn main() { v := V.init(std::memory::heap_allocator()); V.push(v&, true); }",
+            "incompatible types",
+        ),
+        (
+            "fn main() int32 { return std::result::unwrap_or(int32, bool, std::result::Result(int32, int32).Ok(1), 0); }",
+            "incompatible types",
+        ),
+        (
+            "fn main() { x := std::option::is_some(int32, 3); }",
+            "incompatible types",
+        ),
+        (
+            "fn main() { p: *uint8 = null; x := std::memory::span(p); }",
+            "incompatible types",
+        ),
+    ] {
+        let (_directory, plan) = input(source);
+        let error = analyze(&plan).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(expected),
+            "{source}\n{error:#}"
+        );
+    }
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn std_helpers_vectors_streams_and_allocators_execute() {
+    let (_directory, plan) = input(include_str!("programs/std_helpers.fib"));
+    fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+    let output = std::process::Command::new(&plan.output).output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[cfg(feature = "llvm")]
+#[test]
+fn expect_on_err_and_none_aborts_with_message() {
+    for source in [
+        "comp R := std::result::Result(int32, bool); fn main() int32 { return std::result::expect(int32, bool, R.Err(true), \"fatal: boom\"); }",
+        "comp O := std::option::Option(int32); fn main() int32 { return std::option::expect(int32, O.None, \"fatal: boom\"); }",
+    ] {
+        let (_directory, plan) = input(source);
+        fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
+        let output = std::process::Command::new(&plan.output).output().unwrap();
+        assert_eq!(output.status.code(), Some(134), "{source}\n{output:?}");
+        assert_eq!(output.stderr, b"fatal: boom\n");
     }
 }
 
@@ -121,26 +306,29 @@ fn generic_maps_execute_with_scalar_and_struct_keys_and_values() {
         comp Key := struct { number: int32, ignored: bool };
         comp Value := struct { answer: int64, flag: bool };
         fn equal(a: Key, b: Key) bool { return a.number == b.number; }
+        fn put(m: *std::map::Map(Key, Value), key: Key, value: Value) bool {
+            return std::result::is_ok(void, std::memory::AllocError, std::map::insert(Key, Value, m, key, value));
+        }
         fn main() int32 {
             m := std::map::init(Key, Value, equal);
             defer std::map::deinit(Key, Value, m&);
             i := 0;
             while (i < 20) {
-                if !std::map::insert(Key, Value, m&, Key { number: i, ignored: false }, Value { answer: i as int64, flag: false }) { return 1; };
+                if !put(m&, Key { number: i, ignored: false }, Value { answer: i as int64, flag: false }) { return 1; };
                 i = i + 1;
             };
-            if !std::map::insert(Key, Value, m&, Key { number: 7, ignored: true }, Value { answer: 42, flag: true }) { return 2; };
+            if !put(m&, Key { number: 7, ignored: true }, Value { answer: 42, flag: true }) { return 2; };
             if m.len != 20 { return 3; };
             switch (std::map::get(Key, Value, m, Key { number: 7, ignored: false })) {
-                when .Ok(value) { if value.answer != 42 || !value.flag { return 4; }; }
-                when .Err { return 5; }
+                when .Some(value) { if value.answer != 42 || !value.flag { return 4; }; }
+                when .None { return 5; }
             };
             switch (std::map::get(Key, Value, m, Key { number: 25, ignored: false })) {
-                when .Ok(value) { return 6; }
-                when .Err {}
+                when .Some(value) { return 6; }
+                when .None {}
             };
             std::map::deinit(Key, Value, m&);
-            if !std::map::insert(Key, Value, m&, Key { number: 1, ignored: true }, Value { answer: 42, flag: true }) { return 7; };
+            if !put(m&, Key { number: 1, ignored: true }, Value { answer: 42, flag: true }) { return 7; };
             return 42;
         }
     "#,
@@ -166,7 +354,8 @@ fn process_entry_contracts_validate_and_lower() {
         "comp R := std::result::Result(void, int32); fn main() R { return R.Ok; }",
         "comp R := std::result::Result(int32, void); fn main() R { return R.Ok(42); }",
         "fn main(args: std::process::Arguments) int32 { return args.len as int32; }",
-        "comp M := std::map::Map(std::process::Bytes, std::process::Bytes); fn main(env: M) int32 { return env.len as int32; }",
+        "comp M := std::map::Map(const []uint8, const [:0]uint8); fn main(env: M) int32 { return env.len as int32; }",
+        "fn main(args: std::process::Arguments) int32 { if args.len < 2 { return 0; }; switch (std::os::access(std::memory::slice_data(args[1]), std::os::F_OK)) { when .Ok { return 0; } when .Err(error) { return error; } }; }",
         include_str!("../samples/process_entry.fib"),
         "fn __fib_process_entry() {} fn main(args: std::process::Arguments) {}",
     ] {
@@ -232,7 +421,7 @@ fn process_entries_execute_with_arguments_environment_and_result_status() {
         ),
         ("fn main() {}", vec![], vec![], 0),
         (
-            "comp R := std::result::Result(void, std::process::Bytes); fn main() R { return R.Err(\"failed\"[..]); }",
+            "comp R := std::result::Result(void, const []uint8); fn main() R { return R.Err(\"failed\"[..]); }",
             vec![],
             vec![],
             1,
@@ -244,7 +433,14 @@ fn process_entries_execute_with_arguments_environment_and_result_status() {
             42,
         ),
         (
-            "fn main(args: std::process::Arguments, env: std::process::Environment) int32 { if !std::map::insert(std::process::Bytes, std::process::Bytes, env&, \"new\"[..], \"value\"[..]) { return 1; }; std::map::deinit(std::process::Bytes, std::process::Bytes, env&); if args.len > 0 { return 42; }; return 1; }",
+            "fn main(args: std::process::Arguments, env: std::process::Environment) int32 { switch (std::map::insert(const []uint8, const [:0]uint8, env&, \"new\", \"value\")) { when .Ok {} when .Err { return 1; } }; std::map::deinit(const []uint8, const [:0]uint8, env&); if args.len > 0 { return 42; }; return 1; }",
+            vec![],
+            vec![],
+            42,
+        ),
+        (
+            // Arguments are NUL-terminated, so they pass directly to path syscalls.
+            "fn main(args: std::process::Arguments) int32 { switch (std::os::access(std::memory::slice_data(args[0]), std::os::X_OK)) { when .Ok { return 42; } when .Err(error) { return error; } }; }",
             vec![],
             vec![],
             42,
@@ -289,13 +485,13 @@ fn process_entries_execute_with_arguments_environment_and_result_status() {
             r#"comp R := std::result::Result(int32, void);
             fn main(args: std::process::Arguments, env: std::process::Environment) R {
                 if args.len != 2 || args[1].len != 0 || env.len != 2 { return R.Err; };
-                switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "EMPTY"[..])) {
-                    when .Ok(value) { if value.len != 0 { return R.Err; }; }
-                    when .Err { return R.Err; }
+                switch (std::process::getenv(env, "EMPTY")) {
+                    when .Some(value) { if value.len != 0 { return R.Err; }; }
+                    when .None { return R.Err; }
                 };
-                switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "VALUE"[..])) {
-                    when .Ok(value) { if value.len == 3 && value[1] == 61 { return R.Ok(42); }; }
-                    when .Err {}
+                switch (std::process::getenv(env, "VALUE")) {
+                    when .Some(value) { if value.len == 3 && value[1] == '=' { return R.Ok(42); }; }
+                    when .None {}
                 };
                 return R.Err;
             }"#,
@@ -327,15 +523,15 @@ fn environment_vectors_split_once_replace_duplicates_and_skip_malformed_entries(
             empty: [3]uint8 = [69, 61, 0];
             vector := [first[0]&, malformed[0]&, replacement[0]&, empty[0]&, null as *uint8];
             env := std::process::environment(vector[0]&);
-            defer std::map::deinit(std::process::Bytes, std::process::Bytes, env&);
+            defer std::map::deinit(const []uint8, const [:0]uint8, env&);
             if env.len != 2 { return 1; };
-            switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "K"[..])) {
-                when .Ok(value) { if value.len != 3 || value[0] != 50 || value[1] != 61 || value[2] != 255 { return 2; }; }
-                when .Err { return 3; }
+            switch (std::process::getenv(env, "K")) {
+                when .Some(value) { if value.len != 3 || value[0] != 50 || value[1] != 61 || value[2] != 255 { return 2; }; }
+                when .None { return 3; }
             };
-            switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "E"[..])) {
-                when .Ok(value) { if value.len != 0 { return 4; }; }
-                when .Err { return 5; }
+            switch (std::process::getenv(env, "E")) {
+                when .Some(value) { if value.len != 0 { return 4; }; }
+                when .None { return 5; }
             };
             return 42;
         }
@@ -355,28 +551,33 @@ fn environment_vectors_split_once_replace_duplicates_and_skip_malformed_entries(
 #[test]
 fn byte_string_map_grows_replaces_and_releases_storage() {
     let source = r#"
+        comp Strings := std::map::Map(const []uint8, const []uint8);
+        fn put(map: *Strings, key: const []uint8, value: const []uint8) bool {
+            return std::result::is_ok(void, std::memory::AllocError,
+                std::map::insert(const []uint8, const []uint8, map, key, value));
+        }
         fn main() int32 {
-            map := std::map::init(std::process::Bytes, std::process::Bytes, std::map::bytes_equal);
-            defer std::map::deinit(std::process::Bytes, std::process::Bytes, map&);
-            if !std::map::insert(std::process::Bytes, std::process::Bytes, map&, ""[..], ""[..]) { return 1; };
+            map := std::map::init(const []uint8, const []uint8, std::string::eq);
+            defer std::map::deinit(const []uint8, const []uint8, map&);
+            if !put(map&, ""[..], ""[..]) { return 1; };
             keys := ["a"[..], "b"[..], "c"[..], "d"[..], "e"[..], "f"[..], "g"[..], "h"[..], "i"[..]];
             i: usize = 0;
             while (i < keys.len) {
-                if !std::map::insert(std::process::Bytes, std::process::Bytes, map&, keys[i], "old"[..]) { return 2; };
+                if !put(map&, keys[i], "old"[..]) { return 2; };
                 i = i + 1;
             };
-            if !std::map::insert(std::process::Bytes, std::process::Bytes, map&, "a"[..], "new"[..]) || map.len != 10 { return 3; };
-            switch (std::map::get(std::process::Bytes, std::process::Bytes, map, "a"[..])) {
-                when .Ok(value) { if value[0] != 110 { return 4; }; }
-                when .Err { return 5; }
+            if !put(map&, "a"[..], "new"[..]) || map.len != 10 { return 3; };
+            switch (std::map::get(const []uint8, const []uint8, map, "a"[..])) {
+                when .Some(value) { if value[0] != 'n' { return 4; }; }
+                when .None { return 5; }
             };
-            switch (std::map::get(std::process::Bytes, std::process::Bytes, map, "absent"[..])) {
-                when .Ok(value) { return 6; }
-                when .Err {}
+            switch (std::map::get(const []uint8, const []uint8, map, "absent"[..])) {
+                when .Some(value) { return 6; }
+                when .None {}
             };
-            std::map::deinit(std::process::Bytes, std::process::Bytes, map&);
+            std::map::deinit(const []uint8, const []uint8, map&);
             if map.len != 0 { return 7; };
-            if !std::map::insert(std::process::Bytes, std::process::Bytes, map&, "reused"[..], "yes"[..]) { return 8; };
+            if !put(map&, "reused"[..], "yes"[..]) { return 8; };
             return 42;
         }
     "#;
@@ -479,31 +680,29 @@ fn formatting_write_all_retries_interruptions_and_short_writes() {
     let source = r#"
         comp io := std::io;
         fn main() int32 {
-            switch (io::write_all(1, "abcde"[..])) {
+            switch (io::write_all(io::stdout(), "abcde"[..])) {
                 when .Err(e) { return 1; }
                 when .Ok(n) { if n != 5 || std::os::test_calls() != 4 { return 2; }; }
             };
             std::os::test_reset(1);
-            switch (io::write_all(1, "x"[..])) {
+            switch (io::write_all(io::stdout(), "x"[..])) {
                 when .Ok(n) { return 3; }
-                when .Err(e) {
-                    switch (e) {
-                        when .Io(errno) { if errno != 5 { return 4; }; }
-                        when .InvalidFormat { return 5; }
-                        when .ArgumentCount { return 6; }
-                        when .BufferTooSmall { return 11; }
-                    };
-                }
+                when .Err(errno) { if errno != std::os::EIO { return 4; }; }
             };
             std::os::test_reset(2);
-            switch (io::write_all(1, "x"[..])) {
+            switch (io::write_all(io::stdout(), "x"[..])) {
                 when .Ok(n) { return 7; }
+                when .Err(errno) { if errno != std::os::ENOSPC { return 8; }; }
+            };
+            // print reports the same errno through the formatting error type.
+            switch (io::print("x"[..])) {
+                when .Ok(n) { return 9; }
                 when .Err(e) {
                     switch (e) {
-                        when .Io(errno) { if errno != 28 { return 8; }; }
-                        when .InvalidFormat { return 9; }
-                        when .ArgumentCount { return 10; }
-                        when .BufferTooSmall { return 12; }
+                        when .Io(errno) { if errno != std::os::ENOSPC { return 10; }; }
+                        when .InvalidFormat { return 11; }
+                        when .ArgumentCount { return 12; }
+                        when .BufferTooSmall { return 13; }
                     };
                 }
             };
@@ -518,27 +717,14 @@ fn formatting_write_all_retries_interruptions_and_short_writes() {
         installed.join("sysroot.toml"),
     )
     .unwrap();
-    for name in [
-        "memory",
-        "os",
-        "os_abi",
-        "prelude",
-        "result",
-        "io",
-        "map",
-        "process",
-        "formatting",
-        "random",
-        "string",
-    ] {
-        std::fs::copy(
-            sysroot().join(format!("std/{name}.fib")),
-            installed.join(format!("std/{name}.fib")),
-        )
-        .unwrap();
-    }
+    copy_std_sources(&installed);
     // Script the write boundary to force otherwise timing-dependent outcomes.
-    let path = installed.join("std/os.fib");
+    // Patch whichever std::os implementation the host target loads.
+    let path = installed.join(if cfg!(target_os = "macos") {
+        "std/darwin/os.fib"
+    } else {
+        "std/os.fib"
+    });
     let mut os = std::fs::read_to_string(&path).unwrap();
     let start = os.find("pub fn write(").unwrap();
     let end = os[start..].find("pub fn close(").unwrap() + start;
@@ -630,7 +816,12 @@ fn loading_std_preserves_flat_plan_names_and_existing_source_ids() {
     let (directory, mut plan) =
         input("fn main() int32 { return shortened::value() + root::nested::helper::value(); }");
     std::fs::create_dir(directory.path().join("nested")).unwrap();
-    let path = directory.path().join("nested/helper.fib");
+    // The entry path is canonical; match it where temp dirs are symlinks (macOS).
+    let path = directory
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("nested/helper.fib");
     std::fs::write(&path, "pub(root) fn value() int32 { return 21; }").unwrap();
     plan.files.push(SourceFile {
         id: FileId(1),
@@ -645,27 +836,34 @@ fn loading_std_preserves_flat_plan_names_and_existing_source_ids() {
 
 #[test]
 fn directly_opened_std_modules_keep_their_package_and_document_identity() {
-    let modules = [
-        "os",
-        "memory",
-        "result",
-        "os_abi",
-        "prelude",
-        "io",
-        "map",
-        "process",
-        "formatting",
-        "random",
-        "string",
-    ];
-    for name in modules {
-        let path = sysroot().join(format!("std/{name}.fib"));
+    // Every std file, including per-target implementations such as
+    // darwin/os.fib, opens as a member of some target's source set.
+    let mut modules: Vec<PathBuf> = Vec::new();
+    let mut directories = vec![sysroot().join("std")];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path().canonicalize().unwrap();
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.extension().is_some_and(|e| e == "fib") {
+                modules.push(path);
+            }
+        }
+    }
+    let top_level = modules
+        .iter()
+        .filter(|path| path.parent() == sysroot().join("std").canonicalize().ok().as_deref())
+        .count();
+    for path in &modules {
+        let path = path.clone();
         // The owning source tree takes precedence over the server's installation.
         let plan = tooling::standalone_plan(&path)
             .with_standard_library(StandardLibrary::at("/missing/installed/sysroot"));
         let prepared = plan.prepare().unwrap();
         assert_eq!(prepared.entry, plan.entry);
-        assert_eq!(prepared.files.len(), modules.len());
+        // Each target loads as many modules as there are top-level files: Linux
+        // omits libc, darwin swaps syscall for darwin/libc.
+        assert_eq!(prepared.files.len(), top_level, "{}", path.display());
         assert_eq!(prepared.packages.len(), 1);
         assert_eq!(prepared.files.iter().filter(|f| f.path == path).count(), 1);
         assert!(prepared.packages[0].files.contains(&plan.entry));
@@ -674,7 +872,8 @@ fn directly_opened_std_modules_keep_their_package_and_document_identity() {
         let report = tooling::analyze_plan(&plan, &DiskSources, false);
         assert!(
             report.documents[&path].diagnostics.is_empty(),
-            "{name}: {:?}",
+            "{}: {:?}",
+            path.display(),
             report.documents[&path].diagnostics
         );
     }
@@ -700,6 +899,11 @@ fn invalid_syscall_arguments_and_private_conversions_are_rejected() {
             "p: *uint8 = null; x := std::os_abi::pointer_to_word(p); return 0;",
             "private",
         ),
+        (
+            "p: *uint8 = null; x := std::os_abi::terminated_from_parts(p, 0); return 0;",
+            "private",
+        ),
+        ("x := std::memory::c_string_at(0); return 0;", "private"),
         ("p: *uint8 = null; x := p as uint64; return 0;", "cast"),
         ("return memory::unchecked_deref();", "unresolved"),
         ("std := 1; return std;", "cannot be shadowed"),
@@ -864,25 +1068,7 @@ fn prelude_exports_are_ordinary_aliases_and_collisions_are_errors() {
         installed.join("sysroot.toml"),
     )
     .unwrap();
-    for name in [
-        "memory",
-        "os",
-        "os_abi",
-        "prelude",
-        "result",
-        "io",
-        "map",
-        "process",
-        "formatting",
-        "random",
-        "string",
-    ] {
-        std::fs::copy(
-            sysroot().join(format!("std/{name}.fib")),
-            installed.join(format!("std/{name}.fib")),
-        )
-        .unwrap();
-    }
+    copy_std_sources(&installed);
     std::fs::write(
         installed.join("std/prelude.fib"),
         "pub comp Result := root::result::Result;",
@@ -923,7 +1109,8 @@ fn prelude_exports_are_ordinary_aliases_and_collisions_are_errors() {
     assert!(format!("{:#}", analyze(&plan).unwrap_err()).contains("cannot be shadowed"));
 }
 
-#[cfg(feature = "llvm")]
+// Linux x86-64: exercises sbrk adjacency and raw setrlimit/brk syscalls.
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
 #[test]
 fn allocator_and_sbrk_execute_against_installed_sources() {
     for source in [
@@ -931,59 +1118,82 @@ fn allocator_and_sbrk_execute_against_installed_sources() {
         include_str!("programs/sbrk.fib"),
         r#"
         comp m := std::memory;
+        // Failed allocations become empty slices so checks can compare lengths.
+        fn take(T: type, count: usize) []T {
+            empty: *T = null;
+            return std::result::unwrap_or([]T, m::AllocError, m::alloc(T, count), m::slice_from_parts(empty, 0));
+        }
+        fn released(T: type, items: []T) bool {
+            return std::result::is_ok(void, m::AllocError, m::free(T, items));
+        }
         fn main() int32 {
             // Force an unaligned initial break before the allocator starts.
             switch (std::os::sbrk(1)) { when .Ok(p) {} when .Err(e) { return 1; } };
-            big := m::alloc(uint8, 256);
-            guard := m::alloc(uint128, 2);
+            big := take(uint8, 256);
+            guard := take(uint128, 2);
             if big.len != 256 || guard.len != 2 { return 2; };
             guard[0] = 42;
             original := m::slice_data(big);
-            m::free(uint8, original);
-            left := m::alloc(uint8, 64);
-            right := m::alloc(uint8, 64);
+            if !released(uint8, big) { return 9; };
+            left := take(uint8, 64);
+            right := take(uint8, 64);
             if left.len != 64 || right.len != 64 || m::slice_data(left) != original { return 3; };
             if m::slice_data(left) == m::slice_data(right) { return 4; };
             left[63] = 41;
             right[0] = 42;
             if left[63] != 41 || right[0] != 42 || guard[0] != 42 { return 5; };
-            m::free(uint8, m::slice_data(right));
-            m::free(uint8, m::slice_data(left));
-            merged := m::alloc(uint8, 256);
+            if !released(uint8, right) || !released(uint8, left) { return 10; };
+            merged := take(uint8, 256);
             if merged.len != 256 || m::slice_data(merged) != original { return 6; };
-            m::free(uint8, m::slice_data(merged));
-            m::free(uint128, m::slice_data(guard));
+            if !released(uint8, merged) || !released(uint128, guard) { return 11; };
             // Adjacent independently requested regions also coalesce.
-            larger := m::alloc(uint8, 300);
+            larger := take(uint8, 300);
             if larger.len != 300 || m::slice_data(larger) != original { return 7; };
             larger[299] = 42;
-            // An unrelated pointer must not corrupt the list.
+            // An unrelated pointer is reported and must not corrupt the list.
             local := 1;
-            m::free(int32, local&);
-            m::free(uint8, m::slice_data(larger));
-            again := m::alloc(uint8, 300);
+            if released(int32, m::slice_from_parts(local&, 1)) { return 12; };
+            if !released(uint8, larger) { return 13; };
+            // Double frees are reported too.
+            if released(uint8, larger) { return 14; };
+            again := take(uint8, 300);
             if again.len != 300 || m::slice_data(again) != original { return 8; };
             return 42;
         }
         "#,
         r#"
+        comp m := std::memory;
+        fn take(T: type, count: usize) []T {
+            empty: *T = null;
+            return std::result::unwrap_or([]T, m::AllocError, m::alloc(T, count), m::slice_from_parts(empty, 0));
+        }
         fn main() int32 {
-            // Reject multiplication beyond the signed sbrk limit before asking Linux.
-            huge := std::memory::alloc([1073741824]uint64, 4294967295);
+            // Reject multiplication beyond the address space before asking Linux.
+            huge := take([1073741824]uint64, 4294967295);
             if huge.len != 0 { return 1; };
-            live := std::memory::alloc(uint8, 16);
+            live := take(uint8, 16);
             if live.len != 16 { return 4; };
             live[0] = 42;
             // setrlimit(RLIMIT_DATA, {0, 0}) makes brk growth fail deterministically.
             limits: [2]uint64 = [0, 0];
             if std::os::syscall2(160, 2, limits&) != 0 { return 2; };
-            failed := std::memory::alloc(uint8, 32);
-            if failed.len != 0 { return 3; };
+            switch (m::alloc(uint8, 32)) {
+                when .Ok(bytes) { return 3; }
+                when .Err(error) {
+                    switch (error) {
+                        when .NotEnoughMemory {}
+                        when .MapFailed { return 7; }
+                        when .InvalidAlignment { return 7; }
+                        when .UnmapFailed { return 7; }
+                        when .InvalidFree { return 7; }
+                    };
+                }
+            };
             if live[0] != 42 { return 5; };
-            original := std::memory::slice_data(live);
-            std::memory::free(uint8, original);
-            reused := std::memory::alloc(uint8, 16);
-            if reused.len != 16 || std::memory::slice_data(reused) != original { return 6; };
+            original := m::slice_data(live);
+            m::free(uint8, live);
+            reused := take(uint8, 16);
+            if reused.len != 16 || m::slice_data(reused) != original { return 6; };
             return 42;
         }
         "#,
@@ -996,7 +1206,7 @@ fn allocator_and_sbrk_execute_against_installed_sources() {
     }
 }
 
-#[cfg(feature = "llvm")]
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
 #[test]
 fn syscall_wrappers_execute_without_a_native_shim() {
     use fibc::driver::{PipelineGoal, run_pipeline};
@@ -1007,7 +1217,7 @@ fn syscall_wrappers_execute_without_a_native_shim() {
     assert_eq!(output.stdout, b"std syscalls\n");
 }
 
-#[cfg(feature = "llvm")]
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
 #[test]
 fn syscall_clobbers_survive_optimization_and_other_targets_are_rejected() {
     use fibc::backend::{emit_llvm, lowering::llvm_lower::host_target};
@@ -1073,7 +1283,9 @@ fn syscall_clobbers_survive_optimization_and_other_targets_are_rejected() {
     assert_eq!(output.stdout, b"std syscalls\n");
 }
 
-#[cfg(feature = "llvm")]
+// Linux-only: on macOS, read() into a private mapping of the same file can
+// deadlock in the kernel, leaving an unkillable process.
+#[cfg(all(feature = "llvm", target_os = "linux"))]
 #[test]
 fn file_backed_mapping_and_short_reads_preserve_kernel_results() {
     let (directory, mut plan) = input("");
@@ -1117,7 +1329,8 @@ fn file_backed_mapping_and_short_reads_preserve_kernel_results() {
 }
 
 // Enumerate the installed tree so new std modules participate in mocked sysroots.
-#[cfg(feature = "llvm")]
+// The page-allocator instrumentation uses raw Linux x86-64 syscalls (mincore).
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
 fn page_allocator_sysroot(source: &Path, destination: &Path) {
     std::fs::create_dir_all(destination).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
@@ -1131,7 +1344,7 @@ fn page_allocator_sysroot(source: &Path, destination: &Path) {
     }
 }
 
-#[cfg(feature = "llvm")]
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
 fn page_allocator_input(source: &str) -> (tempfile::TempDir, BuildPlan) {
     let (directory, mut plan) = input(source);
     let installed = directory.path().join("sysroot");
@@ -1169,7 +1382,7 @@ fn page_allocator_analyzes_and_lowers() {
     fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Ir).unwrap();
 }
 
-#[cfg(feature = "llvm")]
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
 fn instrumented_page_allocator_program() -> String {
     let source = include_str!("programs/page_allocator.fib");
     let allocation = "bytes := memory::slice_from_parts(pointer, size);";
@@ -1192,7 +1405,7 @@ fn instrumented_page_allocator_program() -> String {
 }
 
 #[test]
-#[cfg(feature = "llvm")]
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
 fn page_allocator_executes_and_unmaps() {
     let (_directory, plan) = page_allocator_input(&instrumented_page_allocator_program());
     fibc::driver::run_pipeline(&plan, fibc::driver::PipelineGoal::Binary).unwrap();
@@ -1201,13 +1414,13 @@ fn page_allocator_executes_and_unmaps() {
 }
 
 #[test]
-#[cfg(feature = "llvm")]
+#[cfg(all(feature = "llvm", target_os = "linux", target_arch = "x86_64"))]
 fn page_allocator_scripted_mapping_and_unmapping_failures() {
     let (directory, plan) = page_allocator_input(
         r#"
         comp m := std::memory;
         fn main() int32 {
-            a := m::create_page_alloc();
+            a := m::page_allocator();
             if !rejected(a, 0, 8, m::AllocError.NotEnoughMemory) { return 1; };
             if !rejected(a, 1, 3, m::AllocError.InvalidAlignment) { return 2; };
             if !rejected(a, 18446744073709551615, 8, m::AllocError.NotEnoughMemory) { return 3; };
@@ -1221,14 +1434,14 @@ fn page_allocator_scripted_mapping_and_unmapping_failures() {
                 when .Err(e) { return 7; }
                 when .Ok(p) {
                     std::os::test_mode(1);
-                    switch (a.free(a.context, p as *void)) {
+                    switch (a.free(a.context, p)) {
                         when .Ok { return 8; }
                         when .Err(e) { if error_code(e) != 4 { return 9; }; }
                     };
                     p* = 73;
                     std::os::test_mode(0);
                     address := std::os::test_address(p);
-                    switch (a.free(a.context, p as *void)) {
+                    switch (a.free(a.context, p)) {
                         when .Err(e) { return 10; }
                         when .Ok {}
                     };

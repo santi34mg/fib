@@ -1,7 +1,9 @@
 # Samples
 
 Every top-level `.fib` sample builds and runs with the current compiler and source
-standard library on Linux x86-64. From the repository root:
+standard library on Linux x86-64 and macOS arm64 (except `builtin_scalars` on
+macOS arm64, whose float128 casts need a runtime that platform lacks). From the
+repository root:
 
 ```sh
 cargo run --bin fibc -- build --sysroot library --single-file samples/hello_world.fib

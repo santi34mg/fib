@@ -1,7 +1,7 @@
 # Owned SSA IR
 
 The [language specification](../../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
-warned pointer field access and exhaustive switches. Concrete generic functions,
+implicit pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
@@ -34,6 +34,13 @@ Defer statements and blocks register at their source position and execute in
 reverse order on lexical scope exits. Return expressions are evaluated before
 cleanup; break/continue clean up only scopes left by that loop transfer. Cleanup
 uses ordinary verified CFG and memory operations; traps do not unwind it.
+`never` signatures lower with no results (like void, including C declarations
+and function pointers). Each direct/indirect never call is followed by an
+`Unreachable` terminator and runs no pending defers. A private `Diverged` signal
+stops emission at the nearest statement list, or at a short-circuit right
+operand whose join stays reachable through the skip edge, so dead code after the
+call creates no unreachable blocks. Never-typed expressions such as `x + stop()`
+skip runtime-type lookup; `fn main() never` is not an accepted entry contract.
 See [scalar semantics](../../../scalar-semantics.md) for operation rules.
 Enum constructors and switches with copied payload bindings also lower; see [enum semantics](../../../enum-semantics.md). SSA variable merges and loop-carried values use block parameters. Struct,
 uninitialized and address-taken locals use explicit stack storage; ordinary

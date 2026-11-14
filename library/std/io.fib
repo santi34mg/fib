@@ -1,55 +1,117 @@
-// Byte-oriented output; formatting is shared with the buffer formatter.
+// Byte-oriented I/O through callback interfaces. Formatting is shared with
+// std::formatting; its types are re-exported here for printf callers.
 pub comp Arg := root::formatting::Arg;
-
-fn read(T: type) void {
-
-}
-
-pub comp fn Reader(T: type) type {
-
-    return struct {
-        read: fn(type, ) void,
-    };
-}
-
 pub comp PrintError := root::formatting::Error;
 pub comp PrintResult := root::formatting::FormatResult;
+pub comp CountResult := root::os::CountResult;
 
-// Write every byte, retrying EINTR and short writes. Empty slices make no syscall.
-// Errors may leave partial output; zero progress reports EIO (5).
-pub fn write_all(fd: int32, bytes: const []uint8) PrintResult {
+// A source of bytes. read stores up to buffer.len bytes into a prefix of
+// buffer and returns how many; zero for a nonempty buffer means end of input.
+// It may return fewer bytes than requested and may fail with EINTR.
+pub comp Reader := struct {
+    context: *void,
+    read: fn(*void, []uint8) CountResult,
+};
+
+// A sink of bytes. write consumes a prefix of bytes and returns its length;
+// it may accept fewer bytes than offered and may fail with EINTR.
+pub comp Writer := struct {
+    context: *void,
+    write: fn(*void, const []uint8) CountResult,
+};
+
+fn descriptor_read(context: *void, buffer: []uint8) CountResult {
+    fd := context as *int32;
+    return root::os::read(fd*, buffer);
+}
+
+fn descriptor_write(context: *void, bytes: const []uint8) CountResult {
+    fd := context as *int32;
+    return root::os::write(fd*, bytes);
+}
+
+// Adapt a file descriptor. The reader borrows fd's storage, which must stay
+// live and unchanged while the reader is used; it does not close fd.
+pub fn fd_reader(fd: *int32) Reader {
+    return Reader { context: fd as *void, read: descriptor_read };
+}
+
+pub fn fd_writer(fd: *int32) Writer {
+    return Writer { context: fd as *void, write: descriptor_write };
+}
+
+// Program-lifetime descriptor storage for the standard streams.
+standard_input: int32 = 0;
+standard_output: int32 = 1;
+standard_error: int32 = 2;
+
+pub fn stdin() Reader { return fd_reader(standard_input&); }
+pub fn stdout() Writer { return fd_writer(standard_output&); }
+pub fn stderr() Writer { return fd_writer(standard_error&); }
+
+// Read until buffer is full or end of input, retrying EINTR and short reads.
+// A count below buffer.len means end of input. Empty buffers make no call.
+// Errors may leave partial input in buffer.
+pub fn read_full(reader: Reader, buffer: []uint8) CountResult {
+    filled: usize = 0;
+    while (filled < buffer.len) {
+        switch (reader.read(reader.context, buffer[filled..])) {
+            when .Err(error) { if error != root::os::EINTR { return CountResult.Err(error); }; }
+            when .Ok(count) {
+                if count == 0 { return CountResult.Ok(filled); };
+                filled = filled + count;
+            }
+        };
+    };
+    return CountResult.Ok(filled);
+}
+
+// Write every byte, retrying EINTR and short writes. Empty slices make no call.
+// Errors may leave partial output; zero progress reports EIO.
+pub fn write_all(writer: Writer, bytes: const []uint8) CountResult {
     written: usize = 0;
     while (written < bytes.len) {
-        switch (root::os::write(fd, bytes[written..])) {
-            when .Err(error) {
-                if error != 4 { return PrintResult.Err(PrintError.Io(error)); };
-            }
+        switch (writer.write(writer.context, bytes[written..])) {
+            when .Err(error) { if error != root::os::EINTR { return CountResult.Err(error); }; }
             when .Ok(count) {
-                if count == 0 { return PrintResult.Err(PrintError.Io(5)); };
+                if count == 0 { return CountResult.Err(root::os::EIO); };
                 written = written + count;
             }
         };
     };
-    return PrintResult.Ok(written);
+    return CountResult.Ok(written);
+}
+
+fn print_result(result: CountResult) PrintResult {
+    switch (result) {
+        when .Err(error) { return PrintResult.Err(PrintError.Io(error)); }
+        when .Ok(count) { return PrintResult.Ok(count); }
+    };
 }
 
 // Write literal bytes to stdout; braces have no special meaning.
 pub fn print(bytes: const []uint8) PrintResult {
-    return write_all(root::os::stdout, bytes);
+    return print_result(write_all(stdout(), bytes));
 }
 
-fn write_chunk(fd: *int32, bytes: const []uint8) PrintResult {
-    return write_all(fd*, bytes);
+fn write_chunk(writer: *Writer, bytes: const []uint8) PrintResult {
+    return print_result(write_all(writer*, bytes));
 }
 
-// Shared formatting validates syntax/counts before output. I/O errors may leave
-// partial output; write_all handles EINTR and short writes without allocation.
+// Format to writer. Syntax and argument counts are validated before any
+// output (see std::formatting::format_to). I/O errors may leave partial output.
+pub fn writef(writer: Writer, format: const []uint8, values: const []Arg) PrintResult {
+    target := writer;
+    return root::formatting::format_to(Writer, target&, write_chunk, format, values);
+}
+
+// Format to a file descriptor. See writef.
 pub fn fprintf(fd: int32, format: const []uint8, values: const []Arg) PrintResult {
     descriptor := fd;
-    return root::formatting::format_to(int32, descriptor&, write_chunk, format, values);
+    return writef(fd_writer(descriptor&), format, values);
 }
 
-// Format to stdout. See fprintf for syntax and error behavior.
+// Format to stdout. See writef.
 pub fn printf(format: const []uint8, values: const []Arg) PrintResult {
-    return fprintf(root::os::stdout, format, values);
+    return writef(stdout(), format, values);
 }

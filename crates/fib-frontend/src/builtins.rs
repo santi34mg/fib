@@ -43,6 +43,7 @@ impl SyntheticModule {
         functions: &[
             BuiltinFunction::PointerFromWord,
             BuiltinFunction::PointerToWord,
+            BuiltinFunction::TerminatedFromParts,
         ],
     };
     pub const BUILD_API: Self = Self {

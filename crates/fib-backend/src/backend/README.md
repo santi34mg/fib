@@ -1,7 +1,7 @@
 # LLVM backend
 
 The [language specification](../../../../docs/language-specification.md) is implemented for prelude names, casts, shallow readonly views,
-warned pointer field access and exhaustive switches. Concrete generic functions,
+implicit pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
@@ -19,10 +19,18 @@ pointee type, including nested readonly qualifiers.
 
 ## Executable subset
 
-`callconv "C"` uses the Linux x86-64 System V ABI for supported integer/bool,
-float32/64, pointer/function-pointer and nonempty struct types. Struct classification
-supports register coercions and indirect arguments/results; array parameters
-require explicit pointers. Unsupported types and targets are rejected.
+`callconv "C"` uses the System V x86-64 ABI (Linux and macOS) or AAPCS64
+(arm64 Linux and Apple arm64) for supported integer/bool, float32/64,
+pointer/function-pointer and nonempty struct types; `c_abi::convention` selects
+it from the triple. System V classification supports register coercions and
+`byval` indirect arguments. AAPCS64 passes homogeneous float aggregates as one
+`[N x float]`/`[N x double]` value, other composites up to 16 bytes as `i64`,
+`[2 x i64]` or `i128`, and larger ones by reference to a caller copy (no
+`byval`), so aggregates are never split between registers and the stack.
+Results above 16 bytes use `sret`. Array parameters require explicit pointers.
+Unsupported types and targets are rejected. Raw syscalls remain Linux x86-64
+only. On Apple arm64, float128 operations (which need soft-float runtime
+routines the platform lacks) are rejected before emission.
 Internal Fib helpers support direct Bool, fixed-width integers, IEEE floats,
 structs, enums and typed pointers as parameters/results, or void, using LLVM fastcc.
 This limited direct convention is

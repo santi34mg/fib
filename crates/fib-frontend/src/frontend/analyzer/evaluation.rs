@@ -111,7 +111,7 @@ impl TypeContext<'_> {
         arguments: Vec<Argument>,
     ) -> anyhow::Result<TypeId> {
         // Type identities may themselves be symbolic: constructing *T or a
-        // function type needs no concrete representation or general CT execution.
+        // function type needs no concrete representation or general CompileTime execution.
         let symbolic = arguments
             .iter()
             .any(|arg| matches!(arg, Argument::Expression(_)));
@@ -179,6 +179,16 @@ impl TypeContext<'_> {
             ) -> anyhow::Result<()> {
                 if let Some(id @ BindingId::Declaration(_)) = slot.binding {
                     self.0.insert(id);
+                }
+                Ok(())
+            }
+            // Each evaluation rebinds `Self` to its own nominal struct.
+            fn ty(
+                &mut self,
+                node: &mut crate::frontend::ast::type_expression::TypeExpression,
+            ) -> anyhow::Result<()> {
+                if let Some(id) = node.annotation.self_binding {
+                    self.0.insert(BindingId::Declaration(id));
                 }
                 Ok(())
             }
@@ -336,6 +346,7 @@ impl TypeContext<'_> {
         &mut self,
         callee: &mut Expression,
         args: &mut [Expression],
+        expected_result: Option<TypeId>,
     ) -> anyhow::Result<ExpressionInfo> {
         use crate::frontend::{
             semantic_type::SemanticType as T, tokens::builtin::BuiltinType as B,
@@ -353,7 +364,10 @@ impl TypeContext<'_> {
                 .filter(|b| b.is_intrinsic())
                 .ok_or_else(|| type_error("invalid intrinsic call identity"))?;
             let expected_count = builtin.syscall_arity().map(|n| n + 1).unwrap_or(
-                if matches!(builtin, F::SliceFromParts | F::PointerFromWord) {
+                if matches!(
+                    builtin,
+                    F::SliceFromParts | F::PointerFromWord | F::TerminatedFromParts
+                ) {
                     2
                 } else {
                     1
@@ -362,6 +376,32 @@ impl TypeContext<'_> {
             if args.len() != expected_count {
                 return Err(type_error("invalid intrinsic argument count"));
             }
+            // T is inferred from the pointer argument, so an untyped null cannot
+            // supply it. Suggest the pointer type implied by the result context.
+            if matches!(builtin, F::SliceFromParts | F::UncheckedDeref)
+                && matches!(args[0].kind, E::Literal(Literal::Null))
+            {
+                let pointer = match (builtin, expected_result) {
+                    (F::SliceFromParts, Some(expected)) => match self.types.container(expected)? {
+                        (T::Slice(element), readonly) => super::value_typing::hint_spelling(
+                            *element, self.types,
+                        )
+                        .map(|element| {
+                            format!("{}*{element}", if readonly { "const " } else { "" })
+                        }),
+                        _ => None,
+                    },
+                    (F::UncheckedDeref, Some(expected)) => {
+                        super::value_typing::hint_spelling(expected, self.types)
+                            .map(|pointee| format!("*{pointee}"))
+                    }
+                    _ => None,
+                };
+                return Err(super::at_span(
+                    super::value_typing::null_requires_pointer(pointer),
+                    args[0].span,
+                ));
+            }
             let usize_type = self.types.builtin(B::Usize);
             let word = self.types.builtin(B::UInt64);
             self.types.builtin(B::Int64);
@@ -369,7 +409,9 @@ impl TypeContext<'_> {
             self.types.intern(T::Pointer(byte));
             let mut arguments = Vec::new();
             for (index, arg) in args.iter_mut().enumerate() {
-                let expected = if builtin == F::SliceFromParts && index == 1 {
+                let expected = if matches!(builtin, F::SliceFromParts | F::TerminatedFromParts)
+                    && index == 1
+                {
                     Some(usize_type)
                 } else if (builtin.syscall_arity().is_some()
                     && (index == 0
@@ -402,6 +444,21 @@ impl TypeContext<'_> {
                         return Err(type_error("slice elements cannot be void"));
                     }
                     let slice = self.types.intern(T::Slice(element));
+                    if readonly {
+                        self.types.intern(T::Readonly(slice));
+                    }
+                }
+                F::TerminatedFromParts => {
+                    let (T::Pointer(element), readonly) = self.types.container(arguments[0].ty)?
+                    else {
+                        return Err(type_error("terminated_from_parts requires a *uint8"));
+                    };
+                    let element = *element;
+                    let slice = self.types.intern(T::Slice(element));
+                    let slice = self.types.intern(T::Sentinel {
+                        inner: slice,
+                        value: 0,
+                    });
                     if readonly {
                         self.types.intern(T::Readonly(slice));
                     }

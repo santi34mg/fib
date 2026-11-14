@@ -3,7 +3,7 @@ use crate::frontend::semantic_type::{SemanticType as T, SemanticTypes, TypeId, t
 use std::collections::HashSet;
 
 /// Render resolved types for diagnostics rather than exposing table indices.
-fn describe(id: TypeId, types: &SemanticTypes, depth: usize) -> anyhow::Result<String> {
+pub(super) fn describe(id: TypeId, types: &SemanticTypes, depth: usize) -> anyhow::Result<String> {
     if depth == 32 {
         return Ok("...".into());
     }

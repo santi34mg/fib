@@ -31,20 +31,25 @@ fn main() int32 {
             };
         }
     };
-    switch (io::write_all(-1, "x"[..])) {
+    invalid_fd: int32 = -1;
+    switch (io::write_all(io::fd_writer(invalid_fd&), "x"[..])) {
         when .Ok(count) { return 5; }
+        when .Err(errno) { if errno != std::os::EBADF { return 6; }; }
+    };
+    switch (io::fprintf(-1, "x"[..], extra[..0])) {
+        when .Ok(count) { return 7; }
         when .Err(error) {
             switch (error) {
-                when .Io(errno) { if errno != 9 { return 6; }; }
-                when .InvalidFormat { return 7; }
-                when .ArgumentCount { return 8; }
+                when .Io(errno) { if errno != std::os::EBADF { return 8; }; }
+                when .InvalidFormat { return 18; }
+                when .ArgumentCount { return 18; }
                 when .BufferTooSmall { return 18; }
             };
         }
     };
     // Empty writes do not touch even an invalid descriptor or null pointer.
     empty := std::memory::slice_from_parts(null as *uint8, 0);
-    switch (io::write_all(-1, empty)) {
+    switch (io::write_all(io::fd_writer(invalid_fd&), empty)) {
         when .Err(error) { return 9; }
         when .Ok(count) { if count != 0 { return 10; }; }
     };

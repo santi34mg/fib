@@ -30,6 +30,9 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
             PieceKind::Integer(w) => self.context.custom_width_int_type(w.into()).into(),
             PieceKind::Float32 => self.context.f32_type().into(),
             PieceKind::Float64 => self.context.f64_type().into(),
+            PieceKind::Integers64(n) => self.context.i64_type().array_type(n.into()).into(),
+            PieceKind::Floats32(n) => self.context.f32_type().array_type(n.into()).into(),
+            PieceKind::Floats64(n) => self.context.f64_type().array_type(n.into()).into(),
         }
     }
     fn result_type(&self, abi: &FunctionAbi) -> Option<BasicTypeEnum<'ctx>> {
@@ -90,7 +93,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
             return attrs;
         };
         let mut index = 0;
-        if let Some(Boundary::Indirect { alignment }) = &c.result {
+        if let Some(Boundary::Indirect { alignment, .. }) = &c.result {
             let ty = self.types[abi.result.unwrap().0];
             attrs.push((
                 AttributeLoc::Param(0),
@@ -110,14 +113,16 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
         }
         for (&ty, boundary) in abi.parameters.iter().zip(&c.arguments) {
             match boundary {
-                Boundary::Indirect { alignment } => {
-                    attrs.push((
-                        AttributeLoc::Param(index),
-                        self.context.create_type_attribute(
-                            Attribute::get_named_enum_kind_id("byval"),
-                            self.types[ty.0].as_any_type_enum(),
-                        ),
-                    ));
+                Boundary::Indirect { alignment, byval } => {
+                    if *byval {
+                        attrs.push((
+                            AttributeLoc::Param(index),
+                            self.context.create_type_attribute(
+                                Attribute::get_named_enum_kind_id("byval"),
+                                self.types[ty.0].as_any_type_enum(),
+                            ),
+                        ));
+                    }
                     attrs.push((
                         AttributeLoc::Param(index),
                         self.context.create_enum_attribute(
@@ -216,6 +221,35 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
         }
         .map_err(error)
     }
+    // Scratch for converting between a logical value and its pieces. Pieces
+    // can cover whole registers beyond the logical size (AAPCS64 composites),
+    // so the slot is widened to the furthest piece byte and 16-byte aligned.
+    fn piece_scratch(
+        &self,
+        builder: &Builder<'ctx>,
+        ty: TypeId,
+        pieces: &[Piece],
+    ) -> Result<PointerValue<'ctx>, BackendError> {
+        let logical = super::c_abi::layout(&self.ir.types, ty)?.size;
+        let extent = pieces
+            .iter()
+            .map(|p| p.offset + p.kind.size())
+            .max()
+            .unwrap_or(0);
+        if extent <= logical {
+            return self.scratch(builder, self.types[ty.0]);
+        }
+        let pointer = self.scratch(
+            builder,
+            self.context.i8_type().array_type(extent as u32).into(),
+        )?;
+        pointer
+            .as_instruction_value()
+            .ok_or_else(|| error("missing ABI scratch instruction"))?
+            .set_alignment(16)
+            .map_err(error)?;
+        Ok(pointer)
+    }
     fn pack(
         &self,
         builder: &Builder<'ctx>,
@@ -223,7 +257,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
         pieces: &[Piece],
         values: &[BasicValueEnum<'ctx>],
     ) -> Result<BasicValueEnum<'ctx>, BackendError> {
-        let pointer = self.scratch(builder, self.types[ty.0])?;
+        let pointer = self.piece_scratch(builder, ty, pieces)?;
         builder
             .build_store(pointer, self.types[ty.0].const_zero())
             .map_err(error)?;
@@ -241,10 +275,11 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
     fn unpack(
         &self,
         builder: &Builder<'ctx>,
+        ty: TypeId,
         value: BasicValueEnum<'ctx>,
         pieces: &[Piece],
     ) -> Result<Vec<BasicValueEnum<'ctx>>, BackendError> {
-        let pointer = self.scratch(builder, value.get_type())?;
+        let pointer = self.piece_scratch(builder, ty, pieces)?;
         builder.build_store(pointer, value).map_err(error)?;
         pieces
             .iter()
@@ -332,7 +367,8 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
                 physical.push(p.into());
                 result_pointer = Some(p);
             }
-            for (value, boundary) in arguments.iter().zip(&c.arguments) {
+            for ((value, boundary), &ty) in arguments.iter().zip(&c.arguments).zip(&abi.parameters)
+            {
                 match boundary {
                     Boundary::Direct => physical.push((*value).into()),
                     Boundary::Indirect { .. } => {
@@ -341,7 +377,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
                         physical.push(p.into());
                     }
                     Boundary::Coerce(pieces) => physical.extend(
-                        self.unpack(builder, *value, pieces)?
+                        self.unpack(builder, ty, *value, pieces)?
                             .into_iter()
                             .map(BasicMetadataValueEnum::from),
                     ),
@@ -453,7 +489,7 @@ impl<'ctx> LlvmAbi<'_, 'ctx> {
                 value = None;
             }
             Some(Boundary::Coerce(pieces)) => {
-                let parts = self.unpack(builder, value.unwrap(), pieces)?;
+                let parts = self.unpack(builder, abi.result.unwrap(), value.unwrap(), pieces)?;
                 value = Some(if parts.len() == 1 {
                     parts[0]
                 } else {

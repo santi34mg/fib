@@ -97,7 +97,7 @@ fn includes_selected_std_sources_but_not_the_implicit_prelude() {
     let doc = document(&output);
     let symbols = doc["symbols"].as_array().unwrap();
     assert!(symbols.iter().any(|s| s["name"] == "answer"));
-    assert!(symbols.iter().any(|s| s["name"] == "create_page_alloc"));
+    assert!(symbols.iter().any(|s| s["name"] == "page_allocator"));
     assert!(symbols.iter().all(|s| s["package"] != "compiler"));
 }
 

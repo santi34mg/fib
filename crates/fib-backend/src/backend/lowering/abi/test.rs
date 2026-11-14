@@ -180,3 +180,112 @@ fn fib_enum_boundaries_use_the_shared_direct_abi_and_c_rejects_them() {
     signature.calling_convention = CallingConvention::C;
     assert!(classify_signature(&signature, &types, &target()).is_err());
 }
+
+fn apple_arm64() -> AbiTarget {
+    AbiTarget {
+        triple: "arm64-apple-macosx14.0.0".into(),
+        data_layout: "e-m:o-i64:64-i128:128-n32:64-S128-Fn32".into(),
+    }
+}
+
+#[test]
+fn aapcs64_classifies_composites_like_clang() {
+    use crate::ir::FloatWidth;
+    let int32 = TypeId(0);
+    let mut types = types();
+    let f32 = TypeId(types.len());
+    types.push(IrType::Float(FloatWidth::F32));
+    let f64 = TypeId(types.len());
+    types.push(IrType::Float(FloatWidth::F64));
+    let int128 = TypeId(types.len());
+    types.push(IrType::Integer {
+        width: IntegerWidth::Bits(128),
+        signed: true,
+    });
+    let mut add = |fields: Vec<TypeId>| {
+        types.push(IrType::Struct { name: None, fields });
+        TypeId(types.len() - 1)
+    };
+    let pair = add(vec![int32, int32]);
+    let triple = add(vec![int32, int32, int32]);
+    let vec3 = add(vec![f32, f32, f32]);
+    let vec2d = add(vec![f64, f64]);
+    let mixed = add(vec![f64, int32]);
+    let five_floats = add(vec![f32, f32, f32, f32, f32]);
+    let wide = add(vec![int128]);
+    let big = add(vec![int128, int32]);
+    let coerce = |kind| Boundary::Coerce(vec![Piece { offset: 0, kind }]);
+    for (ty, expected) in [
+        (pair, coerce(PieceKind::Integer(64))),
+        (triple, coerce(PieceKind::Integers64(2))),
+        (vec3, coerce(PieceKind::Floats32(3))),
+        (vec2d, coerce(PieceKind::Floats64(2))),
+        (mixed, coerce(PieceKind::Integers64(2))),
+        (
+            five_floats,
+            Boundary::Indirect {
+                alignment: 4,
+                byval: false,
+            },
+        ),
+        (wide, coerce(PieceKind::Integer(128))),
+        (
+            big,
+            Boundary::Indirect {
+                alignment: 16,
+                byval: false,
+            },
+        ),
+        (int32, Boundary::Direct),
+    ] {
+        let signature = Signature {
+            params: vec![ty],
+            results: vec![ty],
+            calling_convention: CallingConvention::C,
+        };
+        let abi = classify_signature(&signature, &types, &apple_arm64()).unwrap();
+        let c = abi.c_abi.unwrap();
+        assert_eq!(c.arguments, vec![expected.clone()], "{:?}", types[ty.0]);
+        assert_eq!(c.result, Some(expected));
+    }
+    // System V keeps copying large arguments into the callee frame (byval).
+    let signature = Signature {
+        params: vec![big],
+        results: vec![],
+        calling_convention: CallingConvention::C,
+    };
+    let sysv = classify_signature(&signature, &types, &target()).unwrap();
+    assert_eq!(
+        sysv.c_abi.unwrap().arguments,
+        vec![Boundary::Indirect {
+            alignment: 16,
+            byval: true
+        }]
+    );
+}
+
+#[test]
+fn c_abi_targets_are_explicit() {
+    for (triple, supported) in [
+        ("x86_64-unknown-linux-gnu", true),
+        ("x86_64-apple-darwin", true),
+        ("aarch64-unknown-linux-gnu", true),
+        ("arm64-apple-macosx14.0.0", true),
+        ("x86_64-unknown-freebsd", false),
+        ("riscv64-unknown-linux-gnu", false),
+        ("x86_64-pc-windows-msvc", false),
+    ] {
+        let target = AbiTarget {
+            triple: triple.into(),
+            data_layout: "e".into(),
+        };
+        let result = classify_signature(&signature(), &types(), &target);
+        assert_eq!(result.is_ok(), supported, "{triple}");
+        if let Err(error) = result {
+            assert!(
+                error.to_string().contains("unsupported for target"),
+                "{error}"
+            );
+        }
+    }
+}

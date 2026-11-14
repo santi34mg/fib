@@ -135,6 +135,31 @@ pub(super) fn emit_classified(
             "syscall emission requires Linux x86-64 with 64-bit pointers",
         ));
     }
+    // float128 arithmetic, comparisons and conversions lower to soft-float
+    // runtime calls (__addtf3, __eqtf2, ...). Apple's arm64 runtime, where long
+    // double is double, provides none, so reject them here instead of failing
+    // at link time. Storing and copying float128 values needs no runtime.
+    if (target.triple.starts_with("arm64-apple") || target.triple.starts_with("aarch64-apple"))
+        && ir.blocks.iter().flat_map(|b| &b.instructions).any(|i| {
+            let wide = |ty: Option<TypeId>| {
+                ty.is_some_and(|t| {
+                    matches!(ir.types.get(t.0), Some(IrType::Float(FloatWidth::F128)))
+                })
+            };
+            let result = i.results.first().map(|v| ir.values[v.0].ty);
+            match &i.kind {
+                InstructionKind::Binary { lhs, .. } => wide(ir.operand_type(*lhs)) || wide(result),
+                InstructionKind::Unary { operand, .. } | InstructionKind::Cast { operand, .. } => {
+                    wide(ir.operand_type(*operand)) || wide(result)
+                }
+                _ => false,
+            }
+        })
+    {
+        return Err(error(
+            "float128 arithmetic, comparisons and conversions are unsupported on Apple arm64: its runtime lacks the soft-float float128 routines",
+        ));
+    }
     use inkwell::{context::Context, types::BasicTypeEnum, values::BasicValue};
     let context = Context::create();
     let module = context.create_module("fib");

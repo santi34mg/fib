@@ -1,4 +1,7 @@
-// Byte-string helpers. Lengths count bytes; no encoding or NUL convention.
+// Byte-string helpers. Lengths count bytes; no encoding is assumed. Ordinary
+// byte strings are `const []uint8`; NUL-terminated strings (process arguments,
+// environment values, c"..." views) are `const [:0]uint8` and convert to
+// `const []uint8` implicitly, so every helper here accepts both.
 pub comp Error := enum { BufferTooSmall };
 pub comp ConcatResult := root::result::Result([]uint8, Error);
 
@@ -14,16 +17,25 @@ pub fn concat(destination: []uint8, a: const []uint8, b: const []uint8) ConcatRe
     return ConcatResult.Ok(destination[..a.len + b.len]);
 }
 
-// Compatibility helper for ordinary calls; .len is the direct spelling.
-pub fn str_len(value: const []uint8) usize { return value.len; }
-
-// Bytewise content equality, including empty slices; no allocation.
-pub fn str_eq(s1: const []uint8, s2: const []uint8) bool {
-    if s1.len != s2.len { return false; };
+// Bytewise, case-sensitive content equality, including empty slices; no
+// allocation. Usable directly as a std::map equality function.
+pub fn eq(a: const []uint8, b: const []uint8) bool {
+    if a.len != b.len { return false; };
     i: usize = 0;
-    while (i < s1.len) {
-        if s1[i] != s2[i] { return false; };
+    while (i < a.len) {
+        if a[i] != b[i] { return false; };
         i += 1;
     };
     return true;
+}
+
+// Index of the first occurrence of byte, if any.
+pub fn index_of(value: const []uint8, byte: uint8) root::option::Option(usize) {
+    comp O := root::option::Option(usize);
+    i: usize = 0;
+    while (i < value.len) {
+        if value[i] == byte { return O.Some(i); };
+        i += 1;
+    };
+    return O.None;
 }

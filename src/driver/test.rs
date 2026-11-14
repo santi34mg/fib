@@ -186,6 +186,39 @@ fn globals_require_constant_initializers_and_comp_value_calls_remain_explicit() 
 
 #[cfg(feature = "llvm")]
 #[test]
+fn never_calls_emit_unreachable_after_the_call() {
+    let (_directory, plan) = source(
+        "callconv \"C\" fn abort() never; \
+         fn fail(b: bool) bool { return b || abort(); } \
+         fn main() int32 { if (!fail(true)) { return 1; }; std::os::exit(7); }",
+    );
+    let project = run_frontend(&plan).unwrap();
+    let ir = crate::ir::lowering::lower(&project).unwrap();
+    let target = crate::backend::TargetSpec {
+        triple: "x86_64-unknown-linux-gnu".into(),
+        cpu: "generic".into(),
+        features: Vec::new(),
+    };
+    let text = crate::backend::emit_llvm(&ir, &target)
+        .unwrap()
+        .ir_text()
+        .to_owned();
+    assert!(text.contains("declare void @abort()"), "{text}");
+    for callee in ["@abort()", "_exit\"(i32 7)"] {
+        let call = text
+            .lines()
+            .position(|line| line.contains("call ") && line.contains(callee))
+            .unwrap_or_else(|| panic!("missing call to {callee}\n{text}"));
+        assert_eq!(
+            text.lines().nth(call + 1).map(str::trim),
+            Some("unreachable"),
+            "{callee}\n{text}"
+        );
+    }
+}
+
+#[cfg(feature = "llvm")]
+#[test]
 fn global_initializers_are_embedded_data_without_startup_code() {
     let (_directory, plan) =
         source("table := [1, 42]; view := table[1..]; fn main() int32 { return view[0]; }");
@@ -246,6 +279,36 @@ fn invalid_plans_missing_files_and_parse_errors_are_diagnostics() {
             .unwrap_err()
             .to_string()
             .contains("reading")
+    );
+}
+
+#[test]
+fn computed_struct_members_lower_once_per_owner() {
+    let (_directory, plan) = source(
+        "comp fn Cell(T: type) type { return struct { value: T, \
+           comp get := fn(self: *Self) T { return self.value; }; \
+           comp bumped := fn(self: *Self, by: T) T { return Self.get(self) + by; }; }; } \
+         comp IntCell := Cell(int32); comp ByteCell := Cell(uint8); \
+         fn main() int32 { a := IntCell { value: 40 }; b := ByteCell { value: 7 }; \
+           if Cell(uint8).get(b&) != 7 { return 1; }; return Cell(int32).bumped(a&, 2); }",
+    );
+    let project = run_frontend(&plan).unwrap();
+    let ir = crate::ir::lowering::lower(&project).unwrap();
+    crate::ir::verify_ir(&ir).unwrap();
+    let members = ir
+        .functions
+        .iter()
+        .filter(|f| f.identifier.starts_with("fib.v1.member."))
+        .count();
+    // get/bumped for int32 and uint8; symbolic templates are never lowered.
+    assert_eq!(
+        members,
+        4,
+        "{:?}",
+        ir.functions
+            .iter()
+            .map(|f| &f.identifier)
+            .collect::<Vec<_>>()
     );
 }
 

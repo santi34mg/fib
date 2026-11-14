@@ -174,11 +174,24 @@ pub(super) fn resolve_project_collecting(
     }
     let mut definitions = HashMap::new();
     let mut functions = HashMap::new();
+    // Type-owned functions are typed with their owner struct, after `Self` exists.
+    let mut owned_members = HashSet::new();
     for unit in units.iter() {
         collect(&unit.ast.statements, &mut definitions);
         let members = crate::frontend::ast::members::declarations(&unit.ast.statements);
         for member in &members {
             collect(std::slice::from_ref(*member), &mut definitions);
+        }
+        for node in crate::frontend::ast::members::struct_types(&unit.ast.statements) {
+            if let K::Struct { members, .. } = &node.kind {
+                for member in members {
+                    if let S::FunctionDeclaration(f) = &member.kind
+                        && let Some(BindingId::Declaration(id)) = f.signature.annotation.binding
+                    {
+                        owned_members.insert(id);
+                    }
+                }
+            }
         }
         for node in unit.ast.statements.iter().chain(members) {
             if let S::FunctionDeclaration(fun) = &node.kind
@@ -194,6 +207,9 @@ pub(super) fn resolve_project_collecting(
     let mut ids: Vec<_> = context.state.definitions.keys().copied().collect();
     ids.sort_by_key(|id| (id.file_id.0, id.index));
     for id in ids {
+        if owned_members.contains(&id) {
+            continue;
+        }
         if (matches!(&context.state.definitions[&id], Definition::Function(..))
             || symbols.declaration(id)?.kind == crate::frontend::namespace::DeclarationKind::Type)
             && let Err(error) = context.ensure_declaration(id)
@@ -548,6 +564,11 @@ impl TypeContext<'_> {
             }
             K::Struct { fields, members } => {
                 let owner = self.aggregate_site(node.span);
+                if let Some(id) = node.annotation.self_binding {
+                    // Rebound per typing pass so each specialization sees its own identity.
+                    let info = self.metatype(owner);
+                    self.types.bind(BindingId::Declaration(id), info);
+                }
                 let fs = self.field_definitions(fields, owner)?;
                 self.types.types[owner.0 as usize] = T::Struct(fs);
                 let mut seen: HashSet<_> = fields
@@ -575,14 +596,25 @@ impl TypeContext<'_> {
                     let S::FunctionDeclaration(function) = &mut member.kind else {
                         unreachable!()
                     };
-                    self.signature(&mut function.signature)?;
+                    let signature = self.signature(&mut function.signature)?;
+                    // `signature` leaves function bindings untouched while a generic
+                    // instance is checked; members are owned by that instance body.
+                    if !self.state.specialization.is_empty()
+                        && let Some(binding) = function.signature.annotation.binding
+                    {
+                        let info = self.value(signature);
+                        self.types.bind(binding, info);
+                    }
                 }
                 self.statements(members)?;
-                for member in members {
+                for member in members.iter() {
                     let S::FunctionDeclaration(function) = &member.kind else {
                         unreachable!()
                     };
                     super::function_declaration::validate_member_captures(function, self.types)?;
+                }
+                if self.state.evaluation_depth > 0 && !self.types.is_dependent(owner)? {
+                    self.record_member_instances(owner, node.annotation.self_binding, members)?;
                 }
                 owner
             }
@@ -633,6 +665,76 @@ impl TypeContext<'_> {
         }
         node.annotation.resolved = Some(ty);
         Ok(ty)
+    }
+    /// Retain members checked for one computed owner. Evaluation discards its
+    /// body copy and restores template bindings afterwards, so the concrete
+    /// signature, annotated body and binding facts are captured here.
+    fn record_member_instances(
+        &mut self,
+        owner: TypeId,
+        self_binding: Option<DeclId>,
+        members: &mut [Statement],
+    ) -> anyhow::Result<()> {
+        struct Owned(HashSet<BindingId>);
+        impl super::walk::Visitor for Owned {
+            fn binding(
+                &mut self,
+                _: &str,
+                slot: &mut crate::frontend::analysis_annotation::BindingAnnotation,
+                _: Span,
+            ) -> anyhow::Result<()> {
+                if let Some(id) = slot.binding {
+                    self.0.insert(id);
+                }
+                Ok(())
+            }
+            fn ty(&mut self, node: &mut TypeExpression) -> anyhow::Result<()> {
+                if let Some(id) = node.annotation.self_binding {
+                    self.0.insert(BindingId::Declaration(id));
+                }
+                Ok(())
+            }
+        }
+        for member in members.iter_mut() {
+            let mut owned = Owned(
+                self_binding
+                    .map(BindingId::Declaration)
+                    .into_iter()
+                    .collect(),
+            );
+            super::walk::statements(&mut owned, std::slice::from_mut(member), false)?;
+            let S::FunctionDeclaration(function) = &member.kind else {
+                unreachable!()
+            };
+            let Some(BindingId::Declaration(id)) = function.signature.annotation.binding else {
+                return Err(type_error("pending comp member identity"));
+            };
+            let signature = *self
+                .types
+                .declarations
+                .get(&id)
+                .ok_or_else(|| type_error("pending comp member signature"))?;
+            if self.types.is_dependent(signature)? {
+                continue;
+            }
+            owned.0.remove(&BindingId::Declaration(id));
+            let bindings = self
+                .types
+                .bindings
+                .iter()
+                .filter(|(binding, _)| owned.0.contains(binding))
+                .map(|(binding, info)| (*binding, *info))
+                .collect();
+            self.types.member_instances.insert(
+                (id, owner),
+                crate::frontend::semantic_type::MemberInstance {
+                    signature,
+                    body: function.clone(),
+                    bindings,
+                },
+            );
+        }
+        Ok(())
     }
     fn aggregate_site(&mut self, span: Span) -> TypeId {
         let id = *self

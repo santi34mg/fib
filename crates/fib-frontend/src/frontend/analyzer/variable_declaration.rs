@@ -111,6 +111,9 @@ impl Analyzer {
                 "prelude type name '{name}' cannot be shadowed"
             )));
         }
+        if name == crate::frontend::analyzer::SELF_TYPE_NAME {
+            return Err(name_error(format!("'{name}' is reserved for struct types")));
+        }
         if context.lexical.resolve_lexical(name).is_some() {
             return Err(name_error(format!("duplicate lexical identifier '{name}'")));
         }

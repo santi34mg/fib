@@ -7,13 +7,26 @@ use super::{
     variable_declaration::VariableDeclaration,
 };
 
-pub fn declarations(nodes: &[Statement]) -> Vec<&Statement> {
-    let mut result = Vec::new();
-    statements(nodes, &mut result);
-    result
+#[derive(Default)]
+struct Found<'a> {
+    members: Vec<&'a Statement>,
+    structs: Vec<&'a TypeExpression>,
 }
 
-fn variable<'a>(node: &'a VariableDeclaration, out: &mut Vec<&'a Statement>) {
+pub fn declarations(nodes: &[Statement]) -> Vec<&Statement> {
+    let mut found = Found::default();
+    statements(nodes, &mut found);
+    found.members
+}
+
+/// Struct type expressions nested anywhere in `nodes`, including inside members.
+pub fn struct_types(nodes: &[Statement]) -> Vec<&TypeExpression> {
+    let mut found = Found::default();
+    statements(nodes, &mut found);
+    found.structs
+}
+
+fn variable<'a>(node: &'a VariableDeclaration, out: &mut Found<'a>) {
     if let Some(annotation) = &node.ty {
         ty(annotation, out);
     }
@@ -22,7 +35,7 @@ fn variable<'a>(node: &'a VariableDeclaration, out: &mut Vec<&'a Statement>) {
     }
 }
 
-fn statements<'a>(nodes: &'a [Statement], out: &mut Vec<&'a Statement>) {
+fn statements<'a>(nodes: &'a [Statement], out: &mut Found<'a>) {
     for node in nodes {
         match &node.kind {
             S::VariableDeclaration(v) => variable(v, out),
@@ -109,7 +122,7 @@ fn statements<'a>(nodes: &'a [Statement], out: &mut Vec<&'a Statement>) {
     }
 }
 
-fn expression<'a>(node: &'a Expression, out: &mut Vec<&'a Statement>) {
+fn expression<'a>(node: &'a Expression, out: &mut Found<'a>) {
     match &node.kind {
         E::TypeValue(t) => ty(t, out),
         E::BinaryExpresison(b) => {
@@ -154,13 +167,14 @@ fn expression<'a>(node: &'a Expression, out: &mut Vec<&'a Statement>) {
     }
 }
 
-fn ty<'a>(node: &'a TypeExpression, out: &mut Vec<&'a Statement>) {
+fn ty<'a>(node: &'a TypeExpression, out: &mut Found<'a>) {
     match &node.kind {
         T::Struct { fields, members } => {
             for field in fields {
                 expression(&field.expression, out);
             }
-            out.extend(members);
+            out.structs.push(node);
+            out.members.extend(members);
             statements(members, out);
         }
         T::Enum { variants } => {

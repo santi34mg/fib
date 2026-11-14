@@ -201,25 +201,21 @@ fn editing_std_uses_its_own_manifest_and_unsaved_sibling_sources() {
         sysroot.join("sysroot.toml"),
     )
     .unwrap();
-    for name in [
-        "os",
-        "memory",
-        "result",
-        "os_abi",
-        "prelude",
-        "io",
-        "map",
-        "process",
-        "formatting",
-        "random",
-        "string",
-    ] {
-        std::fs::copy(
-            repository.join(format!("std/{name}.fib")),
-            sources.join(format!("{name}.fib")),
-        )
-        .unwrap();
+    // Copy every source, including per-target subdirectories such as darwin/,
+    // so new std modules do not break this fixture.
+    fn copy(source: &Path, destination: &Path) {
+        std::fs::create_dir_all(destination).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let path = entry.unwrap().path();
+            let target = destination.join(path.file_name().unwrap());
+            if path.is_dir() {
+                copy(&path, &target);
+            } else if path.extension().is_some_and(|e| e == "fib") {
+                std::fs::copy(&path, target).unwrap();
+            }
+        }
     }
+    copy(&repository.join("std"), &sources);
     // A source package is independent of an enclosing application's build file.
     std::fs::write(directory.path().join("build.fib"), "invalid build file").unwrap();
     let os = sources.join("os.fib");
@@ -313,15 +309,17 @@ fn rapid_edits_publish_latest_snapshot_and_watched_files_reload() {
 
 #[test]
 fn watched_disk_dependencies_and_removed_members_clear_diagnostics() {
-    let root = tempfile::tempdir().unwrap();
-    let main = root.path().join("main.fib");
-    let helper = root.path().join("helper.fib");
-    let build = root.path().join("build.fib");
+    let directory = tempfile::tempdir().unwrap();
+    // Diagnostics use canonical URIs; macOS temp dirs are symlinks.
+    let root = directory.path().canonicalize().unwrap();
+    let main = root.join("main.fib");
+    let helper = root.join("helper.fib");
+    let build = root.join("build.fib");
     let main_source = "fn main() int32 { return helper::answer(); }";
     std::fs::write(&main, main_source).unwrap();
     std::fs::write(&helper, "pub fn answer() int32 { return false; }").unwrap();
     std::fs::write(&build, "fn build() int32 { build_api::add_source(\"main.fib\"[..]); build_api::add_source(\"helper.fib\"[..]); build_api::set_entry(\"main\"[..]); build_api::set_output(\"app\"[..]); return 0; }").unwrap();
-    let mut client = Client::new(root.path());
+    let mut client = Client::new(&root);
     client.open(&main, main_source);
     let helper_uri = uri(&helper);
     let first = client.wait(|m| m["params"]["uri"] == helper_uri);
@@ -342,8 +340,8 @@ fn watched_disk_dependencies_and_removed_members_clear_diagnostics() {
         client.wait(|m| m["params"]["uri"] == helper_uri)["params"]["diagnostics"],
         json!([])
     );
-    assert!(!root.path().join("app").exists());
-    assert!(!root.path().join("app.o").exists());
+    assert!(!root.join("app").exists());
+    assert!(!root.join("app.o").exists());
     client.finish();
 }
 

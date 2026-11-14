@@ -53,6 +53,40 @@ pub(super) fn cast_context(
         _ => None,
     }
 }
+/// `null` without a pointer context. `pointer` is the concrete pointer type to
+/// suggest when the surrounding context determines it.
+pub(super) fn null_requires_pointer(pointer: Option<String>) -> anyhow::Error {
+    let hint = match pointer {
+        Some(pointer) => format!("give null an explicit pointer type: `null as {pointer}`"),
+        None => "give null an explicit pointer type: `null as *T`, where T is the pointee type"
+            .to_owned(),
+    };
+    crate::diagnostics::CompilerError::new(
+        crate::diagnostics::ErrorKind::Type,
+        "null requires a pointer context".into(),
+    )
+    .with_hint(hint)
+    .into()
+}
+
+/// Renders a type for a `null as ...` hint only when the spelling is valid
+/// source; structural placeholders such as "struct" would mislead.
+pub(super) fn hint_spelling(id: TypeId, types: &SemanticTypes) -> Option<String> {
+    let text = super::types::describe(id, types, 0).ok()?;
+    let placeholder = [
+        "struct",
+        "enum",
+        "type parameter",
+        "computed type",
+        "element of",
+        "::",
+        "intrinsic",
+        "fn(",
+        "...",
+    ];
+    (!placeholder.iter().any(|p| text.contains(p))).then_some(text)
+}
+
 /// Returns whether a semantic type is an integer builtin. Unlike `integer`,
 /// which also provides signedness and width, this predicate is convenient when
 /// an operation only needs to enforce that its operand is is_integral_type.
@@ -211,9 +245,13 @@ pub(super) fn member(
 ) -> anyhow::Result<MemberInfo> {
     let owner = types.canonical(owner)?;
     if let Some(&id) = types.comp_members.get(&(owner, spelling.to_owned())) {
-        let ty = *types
-            .declarations
-            .get(&id)
+        // Computed owners select their specialized signature; the shared
+        // declaration keeps the symbolic template signature.
+        let ty = types
+            .member_instances
+            .get(&(id, owner))
+            .map(|instance| instance.signature)
+            .or_else(|| types.declarations.get(&id).copied())
             .ok_or_else(|| type_error("pending comp member signature"))?;
         return Ok(MemberInfo {
             owner,
@@ -451,7 +489,7 @@ impl TypeContext<'_> {
                             Ok((T::Pointer(_) | T::Function(_), _))
                         )
                     })
-                    .ok_or_else(|| type_error("null requires a pointer context"))?,
+                    .ok_or_else(|| null_requires_pointer(None))?,
             },
             E::QualifiedIdentifier(name) => {
                 return self.name_info(
@@ -685,7 +723,7 @@ impl TypeContext<'_> {
                     _ => return Err(type_error("invalid binary operand types")),
                 }
             }
-            E::Call { callee, args } => return self.call(callee, args),
+            E::Call { callee, args } => return self.call(callee, args, expected),
             E::ExprAcess {
                 expr: receiver,
                 accessed_identifier,
@@ -1105,6 +1143,28 @@ pub(super) fn intrinsic_info(
                 return Err(type_error("slice length must be usize"));
             }
             let ty = find(T::Slice(*element))?;
+            let ty = if readonly { find(T::Readonly(ty))? } else { ty };
+            Ok(ExpressionInfo {
+                ty,
+                category: ValueCategory::Value,
+                type_value: None,
+            })
+        }
+        (F::TerminatedFromParts, [pointer, length]) => {
+            let (T::Pointer(element), readonly) = types.container(pointer.ty)? else {
+                return Err(type_error("terminated_from_parts requires a *uint8"));
+            };
+            if !matches!(types.get(types.canonical(*element)?)?, T::Builtin(B::UInt8)) {
+                return Err(type_error("terminated_from_parts requires a *uint8"));
+            }
+            if !matches!(types.get(length.ty)?, T::Builtin(B::Usize)) {
+                return Err(type_error("slice length must be usize"));
+            }
+            let ty = find(T::Slice(*element))?;
+            let ty = find(T::Sentinel {
+                inner: ty,
+                value: 0,
+            })?;
             let ty = if readonly { find(T::Readonly(ty))? } else { ty };
             Ok(ExpressionInfo {
                 ty,

@@ -64,6 +64,45 @@ fn main() int32 {
     assert_eq!(Command::new(&plan.output).status().unwrap().code(), Some(0));
 }
 
+// Apple arm64 has no float128 soft-float runtime: operations are rejected
+// before linking with an actionable message, while storage still works.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[test]
+fn float128_operations_are_rejected_on_apple_arm64() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("main.fib");
+    for (text, rejected) in [
+        (
+            "fn main() int32 { x: float128 = 1.5; y := x + x; return 0; }",
+            true,
+        ),
+        (
+            "fn widen(x: float64) float128 { return x as float128; } fn main() int32 { return 0; }",
+            true,
+        ),
+        (
+            "fn copy(x: float128) float128 { return x; } fn main() int32 { a: float128 = 2.0; b := copy(a); return 0; }",
+            false,
+        ),
+    ] {
+        std::fs::write(&source, text).unwrap();
+        let plan = BuildPlan::single_file(&source)
+            .unwrap()
+            .with_standard_library(fibc::standard_library::StandardLibrary::disabled());
+        let result = run_pipeline(&plan, PipelineGoal::Binary);
+        if rejected {
+            let error = format!("{:#}", result.unwrap_err());
+            assert!(
+                error.contains("float128") && error.contains("Apple arm64"),
+                "{error}"
+            );
+        } else {
+            result.unwrap_or_else(|e| panic!("{text}\n{e:#}"));
+            assert_eq!(Command::new(&plan.output).status().unwrap().code(), Some(0));
+        }
+    }
+}
+
 #[test]
 fn single_file_cli_compiles_links_and_runs() {
     for status in [0, 42, 127] {
@@ -341,6 +380,9 @@ fn indexed_assignment_and_slice_bounds_evaluate_once_in_order() {
         fn index() int32 { trace = trace * 10 + 3; return 1; }
         fn start() int32 { trace = trace * 10 + 4; return 0; }
         fn end() int32 { trace = trace * 10 + 5; return 2; }
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
         fn main() int32 {
             receiver()[index()] = rhs();
             if trace != 123 { return 1; };
@@ -493,6 +535,10 @@ fn signed_division_overflow_wraps_and_remainder_is_zero() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn floats_cross_calls_and_joins_with_ieee_arithmetic() {
     for width in [16, 32, 64, 128] {
         let text = format!(
@@ -537,6 +583,10 @@ fn short_circuiting_skips_calls_and_preserves_boolean_results() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn invalid_runtime_numeric_operations_trap() {
     let programs = [
         "fn f(x: int32) int32 { return 1 / x; } fn main() int32 { return f(0); }",
@@ -565,6 +615,10 @@ fn invalid_runtime_numeric_operations_trap() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn float_to_integer_checks_after_truncation() {
     let text = r#"
         fn f(x: float16, y: float128) bool { return (x as int8) == -128 && (y as uint8) == 0; }
@@ -574,11 +628,18 @@ fn float_to_integer_checks_after_truncation() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn exact_literals_and_runtime_float_rounding_agree() {
     let text = r#"
         fn half(x: float128) float16 { return x as float16; }
         fn single(x: float128) float32 { return x as float32; }
         fn integer(x: uint128) float128 { return x as float128; }
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
         fn main() int32 {
             a: float16 = 1.00048828125000000000000000000001;
             b: float32 = 1.000000059604644775390625000001;
@@ -595,6 +656,10 @@ fn exact_literals_and_runtime_float_rounding_agree() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn builtin_scalar_sample_executes() {
     assert_eq!(
         scalar_program(include_str!("../samples/builtin_scalars.fib")).code(),
@@ -687,6 +752,10 @@ fn source_loops_breaks_continues_and_returns_execute() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn loops_carry_all_numeric_widths_and_bool() {
     for ty in [
         "int8", "int16", "int32", "int64", "int128", "uint8", "uint16", "uint32", "uint64",
@@ -712,6 +781,10 @@ fn loops_carry_all_numeric_widths_and_bool() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn current_capabilities_project_builds_from_build_file_and_runs() {
     let directory = tempfile::tempdir().unwrap();
     let build_file = directory.path().join("build.fib");
@@ -810,6 +883,9 @@ fn struct_construction_and_assignment_preserve_evaluation_order() {
             ignored := mark(trace, 3);
             return s;
         }
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
         fn main() int32 {
             trace := 0;
             s := S { y: mark(trace&, 1), x: mark(trace&, 2) };
@@ -842,6 +918,10 @@ fn ordinary_null_dereferences_trap_including_field_projection_and_address_of() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn structs_preserve_mixed_layout_and_every_numeric_field_width_across_calls() {
     for ty in [
         "int8", "int16", "int32", "int64", "int128", "uint8", "uint16", "uint32", "uint64",
@@ -904,6 +984,9 @@ fn direct_enum_payloads_and_normalized_unit_values_execute() {
                 when .Err(error) { return error; }
             };
         }
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
         fn main() int32 {
             if inspect(int32) != 42 { return 1; };
             return inspect(void);
@@ -913,6 +996,10 @@ fn direct_enum_payloads_and_normalized_unit_values_execute() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn enum_payloads_preserve_target_alignment_and_numeric_widths() {
     for ty in [
         "int8", "uint16", "int32", "uint64", "int128", "uint128", "float16", "float32", "float64",
@@ -944,6 +1031,9 @@ fn enum_subjects_and_constructor_arguments_evaluate_once_in_order() {
         comp E: type = enum { Pair: Pair, Empty };
         fn mark(p: *int32, digit: int32) int32 { p* = (p*) * 10 + digit; return digit; }
         fn make(p: *int32) E { return E.Pair(Pair { first: mark(p, 1), second: mark(p, 2) }); }
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
         fn main() int32 {
             trace := 0;
             switch(make(trace&)) {
@@ -995,8 +1085,11 @@ fn specification_conversions_views_and_generic_instances_execute() {
 fn multiple_files_preserve_entry_and_declaration_identities() {
     use fibc::plan::{FileId, PackageId, PackageSpec, SourceFile};
     let directory = tempfile::tempdir().unwrap();
-    let main = directory.path().join("main.fib");
-    let helper = directory.path().join("helper.fib");
+    // Plans canonicalize the entry path; keep the package root comparable
+    // where the temp directory is a symlink (macOS /var -> /private/var).
+    let root = directory.path().canonicalize().unwrap();
+    let main = root.join("main.fib");
+    let helper = root.join("helper.fib");
     std::fs::write(
         &main,
         "fn same() int32 { return 20; } fn main() int32 { return same()+helper::same(); }",
@@ -1020,7 +1113,7 @@ fn multiple_files_preserve_entry_and_declaration_identities() {
     plan.packages = vec![PackageSpec {
         id: PackageId(42),
         identity: "test:application@1".into(),
-        source_root: directory.path().to_owned(),
+        source_root: root.clone(),
         dependencies: Default::default(),
         files: vec![FileId(0), FileId(1)],
     }];
@@ -1032,6 +1125,10 @@ fn multiple_files_preserve_entry_and_declaration_identities() {
 }
 
 #[test]
+#[cfg_attr(
+    all(target_os = "macos", target_arch = "aarch64"),
+    ignore = "float128 needs soft-float routines Apple arm64 lacks"
+)]
 fn boolean_casts_cover_every_numeric_runtime_representation() {
     let mut text = String::new();
     let mut checks = String::new();
@@ -1064,7 +1161,7 @@ fn boolean_casts_cover_every_numeric_runtime_representation() {
 }
 
 #[test]
-fn implicit_pointer_access_warns_and_traps_on_null() {
+fn implicit_pointer_access_does_not_warn_and_traps_on_null() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("main.fib");
     std::fs::write(&source, "comp S:type = struct { x:int32 }; fn read(p:*S) int32 { return p.x; } fn main() int32 { return read(null); }").unwrap();
@@ -1083,8 +1180,7 @@ fn implicit_pointer_access_warns_and_traps_on_null() {
         String::from_utf8_lossy(&output.stderr)
     );
     let warnings = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(warnings.matches("warning[type]").count(), 1);
-    assert!(warnings.contains("main.fib:1:"));
+    assert!(!warnings.contains("warning["), "{warnings}");
     let plan = BuildPlan::single_file(&source)
         .unwrap()
         .with_standard_library(fibc::standard_library::StandardLibrary::at(
@@ -1246,6 +1342,9 @@ fn function_pointer_callback_in_struct_with_multiple_fields() {
             name: const []uint8
         };
         fn square(x: int32) int32 { return x * x; }
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
         fn main() int32 {
             s := S {
                 x: 7,
@@ -1275,6 +1374,9 @@ fn function_pointer_in_struct_can_be_assigned_and_called() {
         comp S: type = struct { callback: Callback };
         fn add_one(x: int32) int32 { return x + 1; }
         fn sub_one(x: int32) int32 { return x - 1; }
+
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
 
         fn main() int32 {
             // Create multiple structs with different callbacks
@@ -1310,6 +1412,9 @@ fn struct_with_function_pointer_can_be_passed_as_argument() {
 
         fn double(x: int32) int32 { return x * 2; }
 
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
         fn main() int32 {
             s := S { callback: double };
             result := apply_callback(s, 21);
@@ -1337,6 +1442,9 @@ fn function_pointer_in_struct_with_array_fields() {
             counts: [5]uint
         };
         fn increment(x: int32) int32 { return x + 1; }
+
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
 
         fn main() int32 {
             s := S {
@@ -1371,6 +1479,9 @@ fn function_pointer_in_struct_with_enum_fields() {
         };
         fn square(x: int32) int32 { return x * x; }
 
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
         fn main() int32 {
             s := S {
                 value: 7,
@@ -1402,6 +1513,9 @@ fn function_pointer_mutations_in_struct() {
         comp S: type = struct { callback: Callback, value: int32 };
         fn add(x: int32) int32 { return x + 1; }
         fn double(x: int32) int32 { return x * 2; }
+
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
 
         fn main() int32 {
             // Create a struct with an initial callback
@@ -1438,6 +1552,9 @@ fn function_pointer_in_struct_with_nested_structs() {
 
         fn increment(x: int32) int32 { return x + 1; }
 
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
         fn main() int32 {
             o := Outer {
                 inner: Inner { value: 42 },
@@ -1454,4 +1571,30 @@ fn function_pointer_in_struct_with_nested_structs() {
         Some(0),
         "Function pointer in struct with nested structs failed"
     );
+}
+
+#[test]
+fn computed_struct_members_specialize_per_owner() {
+    let source = r#"
+        comp fn Cell(T: type) type {
+            return struct {
+                value: T,
+                comp get := fn(self: *Self) T { return self.value; };
+                comp set := fn(self: *Self, value: T) void { self.value = value; };
+                comp bumped := fn(self: *Self, by: T) T { Self.set(self, Self.get(self) + by); return Self.get(self); };
+            };
+        }
+
+        comp IntCell := Cell(int32);
+        comp ByteCell := Cell(uint8);
+
+        fn main() int32 {
+            a := IntCell { value: 40 };
+            b := ByteCell { value: 1 };
+            Cell(uint8).set(b&, 7);
+            if Cell(uint8).get(b&) != 7 { return 1; };
+            return Cell(int32).bumped(a&, 2);
+        }
+    "#;
+    assert_eq!(bounded_program(source).code(), Some(42));
 }

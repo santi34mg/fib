@@ -24,7 +24,7 @@ Samples now use source std output with tagged formatting arguments, slice-based
 sorting/allocation, explicit `comp` type bindings, and byte-slice string helpers.
 `multiple_returns.fib` uses a struct return and multi-binding locals because native
 tuple lowering remains unsupported. `memory.fib` names its std alias `mem` to avoid
-self-namespace shadowing. The `specification_runtime` pointer-access warning is
+self-namespace shadowing. The `specification_runtime` implicit pointer access is
 intentional; `sizeof` checks the current target layout.
 `const_bindings` demonstrates immutable scalar/struct/enum bindings and independent
 mutable inline copies. `indexed_globals` uses writable global array storage.

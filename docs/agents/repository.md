@@ -1,7 +1,7 @@
 # Repository map and commands
 
 The [language specification](../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
-warned pointer field access and exhaustive switches. Concrete generic functions,
+implicit pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized

@@ -1,0 +1,112 @@
+// Growable arrays backed by an explicit std::memory::Allocator.
+//
+//     comp Numbers := std::vector::Vec(int32);
+//     numbers := Numbers.init(std::memory::heap_allocator());
+//     defer Numbers.deinit(numbers&);
+//     switch (Numbers.push(numbers&, 7)) { when .Ok {} when .Err(error) { ... } };
+//     items := Numbers.items(numbers&);
+//
+// Elements are copied in and out by value. Growth moves elements to new
+// storage, so slices from items() expire after push, reserve or deinit.
+// Copies of a Vec share storage: keep one owner and call deinit once.
+pub comp fn Vec(T: type) type {
+    return struct {
+        // Initialized elements are buffer[..len]; the rest is spare capacity.
+        buffer: []T,
+        len: usize,
+        allocator: root::memory::Allocator,
+
+        comp init := fn(allocator: root::memory::Allocator) Self {
+            return Self {
+                buffer: root::memory::slice_from_parts(null as *T, 0),
+                len: 0,
+                allocator: allocator,
+            };
+        };
+
+        // Number of elements that fit without reallocating.
+        comp capacity := fn(self: const *Self) usize {
+            return self.buffer.len;
+        };
+
+        // View of the initialized elements; writes through it update the Vec.
+        comp items := fn(self: *Self) []T {
+            return self.buffer[..self.len];
+        };
+
+        // Ensure room for at least additional more elements. Capacity grows
+        // geometrically. On allocation failure the Vec is unchanged; if only
+        // releasing the old storage fails, the Vec keeps the new storage and
+        // that error is returned.
+        comp reserve := fn(self: *Self, additional: usize) root::memory::Status {
+            comp R := root::memory::Status;
+            if additional <= self.buffer.len - self.len { return R.Ok; };
+            limit: usize = 18446744073709551615;
+            if additional > limit - self.len { return R.Err(root::memory::AllocError.NotEnoughMemory); };
+            required := self.len + additional;
+            capacity := required;
+            if self.buffer.len <= limit / 2 && self.buffer.len * 2 > capacity {
+                capacity = self.buffer.len * 2;
+            };
+            if capacity < 4 { capacity = 4; };
+            storage: []T;
+            switch (root::memory::create(T, self.allocator, capacity)) {
+                when .Err(error) { return R.Err(error); }
+                when .Ok(allocated) { storage = allocated; }
+            };
+            i: usize = 0;
+            while (i < self.len) {
+                storage[i] = self.buffer[i];
+                i = i + 1;
+            };
+            previous := self.buffer;
+            self.buffer = storage;
+            // The elements already live in the new storage; report a failure
+            // to release the old storage without undoing the growth.
+            return root::memory::destroy(T, self.allocator, previous);
+        };
+
+        // Append element, growing if needed. A reserve error is returned and
+        // the element is not appended.
+        comp push := fn(self: *Self, element: T) root::memory::Status {
+            comp R := root::memory::Status;
+            if self.len == self.buffer.len {
+                switch (Self.reserve(self, 1)) {
+                    when .Err(error) { return R.Err(error); }
+                    when .Ok {}
+                };
+            };
+            self.buffer[self.len] = element;
+            self.len = self.len + 1;
+            return R.Ok;
+        };
+
+        // Remove and return the last element, or None when empty.
+        comp pop := fn(self: *Self) root::option::Option(T) {
+            comp O := root::option::Option(T);
+            if self.len == 0 { return O.None; };
+            self.len = self.len - 1;
+            return O.Some(self.buffer[self.len]);
+        };
+
+        // The element at index, or None when out of bounds.
+        comp get := fn(self: const *Self, index: usize) root::option::Option(T) {
+            comp O := root::option::Option(T);
+            if index >= self.len { return O.None; };
+            return O.Some(self.buffer[index]);
+        };
+
+        // Drop every element and keep the capacity.
+        comp clear := fn(self: *Self) void {
+            self.len = 0;
+        };
+
+        // Release the storage and reset to an empty Vec with the same allocator.
+        comp deinit := fn(self: *Self) root::memory::Status {
+            previous := self.buffer;
+            self.buffer = root::memory::slice_from_parts(null as *T, 0);
+            self.len = 0;
+            return root::memory::destroy(T, self.allocator, previous);
+        };
+    };
+}

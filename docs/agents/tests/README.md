@@ -110,7 +110,7 @@ See the [performance report](../../performance.md) for commands, measurement
 scope, results, and optimization candidates. They are not timing gates.
 
 The [language specification](../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
-warned pointer field access and exhaustive switches. Concrete generic functions,
+implicit pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
@@ -294,7 +294,7 @@ The implementation passed:
 
 New coverage checks literal-cast context/ranges, numeric/bool casts across every
 numeric runtime representation, NaN/signed zero, readonly views and nested-cast
-restrictions, implicit-pointer warnings/null traps, RHS-first assignment,
+restrictions, implicit-pointer null traps, RHS-first assignment,
 exhaustive unreachable switches, ordinary prelude names/type brackets, generic
 recursion/loops/aggregates, multi-file entry identity, fixed-array values/lengths,
 IR array corruption, and package membership/scoped visibility/re-exports.

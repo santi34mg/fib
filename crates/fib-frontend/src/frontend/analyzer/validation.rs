@@ -50,6 +50,15 @@ pub(super) fn validate(
         for member in crate::frontend::ast::members::declarations(&unit.ast.statements) {
             v.collect(std::slice::from_ref(member))?;
         }
+        for node in crate::frontend::ast::members::struct_types(&unit.ast.statements) {
+            let slot = BindingAnnotation {
+                binding: node.annotation.self_binding.map(BindingId::Declaration),
+                ..BindingAnnotation::default()
+            };
+            if slot.binding.is_some() {
+                v.register(slot, node.span)?;
+            }
+        }
     }
     // Compiler-provided namespaces have no source AST to walk. Their declarations
     // are nevertheless canonical bindings and must still pass the semantic-table
@@ -261,6 +270,26 @@ pub(super) fn validate(
             return Err(type_error("invalid comp member owner or declaration"));
         }
     }
+    for (&(declaration, owner), instance) in &types.member_instances {
+        let spelling = &instance.body.signature.identifier;
+        if types.comp_members.get(&(owner, spelling.clone())) != Some(&declaration)
+            || instance.body.signature.annotation.binding
+                != Some(BindingId::Declaration(declaration))
+            || types.is_dependent(owner)?
+            || types.is_dependent(instance.signature)?
+            || !matches!(types.get(instance.signature)?, T::Function(_))
+        {
+            return Err(type_error("invalid specialized comp member"));
+        }
+        for (binding, info) in &instance.bindings {
+            if !v.bindings.contains(binding) {
+                return Err(type_error(
+                    "specialized comp member owns an unknown binding",
+                ));
+            }
+            v.info(*info)?;
+        }
+    }
     for (&(owner, index), &constructor) in &types.variant_constructors {
         let T::Enum(variants) = types.get(owner)? else {
             return Err(type_error("variant constructor has a non-enum owner"));
@@ -357,6 +386,9 @@ fn instance_source(mut node: Statement) -> anyhow::Result<(Statement, HashSet<Bi
         }
         fn ty(&mut self, node: &mut TypeExpression) -> anyhow::Result<()> {
             node.annotation.resolved = None;
+            if let Some(id) = node.annotation.self_binding {
+                self.0.insert(BindingId::Declaration(id));
+            }
             if let K::Struct { fields, .. } = &mut node.kind {
                 for f in fields {
                     f.annotation = MemberAnnotation::default();

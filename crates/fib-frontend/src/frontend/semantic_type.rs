@@ -9,6 +9,15 @@ use crate::frontend::{
     tokens::builtin::BuiltinType,
 };
 
+/// A type-owned function specialized for one computed owner (e.g. `Vec(int32)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberInstance {
+    pub signature: TypeId,
+    pub body: crate::frontend::ast::function_declaration::FunctionDeclaration,
+    /// Binding facts owned by the member body (parameters, locals, `Self`).
+    pub bindings: HashMap<BindingId, ExpressionInfo>,
+}
+
 /// An index in one analyzed project's type table; not a layout or ABI identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeId(pub u32);
@@ -101,6 +110,9 @@ pub struct VariantType {
 pub struct SemanticTypes {
     /// Type-owned functions, excluded from instance fields and layout.
     pub comp_members: HashMap<(TypeId, String), DeclId>,
+    /// Member bodies checked while a type computation built a concrete owner,
+    /// keyed by (member template, owner). The source member stays symbolic.
+    pub member_instances: HashMap<(DeclId, TypeId), MemberInstance>,
     /// Source identity for anonymous nominal types; never a type-table index.
     pub nominal_sites: HashMap<TypeId, (crate::plan::FileId, crate::diagnostics::Span)>,
     pub nominal_arguments: HashMap<TypeId, Vec<TypeId>>,

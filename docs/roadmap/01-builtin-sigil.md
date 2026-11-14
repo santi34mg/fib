@@ -31,9 +31,9 @@ Success returns a view of the written prefix, preserves the unused tail and
 appends no NUL. It allocates nothing; sources must not overlap destination.
 The result borrows caller-owned storage without extending its lifetime.
 
-`std::string::str_len(value: const []uint8) usize` wraps `.len`, counting bytes.
-The same module supplies ordinary `std::string::str_eq(const []uint8, const []uint8) bool`
-with bytewise content equality, including empty slices. No encoding is assumed.
+The former `str_len` wrapper was removed in favor of `.len`, and `str_eq` became
+`std::string::eq(const []uint8, const []uint8) bool`, with bytewise content
+equality including empty slices. No encoding is assumed.
 The historical std wrapper around `@concat` has been retired; the string sample
 uses these working source-library implementations.
 

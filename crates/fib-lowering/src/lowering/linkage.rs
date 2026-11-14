@@ -54,6 +54,17 @@ pub(super) fn instance(
     Ok(name)
 }
 
+pub(super) fn member_instance(
+    project: &AnalyzedProject,
+    template: DeclId,
+    owner: SemanticId,
+) -> anyhow::Result<String> {
+    let mut name = symbol(project, "member", template)?;
+    name.push('O');
+    name.push_str(&component(&type_key(project, owner, &mut Vec::new())?));
+    Ok(name)
+}
+
 pub(super) fn type_key(
     project: &AnalyzedProject,
     ty: SemanticId,

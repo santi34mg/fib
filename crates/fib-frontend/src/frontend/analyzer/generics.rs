@@ -157,6 +157,16 @@ fn check_body(
             }
             Ok(())
         }
+        // Struct-local `Self` is rebound per instance like any owned binding.
+        fn ty(
+            &mut self,
+            node: &mut crate::frontend::ast::type_expression::TypeExpression,
+        ) -> anyhow::Result<()> {
+            if let Some(id) = node.annotation.self_binding {
+                self.0.insert(BindingId::Declaration(id));
+            }
+            Ok(())
+        }
     }
     let mut owned = Owned(
         fun.signature

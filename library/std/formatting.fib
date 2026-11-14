@@ -5,7 +5,7 @@ pub comp Arg := enum {
     Unsigned: uint64,
     Boolean: bool
 };
-pub comp Error := enum { InvalidFormat, ArgumentCount, BufferTooSmall, Io: int32 };
+pub comp Error := enum { InvalidFormat, ArgumentCount, BufferTooSmall, Io: root::os::Errno };
 pub comp FormatResult := root::result::Result(usize, Error);
 
 // Validate the entire template before invoking a writer.
@@ -14,10 +14,10 @@ fn validate(template: const []uint8, count: usize) FormatResult {
     arguments: usize = 0;
     while (i < template.len) {
         byte := template[i];
-        if byte == 123 || byte == 125 {
+        if byte == '{' || byte == '}' {
             if template.len - i < 2 { return FormatResult.Err(Error.InvalidFormat); };
             next := template[i + 1];
-            if byte == 123 && next == 125 {
+            if byte == '{' && next == '}' {
                 arguments = arguments + 1;
             } else {
                 if byte != next { return FormatResult.Err(Error.InvalidFormat); };
@@ -37,13 +37,13 @@ fn write_integer(T: type, context: *T, writer: fn(*T, const []uint8) FormatResul
     remaining := magnitude;
     while (true) {
         position = position - 1;
-        buffer[position] = ((remaining % 10) as uint8) + 48;
+        buffer[position] = ((remaining % 10) as uint8) + '0';
         remaining = remaining / 10;
         if remaining == 0 { break; };
     };
     if negative {
         position = position - 1;
-        buffer[position] = 45;
+        buffer[position] = '-';
     };
     return writer(context, buffer[position..]);
 }
@@ -78,13 +78,13 @@ pub fn format_to(T: type, context: *T, writer: fn(*T, const []uint8) FormatResul
     written: usize = 0;
     while (i < template.len) {
         start := i;
-        while (i < template.len && template[i] != 123 && template[i] != 125) { i = i + 1; };
+        while (i < template.len && template[i] != '{' && template[i] != '}') { i = i + 1; };
         switch (writer(context, template[start..i])) {
             when .Err(error) { return FormatResult.Err(error); }
             when .Ok(count) { written = written + count; }
         };
         if i < template.len {
-            if template[i] == 123 && template[i + 1] == 125 {
+            if template[i] == '{' && template[i + 1] == '}' {
                 switch (write_arg(T, context, writer, values[argument])) {
                     when .Err(error) { return FormatResult.Err(error); }
                     when .Ok(count) { written = written + count; }
@@ -108,11 +108,7 @@ fn buffer_write(context: *Buffer, bytes: const []uint8) FormatResult {
         return FormatResult.Err(Error.BufferTooSmall);
     };
     if (context*).writing {
-        i: usize = 0;
-        while (i < bytes.len) {
-            (context*).destination[(context*).position + i] = bytes[i];
-            i = i + 1;
-        };
+        root::memory::memcpy((context*).destination[(context*).position..], bytes);
     };
     (context*).position = (context*).position + bytes.len;
     return FormatResult.Ok(bytes.len);

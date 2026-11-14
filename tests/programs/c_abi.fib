@@ -1,0 +1,64 @@
+// Fib side of the C-ABI conformance program; see c_abi.c. Returns 0, or the
+// number of the first failing check.
+comp Pair := struct { a: int32, b: int32 };
+comp Triple := struct { a: int32, b: int32, c: int32 };
+comp Vec3 := struct { x: float32, y: float32, z: float32 };
+comp Vec2d := struct { x: float64, y: float64 };
+comp Big := struct { a: int64, b: int64, c: int64 };
+comp Mixed := struct { d: float64, i: int32 };
+comp Wide := struct { v: int128 };
+comp Bytes3 := struct { a: uint8, b: uint8, c: uint8 };
+
+callconv "C" fn c_pair(p: Pair) int32;
+callconv "C" fn c_make_pair(a: int32, b: int32) Pair;
+callconv "C" fn c_triple(t: Triple) int32;
+callconv "C" fn c_make_triple(v: int32) Triple;
+callconv "C" fn c_vec3(v: Vec3) float32;
+callconv "C" fn c_make_vec3(s: float32) Vec3;
+callconv "C" fn c_vec2d(v: Vec2d) float64;
+callconv "C" fn c_make_vec2d(a: float64) Vec2d;
+callconv "C" fn c_big(b: Big) int64;
+callconv "C" fn c_make_big(v: int64) Big;
+callconv "C" fn c_mixed(m: Mixed) float64;
+callconv "C" fn c_make_mixed(d: float64, i: int32) Mixed;
+callconv "C" fn c_wide(w: Wide) int64;
+callconv "C" fn c_bytes3(b: Bytes3) int32;
+callconv "C" fn c_small(a: int8, b: uint8, c: int16, d: bool) int32;
+callconv "C" fn c_many_fp(a: float64, b: float64, c: float64, d: float64, e: float64, f: float64, g: float64, v: Vec3) float64;
+callconv "C" fn c_many_gp(a: int32, b: int32, c: int32, d: int32, e: int32, f: int32, g: int32, t: Triple) int32;
+callconv "C" fn c_callbacks() int32;
+
+callconv "C" fn fib_pair(p: Pair) int32 { return p.a * 10 + p.b; }
+callconv "C" fn fib_triple(v: int32) Triple { return Triple { a: v, b: v + 1, c: v + 2 }; }
+callconv "C" fn fib_vec3(v: Vec3) float32 { return v.x + v.y + v.z; }
+callconv "C" fn fib_big(b: Big) int64 { return b.a + b.b + b.c; }
+callconv "C" fn fib_make_big(v: int64) Big { return Big { a: v, b: v * 2, c: v * 3 }; }
+
+fn main() int32 {
+    if c_pair(Pair { a: 4, b: 2 }) != 42 { return 1; };
+    p := c_make_pair(3, 9);
+    if p.a != 3 || p.b != 9 { return 2; };
+    if c_triple(Triple { a: 1, b: 2, c: 3 }) != 6 { return 3; };
+    t := c_make_triple(10);
+    if t.a != 10 || t.b != 11 || t.c != 12 { return 4; };
+    if c_vec3(Vec3 { x: 1.0, y: 2.0, z: 3.5 }) != 6.5 { return 5; };
+    v := c_make_vec3(2.0);
+    if v.x != 2.0 || v.y != 4.0 || v.z != 6.0 { return 6; };
+    if c_vec2d(Vec2d { x: 3.0, y: 4.0 }) != 12.0 { return 7; };
+    w := c_make_vec2d(5.0);
+    if w.x != 5.0 || w.y != 6.0 { return 8; };
+    if c_big(Big { a: 1, b: 2, c: 3 }) != 6 { return 9; };
+    b := c_make_big(4);
+    if b.a != 4 || b.b != 8 || b.c != 12 { return 10; };
+    if c_mixed(Mixed { d: 1.5, i: 2 }) != 3.5 { return 11; };
+    m := c_make_mixed(2.5, 7);
+    if m.d != 2.5 || m.i != 7 { return 12; };
+    if c_wide(Wide { v: (5 as int128) << 64 | 3 }) != 8 { return 13; };
+    if c_bytes3(Bytes3 { a: 1, b: 2, c: 3 }) != 14 { return 14; };
+    if c_small(-3, 200, -300, true) != 897 { return 15; };
+    if c_many_fp(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, Vec3 { x: 1.0, y: 2.0, z: 3.0 }) != 13.0 { return 16; };
+    if c_many_gp(1, 1, 1, 1, 1, 1, 1, Triple { a: 1, b: 2, c: 3 }) != 13 { return 17; };
+    status := c_callbacks();
+    if status != 0 { return 20 + status; };
+    return 0;
+}

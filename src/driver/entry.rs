@@ -151,7 +151,7 @@ pub(super) fn startup_wrapper(
         format!("fn {name}(fib_argc: int32, fib_argv: **uint8, fib_envp: **uint8) int32 {{\n");
     if args {
         source.push_str("fib_arguments := std::process::arguments(fib_argc, fib_argv);\n");
-        source.push_str("defer std::memory::free(std::process::Bytes, std::memory::slice_data(fib_arguments));\n");
+        source.push_str("defer std::memory::free(const [:0]uint8, fib_arguments);\n");
     }
     if env {
         source.push_str("fib_environment := std::process::environment(fib_envp);\n");

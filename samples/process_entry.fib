@@ -1,12 +1,13 @@
 fn main(args: std::process::Arguments, env: std::process::Environment) std::result::Result(int32, void) {
-    // args[0] is the executable name. Strings contain bytes, without a NUL.
-    switch (std::map::get(std::process::Bytes, std::process::Bytes, env, "FIB_EXIT")) {
-        when .Ok(value) {
-            if value.len == 2 && value[0] == 52 && value[1] == 50 {
+    // args[0] is the executable name. Arguments and environment values are
+    // NUL-terminated (const [:0]uint8); .len excludes the terminator.
+    switch (std::process::getenv(env, "FIB_EXIT")) {
+        when .Some(value) {
+            if std::string::eq(value, "42") {
                 return std::result::Result(int32, void).Ok(42);
             };
         }
-        when .Err {}
+        when .None {}
     };
     if args.len > 1 { return std::result::Result(int32, void).Ok(0); };
     return std::result::Result(int32, void).Err;

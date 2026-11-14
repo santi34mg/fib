@@ -24,6 +24,7 @@ fn expected(name: &str) -> (i32, String) {
         | "specification_runtime"
         | "struct_storage" => (42, ""),
         "function_pointer_callback" => (20, ""),
+        "never_exit" => (7, ""),
         "minimal" => (0, ""),
         "comp_members" => (0, "woofwoofwoof"),
         "bitwise_ops" => (
@@ -80,6 +81,11 @@ fn all_samples_compile_and_execute() {
     for source in sources {
         let name = source.file_stem().unwrap().to_str().unwrap();
         let (code, stdout) = expected(name);
+        // Apple's arm64 compiler-rt lacks the float128 -> float16 conversion
+        // (__trunctfhf2) this sample's float128 casts need at link time.
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) && name == "builtin_scalars" {
+            continue;
+        }
         let directory = tempfile::tempdir().unwrap();
         // Preserve filenames: a reserved namespace filename must fail this sweep.
         let copy = directory.path().join(source.file_name().unwrap());

@@ -21,7 +21,10 @@ impl TypeExpression {
         Self {
             kind,
             span,
-            annotation: TypeAnnotation { resolved: None },
+            annotation: TypeAnnotation {
+                resolved: None,
+                self_binding: None,
+            },
         }
     }
 }

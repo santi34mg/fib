@@ -6,6 +6,7 @@ fn error_code(error: memory::AllocError) int32 {
         when .InvalidAlignment { return 2; }
         when .MapFailed { return 3; }
         when .UnmapFailed { return 4; }
+        when .InvalidFree { return 5; }
     };
 }
 
@@ -28,7 +29,7 @@ fn exercise(allocator: memory::Allocator, size: usize, align: usize) bool {
                 i = i + 1;
             };
             if bytes[0] != 0 || bytes[size - 1] != ((size - 1) % 251) as uint8 { return false; };
-            switch (allocator.free(allocator.context, pointer as *void)) {
+            switch (allocator.free(allocator.context, pointer)) {
                 when .Err(error) { return false; }
                 when .Ok {}
             };
@@ -38,8 +39,8 @@ fn exercise(allocator: memory::Allocator, size: usize, align: usize) bool {
 }
 
 fn main() int32 {
-    first := memory::create_page_alloc();
-    second := memory::create_page_alloc();
+    first := memory::page_allocator();
+    second := memory::page_allocator();
     // Keep one allocation live while the other allocator allocates and frees.
     switch (first.alloc(first.context, 17, 8)) {
         when .Err(error) { return 11; }
@@ -47,7 +48,7 @@ fn main() int32 {
             pointer* = 93;
             if !exercise(second, 4111, 8) { return 12; };
             if (pointer*) != 93 { return 13; };
-            switch (first.free(first.context, pointer as *void)) {
+            switch (first.free(first.context, pointer)) {
                 when .Err(error) { return 14; }
                 when .Ok {}
             };

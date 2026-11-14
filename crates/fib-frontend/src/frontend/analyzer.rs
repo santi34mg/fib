@@ -294,7 +294,7 @@ impl Analyzer {
         self.collect_declarations()?;
         self.resolve_names()?;
         let types = self.resolve_types()?;
-        let mut project = AnalyzedProject {
+        let project = AnalyzedProject {
             entry: self.entry,
             warnings: Vec::new(),
             units: self.units,
@@ -304,12 +304,6 @@ impl Analyzer {
             source_paths: self.paths.clone(),
         };
         validate_analysis_with_paths(&project, Some(&self.paths))?;
-        collect_warnings(
-            &mut project.units,
-            &mut project.types,
-            &self.paths,
-            &mut project.warnings,
-        )?;
         Ok(project)
     }
 
@@ -365,17 +359,6 @@ impl Analyzer {
                 self.paths.get(&self.entry),
             );
         }
-        let mut warnings = Vec::new();
-        if let Err(error) =
-            collect_warnings(&mut self.units, &mut types, &self.paths, &mut warnings)
-        {
-            recovery.record(
-                error,
-                self.entry,
-                Span::new(1, 1),
-                self.paths.get(&self.entry),
-            );
-        }
         let mut errors = recovery.diagnostics();
         errors.sort_by_key(|d| {
             (
@@ -390,7 +373,7 @@ impl Analyzer {
             lexical_completions: recovery.lexical(),
             unavailable_files: unavailable,
             errors,
-            warnings,
+            warnings: Vec::new(),
             units: self.units,
             symbols: self.symbols,
             types,
@@ -484,6 +467,21 @@ impl Analyzer {
                         &mut self,
                         node: &mut crate::frontend::ast::type_expression::TypeExpression,
                     ) -> anyhow::Result<()> {
+                        if matches!(
+                            node.kind,
+                            crate::frontend::ast::type_expression::TypeExpressionKind::Struct { .. }
+                        ) {
+                            // Hidden identity for the contextual `Self` type name.
+                            let name = format!("self@{}:{}", node.span.line, node.span.column);
+                            node.annotation.self_binding = Some(add_declaration(
+                                self.0,
+                                &name,
+                                false,
+                                DeclarationKind::Type,
+                                node.span,
+                                false,
+                            )?);
+                        }
                         if let crate::frontend::ast::type_expression::TypeExpressionKind::Struct {
                             members,
                             ..
@@ -576,7 +574,9 @@ impl Analyzer {
                 )?;
                 if matches!(
                     builtin,
-                    BuiltinFunction::PointerFromWord | BuiltinFunction::PointerToWord
+                    BuiltinFunction::PointerFromWord
+                        | BuiltinFunction::PointerToWord
+                        | BuiltinFunction::TerminatedFromParts
                 ) {
                     namespace.declarations[id.index as usize].visibility = Visibility::Package;
                 }
@@ -742,6 +742,9 @@ impl Analyzer {
     }
 }
 
+/// Contextual name bound inside struct type bodies to the struct being defined.
+pub(crate) const SELF_TYPE_NAME: &str = "Self";
+
 fn add_declaration(
     ns: &mut Namespace,
     name: &str,
@@ -753,6 +756,12 @@ fn add_declaration(
     if crate::frontend::tokens::builtin::BuiltinType::from_name(name).is_some() {
         return Err(at_span(
             name_error(format!("prelude type name '{name}' cannot be shadowed")),
+            span,
+        ));
+    }
+    if name == SELF_TYPE_NAME {
+        return Err(at_span(
+            name_error(format!("'{SELF_TYPE_NAME}' is reserved for struct types")),
             span,
         ));
     }
@@ -988,69 +997,3 @@ pub(crate) mod walk;
 mod test;
 
 pub use constant::{evaluate_boolean, evaluate_numeric};
-
-fn collect_warnings(
-    units: &mut [CompilationUnit],
-    types: &mut SemanticTypes,
-    paths: &HashMap<FileId, std::path::PathBuf>,
-    warnings: &mut Vec<crate::diagnostics::CompilerWarning>,
-) -> anyhow::Result<()> {
-    struct Warnings(
-        Vec<crate::diagnostics::CompilerWarning>,
-        Option<std::path::PathBuf>,
-    );
-    impl walk::Visitor for Warnings {
-        fn expression(
-            &mut self,
-            node: &mut crate::frontend::ast::expression::Expression,
-        ) -> anyhow::Result<()> {
-            if matches!(&node.kind, crate::frontend::ast::expression::ExpressionKind::ExprAcess { member, .. } if member.implicit_deref)
-            {
-                let mut diagnostic = CompilerError::new(
-                    crate::diagnostics::ErrorKind::Type,
-                    "implicit pointer dereference in field access".into(),
-                )
-                .with_span(node.span)
-                .with_hint("use an explicit postfix dereference to make the access explicit");
-                diagnostic.filename = self.1.clone();
-                self.0
-                    .push(crate::diagnostics::CompilerWarning { diagnostic });
-            }
-            Ok(())
-        }
-    }
-    for unit in units {
-        let mut collector = Warnings(Vec::new(), paths.get(&unit.source_file_id).cloned());
-        walk::statements(&mut collector, &mut unit.ast.statements, true)?;
-        warnings.extend(collector.0);
-    }
-    let mut counts = HashMap::new();
-    for warning in warnings.iter() {
-        *counts
-            .entry((warning.diagnostic.filename.clone(), warning.diagnostic.span))
-            .or_insert(0usize) += 1;
-    }
-    for instance in types.generic_instances.values_mut() {
-        if let Some(function) = &mut instance.body
-            && let Some(body) = &mut function.body
-        {
-            let mut collector = Warnings(
-                Vec::new(),
-                paths.get(&instance.key.template.file_id).cloned(),
-            );
-            walk::statements(&mut collector, &mut body.statements, false)?;
-            let mut instance_counts = HashMap::new();
-            for warning in collector.0 {
-                let key = (warning.diagnostic.filename.clone(), warning.diagnostic.span);
-                let current = instance_counts.entry(key.clone()).or_insert(0usize);
-                *current += 1;
-                let count = counts.entry(key).or_insert(0usize);
-                if *current > *count {
-                    *count = *current;
-                    warnings.push(warning);
-                }
-            }
-        }
-    }
-    Ok(())
-}

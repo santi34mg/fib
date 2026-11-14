@@ -1,7 +1,7 @@
 # Driver and build architecture
 
 The [language specification](../../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
-warned pointer field access and exhaustive switches. Concrete generic functions,
+implicit pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
@@ -113,7 +113,8 @@ the bootstrap entry. See [struct/storage semantics](../../struct-storage-semanti
 Enum constructors, payload copies and switches lower through the same verified pipeline. See [enum semantics](../../enum-semantics.md).
 Concrete generic instances, fixed-array values, multi-bindings and calls across
 planned files and lexical defer statements/blocks lower. Constant-initialized globals
-and checked runtime array/slice operations also lower. Broader indirect
+and checked runtime array/slice operations also lower. Calls to `never` functions
+(including `std::os::exit`) end the current path with `Unreachable`. Broader indirect
 calls and multiple-result initializers remain unsupported.
 
 `BuildPlan::packages` accepts host-created `PackageSpec` records with `PackageId`,

@@ -1,7 +1,76 @@
 // Reusable success/error values. Identical arguments preserve nominal identity.
+// Every fallible std operation returns a Result; a unit Ok (Result(void, E))
+// is written and matched as the bare variant: `R.Ok`, `when .Ok {}`.
 pub comp fn Result(T: type, E: type) type {
     return enum {
         Ok: T,
         Err: E
+    };
+}
+
+// Helpers take the payload types explicitly, like every generic std function:
+// std::result::unwrap_or(int32, Errno, value, 0).
+
+pub fn is_ok(T: type, E: type, value: Result(T, E)) bool {
+    switch (value) {
+        when .Ok { return true; }
+        when .Err { return false; }
+    };
+}
+
+pub fn is_err(T: type, E: type, value: Result(T, E)) bool {
+    return !is_ok(T, E, value);
+}
+
+// Return the success payload, or fallback when value is Err.
+pub fn unwrap_or(T: type, E: type, value: Result(T, E), fallback: T) T {
+    switch (value) {
+        when .Ok(payload) { return payload; }
+        when .Err { return fallback; }
+    };
+}
+
+// Return the success payload, or abort the process with message (see
+// std::process::abort). Use for errors the program cannot meaningfully handle.
+pub fn expect(T: type, E: type, value: Result(T, E), message: const []uint8) T {
+    switch (value) {
+        when .Ok(payload) { return payload; }
+        when .Err { root::process::abort(message); }
+    };
+}
+
+// Discard the error and keep only the success payload.
+pub fn ok(T: type, E: type, value: Result(T, E)) root::option::Option(T) {
+    comp O := root::option::Option(T);
+    switch (value) {
+        when .Ok(payload) { return O.Some(payload); }
+        when .Err { return O.None; }
+    };
+}
+
+// Discard the success payload and keep only the error.
+pub fn err(T: type, E: type, value: Result(T, E)) root::option::Option(E) {
+    comp O := root::option::Option(E);
+    switch (value) {
+        when .Ok { return O.None; }
+        when .Err(error) { return O.Some(error); }
+    };
+}
+
+// Transform the success payload; errors pass through unchanged.
+pub fn map(T: type, U: type, E: type, value: Result(T, E), transform: fn(T) U) Result(U, E) {
+    comp R := Result(U, E);
+    switch (value) {
+        when .Ok(payload) { return R.Ok(transform(payload)); }
+        when .Err(error) { return R.Err(error); }
+    };
+}
+
+// Transform the error; success payloads pass through unchanged.
+pub fn map_err(T: type, E: type, F: type, value: Result(T, E), transform: fn(E) F) Result(T, F) {
+    comp R := Result(T, F);
+    switch (value) {
+        when .Ok(payload) { return R.Ok(payload); }
+        when .Err(error) { return R.Err(transform(error)); }
     };
 }

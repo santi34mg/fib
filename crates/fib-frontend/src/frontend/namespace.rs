@@ -159,16 +159,27 @@ impl ProjectSymbols {
                 let relative = std::path::absolute(&file.path)?
                     .strip_prefix(root)?
                     .with_extension("");
-                let path = relative
-                    .components()
-                    .map(|c| {
-                        c.as_os_str()
-                            .to_str()
-                            .map(str::to_owned)
-                            .ok_or_else(|| name_error("module paths must be UTF-8"))
-                    })
-                    .collect::<anyhow::Result<Vec<_>>>()?
-                    .join("::");
+                // Std files keep their manifest's logical names, so a
+                // per-target implementation such as darwin/os.fib is std::os.
+                let path = if plan
+                    .standard_library
+                    .loaded
+                    .as_ref()
+                    .is_some_and(|std| std.package == package)
+                {
+                    file.name.0.clone()
+                } else {
+                    relative
+                        .components()
+                        .map(|c| {
+                            c.as_os_str()
+                                .to_str()
+                                .map(str::to_owned)
+                                .ok_or_else(|| name_error("module paths must be UTF-8"))
+                        })
+                        .collect::<anyhow::Result<Vec<_>>>()?
+                        .join("::")
+                };
                 let segments: Vec<_> = path.split("::").collect();
                 for count in 1..=segments.len() {
                     let spelling = segments[..count].join("::");

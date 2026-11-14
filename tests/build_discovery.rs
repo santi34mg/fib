@@ -36,7 +36,8 @@ fn assert_compiled(output: Output, binary: &Path) {
                 .lines()
                 .last()
                 .unwrap(),
-            binary.display().to_string()
+            // The compiler reports canonical paths (macOS temp dirs are symlinks).
+            binary.canonicalize().unwrap().display().to_string()
         );
     }
     #[cfg(not(feature = "llvm"))]

@@ -1,7 +1,7 @@
 # Compiler implementation guide
 
 The [language specification](../language-specification.md) is implemented for prelude names, casts, shallow readonly views,
-warned pointer field access and exhaustive switches. Concrete generic functions,
+implicit pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
@@ -34,24 +34,33 @@ implements literal output and delegates formatted output to that renderer, with
 write loops handling short writes and EINTR. Its formatting types remain aliases.
 
 The source `std::random` module uses Linux x86-64 `getrandom` for byte filling,
-full-width uint64 values and rejection-sampled bounded integers. It retries EINTR
-and short reads, propagates OS errors and rejects zero bounds without a syscall.
+full-width uint64 values and rejection-sampled bounded integers. It fills through
+`std::io::read_full`, propagates `Errno` values and rejects zero bounds without a
+syscall.
 
-The source `std::memory::create_page_alloc` implements stateless Linux mmap
-allocation and munmap release through public allocator callbacks. Private headers
-retain mapping lengths; checked power-of-two alignment includes over-page values.
-It is separate from the typed sbrk heap allocator, and requires original live
-pointers for release. Raw mmap errors use the full Linux negative-errno range.
+Std reports every failure through `Result`/`Option`; `std::result` and
+`std::option` provide generic helpers, and `expect` aborts through
+`std::process::abort`. OS wrappers use `std::os::Errno`. `std::memory::Allocator`
+is the single allocator interface, implemented by `heap_allocator()` (sbrk free
+list; unknown/double frees return `InvalidFree`) and `page_allocator()` (one mmap
+per allocation with private headers and over-page alignment). Typed
+`create`/`destroy` take any allocator; `alloc`/`free` use the heap and return
+`Result`. `std::vector::Vec(T)` is a working growable array over an allocator.
+
+`std::io::Reader`/`Writer` are callback structs; `read_full`/`write_all` hold the
+only retry loops in std. Process arguments and environment values are
+`const [:0]uint8` views built through `std::memory::c_string_at` and the
+package-private `std::os_abi::terminated_from_parts` intrinsic.
 
 The source std memory module implements byte-slice `memset` and `memcpy` with
 checked loops. Copy accepts readonly sources and checks destination capacity
 before writing; callers must provide nonoverlapping regions.
-`std::string::str_eq` provides byte-slice equality; the string sample uses
-qualified calls to the shared string module. The std prelude is currently empty.
+`std::string::eq` provides byte-slice equality (also the map equality for byte
+keys) and `index_of` finds a byte. The std prelude is currently empty.
 `std::string` supplies allocation-free concatenation into caller storage with
-capacity errors before writes and a borrowed prefix result; `str_len` wraps
-byte-slice `.len`. Native tests cover capacity failures, empty inputs and aliasing
-of the returned view. Sources must not overlap the concatenation destination.
+capacity errors before writes and a borrowed prefix result. Native tests cover
+capacity failures, empty inputs and aliasing of the returned view. Sources must
+not overlap the concatenation destination.
 
 Working components are the tokenizer, parser, AST construction, lexical scope
 utilities, diagnostic rendering, and raw IR data/access/formatting utilities.
@@ -72,7 +81,7 @@ through 128 bits, float16/32/64/128 and bool through locals, arithmetic,
 bitwise/shifts, explicit casts, short-circuit logic, helpers/calls, conditionals,
 while loops, break/continue and returns. Typed numeric values require explicit
 conversions. Native helpers use a limited direct Fib fastcc ABI; main keeps the
-C int32 entry contract. Linux x86-64 System V `callconv "C"` also supports
+C int32 entry contract. System V x86-64 and AAPCS64 (Apple arm64) `callconv "C"` also supports
 integer/bool, float32/64, pointer/function-pointer and nonempty-struct boundaries,
 including register coercions and indirect struct arguments/results. Function
 addresses and indirect calls execute, including callbacks stored in structs.
@@ -139,8 +148,7 @@ without changing resultless void returns or opaque `*void`.
 ## Experimental scaffolding
 
 The separate `fibc-fib` experiment contains token/arena/command scaffolding and
-is not a working compiler or validated bootstrap path. `std::io::Reader(T)` is
-also scaffolding; supported input currently uses `std::os::read`. See the
+is not a working compiler or validated bootstrap path. See the
 [experiment status](../../fibc-fib/README.md) and [std guide](../standard-library.md).
 
 ## Language server
@@ -179,7 +187,7 @@ sibling overlays even when the running server uses another installed source tree
 
 Primitive names resolve through protected synthetic prelude declarations. Direct
 same-family literal cast context, explicit numeric/bool casts, shallow readonly
-views, warned one-layer pointer field access and exhaustive switches are implemented.
+views, implicit one-layer pointer field access and exhaustive switches are implemented.
 Concrete rechecked generic instances and calls across explicitly planned files
 lower to verified IR and LLVM. Fixed arrays support literals, inline storage,
 whole-value copies/assignment, calls/returns and `.len`; multi-binding locals

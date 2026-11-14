@@ -1,54 +1,60 @@
-pub comp Bytes := const []uint8;
-pub comp Arguments := []Bytes;
-pub comp Environment := root::map::Map(Bytes, Bytes);
+// Process entry data. Argument strings and environment values are
+// NUL-terminated byte strings (`const [:0]uint8`) borrowed from the host for the
+// program lifetime, so they can be passed directly to std::os path functions
+// and convert implicitly to `const []uint8`. Environment keys are the bytes
+// before the first '=' and are not terminated.
+pub comp Arguments := []const [:0]uint8;
+pub comp Environment := root::map::Map(const []uint8, const [:0]uint8);
 
-fn failed() {
-    root::os::syscall1(231, 1);
-    while () {};
+// Write message and a newline to stderr, then terminate with status 134.
+// Write errors are ignored. Pending defers in callers do not run.
+pub fn abort(message: const []uint8) never {
+    root::io::write_all(root::io::stderr(), message);
+    root::io::write_all(root::io::stderr(), "\n");
+    root::os::exit(134);
 }
 
-// Startup borrows the host's NUL-terminated strings for the program lifetime.
-fn string(pointer: *uint8) Bytes {
-    address := root::os_abi::pointer_to_word(pointer);
-    length: usize = 0;
-    while () {
-        byte := root::os_abi::pointer_from_word(uint8, address + (length as uint64));
-        if (byte*) == 0 { break; };
-        length = length + 1;
-    };
-    return root::memory::slice_from_parts(pointer, length);
+// The value of an environment variable, or None. Names compare bytewise.
+pub fn getenv(environment: Environment, name: const []uint8) root::option::Option(const [:0]uint8) {
+    return root::map::get(const []uint8, const [:0]uint8, environment, name);
 }
 
 // Compiler startup helpers. Public so the generated application wrapper can call
-// them; callers must supply valid C startup vectors. Allocation failure exits 1.
+// them; callers must supply valid C startup vectors. Allocation failure aborts.
 pub fn arguments(argc: int32, argv: **uint8) Arguments {
     count := argc as usize;
-    result := root::memory::alloc(Bytes, count);
-    if result.len != count { failed(); };
+    result: Arguments;
+    switch (root::memory::alloc(const [:0]uint8, count)) {
+        when .Err { abort("fib: out of memory while reading process arguments"); }
+        when .Ok(storage) { result = storage; }
+    };
     pointers := root::memory::slice_from_parts(argv, count);
     i: usize = 0;
     while (i < count) {
-        result[i] = string(pointers[i]);
+        result[i] = root::memory::c_string_at(root::os_abi::pointer_to_word(pointers[i]));
         i = i + 1;
     };
     return result;
 }
 
 pub fn environment(envp: **uint8) Environment {
-    result := root::map::init(Bytes, Bytes, root::map::bytes_equal);
+    result := root::map::init(const []uint8, const [:0]uint8, root::string::eq);
     address := root::os_abi::pointer_to_word(envp);
-    while () {
+    while (true) {
         pointer := (root::os_abi::pointer_from_word(*uint8, address))*;
         if pointer == null { break; };
-        entry := string(pointer);
-        split: usize = 0;
-        while (split < entry.len && entry[split] != 61) { split = split + 1; };
-        // Ignore malformed entries. The first '=' separates key from value;
-        // later duplicates replace earlier values.
-        if split < entry.len {
-            if !root::map::insert(Bytes, Bytes, result&, entry[..split], entry[split + 1..]) {
-                failed();
-            };
+        entry := root::memory::c_string_at(root::os_abi::pointer_to_word(pointer));
+        // The first '=' separates key from value; malformed entries are
+        // ignored and later duplicates replace earlier values.
+        switch (root::string::index_of(entry, '=')) {
+            when .None {}
+            when .Some(split) {
+                switch (root::map::insert(const []uint8, const [:0]uint8, result&,
+                    entry[..split], entry[split + 1..])) {
+                    when .Err { abort("fib: out of memory while reading the environment"); }
+                    when .Ok {}
+                };
+            }
         };
         address = address + (core::sizeof(*uint8) as uint64);
     };

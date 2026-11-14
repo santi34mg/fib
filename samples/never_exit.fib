@@ -1,0 +1,14 @@
+// `never` functions end their caller's path: no trailing return is required,
+// and short-circuit operands may diverge. Exits with status 7.
+fn fail(code: int32) never {
+    std::os::exit(code);
+}
+
+fn require(condition: bool, code: int32) bool {
+    return condition || fail(code);
+}
+
+fn main() int32 {
+    if (!require(true, 3)) { return 1; };
+    fail(7);
+}

@@ -2,12 +2,13 @@
 
 ## Tooling restrictions
 
-Never use Bash or Python in this project. Do not invoke either interpreter or add
-scripts written in either language. Use Rust for project tooling and direct
-file-edit tools for changes.
+Never commit Bash or Python scripts to this project. Bash may be used for
+exploration and debugging (searching, running cargo, inspecting output), but
+project tooling must be written in Rust and source changes made with direct
+file-edit tools.
 
 The [language specification](docs/language-specification.md) is implemented for prelude names, casts, shallow readonly views,
-warned pointer field access and exhaustive switches. Concrete generic functions,
+implicit pointer field access and exhaustive switches. Concrete generic functions,
 multiple source files and fixed-array values execute. Package-rooted lookup, scoped
 visibility, installed std sources and Linux x86-64 syscalls execute. Recursive source
 discovery remains deferred. Checked runtime indexing/slicing and constant-initialized
@@ -38,7 +39,7 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   Computed type annotations work in signatures and declarations.
   multi-file fixed-width integer/float/bool helpers, direct calls, initialized locals, assignment, arithmetic/bitwise/shifts, explicit numeric casts, short-circuit logic, comparisons, nested if/else, while loops, break/continue and returns. It revalidates analysis, prevalidates the
   supported subset (including dead branches), and builds SSA.
-  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `std::memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Concrete generic functions, fixed-array values and multi-binding locals execute. Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. Array/slice indexing, indexed assignment and slicing execute with bounds checks. Globals require explicit constant initializers and have program lifetime; ordinary initializer calls are rejected. No `static` modifier or startup initializer is introduced.
+  Struct values, partial initialization, stack storage, field/pointer mutation and internal struct/pointer calls now work. Dereferences trap on null; `std::memory::unchecked_deref(pointer)` yields an unchecked place. Enums now support constructors, payload copies, switches, storage and internal calls through LLVM; see [enum semantics](docs/enum-semantics.md). Concrete generic functions, fixed-array values and multi-binding locals execute. Defer statements and blocks execute in reverse order on lexical scope exits, including return, break and continue. `never` functions lower with no results; each never call ends its path with `Unreachable` and skips pending defers (`std::os::exit` returns `never`). Array/slice indexing, indexed assignment and slicing execute with bounds checks. Globals require explicit constant initializers and have program lifetime; ordinary initializer calls are rejected. No `static` modifier or startup initializer is introduced.
 - `src/bin/fib-lsp.rs` implements a native stdio LSP sharing compiler tokenization,
   parsing, collecting analysis and build planning. `frontend::source` supplies
   unsaved overlays; `frontend::tooling` produces highlights and diagnostics.
@@ -48,7 +49,7 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
 - Primitive types and `type` lex as ordinary identifiers and resolve through a
   protected implicit prelude. Direct same-family literal cast context and explicit
   numeric/bool conversions share constant/runtime rules. Shallow readonly views,
-  warned one-layer pointer field access and exhaustive enum switches are enforced.
+  implicit one-layer pointer field access and exhaustive enum switches are enforced.
   `BuildPlan::packages` records explicit package IDs/source roots/dependency maps;
   scoped visibility uses package/directory regions. Package-rooted lookup resolves
   `root` and dependency environments with Unicode case/hyphen normalization. Persistent
@@ -67,7 +68,7 @@ Fib (`fibc`) is a Rust compiler under reconstruction. Start with the
   ownership, signatures, reachability and dominance. Enum operations, constants and switches validate payload signatures, tags and active-variant extraction proofs. Structs, enums, typed pointers,
   stack-slot ownership and aggregate/memory operations are verified. Global storage,
   address relocations and constant slice projections are also verified.
-- LLVM 21 emits multi-block SSA with PHIs/backedges, Linux x86-64 System V C scalar/pointer/nonempty-struct boundaries and internal direct scalar/struct/enum/pointer Fib fastcc ABI. Function addresses and indirect calls execute, including callbacks in structs.
+- LLVM 21 emits multi-block SSA with PHIs/backedges, System V x86-64 and AAPCS64 (incl. Apple arm64) C scalar/pointer/nonempty-struct boundaries and internal direct scalar/struct/enum/pointer Fib fastcc ABI. Native builds run on Linux x86-64 and macOS arm64; raw syscalls are Linux x86-64 only and Apple arm64 rejects float128 operations (no soft-float runtime). Function addresses and indirect calls execute, including callbacks in structs.
   ABI classification is per signature; one shared description controls a function
   and calls to it. `emit_llvm(ir, target)` remains the sole public entry point.
   Struct `comp name := fn(...) ...;` members execute through ordinary function
@@ -94,19 +95,31 @@ empty aggregate; void function returns remain resultless and `*void` stays opaqu
 
 ## Standard library
 
-`std::memory::create_page_alloc()` returns a public `Allocator` with context,
-allocation and free callbacks. It uses mmap/munmap with private mapping headers,
-checked sizes and positive power-of-two alignment (including over-page values).
-Zero size fails; null free succeeds. Free requires an original live pointer.
-This is separate from the typed sbrk allocator. `AllocError` exposes allocation,
-alignment, mapping and release failures; no `NotImplemented` placeholder remains.
+Every fallible std operation returns `std::result::Result` (or `std::option::Option`
+for plain absence); `std::result`/`std::option` provide generic helpers (`is_ok`,
+`unwrap_or`, `expect`, `map`, `map_err`, `ok_or`, …) that take type arguments
+explicitly. `expect` failures call `std::process::abort` (stderr message, status 134).
+OS wrappers carry `std::os::Errno` (an `int32` alias; `errno_name` gives symbols);
+`std::os::Status` is `Result(void, Errno)`.
+
+`std::memory::Allocator` (context, `alloc`, `free: fn(*void, *uint8)`) is the only
+allocator interface: `heap_allocator()` (sbrk free list, alignment ≤ 16, reports
+`InvalidFree`) and `page_allocator()` (one mmap per allocation, any power-of-two
+alignment). Typed `create`/`destroy` work with any allocator and return `Result`;
+`alloc(T, n)`/`free(T, slice)` use the heap. `std::vector::Vec(T)` grows through
+an explicit allocator. `std::memory::span` views C strings; the package-private
+`std::os_abi::terminated_from_parts` intrinsic backs it (declaration revision 6).
 
 `std::formatting` owns tagged `Arg` values, template validation and rendering.
 `format(destination, template, values)` writes byte strings into caller-owned
 `[]uint8` storage after syntax/count/capacity checks; no allocation or NUL suffix.
-`format_to` shares rendering with synchronous writer callbacks. `std::io` retains
-literal output, write retries and thin `printf`/`fprintf` adapters; its formatting
-types alias `std::formatting`, including the `BufferTooSmall` error variant.
+`format_to` shares rendering with synchronous writer callbacks. `std::io` defines
+callback `Reader`/`Writer` structs with the only EINTR/short-transfer retry loops
+(`read_full`, `write_all`), descriptor adapters and `print`/`printf`/`fprintf`/`writef`;
+its formatting types alias `std::formatting`, including `BufferTooSmall`.
+`std::process::Arguments` is `[]const [:0]uint8` and `Environment` maps
+`const []uint8` keys to `const [:0]uint8` values, so entry strings reach path
+syscalls without copying.
 
 `library/std` contains ordinary Fib sources; `library/sysroot.toml` pins compiler
 version and compiler-declaration revision. CLI/build/LSP plans load the installed
@@ -186,7 +199,10 @@ Legacy `@` types, `var`, `for`, dot-index and imports
 are not the current working grammar. Parsing is not semantic/runtime support.
 See [parser details](docs/agents/src/frontend/parser.md). Samples use current
 syntax and have automatic parser coverage. The installed source std provides `std::result::Result(T, E)`, `std::memory`
-intrinsics and Linux x86-64 `std::os` syscalls. General library modules remain pending.
+intrinsics and `std::os`: typed POSIX wrappers over Linux x86-64 syscalls (plus
+every number in `std::syscall`), or the same API over libSystem on macOS
+(`library/std/darwin/`, selected by `[targets.*]` in `sysroot.toml`; module
+paths keep their logical names). General library modules remain pending.
 
 `FileId`/`FileName`/paths live in `plan.rs`; syntax retains point spans and
 pending analysis slots. `AnalyzedProject::source_paths` retains plan paths after analysis; there is no

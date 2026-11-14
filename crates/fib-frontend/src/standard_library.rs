@@ -7,13 +7,24 @@ use std::{
 use crate::plan::{BuildPlan, FileId, FileName, PackageId, PackageSpec, SourceFile};
 use anyhow::Context;
 
-pub const DECLARATION_REVISION: u32 = 4;
+pub const DECLARATION_REVISION: u32 = 6;
 
 #[derive(Debug, Clone)]
 pub struct StandardLibrary {
     pub enabled: bool,
     pub sysroot: Option<PathBuf>,
+    /// Operating-system family selecting per-target std sources (`linux`,
+    /// `darwin`). None uses the host the compiler was built for.
+    pub target_os: Option<String>,
     pub(crate) loaded: Option<Registration>,
+}
+
+/// The std target family of the compiler's host.
+pub fn host_target_os() -> &'static str {
+    match std::env::consts::OS {
+        "macos" | "ios" => "darwin",
+        other => other,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -31,6 +42,7 @@ impl Default for StandardLibrary {
         Self {
             enabled: true,
             sysroot: None,
+            target_os: None,
             loaded: None,
         }
     }
@@ -64,6 +76,22 @@ struct Manifest {
     compiler_version: String,
     declaration_revision: u32,
     sources: Vec<String>,
+    /// Per-target-OS adjustments keyed by family (`linux`, `darwin`).
+    #[serde(default)]
+    targets: BTreeMap<String, TargetSources>,
+}
+
+/// Target-specific source selection. Logical names (and so module paths such
+/// as `std::os`) stay those of `sources`; only the backing file changes.
+#[derive(serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct TargetSources {
+    /// Logical source -> file implementing it for this target.
+    #[serde(default)]
+    replace: BTreeMap<String, String>,
+    /// Logical sources unavailable on this target.
+    #[serde(default)]
+    exclude: Vec<String>,
 }
 
 pub fn installed_sysroot(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
@@ -180,18 +208,72 @@ impl BuildPlan {
         let mut next = plan.files.iter().map(|f| f.id.0).max().unwrap_or(0);
         let mut files = BTreeMap::new();
         let mut selected = false;
-        let mut paths = manifest.sources;
-        paths.sort();
-        for relative in paths {
-            let relative_path = Path::new(&relative);
+        let valid = |relative: &str| {
+            let path = Path::new(relative);
             anyhow::ensure!(
-                relative_path.extension().is_some_and(|s| s == "fib")
-                    && relative_path
+                path.extension().is_some_and(|s| s == "fib")
+                    && path
                         .components()
                         .all(|c| matches!(c, std::path::Component::Normal(_))),
                 "invalid std source manifest path '{relative}'"
             );
-            let path = root.join(relative_path).canonicalize()?;
+            Ok(())
+        };
+        let mut target_os = self
+            .standard_library
+            .target_os
+            .clone()
+            .unwrap_or_else(|| host_target_os().to_owned());
+        // An opened std file selects a target that loads it, preferring the
+        // host, so editing darwin/os.fib or the Linux os.fib works anywhere.
+        if let Some((_, selected_path)) = &selected_source {
+            let loads = |family: &str| {
+                let target = manifest.targets.get(family);
+                manifest.sources.iter().any(|logical| {
+                    if target.is_some_and(|t| t.exclude.contains(logical)) {
+                        return false;
+                    }
+                    let file = target
+                        .and_then(|t| t.replace.get(logical))
+                        .unwrap_or(logical);
+                    root.join(file)
+                        .canonicalize()
+                        .is_ok_and(|p| &p == selected_path)
+                })
+            };
+            if !loads(&target_os)
+                && let Some(family) = manifest.targets.keys().find(|family| loads(family))
+            {
+                target_os = family.clone();
+            }
+        }
+        let mut targets = manifest.targets;
+        let target = targets.remove(&target_os).unwrap_or_default();
+        for (logical, file) in &target.replace {
+            valid(logical)?;
+            valid(file)?;
+            anyhow::ensure!(
+                manifest.sources.contains(logical),
+                "std target '{target_os}' replaces unlisted source '{logical}'"
+            );
+        }
+        for logical in &target.exclude {
+            anyhow::ensure!(
+                manifest.sources.contains(logical),
+                "std target '{target_os}' excludes unlisted source '{logical}'"
+            );
+        }
+        let mut paths = manifest.sources;
+        paths.retain(|logical| !target.exclude.contains(logical));
+        paths.sort();
+        for relative in paths {
+            let relative_path = Path::new(&relative);
+            valid(&relative)?;
+            let file = target
+                .replace
+                .get(&relative)
+                .map_or(relative_path, Path::new);
+            let path = root.join(file).canonicalize()?;
             anyhow::ensure!(
                 path.starts_with(&root) && path.is_file(),
                 "std source escapes its source root"

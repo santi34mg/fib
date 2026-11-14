@@ -1,0 +1,121 @@
+// libSystem declarations backing std::os on Apple arm64 (aarch64-apple-darwin).
+// Package-private: application code uses the typed std::os wrappers.
+//
+// Apple does not support raw syscalls, so every OS operation goes through the
+// C library. Failing calls return -1 (or null) and set errno, read via __error.
+// Types follow the LP64 C prototypes: int = int32, ssize_t/off_t = int64,
+// size_t = usize, mode_t = uint16, socklen_t = uint32, nfds_t = uint32.
+// Structures use the darwin layouts declared in std::os.
+//
+// Variadic functions (openat, fcntl, ioctl): Apple arm64 passes variadic
+// arguments on the stack, while Fib has no variadics. These declarations fill
+// all eight argument registers (x0-x7) with explicit padding so the final
+// fixed argument occupies the first stack slot, exactly where the callee's
+// va_arg reads it. This layout is specific to Apple arm64.
+comp os := root::os;
+
+pub(root) callconv "C" fn __error() *int32;
+
+pub(root) callconv "C" fn read(fd: int32, buffer: *uint8, count: usize) int64;
+pub(root) callconv "C" fn write(fd: int32, buffer: const *uint8, count: usize) int64;
+pub(root) callconv "C" fn close(fd: int32) int32;
+pub(root) callconv "C" fn pread(fd: int32, buffer: *uint8, count: usize, offset: int64) int64;
+pub(root) callconv "C" fn pwrite(fd: int32, buffer: const *uint8, count: usize, offset: int64) int64;
+pub(root) callconv "C" fn readv(fd: int32, vectors: const *os::Iovec, count: int32) int64;
+pub(root) callconv "C" fn writev(fd: int32, vectors: const *os::Iovec, count: int32) int64;
+pub(root) callconv "C" fn openat(dirfd: int32, path: const [*:0]uint8, flags: int32,
+    x3: uint64, x4: uint64, x5: uint64, x6: uint64, x7: uint64, mode: uint64) int32;
+pub(root) callconv "C" fn lseek(fd: int32, offset: int64, whence: int32) int64;
+pub(root) callconv "C" fn dup(fd: int32) int32;
+pub(root) callconv "C" fn dup2(old_fd: int32, new_fd: int32) int32;
+pub(root) callconv "C" fn pipe(fds: *int32) int32;
+pub(root) callconv "C" fn fcntl(fd: int32, command: int32,
+    x2: uint64, x3: uint64, x4: uint64, x5: uint64, x6: uint64, x7: uint64, argument: uint64) int32;
+pub(root) callconv "C" fn ioctl(fd: int32, request: uint64,
+    x2: uint64, x3: uint64, x4: uint64, x5: uint64, x6: uint64, x7: uint64, argument: *void) int32;
+pub(root) callconv "C" fn fsync(fd: int32) int32;
+pub(root) callconv "C" fn fdatasync(fd: int32) int32;
+pub(root) callconv "C" fn sync() void;
+pub(root) callconv "C" fn truncate(path: const [*:0]uint8, length: int64) int32;
+pub(root) callconv "C" fn ftruncate(fd: int32, length: int64) int32;
+pub(root) callconv "C" fn flock(fd: int32, operation: int32) int32;
+pub(root) callconv "C" fn poll(fds: *os::PollFd, count: uint32, timeout: int32) int32;
+
+pub(root) callconv "C" fn fstatat(dirfd: int32, path: const [*:0]uint8, out: *os::DarwinStat, flags: int32) int32;
+pub(root) callconv "C" fn fstat(fd: int32, out: *os::DarwinStat) int32;
+pub(root) callconv "C" fn faccessat(dirfd: int32, path: const [*:0]uint8, mode: int32, flags: int32) int32;
+pub(root) callconv "C" fn chmod(path: const [*:0]uint8, mode: uint16) int32;
+pub(root) callconv "C" fn fchmod(fd: int32, mode: uint16) int32;
+pub(root) callconv "C" fn chown(path: const [*:0]uint8, uid: uint32, gid: uint32) int32;
+pub(root) callconv "C" fn fchown(fd: int32, uid: uint32, gid: uint32) int32;
+pub(root) callconv "C" fn lchown(path: const [*:0]uint8, uid: uint32, gid: uint32) int32;
+pub(root) callconv "C" fn umask(mask: uint16) uint16;
+pub(root) callconv "C" fn mkdirat(dirfd: int32, path: const [*:0]uint8, mode: uint16) int32;
+pub(root) callconv "C" fn unlinkat(dirfd: int32, path: const [*:0]uint8, flags: int32) int32;
+pub(root) callconv "C" fn renameat(old_dirfd: int32, old_path: const [*:0]uint8, new_dirfd: int32,
+    new_path: const [*:0]uint8) int32;
+pub(root) callconv "C" fn linkat(old_dirfd: int32, old_path: const [*:0]uint8, new_dirfd: int32,
+    new_path: const [*:0]uint8, flags: int32) int32;
+pub(root) callconv "C" fn symlinkat(target: const [*:0]uint8, dirfd: int32, link_path: const [*:0]uint8) int32;
+pub(root) callconv "C" fn readlinkat(dirfd: int32, path: const [*:0]uint8, buffer: *uint8, size: usize) int64;
+pub(root) callconv "C" fn getcwd(buffer: *uint8, size: usize) *uint8;
+pub(root) callconv "C" fn chdir(path: const [*:0]uint8) int32;
+pub(root) callconv "C" fn fchdir(fd: int32) int32;
+
+pub(root) callconv "C" fn mmap(address: *uint8, length: usize, protection: int32, flags: int32,
+    fd: int32, offset: int64) *uint8;
+pub(root) callconv "C" fn munmap(address: *uint8, length: usize) int32;
+pub(root) callconv "C" fn mprotect(address: *uint8, length: usize, protection: int32) int32;
+pub(root) callconv "C" fn msync(address: *uint8, length: usize, flags: int32) int32;
+pub(root) callconv "C" fn madvise(address: *uint8, length: usize, advice: int32) int32;
+pub(root) callconv "C" fn getpagesize() int32;
+
+pub(root) callconv "C" fn getpid() int32;
+pub(root) callconv "C" fn getppid() int32;
+pub(root) callconv "C" fn pthread_self() *void;
+pub(root) callconv "C" fn pthread_mach_thread_np(thread: *void) uint32;
+pub(root) callconv "C" fn getuid() uint32;
+pub(root) callconv "C" fn geteuid() uint32;
+pub(root) callconv "C" fn getgid() uint32;
+pub(root) callconv "C" fn getegid() uint32;
+pub(root) callconv "C" fn setuid(uid: uint32) int32;
+pub(root) callconv "C" fn setgid(gid: uint32) int32;
+pub(root) callconv "C" fn getpgid(pid: int32) int32;
+pub(root) callconv "C" fn setpgid(pid: int32, pgid: int32) int32;
+pub(root) callconv "C" fn getsid(pid: int32) int32;
+pub(root) callconv "C" fn setsid() int32;
+pub(root) callconv "C" fn fork() int32;
+pub(root) callconv "C" fn execve(path: const [*:0]uint8, argv: const *const [*:0]uint8,
+    envp: const *const [*:0]uint8) int32;
+pub(root) callconv "C" fn _exit(code: int32) never;
+pub(root) callconv "C" fn waitpid(pid: int32, status: *int32, options: int32) int32;
+pub(root) callconv "C" fn kill(pid: int32, signal: int32) int32;
+pub(root) callconv "C" fn sched_yield() int32;
+pub(root) callconv "C" fn alarm(seconds: uint32) uint32;
+pub(root) callconv "C" fn pause() int32;
+pub(root) callconv "C" fn uname(out: *os::Utsname) int32;
+pub(root) callconv "C" fn getrlimit(resource: int32, out: *os::Rlimit) int32;
+pub(root) callconv "C" fn setrlimit(resource: int32, limit: const *os::Rlimit) int32;
+
+pub(root) callconv "C" fn clock_gettime(clock: int32, out: *os::Timespec) int32;
+pub(root) callconv "C" fn clock_getres(clock: int32, out: *os::Timespec) int32;
+pub(root) callconv "C" fn nanosleep(duration: const *os::Timespec, remaining: *os::Timespec) int32;
+pub(root) callconv "C" fn getentropy(buffer: *uint8, size: usize) int32;
+
+pub(root) callconv "C" fn socket(domain: int32, kind: int32, protocol: int32) int32;
+pub(root) callconv "C" fn socketpair(domain: int32, kind: int32, protocol: int32, fds: *int32) int32;
+pub(root) callconv "C" fn bind(fd: int32, address: const *void, length: uint32) int32;
+pub(root) callconv "C" fn connect(fd: int32, address: const *void, length: uint32) int32;
+pub(root) callconv "C" fn listen(fd: int32, backlog: int32) int32;
+pub(root) callconv "C" fn accept(fd: int32, address: *void, length: *uint32) int32;
+pub(root) callconv "C" fn shutdown(fd: int32, how: int32) int32;
+pub(root) callconv "C" fn sendto(fd: int32, buffer: const *uint8, size: usize, flags: int32,
+    address: const *void, length: uint32) int64;
+pub(root) callconv "C" fn recvfrom(fd: int32, buffer: *uint8, size: usize, flags: int32,
+    address: *void, length: *uint32) int64;
+pub(root) callconv "C" fn setsockopt(fd: int32, level: int32, name: int32, value: const *void,
+    length: uint32) int32;
+pub(root) callconv "C" fn getsockopt(fd: int32, level: int32, name: int32, value: *void,
+    length: *uint32) int32;
+pub(root) callconv "C" fn getsockname(fd: int32, address: *void, length: *uint32) int32;
+pub(root) callconv "C" fn getpeername(fd: int32, address: *void, length: *uint32) int32;

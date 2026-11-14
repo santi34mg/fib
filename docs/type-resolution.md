@@ -1,7 +1,7 @@
 # Type resolution
 
 This page records current analyzer behavior. The [language specification](language-specification.md)
-rules for direct-literal casts, numeric/bool casts, shallow readonly views, warned
+rules for direct-literal casts, numeric/bool casts, shallow readonly views, implicit
 one-layer pointer field access and exhaustive switches are implemented.
 
 The implemented sequence is `Analyzer::new` → `collect_declarations` →

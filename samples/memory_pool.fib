@@ -5,7 +5,9 @@ comp io := std::io;
 comp Pool := struct { blocks: []int32, used: usize };
 
 fn pool_create(capacity: usize) Pool {
-    return Pool { blocks: memory::alloc(int32, capacity), used: 0 };
+    blocks := std::result::expect([]int32, memory::AllocError,
+        memory::alloc(int32, capacity), "pool allocation failed");
+    return Pool { blocks: blocks, used: 0 };
 }
 
 fn pool_alloc(pool: *Pool) []int32 {
@@ -17,7 +19,7 @@ fn pool_alloc(pool: *Pool) []int32 {
 
 fn main() int32 {
     pool := pool_create(6);
-    defer memory::free(int32, memory::slice_data(pool.blocks));
+    defer memory::free(int32, pool.blocks);
     if pool.blocks.len != 6 { return 1; };
     info: [2]io::Arg = [io::Arg.Unsigned(core::sizeof(int32) as uint64),
         io::Arg.Unsigned(pool.blocks.len as uint64)];

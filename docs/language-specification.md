@@ -265,7 +265,7 @@ tracked per element, and dynamic writes establish no particular element's state.
 
 Pointer types use `*T`, address-taking uses postfix `value&`, and explicit
 dereference uses postfix `pointer*`. `pointer.field` may insert exactly one
-implicit dereference per field access and emits a warning; a second pointer layer
+implicit dereference per field access without a warning; a second pointer layer
 requires explicit dereference. Inserted dereferences preserve readonly permissions
 and ordinary null checks. Ordinary dereference traps on null;
 `std::memory::unchecked_deref(pointer)` skips only the selected null check. Neither

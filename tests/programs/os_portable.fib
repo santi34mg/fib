@@ -1,0 +1,142 @@
+// Exercises std::os through names and constants only, so it runs on every
+// supported target (Linux x86-64 syscalls, macOS libSystem). Works inside a
+// private scratch directory under cwd; returns 42 on success.
+comp os := std::os;
+comp memory := std::memory;
+
+fn ok(status: os::Status) bool {
+    return std::result::is_ok(void, os::Errno, status);
+}
+
+fn fd_of(result: os::IntResult) int32 {
+    return std::result::unwrap_or(int32, os::Errno, result, -1);
+}
+
+fn count_of(result: os::CountResult) int64 {
+    switch (result) {
+        when .Ok(n) { return n as int64; }
+        when .Err(error) { return -(error as int64); }
+    };
+}
+
+fn files() int32 {
+    if !ok(os::mkdir(c"fib-os-portable", 0o700)) { return 1; };
+    if !ok(os::chdir(c"fib-os-portable")) { return 2; };
+    fd := fd_of(os::open(c"data", os::O_RDWR | os::O_CREAT | os::O_TRUNC | os::O_CLOEXEC, 0o600));
+    if fd < 0 { return 3; };
+    if count_of(os::write(fd, "hello")) != 5 { return 4; };
+    switch (os::lseek(fd, 0, os::SEEK_SET)) {
+        when .Ok(offset) { if offset != 0 { return 5; }; }
+        when .Err { return 5; }
+    };
+    buffer: [8]uint8 = [0, 0, 0, 0, 0, 0, 0, 0];
+    if count_of(os::read(fd, buffer[..])) != 5 || buffer[0] != 'h' || buffer[4] != 'o' { return 6; };
+    if count_of(os::pread(fd, buffer[..2], 3)) != 2 || buffer[0] != 'l' { return 7; };
+    flags := fd_of(os::fcntl(fd, os::F_GETFD, 0));
+    if flags < 0 || (flags & os::FD_CLOEXEC) == 0 { return 8; };
+    switch (os::fstat(fd)) {
+        when .Ok(info) {
+            if info.size != 5 || (info.mode & os::S_IFMT) != os::S_IFREG { return 9; };
+        }
+        when .Err { return 9; }
+    };
+    switch (os::stat(c"missing")) {
+        when .Ok { return 10; }
+        when .Err(error) { if error != os::ENOENT { return 11; }; }
+    };
+    if !ok(os::access(c"data", os::R_OK | os::W_OK)) { return 12; };
+    if !ok(os::symlink(c"data", c"alias")) { return 13; };
+    switch (os::lstat(c"alias")) {
+        when .Ok(info) { if (info.mode & os::S_IFMT) != os::S_IFLNK { return 14; }; }
+        when .Err { return 14; }
+    };
+    if count_of(os::readlink(c"alias", buffer[..])) != 4 || buffer[0] != 'd' { return 15; };
+    if !ok(os::rename(c"alias", c"moved")) || !ok(os::unlink(c"moved")) { return 16; };
+    cwd := std::result::expect([]uint8, memory::AllocError, memory::alloc(uint8, 4096), "allocation failed");
+    defer memory::free(uint8, cwd);
+    if count_of(os::getcwd(cwd)) <= 1 { return 17; };
+    // An invalid descriptor reports EBADF through the shared Errno type.
+    switch (os::close(-1)) {
+        when .Ok { return 18; }
+        when .Err(error) { if error != os::EBADF || !std::string::eq(os::errno_name(error), "EBADF") { return 19; }; }
+    };
+    if !ok(os::close(fd)) || !ok(os::unlink(c"data")) { return 20; };
+    if !ok(os::chdir(c"..")) || !ok(os::rmdir(c"fib-os-portable")) { return 21; };
+    return 0;
+}
+
+fn pipes_and_processes() int32 {
+    switch (os::pipe2(os::O_CLOEXEC)) {
+        when .Err { return 30; }
+        when .Ok(pair) {
+            if count_of(os::write(pair.second, "x")) != 1 { return 31; };
+            buffer: [1]uint8 = [0];
+            if count_of(os::read(pair.first, buffer[..])) != 1 || buffer[0] != 'x' { return 32; };
+            os::close(pair.first);
+            os::close(pair.second);
+        }
+    };
+    switch (os::fork()) {
+        when .Err { return 33; }
+        when .Ok(pid) {
+            if pid == 0 { os::exit(7); };
+            switch (os::waitpid(pid, 0)) {
+                when .Err { return 34; }
+                when .Ok(waited) {
+                    // Exit code in bits 8-15 of the wait status on both targets.
+                    if waited.pid != pid || ((waited.status >> 8) & 255) != 7 { return 35; };
+                }
+            };
+        }
+    };
+    if os::getpid() <= 0 || os::getppid() <= 0 { return 36; };
+    return 0;
+}
+
+fn system() int32 {
+    switch (os::clock_gettime(os::CLOCK_MONOTONIC)) {
+        when .Ok(time) { if time.seconds < 0 || time.nanoseconds >= 1000000000 { return 40; }; }
+        when .Err { return 40; }
+    };
+    if !ok(os::nanosleep(os::Timespec { seconds: 0, nanoseconds: 1000 }, null)) { return 41; };
+    bytes: [16]uint8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    if count_of(os::getrandom(bytes[..], 0)) != 16 { return 42; };
+    switch (os::uname()) {
+        when .Ok(name) { if name.sysname[0] == 0 { return 43; }; }
+        when .Err { return 43; }
+    };
+    switch (os::getrlimit(os::RLIMIT_NOFILE)) {
+        when .Ok(limit) { if limit.current == 0 { return 44; }; }
+        when .Err { return 44; }
+    };
+    page := os::get_page_size();
+    if page < 4096 || (page & (page - 1)) != 0 { return 45; };
+    switch (os::mmap(null, page, os::PROT_READ | os::PROT_WRITE, os::MAP_PRIVATE | os::MAP_ANONYMOUS, -1, 0)) {
+        when .Err { return 46; }
+        when .Ok(pointer) {
+            mapped := memory::slice_from_parts(pointer, page);
+            mapped[page - 1] = 9;
+            if mapped[0] != 0 || mapped[page - 1] != 9 { return 47; };
+            if !ok(os::munmap(pointer, page)) { return 48; };
+        }
+    };
+    switch (os::socketpair(os::AF_UNIX, os::SOCK_STREAM, 0)) {
+        when .Err { return 49; }
+        when .Ok(pair) {
+            if count_of(os::send(pair.first, "ping", 0)) != 4 { return 50; };
+            buffer: [4]uint8 = [0, 0, 0, 0];
+            if count_of(os::recv(pair.second, buffer[..], 0)) != 4 || buffer[1] != 'i' { return 51; };
+            os::close(pair.first);
+            os::close(pair.second);
+        }
+    };
+    return 0;
+}
+
+fn main() int32 {
+    status := files();
+    if status == 0 { status = pipes_and_processes(); };
+    if status == 0 { status = system(); };
+    if status == 0 { return 42; };
+    return status;
+}

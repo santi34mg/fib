@@ -17,7 +17,7 @@ mod memory_intrinsics {
     };
     use std::path::Path;
 
-    fn analyze(text: &str) -> anyhow::Result<AnalyzedProject> {
+    pub(super) fn analyze(text: &str) -> anyhow::Result<AnalyzedProject> {
         let ast = Parser::with_source(Tokenizer::new(text), Path::new("main.fib"), text).parse()?;
         let plan = BuildPlan {
             standard_library: crate::standard_library::StandardLibrary::disabled(),
@@ -154,6 +154,41 @@ mod memory_intrinsics {
             let error = analyze(text).unwrap_err();
             assert!(format!("{error:#}").contains(expected), "{text}: {error:#}");
         }
+    }
+
+    #[test]
+    fn untyped_null_intrinsic_pointers_suggest_a_cast() {
+        for (text, hint) in [
+            (
+                "fn f() { s := std::memory::slice_from_parts(null, 0); }",
+                "`null as *T`, where T is the pointee type",
+            ),
+            (
+                "fn f() { s: []uint8 = std::memory::slice_from_parts(null, 0); }",
+                "`null as *uint8`",
+            ),
+            (
+                "fn f() { s: const []int64 = std::memory::slice_from_parts(null, 0); }",
+                "`null as const *int64`",
+            ),
+            (
+                "fn f() []uint16 { return std::memory::slice_from_parts(null, 0); }",
+                "`null as *uint16`",
+            ),
+            (
+                "fn f() { x: int32 = std::memory::unchecked_deref(null); }",
+                "`null as *int32`",
+            ),
+            ("fn f() { p := null; }", "`null as *T`"),
+        ] {
+            let error = format!("{:#}", analyze(text).unwrap_err());
+            assert!(
+                error.contains("null requires a pointer context") && error.contains(hint),
+                "{text}: {error}"
+            );
+        }
+        analyze("fn f() { s := std::memory::slice_from_parts(null as *uint8, 0); }")
+            .unwrap_or_else(|e| panic!("{e:#}"));
     }
 
     #[test]
@@ -382,5 +417,77 @@ mod package_lookup {
             .analyze()
             .unwrap();
         crate::ir::lowering::lower(&project).unwrap();
+    }
+}
+
+mod never_returns {
+    use super::memory_intrinsics::analyze;
+    use crate::ir::{FunctionBody, InstructionKind, Terminator};
+
+    const STOP: &str = "callconv \"C\" fn stop(code: int32) never; ";
+
+    /// Number of blocks that end in `Unreachable` right after a call.
+    fn diverging_calls(source: &str) -> usize {
+        let project = analyze(source).unwrap_or_else(|e| panic!("{source}: {e:#}"));
+        let ir = crate::ir::lowering::lower(&project).unwrap_or_else(|e| panic!("{source}: {e:#}"));
+        ir.blocks
+            .iter()
+            .filter(|b| {
+                matches!(b.terminator, Terminator::Unreachable)
+                    && b.instructions.last().is_some_and(|i| {
+                        matches!(
+                            i.kind,
+                            InstructionKind::Call { .. } | InstructionKind::CallIndirect { .. }
+                        )
+                    })
+            })
+            .count()
+    }
+
+    #[test]
+    fn never_signatures_lower_without_results() {
+        let source =
+            "fn spin() never { while (true) {}; } callconv \"C\" fn stop(code: int32) never;";
+        let ir = crate::ir::lowering::lower(&analyze(source).unwrap()).unwrap();
+        for name in ["spin", "stop"] {
+            let function = ir
+                .functions
+                .iter()
+                .find(|f| f.identifier.contains(name))
+                .unwrap_or_else(|| panic!("missing {name}"));
+            assert!(function.signature.results.is_empty(), "{name}");
+        }
+        assert!(
+            ir.functions
+                .iter()
+                .any(|f| matches!(f.body, FunctionBody::Declaration))
+        );
+    }
+
+    #[test]
+    fn never_calls_terminate_their_block() {
+        for (body, expected) in [
+            ("fn f() { stop(1); }", 1),
+            ("fn f() int32 { return stop(1); }", 1),
+            ("fn f(b: bool) int32 { if (b) { return 1; }; stop(2); }", 1),
+            (
+                "fn f(b: bool) int32 { if (b) { stop(1); } else { stop(2); }; }",
+                2,
+            ),
+            ("fn f(x: int32) int32 { return x + stop(1); }", 1),
+            ("fn f(b: bool) bool { return b && stop(1); }", 1),
+            ("fn f(b: bool) bool { return b || stop(1); }", 1),
+            (
+                "fn f(b: bool) bool { if (b && stop(1)) { return true; }; return false; }",
+                1,
+            ),
+            ("fn f() int32 { while (true) { stop(1); }; }", 1),
+            ("fn g() never { stop(3); } fn f() int32 { return g(); }", 2),
+            ("fn g() never { stop(3); } fn f() { h := g; h(); }", 2),
+            ("fn f() int32 { stop(1); x := 2; return x; }", 1),
+        ] {
+            let source = format!("{STOP}{body}");
+            assert_eq!(diverging_calls(&source), expected, "{source}");
+        }
     }
 }

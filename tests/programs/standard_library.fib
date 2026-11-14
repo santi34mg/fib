@@ -7,10 +7,7 @@ fn main() int32 {
     if os::syscall1(39, 1) != pid || os::syscall2(39, 1, 2) != pid
         || os::syscall3(39, 1, 2, 3) != pid || os::syscall4(39, 1, 2, 3, 4) != pid
         || os::syscall5(39, 1, 2, 3, 4, 5) != pid || os::syscall6(39, 1, 2, 3, 4, 5, 6) != pid { return 2; };
-    switch (os::getpid()) {
-        when .Ok(p) { if p as int64 != pid { return 3; }; }
-        when .Err(e) { return 4; }
-    };
+    if os::getpid() as int64 != pid { return 3; };
     switch (os::close(-1)) {
         when .Ok { return 5; }
         when .Err(e) { if e != 9 { return 6; }; }

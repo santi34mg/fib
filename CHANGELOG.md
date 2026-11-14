@@ -7,12 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Std failures are reported only through `Result`/`Option`. `std::os` errors
+  carry the new `std::os::Errno` alias, `std::os::Status` is
+  `Result(void, Errno)`, and `getpid` returns `int32`. `std::os` flag constants
+  and `stdin`/`stdout`/`stderr` are explicitly typed; `MAP_FAILED` is removed.
+- One allocator interface: `std::memory::Allocator.free` takes `*uint8`, the sbrk
+  heap is `heap_allocator()` and `create_page_alloc()` is renamed
+  `page_allocator()`. `alloc(T, n)` returns `Result([]T, AllocError)` and
+  `free(T, items)` takes the allocated slice and returns `Status`; unknown and
+  double frees return the new `AllocError.InvalidFree` instead of being ignored.
+- `std::process::Arguments` is `[]const [:0]uint8` and `Environment` is
+  `Map(const []uint8, const [:0]uint8)`, so entry strings pass to path syscalls
+  through `slice_data`. `std::process::Bytes` is removed. Startup allocation
+  failure aborts with a message (status 134) instead of exiting silently.
+- `std::map::insert` returns `std::memory::Status`, `get` returns `Option(V)`,
+  and `bytes_equal` is replaced by `std::string::eq` (formerly `str_eq`);
+  `str_len` is removed in favor of `.len`.
+- `std::io::write_all` takes a `Writer` and returns `Result(usize, Errno)`;
+  `std::random` and printing share its retry loop. `formatting::Error.Io` and
+  `random::Error.Io` carry `Errno`.
+- Compiler-declaration revision 6; reinstall std sources with the compiler.
+
+### Removed
+
+- The "implicit pointer dereference in field access" warning. `pointer.field`
+  still inserts one checked dereference, now silently.
+- The empty `std::path` placeholder module and the `std::io::Reader(T)` scaffold.
+
 ### Added
 
+- macOS on Apple Silicon (arm64) builds and runs Fib programs natively:
+  - The C ABI classifier implements AAPCS64 alongside System V x86-64:
+    homogeneous float aggregates, register-pair composites, 16-byte-aligned
+    values and caller-copied large aggregates match clang in both directions.
+  - `sysroot.toml` gains `[targets.<family>]` sections that `replace` or
+    `exclude` std sources per OS family while module paths keep their logical
+    names; the darwin std implements `std::os` over libSystem
+    (`library/std/darwin/`) with the Linux API and darwin constant values.
+  - The std heap allocator obtains storage through a package-private
+    `os::heap_grow` (program break on Linux, mappings on macOS).
+  - float128 arithmetic, comparisons and conversions are rejected on Apple
+    arm64 with a clear error, since its runtime lacks soft-float routines.
+  - CI runs the LLVM test suite on `macos-latest`; Linux-only tests are gated.
+- `std::result` and `std::option` helpers: `is_ok`/`is_err`, `is_some`/`is_none`,
+  `unwrap_or`, `expect`, `map`, `map_err`, `ok`, `err` and `ok_or`.
+- A working `std::vector::Vec(T)` (`init`, `push`, `reserve`, `pop`, `get`,
+  `items`, `capacity`, `clear`, `deinit`) over an explicit allocator.
+- `std::io::Reader`/`Writer` callback interfaces with `fd_reader`, `fd_writer`,
+  `stdin`/`stdout`/`stderr`, `read_full`, `write_all` and `writef`.
+- `std::memory::create`/`destroy` for any allocator, `std::memory::span` for C
+  strings, `std::os::errno_name`, `std::process::getenv`/`abort` and
+  `std::string::index_of`, backed by the package-private
+  `std::os_abi::terminated_from_parts` intrinsic.
+
+- Functions returning `never` now lower and execute: definitions, `callconv "C"`
+  declarations, direct and indirect calls, and never-typed operands such as
+  `x + stop()` or `b || stop()`. A never call is followed by `unreachable` and
+  does not run pending defers. `std::os::exit` now returns `never`, so
+  `fn main() int32 { std::os::exit(7); }` needs no trailing `return`.
+- `std::syscall` names every Linux x86-64 syscall number (0–334, 424–469).
+  `std::os` adds typed wrappers for the common POSIX calls (file/directory,
+  descriptor, memory, process, time, randomness and socket operations), kernel
+  structures (`Stat`, `Timespec`, `Utsname`, …) and flag/signal/errno constants.
+  Existing wrappers use the named numbers; `sbrk` errors use `ENOMEM`.
+- `null requires a pointer context` diagnostics now suggest a `null as *T` cast.
+  For `std::memory::slice_from_parts`/`unchecked_deref`, T comes from the
+  expected result type when known (e.g. `null as const *int64`).
 - Type-owned struct `comp` function members with explicit receiver types,
   ordinary callback values and fixed helpers. Members add no instance storage
   and cannot be initialized or replaced by instances; interface adapters remain
   explicit.
+- Contextual `Self` inside struct type bodies (fields and `comp` members) names
+  the struct being defined, including anonymous structs returned by type
+  computations such as `comp fn List(T: type) type`. `Self` is reserved.
 - Native LSP completion for in-scope parameters/locals and struct fields, including
   partial and unfinished expressions, UTF-16 positions and `.` triggering.
 - Build-file IR execution of branches, loops, block arguments and direct helpers,
@@ -27,6 +96,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `comp` members of structs returned by type computations (e.g. `Vec(T)`)
+  specialize per computed owner: `Vec(int32).push` checks and lowers with
+  `T = int32` and `Self = Vec(int32)`. Symbolic member templates are no
+  longer lowered.
 - Reject radix-prefixed numeric literals without digits (such as `0d.5`) instead of treating them as decimal floats.
 - Restore compiler builds after integrating indexed compound-assignment syntax
   with type-owned member traversal; visit both target and value expressions.

@@ -37,7 +37,7 @@ pub(super) fn register_runtime_types(
                 result
                     && (matches!(
                         project.types.get(f.return_type)?,
-                        SemanticType::Builtin(BuiltinType::Void)
+                        SemanticType::Builtin(BuiltinType::Void | BuiltinType::Never)
                     ) || supported(project, f.return_type, seen)?)
             }
             SemanticType::Array { element, .. } => supported(project, *element, seen)?,
@@ -140,9 +140,10 @@ pub(super) fn register_runtime_types(
                     .iter()
                     .map(|t| register(project, ir, map, *t))
                     .collect::<anyhow::Result<Vec<_>>>()?;
+                // Never results lower like void; call sites add `Unreachable`.
                 let results = if matches!(
                     project.types.get(f.return_type)?,
-                    SemanticType::Builtin(BuiltinType::Void)
+                    SemanticType::Builtin(BuiltinType::Void | BuiltinType::Never)
                 ) {
                     vec![]
                 } else {

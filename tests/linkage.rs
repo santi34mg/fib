@@ -320,6 +320,30 @@ fn diamond_aliases_and_same_spelled_helpers_link_and_execute() {
     }
 }
 
+// System V x86-64 and AAPCS64 (Apple arm64) structure passing must agree with
+// the host C compiler in both directions.
+#[cfg(feature = "llvm")]
+#[test]
+fn c_abi_struct_classes_agree_with_the_host_c_compiler() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("c_abi.fib");
+    std::fs::write(&source, include_str!("programs/c_abi.fib")).unwrap();
+    let native = root.path().join("c_abi.c");
+    std::fs::write(&native, include_str!("programs/c_abi.c")).unwrap();
+    let mut plan = BuildPlan::single_file(&source)
+        .unwrap()
+        .with_standard_library(fibc::standard_library::StandardLibrary::disabled());
+    plan.native.sources.push(native);
+    run_pipeline(&plan, PipelineGoal::Binary).unwrap();
+    assert_eq!(
+        std::process::Command::new(&plan.output)
+            .status()
+            .unwrap()
+            .code(),
+        Some(0)
+    );
+}
+
 #[cfg(feature = "llvm")]
 #[test]
 fn foreign_declarations_link_to_the_declared_native_symbol() {

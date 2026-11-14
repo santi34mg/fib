@@ -21,6 +21,7 @@ pub enum BuiltinFunction {
     Syscall6,
     PointerFromWord,
     PointerToWord,
+    TerminatedFromParts,
 }
 
 impl BuiltinFunction {
@@ -54,6 +55,7 @@ impl BuiltinFunction {
             Self::Syscall6 => "syscall6",
             Self::PointerFromWord => "pointer_from_word",
             Self::PointerToWord => "pointer_to_word",
+            Self::TerminatedFromParts => "terminated_from_parts",
         }
     }
 
@@ -73,6 +75,7 @@ impl BuiltinFunction {
                 | Self::Syscall6
                 | Self::PointerFromWord
                 | Self::PointerToWord
+                | Self::TerminatedFromParts
         )
     }
 

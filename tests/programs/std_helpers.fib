@@ -1,0 +1,197 @@
+// Exercises Result/Option helpers, Vec, Reader/Writer, allocators, C-string
+// views and errno names. Returns 0 on success, or the failing check's number.
+comp result := std::result;
+comp option := std::option;
+comp memory := std::memory;
+comp io := std::io;
+comp os := std::os;
+comp R := result::Result(int32, os::Errno);
+comp O := option::Option(int32);
+comp Numbers := std::vector::Vec(int32);
+
+fn double(value: int32) int32 { return value * 2; }
+fn widen(error: os::Errno) int64 { return error as int64; }
+
+fn results() int32 {
+    good := R.Ok(21);
+    bad := R.Err(os::ENOENT);
+    if !result::is_ok(int32, os::Errno, good) || result::is_err(int32, os::Errno, good) { return 1; };
+    if result::unwrap_or(int32, os::Errno, bad, 7) != 7 { return 2; };
+    if result::expect(int32, os::Errno, good, "unreachable") != 21 { return 3; };
+    switch (result::map(int32, int32, os::Errno, good, double)) {
+        when .Ok(value) { if value != 42 { return 4; }; }
+        when .Err { return 5; }
+    };
+    switch (result::map_err(int32, os::Errno, int64, bad, widen)) {
+        when .Ok { return 6; }
+        when .Err(error) { if error != 2 { return 7; }; }
+    };
+    if option::is_some(int32, result::ok(int32, os::Errno, bad)) { return 8; };
+    if option::unwrap_or(os::Errno, result::err(int32, os::Errno, bad), 0) != os::ENOENT { return 9; };
+    status := os::Status.Ok;
+    if !result::is_ok(void, os::Errno, status) { return 10; };
+    return 0;
+}
+
+fn options() int32 {
+    some := O.Some(4);
+    none := O.None;
+    if !option::is_some(int32, some) || !option::is_none(int32, none) { return 11; };
+    if option::unwrap_or(int32, none, 9) != 9 { return 12; };
+    if option::expect(int32, some, "unreachable") != 4 { return 13; };
+    if option::unwrap_or(int32, option::map(int32, int32, some, double), 0) != 8 { return 14; };
+    switch (option::ok_or(int32, os::Errno, none, os::EINVAL)) {
+        when .Ok { return 15; }
+        when .Err(error) { if error != os::EINVAL { return 16; }; }
+    };
+    return 0;
+}
+
+fn vectors(allocator: memory::Allocator) int32 {
+    numbers := Numbers.init(allocator);
+    defer Numbers.deinit(numbers&);
+    if Numbers.capacity(numbers&) != 0 { return 20; };
+    i: int32 = 0;
+    while (i < 100) {
+        switch (Numbers.push(numbers&, i)) {
+            when .Ok {}
+            when .Err { return 21; }
+        };
+        i = i + 1;
+    };
+    items := Numbers.items(numbers&);
+    if items.len != 100 || items[99] != 99 || Numbers.capacity(numbers&) < 100 { return 22; };
+    items[0] = 42;
+    if option::unwrap_or(int32, Numbers.get(numbers&, 0), 0) != 42 { return 23; };
+    if option::is_some(int32, Numbers.get(numbers&, 100)) { return 24; };
+    if option::unwrap_or(int32, Numbers.pop(numbers&), 0) != 99 || numbers.len != 99 { return 25; };
+    Numbers.clear(numbers&);
+    if option::is_some(int32, Numbers.pop(numbers&)) { return 26; };
+    switch (Numbers.deinit(numbers&)) {
+        when .Ok {}
+        when .Err { return 27; }
+    };
+    if Numbers.capacity(numbers&) != 0 { return 28; };
+    return 0;
+}
+
+fn allocators() int32 {
+    switch (memory::alloc(uint64, 4)) {
+        when .Err { return 30; }
+        when .Ok(words) {
+            words[3] = 42;
+            switch (memory::free(uint64, words)) {
+                when .Ok {}
+                when .Err { return 31; }
+            };
+            // A second free of the same storage is reported, not ignored.
+            switch (memory::free(uint64, words)) {
+                when .Ok { return 32; }
+                when .Err(error) {
+                    switch (error) {
+                        when .InvalidFree {}
+                        when .NotEnoughMemory { return 33; }
+                        when .MapFailed { return 33; }
+                        when .InvalidAlignment { return 33; }
+                        when .UnmapFailed { return 33; }
+                    };
+                }
+            };
+        }
+    };
+    switch (memory::alloc(uint8, 0)) {
+        when .Err { return 34; }
+        when .Ok(empty) { if empty.len != 0 { return 35; }; }
+    };
+    switch (memory::alloc([1073741824]uint64, 4294967295)) {
+        when .Ok { return 36; }
+        when .Err {}
+    };
+    page := memory::page_allocator();
+    switch (memory::create(uint8, page, 5000)) {
+        when .Err { return 37; }
+        when .Ok(bytes) {
+            bytes[4999] = 1;
+            switch (memory::destroy(uint8, page, bytes)) {
+                when .Ok {}
+                when .Err { return 38; }
+            };
+        }
+    };
+    heap := memory::heap_allocator();
+    switch (heap.alloc(heap.context, 8, 32)) {
+        when .Ok { return 39; }
+        when .Err {}
+    };
+    status := vectors(page);
+    if status != 0 { return status; };
+    return vectors(heap);
+}
+
+comp Counter := struct { calls: usize, total: usize };
+
+fn counting_write(context: *void, bytes: const []uint8) io::CountResult {
+    counter := context as *Counter;
+    counter.calls = counter.calls + 1;
+    if counter.calls == 1 { return io::CountResult.Err(os::EINTR); };
+    // Accept at most two bytes per call to force short writes.
+    count: usize = 2;
+    if bytes.len < count { count = bytes.len; };
+    counter.total = counter.total + count;
+    return io::CountResult.Ok(count);
+}
+
+fn ending_read(context: *void, buffer: []uint8) io::CountResult {
+    counter := context as *Counter;
+    if counter.total == 0 { return io::CountResult.Ok(0); };
+    buffer[0] = 'x';
+    counter.total = counter.total - 1;
+    return io::CountResult.Ok(1);
+}
+
+fn streams() int32 {
+    counter := Counter { calls: 0, total: 0 };
+    sink := io::Writer { context: (counter&) as *void, write: counting_write };
+    switch (io::write_all(sink, "abcde")) {
+        when .Err { return 40; }
+        when .Ok(count) { if count != 5 || counter.total != 5 || counter.calls != 4 { return 41; }; }
+    };
+    source := io::Reader { context: (counter&) as *void, read: ending_read };
+    buffer: [8]uint8 = [0, 0, 0, 0, 0, 0, 0, 0];
+    switch (io::read_full(source, buffer[..])) {
+        when .Err { return 42; }
+        when .Ok(count) { if count != 5 || buffer[4] != 'x' || buffer[5] != 0 { return 43; }; }
+    };
+    switch (io::writef(sink, "{}", [io::Arg.Signed(-7)])) {
+        when .Err { return 44; }
+        when .Ok(count) { if count != 2 { return 45; }; }
+    };
+    return 0;
+}
+
+fn strings() int32 {
+    view := memory::span(c"path");
+    if view.len != 4 || !std::string::eq(view, "path") { return 50; };
+    switch (std::string::index_of(view, 't')) {
+        when .Some(index) { if index != 2 { return 51; }; }
+        when .None { return 52; }
+    };
+    if !std::string::eq(os::errno_name(os::ENOENT), "ENOENT") { return 53; };
+    if !std::string::eq(os::errno_name(4095), "EUNKNOWN") { return 54; };
+    // Terminated views pass to path functions through slice_data.
+    missing := memory::span(c"/nonexistent/fib-std-helpers");
+    switch (os::access(memory::slice_data(missing), os::F_OK)) {
+        when .Ok { return 55; }
+        when .Err(error) { if error != os::ENOENT { return 56; }; }
+    };
+    return 0;
+}
+
+fn main() int32 {
+    status := results();
+    if status == 0 { status = options(); };
+    if status == 0 { status = allocators(); };
+    if status == 0 { status = streams(); };
+    if status == 0 { status = strings(); };
+    return status;
+}

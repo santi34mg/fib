@@ -1,3 +1,31 @@
 compiler_version = "0.2.0"
-declaration_revision = 4
-sources = ["formatting.fib", "io.fib", "map.fib", "memory.fib", "os.fib", "os_abi.fib", "prelude.fib", "process.fib", "random.fib", "result.fib", "string.fib"]
+declaration_revision = 6
+# tombi: format.rules.array-values-order = "ascending"
+sources = [
+  "formatting.fib",
+  "io.fib",
+  "libc.fib",
+  "map.fib",
+  "memory.fib",
+  "option.fib",
+  "os.fib",
+  "os_abi.fib",
+  "prelude.fib",
+  "process.fib",
+  "random.fib",
+  "result.fib",
+  "string.fib",
+  "syscall.fib",
+  "vector.fib",
+]
+
+# Per-target-OS source selection. Logical names (and module paths such as
+# std::os) stay those listed above; `replace` changes the implementing file and
+# `exclude` removes modules unavailable on the target.
+
+[targets.linux]
+exclude = ["libc.fib"]
+
+[targets.darwin]
+exclude = ["syscall.fib"]
+replace = { "libc.fib" = "darwin/libc.fib", "os.fib" = "darwin/os.fib" }

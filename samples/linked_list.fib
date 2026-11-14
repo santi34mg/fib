@@ -9,10 +9,13 @@ comp Node: type = struct {
 };
 
 fn push(head: *Node, val: int32) *Node {
-    node := std::memory::alloc(Node, 1);
-    if node.len == 0 { return head; };
-    node[0] = Node { data: val, next: head };
-    return std::memory::slice_data(node);
+    switch (std::memory::alloc(Node, 1)) {
+        when .Err { return head; }
+        when .Ok(node) {
+            node[0] = Node { data: val, next: head };
+            return std::memory::slice_data(node);
+        }
+    };
 }
 
 fn list_length(head: *Node) int32 {
@@ -48,7 +51,8 @@ fn free_list(head: *Node) void {
             break;
         };
         next: *Node = (cur*).next;
-        std::memory::free(Node, cur);
+        // Each node was allocated as a one-element slice.
+        std::memory::free(Node, std::memory::slice_from_parts(cur, 1));
         cur = next;
     };
 }

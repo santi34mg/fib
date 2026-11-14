@@ -1,23 +1,24 @@
 // OS-backed randomness for Linux x86-64. No userspace generator state.
-pub comp Error := enum { Io: int32, InvalidBound };
+pub comp Error := enum { Io: root::os::Errno, InvalidBound };
 pub comp Status := root::result::Result(void, Error);
 pub comp Uint64Result := root::result::Result(uint64, Error);
 
+// getrandom with flags=0 waits for the kernel RNG to initialize. The context
+// is unused.
+fn kernel_read(context: *void, buffer: []uint8) root::os::CountResult {
+    return root::os::getrandom(buffer, 0);
+}
+
 // Fill the entire slice, retrying interruptions and short reads. An error may
-// leave a partially filled buffer. Empty slices do not issue a syscall.
+// leave a partially filled buffer; zero progress reports EIO. Empty slices do
+// not issue a syscall.
 pub fn fill(buffer: []uint8) Status {
-    filled: usize = 0;
-    while (filled < buffer.len) {
-        remaining := buffer[filled..];
-        // getrandom with flags=0 waits for the kernel RNG to initialize.
-        count := root::os::syscall3(318, root::memory::slice_data(remaining),
-            remaining.len as uint64, 0);
-        if count < 0 {
-            if count != -4 { return Status.Err(Error.Io((-count) as int32)); };
-        } else {
-            if count == 0 { return Status.Err(Error.Io(5)); };
-            filled = filled + (count as usize);
-        };
+    source := root::io::Reader { context: null, read: kernel_read };
+    switch (root::io::read_full(source, buffer)) {
+        when .Err(error) { return Status.Err(Error.Io(error)); }
+        when .Ok(count) {
+            if count != buffer.len { return Status.Err(Error.Io(root::os::EIO)); };
+        }
     };
     return Status.Ok;
 }
